@@ -1,0 +1,1084 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Paylode Secure Checkout</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --navy:      #1a2744;
+  --navy-l:    #253360;
+  --navy-xl:   #0f1829;
+  --lime:      #7dc534;
+  --lime-l:    #9ed44f;
+  --lime-d:    #5fa01f;
+  --white:     #ffffff;
+  --off:       #f7f8fa;
+  --g100:      #f1f5f9;
+  --g200:      #e2e8f0;
+  --g300:      #cbd5e1;
+  --g400:      #94a3b8;
+  --g500:      #64748b;
+  --g600:      #475569;
+  --g700:      #334155;
+  --green:     #10b981;
+  --red:       #ef4444;
+  --amber:     #f59e0b;
+  --font:      'DM Sans', sans-serif;
+  --mono:      'DM Mono', monospace;
+  --r:         12px;
+  --rs:        8px;
+}
+
+html, body {
+  min-height: 100%;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--navy);
+  background: var(--off);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── LAYOUT ── */
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  background: var(--navy);
+  padding: 0 20px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.logo-box {
+  width: 30px; height: 30px;
+  background: var(--lime);
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 600; color: var(--navy); font-size: 14px;
+}
+.logo-text { color: #fff; font-weight: 600; font-size: 15px; }
+.logo-sub  { color: rgba(255,255,255,.45); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+
+.secure-badge {
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(125,197,52,.15);
+  border: 1px solid rgba(125,197,52,.3);
+  border-radius: 20px;
+  padding: 4px 10px;
+  color: var(--lime-l); font-size: 11px; font-weight: 500;
+}
+
+.center {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 16px 40px;
+}
+
+.shell {
+  width: 100%;
+  max-width: 420px;
+}
+
+/* ── ORDER SUMMARY ── */
+.order-card {
+  background: var(--white);
+  border: 1px solid var(--g200);
+  border-radius: var(--r);
+  padding: 18px 20px;
+  margin-bottom: 12px;
+  position: relative;
+  overflow: hidden;
+}
+.order-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--lime);
+}
+.merchant-name {
+  font-size: 12px; color: var(--g500); font-weight: 500;
+  margin-bottom: 4px;
+  display: flex; align-items: center; gap: 5px;
+}
+.merchant-name svg { width: 12px; height: 12px; fill: var(--lime-d); }
+.order-amount {
+  font-size: 32px; font-weight: 600; color: var(--navy);
+  letter-spacing: -1px; line-height: 1;
+  margin-bottom: 6px;
+}
+.order-desc {
+  font-size: 13px; color: var(--g500);
+}
+.order-ref {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--g400); margin-top: 8px;
+}
+.order-email {
+  font-size: 12px; color: var(--g500);
+  margin-top: 4px; display: flex; align-items: center; gap: 4px;
+}
+
+/* ── CHECKOUT CARD ── */
+.checkout-card {
+  background: var(--white);
+  border: 1px solid var(--g200);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+/* ── CHANNEL TABS ── */
+.channel-tabs {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  border-bottom: 1px solid var(--g200);
+}
+.ch-tab {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 4px;
+  padding: 14px 8px;
+  cursor: pointer;
+  border: none; background: none;
+  color: var(--g400); font-size: 11px; font-weight: 500;
+  font-family: var(--font);
+  transition: all .15s;
+  border-bottom: 2px solid transparent;
+  position: relative;
+}
+.ch-tab:not(:last-child)::after {
+  content: '';
+  position: absolute; right: 0; top: 20%; bottom: 20%;
+  width: 1px; background: var(--g200);
+}
+.ch-tab svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+.ch-tab:hover { color: var(--navy); background: var(--g100); }
+.ch-tab.active {
+  color: var(--navy); font-weight: 600;
+  border-bottom-color: var(--lime);
+  background: rgba(125,197,52,.05);
+}
+.ch-tab.active svg { stroke: var(--lime-d); }
+
+/* ── PANELS ── */
+.panel { display: none; padding: 20px; }
+.panel.active { display: block; }
+
+/* ── FORM ELEMENTS ── */
+.field { margin-bottom: 14px; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+label {
+  display: block; font-size: 11px; font-weight: 600;
+  color: var(--g600); margin-bottom: 5px;
+  letter-spacing: .3px; text-transform: uppercase;
+}
+input[type=text], input[type=tel], input[type=email], select {
+  width: 100%; padding: 11px 13px;
+  border: 1.5px solid var(--g300);
+  border-radius: var(--rs);
+  font-size: 14px; font-family: var(--font);
+  color: var(--navy); background: var(--white);
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+  appearance: none;
+}
+input:focus, select:focus {
+  border-color: var(--navy);
+  box-shadow: 0 0 0 3px rgba(26,39,68,.08);
+}
+input.error { border-color: var(--red); }
+input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2px; }
+
+.card-input-wrap {
+  position: relative;
+}
+.card-input-wrap input { padding-right: 80px; }
+.card-logos {
+  position: absolute; right: 10px; top: 50%;
+  transform: translateY(-50%);
+  display: flex; gap: 4px;
+}
+.card-logo-chip {
+  width: 30px; height: 20px;
+  border-radius: 3px;
+  background: var(--g100);
+  border: 1px solid var(--g200);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 7px; font-weight: 700; color: var(--g500);
+  overflow: hidden;
+}
+.card-logo-chip.visa { background: #1a1f71; color: #fff; font-size: 8px; }
+.card-logo-chip.mc   { background: #eb001b; color: #fff; font-size: 6px; }
+
+.hint { font-size: 11px; color: var(--g400); margin-top: 4px; }
+
+/* ── PAY BUTTON ── */
+.pay-btn {
+  width: 100%; padding: 14px;
+  background: var(--navy);
+  color: var(--white);
+  border: none; border-radius: var(--rs);
+  font-size: 15px; font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  margin-top: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: background .15s, transform .1s;
+  position: relative; overflow: hidden;
+  letter-spacing: .2px;
+}
+.pay-btn:hover { background: var(--navy-l); }
+.pay-btn:active { transform: scale(.99); }
+.pay-btn.loading { pointer-events: none; }
+.pay-btn.loading .btn-label { opacity: 0; }
+.pay-btn .spinner {
+  display: none;
+  position: absolute;
+  width: 20px; height: 20px;
+  border: 2px solid rgba(255,255,255,.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+.pay-btn.loading .spinner { display: block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.pay-btn-sub {
+  font-size: 11px; color: var(--g400);
+  text-align: center; margin-top: 8px;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+}
+
+/* ── BANK TRANSFER PANEL ── */
+.transfer-steps { display: flex; flex-direction: column; gap: 12px; }
+.transfer-step {
+  display: flex; gap: 12px; align-items: flex-start;
+}
+.step-num {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--navy); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; flex-shrink: 0;
+  margin-top: 2px;
+}
+.step-body { flex: 1; }
+.step-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.step-sub { font-size: 12px; color: var(--g500); }
+
+.account-box {
+  background: var(--g100);
+  border: 1px solid var(--g200);
+  border-radius: var(--rs);
+  padding: 14px 16px;
+  margin-top: 8px;
+}
+.acct-row {
+  display: flex; justify-content: space-between;
+  align-items: center; margin-bottom: 8px;
+}
+.acct-row:last-child { margin-bottom: 0; }
+.acct-label { font-size: 11px; color: var(--g500); font-weight: 500; text-transform: uppercase; letter-spacing: .3px; }
+.acct-value { font-size: 14px; font-weight: 600; color: var(--navy); font-family: var(--mono); }
+.acct-value.big { font-size: 20px; letter-spacing: 2px; }
+.copy-btn {
+  background: var(--white); border: 1px solid var(--g300);
+  border-radius: 5px; padding: 3px 8px;
+  font-size: 11px; font-weight: 500; color: var(--g600);
+  cursor: pointer; font-family: var(--font);
+  transition: all .15s;
+}
+.copy-btn:hover { background: var(--navy); color: #fff; border-color: var(--navy); }
+.copy-btn.copied { background: var(--green); color: #fff; border-color: var(--green); }
+
+.timer-wrap {
+  background: rgba(245,158,11,.08);
+  border: 1px solid rgba(245,158,11,.25);
+  border-radius: var(--rs);
+  padding: 10px 14px;
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 14px;
+}
+.timer-wrap svg { width: 16px; height: 16px; stroke: var(--amber); flex-shrink: 0; }
+.timer-text { font-size: 12px; color: #92400e; }
+.timer-count { font-family: var(--mono); font-weight: 600; }
+
+/* ── USSD PANEL ── */
+.ussd-banks { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.bank-option {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px;
+  border: 1.5px solid var(--g200);
+  border-radius: var(--rs);
+  cursor: pointer;
+  transition: all .15s;
+}
+.bank-option:hover { border-color: var(--g300); background: var(--g100); }
+.bank-option.selected { border-color: var(--navy); background: rgba(26,39,68,.04); }
+.bank-opt-left { display: flex; align-items: center; gap: 10px; }
+.bank-avatar {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: #fff;
+  flex-shrink: 0;
+}
+.bank-name { font-size: 13px; font-weight: 500; }
+.bank-code { font-family: var(--mono); font-size: 13px; color: var(--g500); }
+.radio-dot {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--g300);
+  transition: all .15s;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.bank-option.selected .radio-dot {
+  border-color: var(--navy);
+  background: var(--navy);
+}
+.bank-option.selected .radio-dot::after {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%; background: #fff;
+}
+
+.ussd-code-box {
+  background: var(--navy);
+  border-radius: var(--rs);
+  padding: 20px;
+  text-align: center;
+  margin-top: 4px;
+}
+.ussd-code {
+  font-family: var(--mono); font-size: 28px; font-weight: 500;
+  color: var(--lime-l); letter-spacing: 3px;
+  display: block; margin-bottom: 8px;
+}
+.ussd-instr { font-size: 12px; color: rgba(255,255,255,.6); }
+
+/* ── SUCCESS / FAILED STATES ── */
+.result-screen {
+  display: none; padding: 32px 20px;
+  text-align: center; flex-direction: column; align-items: center;
+}
+.result-screen.active { display: flex; }
+.result-icon {
+  width: 64px; height: 64px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 16px;
+}
+.result-icon.success { background: rgba(16,185,129,.12); }
+.result-icon.failed  { background: rgba(239,68,68,.1); }
+.result-icon svg { width: 32px; height: 32px; }
+.result-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+.result-sub   { font-size: 13px; color: var(--g500); margin-bottom: 20px; line-height: 1.6; }
+
+.result-detail {
+  background: var(--g100); border-radius: var(--rs);
+  padding: 14px 16px; width: 100%; margin-bottom: 16px; text-align: left;
+}
+.rd-row {
+  display: flex; justify-content: space-between;
+  font-size: 12px; padding: 5px 0;
+  border-bottom: 1px dashed var(--g200);
+}
+.rd-row:last-child { border-bottom: none; }
+.rd-label { color: var(--g500); }
+.rd-val   { font-weight: 600; color: var(--navy); font-family: var(--mono); font-size: 12px; }
+
+.back-btn {
+  background: var(--g100); border: 1px solid var(--g200);
+  border-radius: var(--rs); padding: 10px 20px;
+  font-size: 13px; font-weight: 500; font-family: var(--font);
+  color: var(--g600); cursor: pointer;
+}
+
+/* ── SANDBOX BADGE ── */
+.sandbox-banner {
+  background: rgba(245,158,11,.1);
+  border: 1px solid rgba(245,158,11,.3);
+  border-radius: var(--rs);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 12px; color: #92400e;
+  display: flex; align-items: center; gap: 6px;
+  display: none;
+}
+.sandbox-banner.show { display: flex; }
+.sandbox-banner svg { width: 14px; height: 14px; stroke: var(--amber); flex-shrink: 0; }
+
+/* ── FOOTER ── */
+.footer {
+  text-align: center; padding: 20px;
+  font-size: 11px; color: var(--g400);
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.footer a { color: var(--g400); text-decoration: none; }
+.footer a:hover { color: var(--navy); }
+.footer-lock { width: 12px; height: 12px; stroke: var(--g400); fill: none; }
+
+/* ── ANIMATIONS ── */
+.panel, .result-screen { animation: fadeUp .2s ease; }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── MOBILE ── */
+@media (max-width: 480px) {
+  .center { padding: 16px 12px 32px; }
+  .order-amount { font-size: 28px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="logo">
+      <div class="logo-box">P</div>
+      <div>
+        <div class="logo-text">Paylode</div>
+        <div class="logo-sub">Secure Checkout</div>
+      </div>
+    </div>
+    <div class="secure-badge">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      256-bit SSL
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="center">
+    <div class="shell">
+
+      <!-- SANDBOX WARNING -->
+      <div class="sandbox-banner" id="sandbox-banner">
+        <svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Test mode — no real money will be charged
+      </div>
+
+      <!-- ORDER SUMMARY -->
+      <div class="order-card" id="order-card">
+        <div class="merchant-name" id="merchant-name">
+          <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+          <span>Loading...</span>
+        </div>
+        <div class="order-amount" id="order-amount">—</div>
+        <div class="order-desc" id="order-desc">Payment</div>
+        <div class="order-email" id="order-email">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,12 2,6"/></svg>
+          <span></span>
+        </div>
+        <div class="order-ref" id="order-ref"></div>
+      </div>
+
+      <!-- CHECKOUT CARD -->
+      <div class="checkout-card" id="checkout-card">
+
+        <!-- CHANNEL TABS -->
+        <div class="channel-tabs">
+          <button class="ch-tab active" id="tab-card" onclick="switchChannel('card')">
+            <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+            Card
+          </button>
+          <button class="ch-tab" id="tab-transfer" onclick="switchChannel('transfer')">
+            <svg viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+            Transfer
+          </button>
+          <button class="ch-tab" id="tab-ussd" onclick="switchChannel('ussd')">
+            <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+            USSD
+          </button>
+        </div>
+
+        <!-- ── CARD PANEL ── -->
+        <div class="panel active" id="panel-card">
+          <div class="field">
+            <label>Card number</label>
+            <div class="card-input-wrap">
+              <input type="tel" id="card-number" class="mono-input" placeholder="0000  0000  0000  0000"
+                maxlength="19" autocomplete="cc-number" inputmode="numeric"
+                oninput="formatCard(this)" onblur="validateCard(this)">
+              <div class="card-logos">
+                <div class="card-logo-chip visa" id="logo-visa">VISA</div>
+                <div class="card-logo-chip mc" id="logo-mc">MC</div>
+              </div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Cardholder name</label>
+            <input type="text" id="card-name" placeholder="As printed on card"
+              autocomplete="cc-name" oninput="this.value=this.value.toUpperCase()">
+          </div>
+          <div class="field-row">
+            <div class="field" style="margin:0">
+              <label>Expiry</label>
+              <input type="tel" id="card-expiry" class="mono-input" placeholder="MM / YY"
+                maxlength="7" autocomplete="cc-exp" inputmode="numeric" oninput="formatExpiry(this)">
+            </div>
+            <div class="field" style="margin:0">
+              <label>CVV</label>
+              <input type="tel" id="card-cvv" class="mono-input" placeholder="• • •"
+                maxlength="4" autocomplete="cc-csc" inputmode="numeric"
+                onfocus="this.placeholder=''" onblur="this.placeholder='• • •'">
+            </div>
+          </div>
+          <div class="field">
+            <label>Card PIN <span style="color:var(--g400);font-weight:400">(required for Nigerian cards)</span></label>
+            <input type="tel" id="card-pin" class="mono-input" placeholder="• • • •"
+              maxlength="4" inputmode="numeric">
+            <div class="hint">Your 4-digit ATM PIN — encrypted and never stored</div>
+          </div>
+          <button class="pay-btn" id="pay-btn-card" onclick="payWithCard()">
+            <div class="spinner"></div>
+            <span class="btn-label" id="card-btn-label">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+              Pay <span id="card-pay-amount">—</span> securely
+            </span>
+          </button>
+          <div class="pay-btn-sub">
+            <svg class="footer-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            Secured by Paylode · CBN Licensed PSSP
+          </div>
+        </div>
+
+        <!-- ── TRANSFER PANEL ── -->
+        <div class="panel" id="panel-transfer">
+          <div class="transfer-steps">
+            <div class="transfer-step">
+              <div class="step-num">1</div>
+              <div class="step-body">
+                <div class="step-title">Transfer the exact amount</div>
+                <div class="step-sub">Use your banking app, USSD, or internet banking to transfer to this account</div>
+                <div class="account-box" id="transfer-account">
+                  <div class="acct-row">
+                    <div>
+                      <div class="acct-label">Amount to transfer</div>
+                      <div class="acct-value big" id="transfer-amount-display">—</div>
+                    </div>
+                    <button class="copy-btn" onclick="copyText('transfer-amount-display', this)">Copy</button>
+                  </div>
+                  <div class="acct-row">
+                    <div>
+                      <div class="acct-label">Account number</div>
+                      <div class="acct-value" id="virtual-account">8021234567</div>
+                    </div>
+                    <button class="copy-btn" onclick="copyText('virtual-account', this)">Copy</button>
+                  </div>
+                  <div class="acct-row">
+                    <div>
+                      <div class="acct-label">Bank</div>
+                      <div class="acct-value" id="virtual-bank">Wema Bank (ALAT)</div>
+                    </div>
+                  </div>
+                  <div class="acct-row" style="margin-bottom:0">
+                    <div>
+                      <div class="acct-label">Account name</div>
+                      <div class="acct-value" id="virtual-name">PAYLODE/BOLT-NGR</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="transfer-step">
+              <div class="step-num">2</div>
+              <div class="step-body">
+                <div class="step-title">Wait for confirmation</div>
+                <div class="step-sub">This page updates automatically once your transfer is received. Usually within 1–2 minutes.</div>
+                <div class="timer-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  <div class="timer-text">Session expires in <span class="timer-count" id="timer">29:47</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="transfer-step">
+              <div class="step-num">3</div>
+              <div class="step-body">
+                <div class="step-title">Use the exact amount</div>
+                <div class="step-sub">Transfers of a different amount will be automatically reversed within 24 hours.</div>
+              </div>
+            </div>
+          </div>
+          <button class="pay-btn" style="margin-top:20px;background:var(--g600)" onclick="checkTransferStatus()">
+            <span class="btn-label">I've made the transfer — check now</span>
+            <div class="spinner"></div>
+          </button>
+        </div>
+
+        <!-- ── USSD PANEL ── -->
+        <div class="panel" id="panel-ussd">
+          <div style="font-size:13px;color:var(--g500);margin-bottom:14px">Select your bank to get the USSD code</div>
+          <div class="ussd-banks" id="ussd-banks">
+            <div class="bank-option selected" onclick="selectBank(this,'*737#','GTBank','#005F2D')">
+              <div class="bank-opt-left">
+                <div class="bank-avatar" style="background:#005F2D">GT</div>
+                <div>
+                  <div class="bank-name">GTBank</div>
+                  <div class="bank-code">*737#</div>
+                </div>
+              </div>
+              <div class="radio-dot"></div>
+            </div>
+            <div class="bank-option" onclick="selectBank(this,'*901#','Access Bank','#d4181e')">
+              <div class="bank-opt-left">
+                <div class="bank-avatar" style="background:#d4181e">AB</div>
+                <div>
+                  <div class="bank-name">Access Bank</div>
+                  <div class="bank-code">*901#</div>
+                </div>
+              </div>
+              <div class="radio-dot"></div>
+            </div>
+            <div class="bank-option" onclick="selectBank(this,'*966#','Zenith Bank','#96012A')">
+              <div class="bank-opt-left">
+                <div class="bank-avatar" style="background:#96012A">ZB</div>
+                <div>
+                  <div class="bank-name">Zenith Bank</div>
+                  <div class="bank-code">*966#</div>
+                </div>
+              </div>
+              <div class="radio-dot"></div>
+            </div>
+            <div class="bank-option" onclick="selectBank(this,'*894#','First Bank','#004B87')">
+              <div class="bank-opt-left">
+                <div class="bank-avatar" style="background:#004B87">FB</div>
+                <div>
+                  <div class="bank-name">First Bank</div>
+                  <div class="bank-code">*894#</div>
+                </div>
+              </div>
+              <div class="radio-dot"></div>
+            </div>
+            <div class="bank-option" onclick="selectBank(this,'*919#','UBA','#E21A20')">
+              <div class="bank-opt-left">
+                <div class="bank-avatar" style="background:#E21A20">UBA</div>
+                <div>
+                  <div class="bank-name">United Bank for Africa</div>
+                  <div class="bank-code">*919#</div>
+                </div>
+              </div>
+              <div class="radio-dot"></div>
+            </div>
+          </div>
+          <div class="ussd-code-box">
+            <span class="ussd-code" id="ussd-code-display">*737*000*<span id="ussd-amt">0</span>#</span>
+            <div class="ussd-instr">Dial this code on your registered phone number</div>
+          </div>
+          <button class="pay-btn" style="margin-top:16px;background:var(--g600)" onclick="checkUssdStatus()">
+            <span class="btn-label">I've dialled — check payment</span>
+            <div class="spinner"></div>
+          </button>
+        </div>
+
+        <!-- ── SUCCESS SCREEN ── -->
+        <div class="result-screen" id="screen-success">
+          <div class="result-icon success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <div class="result-title">Payment successful</div>
+          <div class="result-sub" id="success-sub">Your payment has been confirmed and the merchant has been notified.</div>
+          <div class="result-detail" id="success-detail"></div>
+          <button class="back-btn" onclick="closeWindow()">Close and return to merchant</button>
+        </div>
+
+        <!-- ── FAILED SCREEN ── -->
+        <div class="result-screen" id="screen-failed">
+          <div class="result-icon failed">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </div>
+          <div class="result-title">Payment failed</div>
+          <div class="result-sub" id="failed-reason">Something went wrong with your payment. Please try again.</div>
+          <button class="pay-btn" style="max-width:240px" onclick="retryPayment()">Try again</button>
+          <div style="margin-top:8px"></div>
+          <button class="back-btn" onclick="closeWindow()">Cancel</button>
+        </div>
+
+      </div><!-- /checkout-card -->
+
+      <!-- FOOTER -->
+      <div class="footer">
+        <svg class="footer-lock" viewBox="0 0 24 24" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        Secured by Paylode &nbsp;·&nbsp;
+        <a href="https://paylodeservices.com">paylodeservices.com</a>
+        &nbsp;·&nbsp;
+        <a href="#">Privacy</a>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── CONFIG ──────────────────────────────────────────────────────────────────
+const API_URL = 'https://api.paylodeservices.com/api/v1';
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let state = {
+  reference: null,
+  amount: 0,
+  amountFormatted: '₦0.00',
+  currency: 'NGN',
+  merchantName: '',
+  customerEmail: '',
+  description: '',
+  isSandbox: false,
+  channel: 'card',
+  selectedUssdCode: '*737#',
+  timerInterval: null,
+  pollInterval: null,
+  timerSeconds: 30 * 60,
+};
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(window.location.search);
+  state.reference   = params.get('ref')        || params.get('reference') || generateDemoRef();
+  state.isSandbox   = params.get('sandbox')    === 'true' || window.location.hostname.includes('sandbox');
+  const rawAmount   = parseInt(params.get('amount') || '500000');
+  state.amount      = rawAmount;
+  state.amountFormatted = formatNaira(rawAmount);
+  state.merchantName    = decodeURIComponent(params.get('merchant') || 'Demo Merchant');
+  state.customerEmail   = decodeURIComponent(params.get('email')    || 'customer@example.com');
+  state.description     = decodeURIComponent(params.get('desc')     || 'Payment');
+
+  // Populate order summary
+  document.getElementById('merchant-name').querySelector('span').textContent = state.merchantName;
+  document.getElementById('order-amount').textContent = state.amountFormatted;
+  document.getElementById('order-desc').textContent   = state.description;
+  document.getElementById('order-email').querySelector('span').textContent = state.customerEmail;
+  document.getElementById('order-ref').textContent    = 'Ref: ' + state.reference;
+  document.getElementById('card-pay-amount').textContent = state.amountFormatted;
+  document.getElementById('transfer-amount-display').textContent = state.amountFormatted;
+
+  // USSD amount (short form)
+  const naira = rawAmount / 100;
+  document.getElementById('ussd-amt').textContent = naira;
+  state.ussdAmt = naira;
+
+  if (state.isSandbox) {
+    document.getElementById('sandbox-banner').classList.add('show');
+  }
+
+  // Virtual account (in production, fetch from API)
+  fetchVirtualAccount();
+
+  // Start countdown timer for transfer
+  startTimer();
+});
+
+// ─── VIRTUAL ACCOUNT (Transfer) ───────────────────────────────────────────────
+async function fetchVirtualAccount() {
+  if (state.isSandbox) return; // demo values already set
+  try {
+    const res = await fetch(`${API_URL}/transactions/${state.reference}/virtual-account`);
+    if (res.ok) {
+      const data = await res.json();
+      document.getElementById('virtual-account').textContent = data.data.account_number;
+      document.getElementById('virtual-bank').textContent    = data.data.bank_name;
+      document.getElementById('virtual-name').textContent    = data.data.account_name;
+    }
+  } catch (e) { /* use demo values */ }
+}
+
+// ─── CHANNEL SWITCHING ────────────────────────────────────────────────────────
+function switchChannel(ch) {
+  state.channel = ch;
+  ['card','transfer','ussd'].forEach(c => {
+    document.getElementById('tab-' + c).classList.toggle('active', c === ch);
+    document.getElementById('panel-' + c).classList.toggle('active', c === ch);
+  });
+  if (ch === 'transfer') startTimer();
+}
+
+// ─── CARD FORMATTING ─────────────────────────────────────────────────────────
+function formatCard(input) {
+  let v = input.value.replace(/\D/g,'').substring(0,16);
+  input.value = v.match(/.{1,4}/g)?.join('  ') || v;
+  // Detect card type
+  const first = v[0];
+  document.getElementById('logo-visa').style.opacity = first==='4'?'1':'0.3';
+  document.getElementById('logo-mc').style.opacity   = first==='5'?'1':'0.3';
+}
+
+function formatExpiry(input) {
+  let v = input.value.replace(/\D/g,'').substring(0,4);
+  if (v.length >= 2) v = v.substring(0,2) + ' / ' + v.substring(2);
+  input.value = v;
+}
+
+function validateCard(input) {
+  const v = input.value.replace(/\D/g,'');
+  input.classList.toggle('error', v.length > 0 && v.length < 16);
+}
+
+// ─── PAY WITH CARD ────────────────────────────────────────────────────────────
+async function payWithCard() {
+  const number = document.getElementById('card-number').value.replace(/\D/g,'');
+  const name   = document.getElementById('card-name').value.trim();
+  const expiry = document.getElementById('card-expiry').value.replace(/\s/g,'');
+  const cvv    = document.getElementById('card-cvv').value;
+  const pin    = document.getElementById('card-pin').value;
+
+  // Basic validation
+  if (number.length < 16) { shake('card-number'); return; }
+  if (!name)               { shake('card-name');   return; }
+  if (expiry.length < 4)   { shake('card-expiry'); return; }
+  if (cvv.length < 3)      { shake('card-cvv');    return; }
+  if (pin.length < 4)      { shake('card-pin');    return; }
+
+  const btn = document.getElementById('pay-btn-card');
+  setLoading(btn, true);
+
+  try {
+    // In production: POST to your backend which calls the card processor
+    const payload = {
+      reference:   state.reference,
+      card_number: number,
+      card_expiry: expiry,
+      card_cvv:    cvv,
+      card_pin:    pin,
+      card_name:   name,
+    };
+
+    let success, failReason;
+
+    if (state.isSandbox) {
+      // Sandbox — simulate based on test card numbers
+      await sleep(1800);
+      if (number === '4084080000000409') {
+        success = false; failReason = 'Insufficient funds';
+      } else if (number === '4000000000000002') {
+        success = false; failReason = 'Card declined by issuer';
+      } else if (number === '4187427415564246') {
+        success = false; failReason = 'Transaction timed out';
+      } else {
+        success = true;
+      }
+    } else {
+      const res = await fetch(`${API_URL}/transactions/${state.reference}/charge/card`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+      });
+      const data = await res.json();
+      success    = data.status && data.data?.status === 'SUCCESS';
+      failReason = data.message || 'Payment failed';
+    }
+
+    setLoading(btn, false);
+    if (success) showSuccess('card');
+    else showFailed(failReason);
+
+  } catch (e) {
+    setLoading(btn, false);
+    showFailed('Network error. Please check your connection and try again.');
+  }
+}
+
+// ─── CHECK TRANSFER STATUS ────────────────────────────────────────────────────
+async function checkTransferStatus() {
+  const btn = document.querySelector('#panel-transfer .pay-btn');
+  setLoading(btn, true);
+  await sleep(2000);
+  setLoading(btn, false);
+
+  if (state.isSandbox) {
+    showSuccess('transfer');
+  } else {
+    try {
+      const res  = await fetch(`${API_URL}/transactions/verify/${state.reference}`, {
+        headers: { 'Authorization': `Bearer ${getPublicKey()}` },
+      });
+      const data = await res.json();
+      if (data.data?.status === 'SUCCESS') showSuccess('transfer');
+      else showFailed('Transfer not yet confirmed. Please wait a moment and try again.');
+    } catch {
+      showFailed('Could not check status. Please try again.');
+    }
+  }
+}
+
+// ─── USSD ─────────────────────────────────────────────────────────────────────
+function selectBank(el, code, name, color) {
+  document.querySelectorAll('.bank-option').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+  state.selectedUssdCode = code;
+  const base = code.replace('#','');
+  document.getElementById('ussd-code-display').innerHTML =
+    `${base}*000*<span id="ussd-amt">${state.ussdAmt}</span>#`;
+}
+
+async function checkUssdStatus() {
+  const btn = document.querySelector('#panel-ussd .pay-btn');
+  setLoading(btn, true);
+  await sleep(2000);
+  setLoading(btn, false);
+  if (state.isSandbox) showSuccess('ussd');
+  else {
+    try {
+      const res  = await fetch(`${API_URL}/transactions/verify/${state.reference}`);
+      const data = await res.json();
+      if (data.data?.status === 'SUCCESS') showSuccess('ussd');
+      else showFailed('Payment not yet received. Please check you dialled the correct code.');
+    } catch {
+      showFailed('Could not check status. Please try again.');
+    }
+  }
+}
+
+// ─── SUCCESS / FAILED ─────────────────────────────────────────────────────────
+function showSuccess(channel) {
+  stopPolling();
+  hideAllPanels();
+  const screen = document.getElementById('screen-success');
+  screen.classList.add('active');
+
+  const channelLabel = { card:'Card payment', transfer:'Bank transfer', ussd:'USSD payment' }[channel];
+  document.getElementById('success-sub').textContent =
+    `Your ${channelLabel} of ${state.amountFormatted} to ${state.merchantName} was successful.`;
+
+  document.getElementById('success-detail').innerHTML = `
+    <div class="rd-row"><span class="rd-label">Amount</span><span class="rd-val">${state.amountFormatted}</span></div>
+    <div class="rd-row"><span class="rd-label">Merchant</span><span class="rd-val">${state.merchantName}</span></div>
+    <div class="rd-row"><span class="rd-label">Channel</span><span class="rd-val">${channelLabel}</span></div>
+    <div class="rd-row"><span class="rd-label">Reference</span><span class="rd-val" style="font-size:11px">${state.reference}</span></div>
+    <div class="rd-row"><span class="rd-label">Time</span><span class="rd-val">${new Date().toLocaleTimeString('en-NG')}</span></div>
+  `;
+
+  // Notify merchant's callback URL if set
+  notifyCallback(true);
+}
+
+function showFailed(reason) {
+  hideAllPanels();
+  document.getElementById('screen-failed').classList.add('active');
+  document.getElementById('failed-reason').textContent = reason || 'Payment failed. Please try again.';
+  notifyCallback(false);
+}
+
+function retryPayment() {
+  document.getElementById('screen-failed').classList.remove('active');
+  switchChannel(state.channel);
+  document.getElementById('panel-' + state.channel).classList.add('active');
+}
+
+function hideAllPanels() {
+  document.querySelectorAll('.panel, .result-screen').forEach(p => {
+    p.classList.remove('active');
+  });
+}
+
+// ─── CALLBACK NOTIFICATION ────────────────────────────────────────────────────
+async function notifyCallback(success) {
+  const params = new URLSearchParams(window.location.search);
+  const callbackUrl = params.get('callback_url');
+  if (!callbackUrl) return;
+
+  // Append result to callback URL
+  const sep = callbackUrl.includes('?') ? '&' : '?';
+  const url = `${callbackUrl}${sep}reference=${state.reference}&status=${success?'success':'failed'}`;
+
+  // Redirect after short delay on success
+  if (success) {
+    setTimeout(() => { window.location.href = url; }, 3000);
+  }
+}
+
+// ─── COUNTDOWN TIMER ─────────────────────────────────────────────────────────
+function startTimer() {
+  clearInterval(state.timerInterval);
+  state.timerSeconds = 30 * 60;
+  state.timerInterval = setInterval(() => {
+    state.timerSeconds--;
+    const m = Math.floor(state.timerSeconds / 60).toString().padStart(2,'0');
+    const s = (state.timerSeconds % 60).toString().padStart(2,'0');
+    const el = document.getElementById('timer');
+    if (el) el.textContent = `${m}:${s}`;
+    if (state.timerSeconds <= 0) {
+      clearInterval(state.timerInterval);
+      showFailed('Session expired. Please return to the merchant and try again.');
+    }
+  }, 1000);
+}
+
+function stopPolling() {
+  clearInterval(state.timerInterval);
+  clearInterval(state.pollInterval);
+}
+
+// ─── UTILS ────────────────────────────────────────────────────────────────────
+function formatNaira(kobo) {
+  const naira = kobo / 100;
+  return new Intl.NumberFormat('en-NG', { style:'currency', currency:'NGN', minimumFractionDigits:2 }).format(naira);
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function setLoading(btn, loading) {
+  btn.classList.toggle('loading', loading);
+}
+
+function shake(id) {
+  const el = document.getElementById(id);
+  el.classList.add('error');
+  el.animate([{transform:'translateX(-4px)'},{transform:'translateX(4px)'},{transform:'translateX(0)'}],
+    {duration:200,iterations:3});
+  el.focus();
+}
+
+function copyText(id, btn) {
+  const text = document.getElementById(id).textContent.replace(/[₦,]/g,'').trim();
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 2000);
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+function generateDemoRef() {
+  return 'TXN-DEMO-' + Math.random().toString(36).substring(2,8).toUpperCase();
+}
+
+function getPublicKey() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('pk') || '';
+}
+
+function closeWindow() {
+  const params  = new URLSearchParams(window.location.search);
+  const callbackUrl = params.get('callback_url');
+  if (callbackUrl) window.location.href = callbackUrl;
+  else if (window.opener) window.close();
+  else history.back();
+}
+</script>
+</body>
+</html>

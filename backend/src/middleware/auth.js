@@ -1,0 +1,77 @@
+'use strict';
+const jwt  = require('jsonwebtoken');
+const { prisma }      = require('../utils/db');
+const { hashApiKey, unauthorized } = require('../utils/helpers');
+
+// ── JWT Authentication ─────────────────────────────────────────────────────
+async function requireAuth(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer '))
+    return unauthorized(res, 'No token provided');
+
+  const token = header.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id:true, email:true, role:true, isActive:true,
+                merchant:{ select:{ id:true, merchantCode:true, kycStatus:true, isActive:true, kycTier:true, processingRate:true, aggregatorId:true }},
+                aggregator:{ select:{ id:true, revenueSplitPct:true }} },
+    });
+    if (!user || !user.isActive) return unauthorized(res, 'Account inactive');
+    req.user = user;
+    next();
+  } catch {
+    return unauthorized(res, 'Invalid or expired token');
+  }
+}
+
+// ── API Key Authentication (for SDK calls) ─────────────────────────────────
+async function requireApiKey(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer '))
+    return unauthorized(res, 'API key required');
+
+  const rawKey = header.split(' ')[1];
+  if (!rawKey.startsWith('sk_live_') && !rawKey.startsWith('sk_test_'))
+    return unauthorized(res, 'Invalid key format. Use sk_live_ or sk_test_ key');
+
+  const keyHash  = hashApiKey(rawKey);
+  const apiKey   = await prisma.apiKey.findUnique({
+    where: { keyHash },
+    include: {
+      merchant: {
+        include: { aggregator: true },
+      },
+    },
+  });
+
+  if (!apiKey || !apiKey.isActive)
+    return unauthorized(res, 'Invalid API key');
+
+  if (!apiKey.merchant.isActive)
+    return unauthorized(res, 'Merchant account is not active. Complete KYC to enable payments.');
+
+  // Update last used (non-blocking)
+  prisma.apiKey.update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
+
+  req.merchant  = apiKey.merchant;
+  req.isSandbox = apiKey.isSandbox;
+  next();
+}
+
+// ── Role guards ────────────────────────────────────────────────────────────
+const requireRole = (...roles) => (req, res, next) => {
+  if (!req.user) return unauthorized(res);
+  if (!roles.includes(req.user.role))
+    return res.status(403).json({ status: false, message: 'Insufficient permissions', error_code: 'FORBIDDEN' });
+  next();
+};
+
+const requireSuperAdmin  = requireRole('SUPER_ADMIN');
+const requireCompliance  = requireRole('SUPER_ADMIN', 'COMPLIANCE_OFFICER');
+const requireAggregator  = requireRole('SUPER_ADMIN', 'AGGREGATOR');
+const requireMerchant    = requireRole('SUPER_ADMIN', 'MERCHANT');
+
+module.exports = { requireAuth, requireApiKey, requireRole,
+                   requireSuperAdmin, requireCompliance, requireAggregator, requireMerchant };

@@ -1,0 +1,438 @@
+'use strict';
+const router = require('express').Router();
+const { prisma } = require('../utils/db');
+const { requireAuth, requireCompliance, requireSuperAdmin } = require('../middleware/auth');
+const { ok, fail, koboToNaira } = require('../utils/helpers');
+
+// ── GET /api/v1/reports/daily-summary ────────────────────────────────────
+router.get('/daily-summary', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { date } = req.query;
+    const targetDate = date ? new Date(date) : new Date();
+    targetDate.setHours(0,0,0,0);
+    const nextDay = new Date(targetDate); nextDay.setDate(nextDay.getDate() + 1);
+
+    const rows = await prisma.$queryRaw`
+      SELECT
+        m.business_name,
+        m.merchant_code,
+        t.channel::text,
+        t.status::text,
+        COUNT(*)::int              AS txn_count,
+        SUM(t.amount)::bigint      AS total_volume,
+        SUM(t.merchant_fee)::bigint AS total_fees,
+        SUM(t.paylode_margin)::bigint AS paylode_net,
+        ROUND(AVG(t.amount))::bigint  AS avg_txn_size
+      FROM transactions t
+      JOIN merchants m ON t.merchant_id = m.id
+      WHERE t.created_at >= ${targetDate}
+        AND t.created_at < ${nextDay}
+        AND t.is_sandbox = false
+      GROUP BY m.business_name, m.merchant_code, t.channel, t.status
+      ORDER BY total_volume DESC
+    `;
+
+    const totals = await prisma.transaction.aggregate({
+      where: { createdAt: { gte: targetDate, lt: nextDay }, isSandbox: false },
+      _count: true,
+      _sum: { amount: true, merchantFee: true, paylodeMargin: true },
+    });
+
+    ok(res, {
+      date: targetDate.toISOString().split('T')[0],
+      summary: {
+        total_transactions: totals._count,
+        total_volume_kobo:  Number(totals._sum.amount || 0),
+        total_volume_naira: koboToNaira(totals._sum.amount || 0),
+        total_fees_kobo:    Number(totals._sum.merchantFee || 0),
+        paylode_net_kobo:   Number(totals._sum.paylodeMargin || 0),
+      },
+      breakdown: rows.map(r => ({
+        ...r,
+        total_volume_naira: koboToNaira(r.total_volume),
+        total_fees_naira:   koboToNaira(r.total_fees),
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/revenue ───────────────────────────────────────────
+router.get('/revenue', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { from, to, groupBy='month' } = req.query;
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const toDate   = to ? new Date(to) : new Date();
+
+    const rows = await prisma.$queryRaw`
+      SELECT
+        DATE_TRUNC(${groupBy}, t.created_at) AS period,
+        m.kyc_tier,
+        t.channel::text,
+        COUNT(*)::int                   AS txn_count,
+        SUM(t.amount)::bigint           AS volume,
+        SUM(t.merchant_fee)::bigint     AS gross_revenue,
+        SUM(t.rail_cost)::bigint        AS rail_costs,
+        SUM(t.net_revenue)::bigint      AS net_after_rails,
+        SUM(t.agg_share)::bigint        AS agg_payouts,
+        SUM(t.paylode_margin)::bigint   AS paylode_margin,
+        ROUND(
+          SUM(t.paylode_margin) * 100.0 / NULLIF(SUM(t.merchant_fee),0), 2
+        )                               AS margin_pct
+      FROM transactions t
+      JOIN merchants m ON t.merchant_id = m.id
+      WHERE t.status = 'SUCCESS'
+        AND t.is_sandbox = false
+        AND t.created_at BETWEEN ${fromDate} AND ${toDate}
+      GROUP BY period, m.kyc_tier, t.channel
+      ORDER BY period DESC, paylode_margin DESC
+    `;
+
+    ok(res, {
+      period: { from: fromDate, to: toDate, group_by: groupBy },
+      data: rows.map(r => ({
+        period:           r.period,
+        kyc_tier:         r.kyc_tier,
+        channel:          r.channel,
+        txn_count:        r.txn_count,
+        volume_naira:     koboToNaira(r.volume),
+        gross_revenue:    koboToNaira(r.gross_revenue),
+        rail_costs:       koboToNaira(r.rail_costs),
+        net_after_rails:  koboToNaira(r.net_after_rails),
+        agg_payouts:      koboToNaira(r.agg_payouts),
+        paylode_margin:   koboToNaira(r.paylode_margin),
+        margin_pct:       Number(r.margin_pct || 0),
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/aggregator-revenue ────────────────────────────────
+router.get('/aggregator-revenue', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { month } = req.query;
+    const periodStart = month ? new Date(month + '-01') : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const periodEnd   = new Date(periodStart); periodEnd.setMonth(periodEnd.getMonth()+1);
+
+    const rows = await prisma.$queryRaw`
+      SELECT
+        a.id AS aggregator_id,
+        a.company_name,
+        a.revenue_split_pct,
+        COUNT(DISTINCT m.id)::int       AS merchant_count,
+        COUNT(t.id)::int                AS txn_count,
+        SUM(t.amount)::bigint           AS total_volume,
+        SUM(t.merchant_fee)::bigint     AS gross_fees,
+        SUM(t.rail_cost)::bigint        AS rail_deductions,
+        SUM(t.net_revenue)::bigint      AS net_pool,
+        SUM(t.agg_share)::bigint        AS agg_payout_due,
+        SUM(t.paylode_margin)::bigint   AS paylode_keeps
+      FROM aggregators a
+      JOIN merchants m  ON m.aggregator_id = a.id
+      JOIN transactions t ON t.merchant_id = m.id
+      WHERE t.status = 'SUCCESS'
+        AND t.is_sandbox = false
+        AND t.created_at >= ${periodStart}
+        AND t.created_at < ${periodEnd}
+      GROUP BY a.id, a.company_name, a.revenue_split_pct
+      ORDER BY agg_payout_due DESC
+    `;
+
+    ok(res, {
+      period: { month: periodStart.toISOString().split('T')[0].slice(0,7) },
+      data: rows.map(r => ({
+        aggregator_id:   r.aggregator_id,
+        company_name:    r.company_name,
+        split_pct:       Number(r.revenue_split_pct) * 100 + '%',
+        merchant_count:  r.merchant_count,
+        txn_count:       r.txn_count,
+        total_volume:    koboToNaira(r.total_volume),
+        gross_fees:      koboToNaira(r.gross_fees),
+        rail_deductions: koboToNaira(r.rail_deductions),
+        net_pool:        koboToNaira(r.net_pool),
+        agg_payout_due:  koboToNaira(r.agg_payout_due),
+        paylode_keeps:   koboToNaira(r.paylode_keeps),
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/rail-cost-analysis ────────────────────────────────
+router.get('/rail-cost-analysis', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRaw`
+      SELECT
+        pr.name AS rail_name,
+        t.channel::text,
+        COUNT(*)::int                    AS txn_count,
+        SUM(t.amount)::bigint            AS volume,
+        SUM(t.merchant_fee)::bigint      AS fees_earned,
+        SUM(t.rail_cost)::bigint         AS rail_cost_paid,
+        SUM(t.net_revenue)::bigint       AS net_contribution,
+        ROUND(
+          SUM(t.rail_cost)*100.0 / NULLIF(SUM(t.merchant_fee),0), 2
+        )                                AS cost_as_pct_revenue
+      FROM transactions t
+      JOIN payment_rails pr ON t.rail_id = pr.id
+      WHERE t.status = 'SUCCESS' AND t.is_sandbox = false
+        AND t.created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY pr.name, t.channel
+      ORDER BY net_contribution DESC
+    `;
+
+    ok(res, rows.map(r => ({
+      rail:              r.rail_name,
+      channel:           r.channel,
+      txn_count:         r.txn_count,
+      volume:            koboToNaira(r.volume),
+      fees_earned:       koboToNaira(r.fees_earned),
+      rail_cost_paid:    koboToNaira(r.rail_cost_paid),
+      net_contribution:  koboToNaira(r.net_contribution),
+      cost_pct_revenue:  Number(r.cost_as_pct_revenue || 0),
+    })));
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/kyc-pipeline ─────────────────────────────────────
+router.get('/kyc-pipeline', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRaw`
+      SELECT
+        k.tier_applied,
+        k.status,
+        COUNT(*)::int    AS count,
+        ROUND(AVG(
+          EXTRACT(EPOCH FROM COALESCE(k.approved_at, NOW()) - k.submitted_at) / 3600
+        ), 1)::float     AS avg_hours_to_decision,
+        k.rejection_code
+      FROM kyc_submissions k
+      WHERE k.submitted_at >= NOW() - INTERVAL '90 days'
+      GROUP BY k.tier_applied, k.status, k.rejection_code
+      ORDER BY k.tier_applied, k.status
+    `;
+
+    const pending = await prisma.kycSubmission.count({ where: { status: { in: ['submitted','in_review'] } } });
+
+    ok(res, { pending_review: pending, breakdown: rows });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/failure-analysis ─────────────────────────────────
+router.get('/failure-analysis', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRaw`
+      SELECT
+        pr.name                          AS rail,
+        t.channel::text,
+        t.failure_reason,
+        COUNT(*)::int                    AS failed_count,
+        ROUND(COUNT(*) * 100.0 /
+          SUM(COUNT(*)) OVER (PARTITION BY pr.name, t.channel), 2) AS failure_rate_pct
+      FROM transactions t
+      LEFT JOIN payment_rails pr ON t.rail_id = pr.id
+      WHERE t.status = 'FAILED'
+        AND t.is_sandbox = false
+        AND t.created_at >= NOW() - INTERVAL '7 days'
+      GROUP BY pr.name, t.channel, t.failure_reason
+      ORDER BY failed_count DESC
+    `;
+
+    ok(res, rows);
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/merchant-statement ─────────────────────────────────
+// Merchant can pull their own; admin can pull any
+router.get('/merchant-statement', requireAuth, async (req, res, next) => {
+  try {
+    const { merchant_id, from, to, page=1, perPage=100 } = req.query;
+    let targetMerchantId;
+
+    if (req.user.role === 'MERCHANT') {
+      targetMerchantId = req.user.merchant?.id;
+      if (!targetMerchantId) return fail(res, 'No merchant account');
+    } else {
+      if (!merchant_id) return fail(res, 'merchant_id required');
+      targetMerchantId = merchant_id;
+    }
+
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const toDate   = to ? new Date(to + 'T23:59:59Z') : new Date();
+
+    const [txns, totals] = await Promise.all([
+      prisma.transaction.findMany({
+        where: {
+          merchantId: targetMerchantId,
+          isSandbox: false,
+          createdAt: { gte: fromDate, lte: toDate },
+        },
+        skip:    (parseInt(page)-1)*parseInt(perPage),
+        take:    parseInt(perPage),
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.transaction.aggregate({
+        where: { merchantId: targetMerchantId, isSandbox: false, status: 'SUCCESS', createdAt: { gte: fromDate, lte: toDate } },
+        _count: true,
+        _sum: { amount: true, merchantFee: true },
+      }),
+    ]);
+
+    const merchant = await prisma.merchant.findUnique({ where: { id: targetMerchantId }, select: { businessName:true, merchantCode:true } });
+
+    ok(res, {
+      merchant,
+      period:    { from: fromDate, to: toDate },
+      summary: {
+        successful_transactions: totals._count,
+        total_collections:       koboToNaira(totals._sum.amount || 0),
+        total_fees_paid:         koboToNaira(totals._sum.merchantFee || 0),
+        net_settled:             koboToNaira((totals._sum.amount || 0n) - (totals._sum.merchantFee || 0n)),
+      },
+      transactions: txns.map(t => ({
+        reference:       t.reference,
+        date:            t.createdAt,
+        customer_email:  t.customerEmail,
+        amount:          koboToNaira(t.amount),
+        channel:         t.channel,
+        status:          t.status,
+        fee:             koboToNaira(t.merchantFee),
+        net:             koboToNaira(t.amount - t.merchantFee),
+        failure_reason:  t.failureReason,
+        metadata:        t.metadata,
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/settlement-reconciliation ──────────────────────────
+router.get('/settlement-reconciliation', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const date = req.query.date ? new Date(req.query.date) : new Date();
+    date.setHours(0,0,0,0);
+    const nextDay = new Date(date); nextDay.setDate(nextDay.getDate()+1);
+
+    const rows = await prisma.$queryRaw`
+      SELECT
+        m.business_name,
+        m.merchant_code,
+        m.settlement_bank,
+        SUM(t.amount)::bigint           AS gross_collections,
+        SUM(t.merchant_fee)::bigint     AS fees,
+        SUM(t.amount - t.merchant_fee)::bigint AS net_to_settle,
+        s.net_settled::bigint           AS actually_settled,
+        s.status                        AS settlement_status
+      FROM transactions t
+      JOIN merchants m ON t.merchant_id = m.id
+      LEFT JOIN settlements s
+        ON s.merchant_id = m.id
+        AND s.period_end = ${date}::date
+      WHERE t.status = 'SUCCESS'
+        AND t.is_sandbox = false
+        AND t.created_at >= ${date}
+        AND t.created_at < ${nextDay}
+      GROUP BY m.business_name, m.merchant_code, m.settlement_bank,
+               s.net_settled, s.status
+    `;
+
+    ok(res, {
+      date: date.toISOString().split('T')[0],
+      merchants: rows.map(r => ({
+        ...r,
+        gross_collections_naira: koboToNaira(r.gross_collections),
+        fees_naira:              koboToNaira(r.fees),
+        net_to_settle_naira:     koboToNaira(r.net_to_settle),
+        actually_settled_naira:  r.actually_settled ? koboToNaira(r.actually_settled) : null,
+        discrepancy:             r.actually_settled ? Number(r.net_to_settle - r.actually_settled) : null,
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/aml-flags ─────────────────────────────────────────
+router.get('/aml-flags', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { status, riskLevel, page=1, perPage=50 } = req.query;
+    const where = {};
+    if (status)    where.status    = status.toUpperCase();
+    if (riskLevel) where.riskLevel = riskLevel.toUpperCase();
+    else where.status = { not: 'CLOSED' };
+
+    const flags = await prisma.amlFlag.findMany({
+      where,
+      skip:    (parseInt(page)-1)*parseInt(perPage),
+      take:    parseInt(perPage),
+      orderBy: [{ riskLevel: 'desc' }, { createdAt: 'asc' }],
+      include: {
+        merchant:    { select: { businessName:true, merchantCode:true, kycTier:true } },
+        transaction: { select: { reference:true, amount:true, channel:true } },
+      },
+    });
+
+    ok(res, flags.map(f => ({
+      id:          f.id,
+      flag_type:   f.flagType,
+      risk_level:  f.riskLevel,
+      status:      f.status,
+      merchant:    f.merchant,
+      transaction: f.transaction ? {
+        reference: f.transaction.reference,
+        amount:    koboToNaira(f.transaction.amount),
+        channel:   f.transaction.channel,
+      } : null,
+      description: f.description,
+      created_at:  f.createdAt,
+      open_hours:  Math.round((Date.now() - new Date(f.createdAt).getTime()) / 3600000),
+    })));
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/cbn-monthly ──────────────────────────────────────
+router.get('/cbn-monthly', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { month } = req.query;
+    const start = month ? new Date(month + '-01') : new Date(new Date().getFullYear(), new Date().getMonth()-1, 1);
+    const end   = new Date(start); end.setMonth(end.getMonth()+1);
+
+    const [txnRows, kycRows, merchantCount, amlCount] = await Promise.all([
+      prisma.$queryRaw`
+        SELECT
+          t.channel::text,
+          COUNT(*)::int                                                AS total,
+          COUNT(*) FILTER (WHERE t.status='SUCCESS')::int             AS successful,
+          COUNT(*) FILTER (WHERE t.status='FAILED')::int              AS failed,
+          SUM(t.amount) FILTER (WHERE t.status='SUCCESS')::bigint     AS successful_value,
+          COUNT(DISTINCT t.merchant_id)::int                          AS active_merchants
+        FROM transactions t
+        WHERE t.created_at >= ${start} AND t.created_at < ${end}
+          AND t.is_sandbox = false
+        GROUP BY t.channel
+      `,
+      prisma.kycSubmission.groupBy({
+        by: ['status', 'tierApplied'],
+        _count: true,
+        where: { submittedAt: { gte: start, lt: end } },
+      }),
+      prisma.merchant.count({ where: { isActive: true } }),
+      prisma.amlFlag.count({ where: { status: 'REPORTED_TO_CBN', createdAt: { gte: start, lt: end } } }),
+    ]);
+
+    ok(res, {
+      report_type:  'CBN PSSP Monthly Return',
+      license_no:   process.env.CBN_LICENSE_NO,
+      period:       { from: start, to: end },
+      generated_at: new Date(),
+      transaction_summary: txnRows.map(r => ({
+        channel:         r.channel,
+        total:           r.total,
+        successful:      r.successful,
+        failed:          r.failed,
+        successful_value:koboToNaira(r.successful_value || 0),
+        active_merchants:r.active_merchants,
+      })),
+      kyc_summary:    kycRows,
+      total_active_merchants: merchantCount,
+      strs_filed:     amlCount,
+    });
+  } catch (e) { next(e); }
+});
+
+module.exports = router;

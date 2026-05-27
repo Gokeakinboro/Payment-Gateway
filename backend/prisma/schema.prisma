@@ -1,0 +1,388 @@
+// Paylode Services Limited — PostgreSQL Schema
+// CBN Licensed PSSP
+// Run: npx prisma migrate dev --name init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ────────────────────────────────────────────────────────────────────
+
+enum KycStatus {
+  PENDING_KYC
+  KYC_IN_REVIEW
+  KYC_APPROVED
+  KYC_REJECTED
+  ACTIVE
+  SUSPENDED
+}
+
+enum TxnStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REVERSED
+}
+
+enum Channel {
+  CARD
+  BANK_TRANSFER
+  USSD
+  DIRECT_DEBIT
+}
+
+enum SettlementStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum AmlRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AmlFlagStatus {
+  OPEN
+  INVESTIGATING
+  CLOSED
+  REPORTED_TO_CBN
+}
+
+enum RailStatus {
+  CONFIG_ONLY
+  TESTING
+  LIVE
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  COMPLIANCE_OFFICER
+  AGGREGATOR
+  MERCHANT
+}
+
+enum PayoutStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+// ─── USERS ────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  firstName    String   @map("first_name")
+  lastName     String   @map("last_name")
+  role         UserRole
+  isActive     Boolean  @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  merchant     Merchant?
+  aggregator   Aggregator?
+  kycReviews   KycSubmission[] @relation("ReviewedBy")
+  auditLogs    AuditLog[]
+  apiKeys      ApiKey[]
+
+  @@map("users")
+}
+
+// ─── AGGREGATORS ──────────────────────────────────────────────────────────────
+
+model Aggregator {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String   @unique @map("user_id") @db.Uuid
+  companyName       String   @map("company_name")
+  rcNumber          String?  @map("rc_number")
+  revenueSplitPct   Decimal  @map("revenue_split_pct") @db.Decimal(5, 4)  // 0.3000 = 30%
+  settlementBank    String?  @map("settlement_bank")
+  settlementAccount String?  @map("settlement_account")
+  status            String   @default("active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user      User       @relation(fields: [userId], references: [id])
+  merchants Merchant[]
+  payouts   AggPayout[]
+
+  @@map("aggregators")
+}
+
+// ─── MERCHANTS ────────────────────────────────────────────────────────────────
+
+model Merchant {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String    @unique @map("user_id") @db.Uuid
+  merchantCode      String    @unique @map("merchant_code")
+  businessName      String    @map("business_name")
+  businessType      String    @map("business_type")
+  category          String
+  rcNumber          String?   @map("rc_number")
+  state             String
+  address           String?
+  businessEmail     String    @map("business_email")
+  businessPhone     String    @map("business_phone")
+  website           String?
+  expectedMonthlyVol String?  @map("expected_monthly_vol")
+  aggregatorId      String?   @map("aggregator_id") @db.Uuid
+  kycStatus         KycStatus @default(PENDING_KYC) @map("kyc_status")
+  kycTier           Int?      @map("kyc_tier")
+  processingRate    Decimal?  @map("processing_rate") @db.Decimal(5, 4)
+  settlementBank    String?   @map("settlement_bank")
+  settlementAccount String?   @map("settlement_account") // encrypted at app layer
+  settlementCycle   String    @default("t1") @map("settlement_cycle")
+  isActive          Boolean   @default(false) @map("is_active") // false until KYC done
+  webhookUrl        String?   @map("webhook_url")
+  webhookSecret     String?   @map("webhook_secret")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  user         User           @relation(fields: [userId], references: [id])
+  aggregator   Aggregator?    @relation(fields: [aggregatorId], references: [id])
+  transactions Transaction[]
+  settlements  Settlement[]
+  kycSubmissions KycSubmission[]
+  amlFlags     AmlFlag[]
+  apiKeys      ApiKey[]
+
+  @@index([kycStatus])
+  @@index([isActive])
+  @@index([aggregatorId])
+  @@map("merchants")
+}
+
+// ─── API KEYS ─────────────────────────────────────────────────────────────────
+
+model ApiKey {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId String?  @map("merchant_id") @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  keyHash    String   @unique @map("key_hash")  // sha256 of actual key
+  keyPrefix  String   @map("key_prefix")         // e.g. pk_live, sk_live, sk_test
+  label      String   @default("Default")
+  isSandbox  Boolean  @default(false) @map("is_sandbox")
+  isActive   Boolean  @default(true) @map("is_active")
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  merchant   Merchant? @relation(fields: [merchantId], references: [id])
+  user       User?     @relation(fields: [userId], references: [id])
+
+  @@index([keyHash])
+  @@map("api_keys")
+}
+
+// ─── PAYMENT RAILS ────────────────────────────────────────────────────────────
+
+model PaymentRail {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String     @unique
+  status    RailStatus @default(CONFIG_ONLY)
+  notes     String?
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  costs        RailCost[]
+  transactions Transaction[]
+
+  @@map("payment_rails")
+}
+
+model RailCost {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  railId        String   @map("rail_id") @db.Uuid
+  channel       Channel
+  rate          Decimal  @db.Decimal(6, 5)   // e.g. 0.01500 = 1.5%
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date  // null = currently active
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  rail PaymentRail @relation(fields: [railId], references: [id])
+
+  @@unique([railId, channel, effectiveFrom])
+  @@map("rail_costs")
+}
+
+// ─── TRANSACTIONS ─────────────────────────────────────────────────────────────
+
+model Transaction {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reference     String    @unique
+  merchantId    String    @map("merchant_id") @db.Uuid
+  customerEmail String    @map("customer_email")
+  amount        BigInt    // kobo — BigInt avoids float precision issues
+  currency      String    @default("NGN") @db.Char(3)
+  status        TxnStatus @default(PENDING)
+  channel       Channel
+  railId        String?   @map("rail_id") @db.Uuid
+  merchantFee   BigInt    @default(0) @map("merchant_fee")     // kobo
+  railCost      BigInt    @default(0) @map("rail_cost")         // kobo
+  netRevenue    BigInt    @default(0) @map("net_revenue")       // kobo
+  aggShare      BigInt    @default(0) @map("agg_share")         // kobo
+  paylodeMargin BigInt    @default(0) @map("paylode_margin")    // kobo
+  authUrl       String?   @map("auth_url")
+  accessCode    String?   @map("access_code")
+  callbackUrl   String?   @map("callback_url")
+  metadata      Json?
+  failureReason String?   @map("failure_reason")
+  paidAt        DateTime? @map("paid_at")
+  isSandbox     Boolean   @default(false) @map("is_sandbox")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  merchant    Merchant     @relation(fields: [merchantId], references: [id])
+  rail        PaymentRail? @relation(fields: [railId], references: [id])
+  amlFlags    AmlFlag[]
+
+  @@index([merchantId])
+  @@index([reference])
+  @@index([status])
+  @@index([createdAt])
+  @@index([isSandbox])
+  @@map("transactions")
+}
+
+// ─── SETTLEMENTS ──────────────────────────────────────────────────────────────
+
+model Settlement {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId     String           @map("merchant_id") @db.Uuid
+  periodStart    DateTime         @map("period_start") @db.Date
+  periodEnd      DateTime         @map("period_end") @db.Date
+  grossAmount    BigInt           @map("gross_amount")
+  feesDeducted   BigInt           @map("fees_deducted")
+  netSettled     BigInt           @map("net_settled")
+  txnCount       Int              @map("txn_count")
+  status         SettlementStatus @default(PENDING)
+  settlementRef  String?          @unique @map("settlement_ref")
+  settledAt      DateTime?        @map("settled_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@index([merchantId])
+  @@index([status])
+  @@map("settlements")
+}
+
+// ─── AGGREGATOR PAYOUTS ────────────────────────────────────────────────────────
+
+model AggPayout {
+  id                 String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  aggregatorId       String       @map("aggregator_id") @db.Uuid
+  periodMonth        DateTime     @map("period_month") @db.Date  // first day of month
+  totalMerchantFees  BigInt       @map("total_merchant_fees")
+  railDeduction      BigInt       @map("rail_deduction")
+  netPool            BigInt       @map("net_pool")
+  aggShareAmount     BigInt       @map("agg_share_amount")
+  txnCount           Int          @map("txn_count")
+  status             PayoutStatus @default(PENDING)
+  paidAt             DateTime?    @map("paid_at")
+  createdAt          DateTime     @default(now()) @map("created_at")
+
+  aggregator Aggregator @relation(fields: [aggregatorId], references: [id])
+
+  @@unique([aggregatorId, periodMonth])
+  @@map("agg_payouts")
+}
+
+// ─── KYC SUBMISSIONS ─────────────────────────────────────────────────────────
+
+model KycSubmission {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId     String   @map("merchant_id") @db.Uuid
+  tierApplied    Int      @map("tier_applied")
+  status         String   @default("submitted")
+  reviewedBy     String?  @map("reviewed_by") @db.Uuid
+  rejectionCode  String?  @map("rejection_code")
+  reviewNotes    String?  @map("review_notes")
+  documents      Json     @default("[]") // [{type, s3Key, verified, verifiedAt}]
+  bvnVerified    Boolean  @default(false) @map("bvn_verified")
+  ninVerified    Boolean  @default(false) @map("nin_verified")
+  cacVerified    Boolean  @default(false) @map("cac_verified")
+  pepClear       Boolean  @default(false) @map("pep_clear")
+  amlScore       String?  @map("aml_score") // low | medium | high
+  submittedAt    DateTime @default(now()) @map("submitted_at")
+  approvedAt     DateTime? @map("approved_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  merchant   Merchant @relation(fields: [merchantId], references: [id])
+  reviewer   User?    @relation("ReviewedBy", fields: [reviewedBy], references: [id])
+
+  @@index([merchantId])
+  @@index([status])
+  @@map("kyc_submissions")
+}
+
+// ─── AML FLAGS ────────────────────────────────────────────────────────────────
+
+model AmlFlag {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId    String        @map("merchant_id") @db.Uuid
+  transactionId String?       @map("transaction_id") @db.Uuid
+  flagType      String        @map("flag_type")  // LARGE_TXN | VELOCITY | ROUND_AMOUNTS | PEP_MATCH | CHARGEBACK
+  riskLevel     AmlRiskLevel  @map("risk_level")
+  status        AmlFlagStatus @default(OPEN)
+  description   String?
+  resolvedBy    String?       @map("resolved_by") @db.Uuid
+  resolvedAt    DateTime?     @map("resolved_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  merchant    Merchant     @relation(fields: [merchantId], references: [id])
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+
+  @@index([merchantId])
+  @@index([status])
+  @@map("aml_flags")
+}
+
+// ─── AUDIT LOG (IMMUTABLE) ────────────────────────────────────────────────────
+
+model AuditLog {
+  id          BigInt   @id @default(autoincrement())  // sequential, never uuid
+  actorId     String   @map("actor_id") @db.Uuid
+  action      String   // KYC_APPROVED | RATE_CHANGED | MERCHANT_SUSPENDED etc.
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  beforeState Json?    @map("before_state")
+  afterState  Json?    @map("after_state")
+  notes       String?
+  ipAddress   String?  @map("ip_address")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  actor User @relation(fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_log")
+}
+
+// ─── WEBHOOKS LOG ─────────────────────────────────────────────────────────────
+
+model WebhookDelivery {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId   String   @map("merchant_id") @db.Uuid
+  event        String
+  payload      Json
+  url          String
+  responseCode Int?     @map("response_code")
+  responseMs   Int?     @map("response_ms")
+  attempt      Int      @default(1)
+  success      Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([merchantId])
+  @@map("webhook_deliveries")
+}
