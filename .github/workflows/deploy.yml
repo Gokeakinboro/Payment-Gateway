@@ -8,7 +8,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy to server via SSH
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Contabo via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -19,10 +22,11 @@ jobs:
             cd ${{ secrets.DEPLOY_PATH }}
             git pull origin main
             cd backend
-            npm install --production
+            npm install --production --quiet
             pm2 reload paylode-api
-            cp /opt/paylode-api/index.html /var/www/paylode/
-            cp /opt/paylode-api/app.js /var/www/paylode/
-            cp /opt/paylode-api/checkout.html /var/www/paylode/
+            cp /opt/paylode-api/app.js /var/www/paylode/app.js
+            cp /opt/paylode-api/login.html /var/www/paylode/login.html
+            cp /opt/paylode-api/index.html /var/www/paylode/index.html
+            cp /opt/paylode-api/checkout.html /var/www/paylode/checkout.html
             nginx -s reload
             echo "Deployed at $(date)"
