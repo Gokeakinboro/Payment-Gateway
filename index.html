@@ -125,7 +125,27 @@ tbody tr:last-child td { border-bottom: none; }
 .modal-close { width: 28px; height: 28px; border-radius: 6px; background: var(--gray-100); border: none; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; }
 .notif-dot { width: 8px; height: 8px; background: var(--red); border-radius: 50%; position: absolute; top: -2px; right: -2px; }
 </style>
-</head>
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+  document.querySelectorAll('[xclass]').forEach(function(el){
+    el.className = el.getAttribute('xclass');
+    el.removeAttribute('xclass');
+  });
+  var observer = new MutationObserver(function(muts){
+    muts.forEach(function(m){
+      m.addedNodes.forEach(function(n){
+        if(n.querySelectorAll){
+          n.querySelectorAll('[xclass]').forEach(function(el){
+            el.className = el.getAttribute('xclass');
+            el.removeAttribute('xclass');
+          });
+        }
+      });
+    });
+  });
+  observer.observe(document.body,{childList:true,subtree:true});
+});
+</script></head>
 <body>
 <div class="app" id="app">
 <div class="sidebar" id="sidebar">
@@ -168,6 +188,6 @@ tbody tr:last-child td { border-bottom: none; }
 <div id="modal" class="modal-overlay" style="display:none" onclick="closeModal(event)">
   <div class="modal" id="modal-inner"></div>
 </div>
-<script src="app.js"></script>
+<script src="app.js?v=31" type="text/javascript"></script>
 </body>
 </html>
