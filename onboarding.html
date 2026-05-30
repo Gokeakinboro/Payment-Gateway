@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paylode — Merchant Onboarding</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#1a2744;--navy-l:#253360;--lime:#7dc534;--lime-l:#9ed44f;
+  --white:#fff;--g50:#f8fafc;--g100:#f1f5f9;--g200:#e2e8f0;--g300:#cbd5e1;
+  --g400:#94a3b8;--g500:#64748b;--g600:#475569;--g700:#334155;--g800:#1e293b;
+  --red:#ef4444;--green:#10b981;--amber:#f59e0b;--font:'DM Sans',sans-serif;
+}
+body{font-family:var(--font);background:var(--g50);color:var(--g800);font-size:14px;line-height:1.5}
+.topbar{background:var(--navy);height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-box{width:34px;height:34px;background:var(--lime);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--navy);font-size:15px}
+.logo-name{color:#fff;font-weight:700;font-size:16px}
+.secure{display:flex;align-items:center;gap:5px;color:rgba(255,255,255,.5);font-size:12px}
+.container{max-width:780px;margin:0 auto;padding:32px 20px 60px}
+.page-title{font-size:24px;font-weight:700;color:var(--navy);margin-bottom:6px}
+.page-sub{font-size:14px;color:var(--g500);margin-bottom:28px}
+
+/* Stepper */
+.stepper{display:flex;align-items:center;margin-bottom:32px;overflow-x:auto;padding-bottom:4px}
+.step{display:flex;align-items:center;flex-shrink:0}
+.step-circle{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;border:2px solid var(--g300);color:var(--g400);background:var(--white);transition:all .2s;flex-shrink:0}
+.step-label{font-size:12px;color:var(--g400);margin-left:8px;white-space:nowrap;transition:color .2s}
+.step-line{flex:1;height:2px;background:var(--g200);margin:0 12px;min-width:20px;transition:background .2s}
+.step.active .step-circle{border-color:var(--navy);background:var(--navy);color:#fff}
+.step.active .step-label{color:var(--navy);font-weight:500}
+.step.done .step-circle{border-color:var(--lime);background:var(--lime);color:var(--navy)}
+.step.done .step-label{color:var(--g500)}
+.step.done + .step-line,.step.active + .step-line{background:var(--lime)}
+
+/* Cards */
+.card{background:var(--white);border:1px solid var(--g200);border-radius:12px;padding:24px;margin-bottom:20px}
+.card-title{font-size:15px;font-weight:600;color:var(--navy);margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.card-sub{font-size:13px;color:var(--g500);margin-bottom:20px}
+.section-divider{height:1px;background:var(--g100);margin:20px 0}
+
+/* Form */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.form-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.field{margin-bottom:16px}
+.field.full{grid-column:1/-1}
+label{display:block;font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;letter-spacing:.3px;text-transform:uppercase}
+.req{color:var(--red);margin-left:2px}
+input[type=text],input[type=email],input[type=tel],input[type=date],input[type=number],select,textarea{
+  width:100%;padding:10px 13px;border:1.5px solid var(--g300);border-radius:8px;
+  font-size:14px;font-family:var(--font);color:var(--g800);background:var(--white);
+  outline:none;transition:border-color .15s;
+}
+input:focus,select:focus,textarea:focus{border-color:var(--navy);box-shadow:0 0 0 3px rgba(26,39,68,.07)}
+input.err,select.err,textarea.err{border-color:var(--red)}
+select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+textarea{resize:vertical;min-height:80px}
+.hint{font-size:11px;color:var(--g400);margin-top:4px}
+.err-msg{font-size:12px;color:var(--red);margin-top:4px;display:none}
+.err-msg.show{display:block}
+
+/* Checkboxes */
+.check-group{display:flex;flex-direction:column;gap:10px}
+.check-item{display:flex;align-items:flex-start;gap:10px;cursor:pointer}
+.check-item input[type=checkbox]{width:18px;height:18px;margin-top:1px;accent-color:var(--navy);flex-shrink:0}
+.check-item span{font-size:13px;color:var(--g700);line-height:1.5}
+.radio-group{display:flex;gap:16px;flex-wrap:wrap}
+.radio-item{display:flex;align-items:center;gap:8px;cursor:pointer}
+.radio-item input[type=radio]{width:16px;height:16px;accent-color:var(--navy)}
+.radio-item span{font-size:14px;color:var(--g700)}
+
+/* Yes/No table */
+.yn-table{width:100%;border-collapse:collapse;font-size:13px}
+.yn-table th{padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--g500);text-transform:uppercase;border-bottom:2px solid var(--g200);background:var(--g50)}
+.yn-table td{padding:10px 14px;border-bottom:1px solid var(--g100);vertical-align:top}
+.yn-table tr:last-child td{border-bottom:none}
+.yn-table tr:hover td{background:var(--g50)}
+.yn-num{width:40px;color:var(--g400);font-weight:600;font-size:12px}
+.yn-q{color:var(--g700);line-height:1.6}
+.yn-btns{white-space:nowrap;width:100px}
+.yn-btn{display:inline-flex;align-items:center;justify-content:center;width:44px;padding:5px 0;border:1.5px solid var(--g300);border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;background:var(--white);font-family:var(--font);color:var(--g600);transition:all .15s;margin-right:4px}
+.yn-btn.yes.sel{background:#dcfce7;border-color:#16a34a;color:#15803d}
+.yn-btn.no.sel{background:#fee2e2;border-color:#dc2626;color:#dc2626}
+.yn-btn:hover{border-color:var(--g400)}
+
+/* T&C */
+.tnc-box{height:280px;overflow-y:scroll;border:1.5px solid var(--g300);border-radius:8px;padding:16px 20px;font-size:12px;line-height:1.9;color:var(--g600);background:var(--g50)}
+.tnc-box h3{font-size:13px;font-weight:600;color:var(--g800);margin:14px 0 6px}
+.tnc-accept{display:flex;align-items:flex-start;gap:10px;margin-top:14px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px}
+.tnc-accept input{margin-top:2px;width:18px;height:18px;accent-color:var(--green)}
+.tnc-accept span{font-size:13px;color:var(--g700);line-height:1.6}
+.tnc-scroll-note{font-size:12px;color:var(--amber);text-align:center;margin-top:8px;display:none}
+.tnc-scroll-note.show{display:block}
+
+/* Signature */
+.sig-canvas-wrap{border:1.5px solid var(--g300);border-radius:8px;background:#fafafa;position:relative}
+canvas#sigCanvas{width:100%;height:150px;cursor:crosshair;display:block;border-radius:7px}
+.sig-btns{display:flex;gap:8px;margin-top:8px}
+
+/* Navigation buttons */
+.nav-btns{display:flex;justify-content:space-between;align-items:center;margin-top:24px}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:11px 24px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;border:none;font-family:var(--font);transition:all .15s}
+.btn-primary{background:var(--navy);color:#fff}
+.btn-primary:hover{background:var(--navy-l)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-outline{background:var(--white);color:var(--g600);border:1.5px solid var(--g300)}
+.btn-outline:hover{background:var(--g50)}
+.btn-lime{background:var(--lime);color:var(--navy);font-weight:600}
+.btn-lime:hover{background:var(--lime-l)}
+.btn-sm{padding:7px 14px;font-size:13px}
+
+/* Alert */
+.alert{padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:16px;display:none}
+.alert.show{display:block}
+.alert-err{background:#fee2e2;border:1px solid #fecaca;color:#991b1b}
+.alert-ok{background:#dcfce7;border:1px solid #bbf7d0;color:#15803d}
+
+/* Success screen */
+.success-screen{text-align:center;padding:48px 20px;display:none}
+.success-screen.show{display:block}
+.success-icon{width:72px;height:72px;border-radius:50%;background:#dcfce7;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:32px}
+.success-title{font-size:22px;font-weight:700;color:var(--navy);margin-bottom:8px}
+.success-sub{font-size:14px;color:var(--g500);max-width:420px;margin:0 auto 24px;line-height:1.7}
+.ref-box{background:var(--g100);border-radius:8px;padding:14px 20px;display:inline-block;font-family:monospace;font-size:15px;color:var(--navy);font-weight:600}
+
+/* Form type selector */
+.type-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:28px}
+.type-card{background:var(--white);border:2px solid var(--g200);border-radius:12px;padding:24px 20px;text-align:center;cursor:pointer;transition:all .2s}
+.type-card:hover{border-color:var(--g300);transform:translateY(-2px)}
+.type-card.selected{border-color:var(--navy);background:rgba(26,39,68,.03)}
+.type-icon{font-size:32px;margin-bottom:12px}
+.type-name{font-size:15px;font-weight:600;color:var(--navy);margin-bottom:4px}
+.type-desc{font-size:12px;color:var(--g500)}
+
+/* Progress bar */
+.progress-wrap{background:var(--g200);border-radius:4px;height:4px;margin-bottom:24px}
+.progress-fill{height:100%;border-radius:4px;background:var(--lime);transition:width .3s}
+
+@media(max-width:600px){
+  .form-grid,.form-grid-3,.type-grid{grid-template-columns:1fr}
+  .stepper{gap:4px}
+  .step-label{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-box">P</div>
+    <span class="logo-name">Paylode</span>
+  </div>
+  <div class="secure">🔒 Secure Onboarding Portal</div>
+</div>
+
+<div class="container">
+
+  <!-- TYPE SELECTOR -->
+  <div id="type-selector">
+    <div class="page-title">Welcome to Paylode</div>
+    <div class="page-sub">Select your onboarding type to get started</div>
+    <div class="type-grid">
+      <div class="type-card" onclick="selectType('merchant')">
+        <div class="type-icon">🏪</div>
+        <div class="type-name">Merchant</div>
+        <div class="type-desc">Accept payments from customers via card, transfer and USSD</div>
+      </div>
+      <div class="type-card" onclick="selectType('aggregator')">
+        <div class="type-icon">🔗</div>
+        <div class="type-name">Aggregator</div>
+        <div class="type-desc">Manage a portfolio of merchants under your umbrella</div>
+      </div>
+      <div class="type-card" onclick="selectType('dd')">
+        <div class="type-icon">📋</div>
+        <div class="type-name">Due Diligence Only</div>
+        <div class="type-desc">Complete the AML/CFT questionnaire for an existing application</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN FORM -->
+  <div id="main-form" style="display:none">
+    <div class="page-title" id="form-title">Merchant Enrolment Form</div>
+    <div class="page-sub" id="form-sub">Complete all sections. Fields marked <span style="color:var(--red)">*</span> are required.</div>
+
+    <div class="progress-wrap"><div class="progress-fill" id="progress-fill" style="width:14%"></div></div>
+
+    <!-- STEPPER -->
+    <div class="stepper" id="stepper"></div>
+
+    <div class="alert alert-err" id="form-alert"></div>
+
+    <!-- STEPS -->
+    <div id="step-content"></div>
+
+    <!-- SUCCESS -->
+    <div class="success-screen" id="success-screen">
+      <div class="success-icon">✓</div>
+      <div class="success-title">Application Submitted!</div>
+      <div class="success-sub">Your application has been received and is being reviewed by our compliance team. You will be contacted within 1-3 business days.</div>
+      <div class="ref-box" id="success-ref">REF: PLY-000000</div>
+      <div style="margin-top:20px">
+        <a href="/index.html" style="color:var(--navy);font-size:13px">← Return to portal</a>
+      </div>
+    </div>
+
+    <div class="nav-btns" id="nav-btns">
+      <button class="btn btn-outline" id="btn-back" onclick="prevStep()">← Back</button>
+      <button class="btn btn-primary" id="btn-next" onclick="nextStep()">Continue →</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = window.location.origin + '/api/v1';
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let formType = 'merchant'; // merchant | aggregator | dd
+let currentStep = 0;
+let formData = {};
+let sigData = null;
+let tncScrolled = false;
+let ynAnswers = {};
+
+// ── Form definitions ──────────────────────────────────────────────────────────
+const MERCHANT_STEPS = [
+  { id:'institution',  label:'Institution'  },
+  { id:'contact',      label:'Contact'      },
+  { id:'website',      label:'Website'      },
+  { id:'payments',     label:'Payments'     },
+  { id:'documents',    label:'Documents'    },
+  { id:'tnc',          label:'Terms'        },
+  { id:'signature',    label:'Sign & Submit'},
+];
+
+const AGGREGATOR_STEPS = [
+  { id:'institution',  label:'Institution'  },
+  { id:'contact',      label:'Contact'      },
+  { id:'portfolio',    label:'Portfolio'    },
+  { id:'documents',    label:'Documents'    },
+  { id:'tnc',          label:'Terms'        },
+  { id:'signature',    label:'Sign & Submit'},
+];
+
+const DD_STEPS = [
+  { id:'dd_institution', label:'Institution' },
+  { id:'dd_questions',   label:'Questions'   },
+  { id:'dd_sign',        label:'Declaration' },
+];
+
+const NIGERIAN_STATES = ['Abia','Adamawa','Akwa Ibom','Anambra','Bauchi','Bayelsa','Benue','Borno','Cross River','Delta','Ebonyi','Edo','Ekiti','Enugu','FCT Abuja','Gombe','Imo','Jigawa','Kaduna','Kano','Katsina','Kebbi','Kogi','Kwara','Lagos','Nasarawa','Niger','Ogun','Ondo','Osun','Oyo','Plateau','Rivers','Sokoto','Taraba','Yobe','Zamfara'];
+
+const BUSINESS_TYPES = ['Limited Liability Company','Sole Proprietorship','Partnership','NGO / Non-Profit','Government Agency','Cooperative Society','Other'];
+
+const BUSINESS_SEGMENTS = ['Retail','E-Commerce','Education','Healthcare','Hotel / Guest House','Travel & Entertainment','Transportation','Church / NGO','Technology','Agriculture','Real Estate','Financial Services','Other'];
+
+const DD_QUESTIONS = [
+  {n:1,  q:'Please indicate the types of services that your business undertake (tick all that apply)', type:'multicheck', options:['Deposit Taking','Current Account and Third-Party Payments','Securities Dealing','Foreign Currency Dealing','Funds Management','Digital Currency','Crowd Funding','Lending','Leasing','Bill payments/Airtime vending','Mobile/Web Payment/Wallet Services','Payment Solution Service Provider','Others']},
+  {n:2,  q:'Please indicate the nature of your customer base (tick all that apply)', type:'multicheck', options:['Domestic','International','Retail Customers','Commercial Customers','Corporate Customers','Financial Institutions','Others']},
+  {n:3,  q:'Do you have clients who are: High Net Worth Individuals, Politically Exposed Persons (PEPs), Money Service Bureaus, Crowd Funding Managers, Gaming/Casino, Offshore Banks, Crypto currency traders, Virtual Currency Exchanges?', type:'yn'},
+  {n:4,  q:'Has your AML/CTF/CPF program received any findings from External Regulators in the last 5 years?', type:'yn'},
+  {n:5,  q:'Are you subject to the local laws and regulations that are designed for AML/CTF/CPF?', type:'yn'},
+  {n:6,  q:'Do you have AML/CFT/CPF Compliance program in place?', type:'yn'},
+  {n:7,  q:'Is the AML/CFT/CPF compliance program approved by the Board of Directors?', type:'yn'},
+  {n:8,  q:'Do your AML/CFT/CPF policies and procedures meet the requirements of the CBN and global AML/CFT/CPF Regulations?', type:'yn'},
+  {n:9,  q:'Do your AML/CFT/CPF procedures require retention of Customer Due Diligence (CDD) and transaction records?', type:'yn'},
+  {n:10, q:'Do your AML/CFT/CPF procedures require beneficial owners of corporate clients to be identified and verified in line with FATF recommendations?', type:'yn'},
+  {n:11, q:'Do your AML/CFT/CPF procedures require the disclosure of suspicious transactions to the Nigerian Financial Intelligence Unit (NFIU)?', type:'yn'},
+  {n:12, q:'Do your AML/CFT/CPF procedures include identification, verification, and ongoing due diligence of all customers in accordance with CBN AML/CFT Regulations?', type:'yn'},
+  {n:13, q:'Do you conduct ongoing monitoring of customer and transaction activities?', type:'yn'},
+  {n:14, q:'Where you have non-resident customers, do you have specific CDD policies to assess and control such risks?', type:'yn'},
+  {n:15, q:'Do you screen customers against: OFAC, HMT, EU, UN (Consolidated List), local regulatory authority sanction lists?', type:'yn'},
+  {n:16, q:'Do your policies prohibit provision of financial services to individuals and entities on sanction lists?', type:'yn'},
+  {n:17, q:'Do you provide financial services to other financial institutions?', type:'yn'},
+  {n:18, q:'Do you have policies covering relationships with Politically Exposed Persons (PEPs), their family and close associates?', type:'yn'},
+  {n:19, q:'Does the institution appoint a Chief Compliance Officer at management level?', type:'yn'},
+  {n:20, q:'Has the institution developed written policies documenting processes to prevent, detect and report suspicious transactions?', type:'yn'},
+  {n:21, q:'Does the institution have a legal and regulatory compliance program with a designated officer responsible for the AML/CFT/CPF framework?', type:'yn'},
+  {n:22, q:'Do you have an Internal Audit function or independent third party that assesses AML/CFT/CPF policies and practices regularly?', type:'yn'},
+  {n:23, q:'Does the institution have a risk-based assessment of its customer base and their transactions?', type:'yn'},
+  {n:24, q:'Does the institution have a requirement to collect information regarding its customers business activities?', type:'yn'},
+  {n:25, q:'Does the institution have a process to review and update customer information relating to high-risk clients?', type:'yn'},
+  {n:26, q:'Does the institution have procedures to establish a record for each new customer noting KYC information?', type:'yn'},
+  {n:27, q:'Does the institution complete a risk-based assessment to understand normal and expected transactions of customers?', type:'yn'},
+  {n:28, q:'Does the institution have policies for identification and reporting of transactions required to be reported to authorities?', type:'yn'},
+  {n:29, q:'Does the institution have procedures to identify transactions structured to avoid reporting obligations?', type:'yn'},
+  {n:30, q:'Does the institution have a monitoring program for unusual and potentially suspicious activity covering funds transfers and monetary instruments?', type:'yn'},
+  {n:31, q:'Does the institution provide AML/CFT/CPF training to relevant employees?', type:'yn'},
+  {n:32, q:'Does the institution retain records of training sessions including attendance records and training materials?', type:'yn'},
+  {n:33, q:'Does the institution communicate new AML/CFT/CPF laws or changes to relevant employees?', type:'yn'},
+  {n:34, q:'Does the institution employ third parties to carry out some of its functions?', type:'yn'},
+  {n:35, q:'If yes to Q34: do you provide AML/CFT/CPF training to relevant third parties?', type:'yn'},
+  {n:36, q:'Does your institution have any customer/agent that appears on a sanction list or is in a jurisdiction subject to sanction?', type:'yn'},
+  {n:37, q:'Does your institution use any system for monitoring suspicious activities/transactions/operations?', type:'yn'},
+  {n:38, q:'Does your institution engage in reporting of suspicious activity?', type:'yn'},
+  {n:39, q:'Does your institution verify the BVN of customers?', type:'yn'},
+  {n:40, q:'Does your institution verify the identification cards of customers?', type:'yn'},
+];
+
+// ── Type selection ─────────────────────────────────────────────────────────────
+function selectType(type) {
+  formType = type;
+  document.getElementById('type-selector').style.display = 'none';
+  document.getElementById('main-form').style.display = 'block';
+  if (type === 'merchant') {
+    document.getElementById('form-title').textContent = 'Merchant Enrolment Form';
+    document.getElementById('form-sub').innerHTML = 'Complete all sections to apply for a Paylode merchant account. Fields marked <span style="color:var(--red)">*</span> are required.';
+    buildStepper(MERCHANT_STEPS);
+  } else if (type === 'aggregator') {
+    document.getElementById('form-title').textContent = 'Aggregator Enrolment Form';
+    buildStepper(AGGREGATOR_STEPS);
+  } else {
+    document.getElementById('form-title').textContent = 'Due Diligence Questionnaire';
+    document.getElementById('form-sub').textContent = 'AML/CFT/CPF compliance questionnaire — complete all 40 questions.';
+    buildStepper(DD_STEPS);
+  }
+  currentStep = 0;
+  renderStep();
+}
+
+// ── Stepper ────────────────────────────────────────────────────────────────────
+function buildStepper(steps) {
+  const el = document.getElementById('stepper');
+  el.innerHTML = steps.map((s,i) => `
+    <div class="step" id="step-dot-${i}">
+      <div class="step-circle">${i+1}</div>
+      <span class="step-label">${s.label}</span>
+    </div>
+    ${i < steps.length-1 ? '<div class="step-line"></div>' : ''}
+  `).join('');
+}
+
+function updateStepper() {
+  const steps = getSteps();
+  steps.forEach((s,i) => {
+    const el = document.getElementById('step-dot-'+i);
+    if (!el) return;
+    el.className = 'step ' + (i < currentStep ? 'done' : i === currentStep ? 'active' : '');
+  });
+  const pct = Math.round((currentStep / (steps.length-1)) * 100);
+  document.getElementById('progress-fill').style.width = Math.max(pct,5) + '%';
+  document.getElementById('btn-back').style.visibility = currentStep === 0 ? 'hidden' : 'visible';
+  const isLast = currentStep === steps.length - 1;
+  document.getElementById('btn-next').textContent = isLast ? '✓ Submit Application' : 'Continue →';
+  document.getElementById('btn-next').className = isLast ? 'btn btn-lime' : 'btn btn-primary';
+}
+
+function getSteps() {
+  return formType === 'merchant' ? MERCHANT_STEPS : formType === 'aggregator' ? AGGREGATOR_STEPS : DD_STEPS;
+}
+
+// ── Step rendering ─────────────────────────────────────────────────────────────
+function renderStep() {
+  updateStepper();
+  const steps = getSteps();
+  const stepId = steps[currentStep].id;
+  const el = document.getElementById('step-content');
+  el.innerHTML = '';
+  document.getElementById('success-screen').classList.remove('show');
+  document.getElementById('nav-btns').style.display = 'flex';
+
+  if (stepId === 'institution')    el.innerHTML = renderInstitution();
+  else if (stepId === 'contact')   el.innerHTML = renderContact();
+  else if (stepId === 'website')   el.innerHTML = renderWebsite();
+  else if (stepId === 'payments')  el.innerHTML = renderPayments();
+  else if (stepId === 'portfolio') el.innerHTML = renderPortfolio();
+  else if (stepId === 'documents') el.innerHTML = renderDocuments();
+  else if (stepId === 'tnc')       el.innerHTML = renderTnC(); setupTnC();
+  else if (stepId === 'signature') el.innerHTML = renderSignature(); setupCanvas();
+  else if (stepId === 'dd_institution') el.innerHTML = renderDDInstitution();
+  else if (stepId === 'dd_questions')   el.innerHTML = renderDDQuestions();
+  else if (stepId === 'dd_sign')        el.innerHTML = renderSignature(); setupCanvas();
+
+  restoreValues(stepId);
+}
+
+// ── Restore saved values ───────────────────────────────────────────────────────
+function restoreValues(stepId) {
+  const saved = formData[stepId] || {};
+  Object.entries(saved).forEach(([k,v]) => {
+    const el = document.querySelector(`[name="${k}"]`);
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = !!v;
+    else el.value = v;
+  });
+}
+
+// ── Step: Institution ──────────────────────────────────────────────────────────
+function renderInstitution() {
+  return `<div class="card">
+  <div class="card-title">A. Institution Details</div>
+  <div class="card-sub">Provide your registered business information exactly as it appears on your CAC documents.</div>
+  <div class="form-grid">
+    <div class="field full">
+      <label>Merchant / Company Name <span class="req">*</span></label>
+      <input type="text" name="business_name" placeholder="Registered business name">
+    </div>
+    <div class="field">
+      <label>Business Type <span class="req">*</span></label>
+      <select name="business_type">
+        <option value="">Select type</option>
+        ${BUSINESS_TYPES.map(t=>`<option>${t}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field">
+      <label>Corporate CAC Reg. No. <span class="req">*</span></label>
+      <input type="text" name="rc_number" placeholder="RC 000000">
+    </div>
+    <div class="field">
+      <label>Date of Incorporation <span class="req">*</span></label>
+      <input type="date" name="incorporation_date">
+    </div>
+    <div class="field">
+      <label>Business Category <span class="req">*</span></label>
+      <select name="category">
+        <option value="">Select category</option>
+        ${BUSINESS_SEGMENTS.map(s=>`<option>${s}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field full">
+      <label>Registered Address <span class="req">*</span></label>
+      <input type="text" name="address" placeholder="Full street address">
+    </div>
+    <div class="field">
+      <label>City <span class="req">*</span></label>
+      <input type="text" name="city" placeholder="City">
+    </div>
+    <div class="field">
+      <label>State <span class="req">*</span></label>
+      <select name="state">
+        <option value="">Select state</option>
+        ${NIGERIAN_STATES.map(s=>`<option>${s}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field">
+      <label>LGA</label>
+      <input type="text" name="lga" placeholder="Local Government Area">
+    </div>
+    <div class="field">
+      <label>Nearest Bus Stop</label>
+      <input type="text" name="bus_stop" placeholder="Nearest landmark">
+    </div>
+  </div>
+  <div class="section-divider"></div>
+  <div class="card-title" style="margin-bottom:4px">Settlement Account Details</div>
+  <div class="card-sub">The bank account where your settlements will be paid into.</div>
+  <div class="form-grid">
+    <div class="field">
+      <label>Account Number <span class="req">*</span></label>
+      <input type="tel" name="account_number" placeholder="10-digit NUBAN" maxlength="10">
+    </div>
+    <div class="field">
+      <label>Account Name <span class="req">*</span></label>
+      <input type="text" name="account_name" placeholder="Must match bank records">
+    </div>
+    <div class="field">
+      <label>Bank <span class="req">*</span></label>
+      <input type="text" name="bank_name" placeholder="e.g. GTBank, Zenith Bank">
+    </div>
+    <div class="field">
+      <label>Settlement Cycle <span class="req">*</span></label>
+      <select name="settlement_cycle">
+        <option value="t1">T+1 (Next business day)</option>
+        <option value="t3">T+3 (3 business days)</option>
+        <option value="weekly">Weekly</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>BVN <span class="req">*</span></label>
+      <input type="tel" name="bvn" placeholder="11-digit BVN" maxlength="11">
+    </div>
+    <div class="field">
+      <label>NIN</label>
+      <input type="tel" name="nin" placeholder="11-digit NIN" maxlength="11">
+    </div>
+  </div>
+  <div class="section-divider"></div>
+  <div class="field">
+    <label>Politically Exposed Person (PEP)? <span class="req">*</span></label>
+    <div class="radio-group">
+      <label class="radio-item"><input type="radio" name="is_pep" value="no"> <span>No</span></label>
+      <label class="radio-item"><input type="radio" name="is_pep" value="yes"> <span>Yes</span></label>
+    </div>
+    <div class="hint">A PEP is a person entrusted with prominent public functions</div>
+  </div>
+  <div class="field">
+    <label>PA-DSS Certificate?</label>
+    <div class="radio-group">
+      <label class="radio-item"><input type="radio" name="has_padss" value="no"> <span>No</span></label>
+      <label class="radio-item"><input type="radio" name="has_padss" value="yes"> <span>Yes — will attach</span></label>
+    </div>
+  </div>
+  <div class="field">
+    <label>Expected Monthly Transaction Volume <span class="req">*</span></label>
+    <select name="expected_monthly_vol">
+      <option value="">Select range</option>
+      <option value="below1m">Below ₦1 million</option>
+      <option value="1to10m">₦1 million – ₦10 million</option>
+      <option value="10to50m">₦10 million – ₦50 million</option>
+      <option value="50to200m">₦50 million – ₦200 million</option>
+      <option value="above200m">Above ₦200 million</option>
+    </select>
+  </div>
+</div>`;
+}
+
+// ── Step: Contact ──────────────────────────────────────────────────────────────
+function renderContact() {
+  return `<div class="card">
+  <div class="card-title">B. Merchant Contact</div>
+  <div class="card-sub">Primary contact person for this merchant account.</div>
+  <div class="form-grid">
+    <div class="field">
+      <label>Surname <span class="req">*</span></label>
+      <input type="text" name="surname" placeholder="Last name">
+    </div>
+    <div class="field">
+      <label>Other Names <span class="req">*</span></label>
+      <input type="text" name="other_names" placeholder="First and middle names">
+    </div>
+    <div class="field">
+      <label>Mobile Number <span class="req">*</span></label>
+      <input type="tel" name="mobile" placeholder="+234 800 000 0000">
+    </div>
+    <div class="field">
+      <label>Email Address <span class="req">*</span></label>
+      <input type="email" name="business_email" placeholder="business@example.com">
+    </div>
+    <div class="field">
+      <label>Position / Title <span class="req">*</span></label>
+      <input type="text" name="position" placeholder="e.g. CEO, Finance Director">
+    </div>
+    <div class="field">
+      <label>Direct Line</label>
+      <input type="tel" name="direct_line" placeholder="Direct phone number">
+    </div>
+  </div>
+</div>`;
+}
+
+// ── Step: Website ──────────────────────────────────────────────────────────────
+function renderWebsite() {
+  return `<div class="card">
+  <div class="card-title">B(ii). Website Information</div>
+  <div class="card-sub">Provide details about the website or platform you intend to connect to Paylode.</div>
+  <div class="form-grid">
+    <div class="field">
+      <label>Website Name <span class="req">*</span></label>
+      <input type="text" name="website_name" placeholder="e.g. My Shop Nigeria">
+    </div>
+    <div class="field">
+      <label>Website URL <span class="req">*</span></label>
+      <input type="text" name="website_url" placeholder="https://www.example.com">
+    </div>
+    <div class="field">
+      <label>Website Development Platform</label>
+      <input type="text" name="dev_platform" placeholder="e.g. WordPress, Custom, Shopify">
+    </div>
+    <div class="field">
+      <label>Value Range of Goods/Services</label>
+      <input type="text" name="value_range" placeholder="e.g. ₦500 – ₦500,000">
+    </div>
+    <div class="field full">
+      <label>Description of Products / Services <span class="req">*</span></label>
+      <textarea name="product_description" placeholder="Describe what you sell or the services you provide..."></textarea>
+    </div>
+    <div class="field">
+      <label>Is customer pre-registration required? <span class="req">*</span></label>
+      <div class="radio-group">
+        <label class="radio-item"><input type="radio" name="requires_registration" value="no"> <span>No</span></label>
+        <label class="radio-item"><input type="radio" name="requires_registration" value="yes"> <span>Yes</span></label>
+      </div>
+    </div>
+    <div class="field">
+      <label>Method of Goods/Service Delivery</label>
+      <select name="delivery_method">
+        <option value="">Select method</option>
+        <option>By Courier</option>
+        <option>Online Download</option>
+        <option>Direct Credit to Account</option>
+        <option>In-person</option>
+        <option>Other</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Number of Days Until Delivery</label>
+      <input type="number" name="delivery_days" min="0" placeholder="e.g. 3">
+    </div>
+  </div>
+  <div class="section-divider"></div>
+  <div class="card-title" style="margin-bottom:12px">Customer Refund Policy</div>
+  <div class="form-grid">
+    <div class="field">
+      <label>Refund Policy</label>
+      <select name="refund_policy">
+        <option value="">Select policy</option>
+        <option value="days">Refund within specified days</option>
+        <option value="exchange">Exchange Only</option>
+        <option value="none">No Refunds</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Refund Period (days)</label>
+      <input type="number" name="refund_days" min="0" placeholder="e.g. 7">
+    </div>
+  </div>
+</div>`;
+}
+
+// ── Step: Payments ─────────────────────────────────────────────────────────────
+function renderPayments() {
+  return `<div class="card">
+  <div class="card-title">Payment Options</div>
+  <div class="card-sub">Select the payment channels you wish to accept on your platform. You must select at least one.</div>
+  <div class="check-group" style="margin-bottom:20px">
+    <label class="check-item">
+      <input type="checkbox" name="pay_local_cards" value="1">
+      <span><strong>Local Cards</strong> — Accept Visa, Mastercard and Verve cards issued in Nigeria</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="pay_intl_cards" value="1">
+      <span><strong>International Cards</strong> — Accept Visa and Mastercard issued outside Nigeria</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="pay_transfer" value="1">
+      <span><strong>Bank Transfer</strong> — Accept payments via NIBSS Instant Payment (NIP)</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="pay_ussd" value="1">
+      <span><strong>USSD</strong> — Accept payments via USSD codes (*737#, *966#, etc.)</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="pay_pos" value="1">
+      <span><strong>POS</strong> — Point of Sale terminal payments</span>
+    </label>
+  </div>
+  <div class="section-divider"></div>
+  <div class="card-title" style="margin-bottom:4px">Webhook Configuration (Optional)</div>
+  <div class="card-sub">We will notify your server when payment events occur.</div>
+  <div class="form-grid">
+    <div class="field">
+      <label>Webhook URL</label>
+      <input type="text" name="webhook_url" placeholder="https://yoursite.com/webhook">
+      <div class="hint">Must be HTTPS. We send POST requests with payment status updates.</div>
+    </div>
+    <div class="field">
+      <label>Callback / Redirect URL</label>
+      <input type="text" name="callback_url" placeholder="https://yoursite.com/payment/complete">
+      <div class="hint">Where customers are redirected after payment.</div>
+    </div>
+  </div>
+</div>`;
+}
+
+// ── Step: Portfolio (Aggregator) ───────────────────────────────────────────────
+function renderPortfolio() {
+  return `<div class="card">
+  <div class="card-title">Portfolio Information</div>
+  <div class="card-sub">Provide details about your merchant portfolio.</div>
+  <div class="form-grid">
+    <div class="field">
+      <label>Number of Merchants in Portfolio</label>
+      <input type="number" name="portfolio_size" min="1" placeholder="Estimated number">
+    </div>
+    <div class="field">
+      <label>Expected Combined Monthly Volume</label>
+      <select name="portfolio_volume">
+        <option value="">Select range</option>
+        <option value="below10m">Below ₦10 million</option>
+        <option value="10to100m">₦10 – ₦100 million</option>
+        <option value="100to500m">₦100 – ₦500 million</option>
+        <option value="above500m">Above ₦500 million</option>
+      </select>
+    </div>
+    <div class="field full">
+      <label>Primary Industries Served <span class="req">*</span></label>
+      <textarea name="industries_served" placeholder="Describe the main industries of merchants in your portfolio..."></textarea>
+    </div>
+    <div class="field full">
+      <label>Technical Integration Model <span class="req">*</span></label>
+      <select name="integration_model">
+        <option value="">Select model</option>
+        <option>Direct API Integration</option>
+        <option>Hosted Payment Page</option>
+        <option>SDK Integration</option>
+        <option>Mixed</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Desired Revenue Split (%)</label>
+      <input type="number" name="desired_split" min="0" max="50" placeholder="e.g. 30">
+      <div class="hint">Your proposed share of net revenue. Subject to Paylode approval.</div>
+    </div>
+    <div class="field">
+      <label>Settlement Account Number <span class="req">*</span></label>
+      <input type="tel" name="agg_account_number" placeholder="10-digit NUBAN" maxlength="10">
+    </div>
+    <div class="field">
+      <label>Settlement Bank <span class="req">*</span></label>
+      <input type="text" name="agg_bank_name" placeholder="e.g. GTBank">
+    </div>
+    <div class="field">
+      <label>Account Name <span class="req">*</span></label>
+      <input type="text" name="agg_account_name" placeholder="Must match bank records">
+    </div>
+  </div>
+</div>`;
+}
+
+// ── Step: Documents ────────────────────────────────────────────────────────────
+function renderDocuments() {
+  return `<div class="card">
+  <div class="card-title">Document Checklist</div>
+  <div class="card-sub">Confirm which documents you will provide. You can upload them now or submit them separately via email to <strong>compliance@paylodeservices.com</strong>.</div>
+  <div class="check-group">
+    <label class="check-item">
+      <input type="checkbox" name="doc_id" value="1">
+      <span><strong>ID Card</strong> — Valid driver's licence, international passport, or voter's card (not expired)</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="doc_utility" value="1">
+      <span><strong>Utility Bill</strong> — Waste disposal, PHCN, water corp, or LG bill (not older than 3 months)</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="doc_cac_cert" value="1">
+      <span><strong>Certificate of Incorporation</strong> — CAC-issued certificate</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="doc_cac_memo" value="1">
+      <span><strong>Memorandum & Articles of Association</strong> — For Limited Liability Companies</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="doc_cac_co2" value="1">
+      <span><strong>Form CO2 — Particulars of Directors</strong> — For Limited Liability Companies</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="doc_passport" value="1">
+      <span><strong>Passport Photograph</strong> — Recent passport-sized photo of principal officer</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="doc_bvn" value="1">
+      <span><strong>BVN Verification Consent</strong> — Authorise Paylode to verify your BVN</span>
+    </label>
+    <label class="check-item">
+      <input type="checkbox" name="doc_padss" value="1">
+      <span><strong>PA-DSS Certificate</strong> — If applicable (Payment Application Data Security Standard)</span>
+    </label>
+  </div>
+  <div class="section-divider"></div>
+  <div class="field">
+    <label>Additional Notes or Documents</label>
+    <textarea name="doc_notes" placeholder="Any additional information about your documents or special circumstances..."></textarea>
+  </div>
+</div>`;
+}
+
+// ── Step: Terms & Conditions ────────────────────────────────────────────────────
+function renderTnC() {
+  return `<div class="card">
+  <div class="card-title">Terms & Conditions</div>
+  <div class="card-sub">Please read the full agreement carefully before proceeding.</div>
+  <div class="tnc-box" id="tnc-scroll">
+    <h3>1. Paylode Payment Gateway</h3>
+    <p>The Paylode Payment Gateway Standard Terms and Conditions represent the legal framework of the Paylode Payment Gateway Service provided by Paylode Services Limited. The content is binding and is not subject to any varying terms or conditions, unless as provided by Paylode Services Limited subsequently upon due notice in writing to the User.</p>
+    <p>1.1. Paylode grants to User the right to use Paylode payment gateway on, and User agrees to abide by, the terms and conditions of this agreement.</p>
+    <p>1.2. Paylode grants to User a non-exclusive, non-transferable license to use Paylode payment gateway for the term of this agreement solely for the purposes of the permitted use.</p>
+    <h3>2. User Responsibilities and Undertakings</h3>
+    <p>2.1. The User shall: (A) Not make any warranty or representation whatsoever in relation to the Services which may bind Paylode or make it liable to a third-party; (B) Where required, comply with all security or encryption standards, rules and procedures imposed by Paylode; (C) Make connections to such other systems as Paylode may require; (D) Inform Paylode of any change in the particulars of its designated bank account; (E) Not capture, keep or store by any means online customers' payment card details including Primary Account Number (PAN), PIN, or CVV; (F) Keep any approved digital certificates current and valid; (G) Notify Paylode of any change to the internet protocol address of its website; (H) Notify Paylode of any new or additional products proposed on its website; (I) Only accept payments in connection with goods and/or services actually supplied; (J) Not offer for sale any goods or services not expressly stated during registration.</p>
+    <p>2.6. The User shall promptly notify Paylode of any security breach, misuse, irregularity, suspected fraudulent transaction, or suspicious activities.</p>
+    <p>2.8. The User shall take all steps to keep secure and confidential any information or data related to transactions. In the event any such information is lost, stolen or compromised, the User shall forthwith report and give written notice to Paylode.</p>
+    <p>2.9. Every merchant using Paylode's API is required to provide a valid PADSS certificate before the API will be exposed.</p>
+    <h3>3. Service Fees and Charges</h3>
+    <p>3.1. The User shall pay Paylode a non-refundable set-up fee where applicable.</p>
+    <p>3.2. Paylode and other industry stakeholders shall be entitled to 1.5% of every transaction amount (with a maximum cap of ₦2,000) per successful transaction on the payment system. Paylode reserves the right to revise such fees upon 30-days notice in writing to the User.</p>
+    <p>3.4. Paylode shall deduct all fees and charges from successful transactions before remitting to User.</p>
+    <h3>4. Settlement of Transaction Funds</h3>
+    <p>4.1. Paylode shall make settlements regularly of funds cleared and actually received by Paylode on the settlement platform. The User shall have no right of objection to any received amount after the expiry of 7 clear days from the settlement date (T+1).</p>
+    <p>4.2. No transaction settlement shall occur on non-settlement days: any day where Nigerian banks are not open for business, Sundays, and public holidays as gazetted in Nigeria.</p>
+    <h3>5. Indemnity</h3>
+    <p>5.1. User shall indemnify and hold Paylode indemnified from and against all actions, proceedings, costs, claims, demands, charges, expenses, liabilities, fines, losses and damages arising out of or in consequence of or in connection with any claim brought against Paylode arising from transactions on the User's website or any aspect of this Agreement.</p>
+    <h3>6. Taxes, Chargebacks and Refunds</h3>
+    <p>6.1. Unless stated otherwise, all fees, charges and other payments to be made by User are exclusive of VAT and any other relevant taxes.</p>
+    <p>6.2. User acknowledges that under applicable rules, regulations and operating guidelines, User may be required to reimburse Paylode for Chargebacks. A Chargeback refers to circumstances where Card Issuers or Other Financial Institutions refuse to settle or require repayment of a transaction previously settled.</p>
+    <p>6.4. Where a Chargeback occurs, Paylode shall immediately be entitled to debit User's position or make a reversal from User's Merchant Bank Account.</p>
+    <h3>8. Disputes</h3>
+    <p>8.2. Any dispute between the User and Paylode shall upon the failure of an amicable resolution, be submitted to mediation by either party in Lagos, Nigeria.</p>
+    <h3>9. Service Termination</h3>
+    <p>9.2. Either Paylode or the User may elect to terminate this agreement by giving one (1) month's prior notice in writing.</p>
+    <p>9.3. Paylode shall be entitled to immediately suspend or terminate service if: User is in breach of any provisions; User fails to pay any amount due; Paylode considers the total value of refunds and/or Chargebacks unreasonable; or User becomes insolvent.</p>
+    <h3>11. Law</h3>
+    <p>These Terms and Conditions shall be governed by the laws of the Federal Republic of Nigeria.</p>
+    <h3>14. Confidentiality</h3>
+    <p>Each of the Parties undertakes to the other to keep confidential all information concerning the business and affairs of the other obtained as a result of their relationship. The confidentiality obligations shall survive the termination of this Agreement.</p>
+  </div>
+  <div class="tnc-scroll-note show" id="tnc-note">⬇ Please scroll to the bottom to accept the terms</div>
+  <div class="tnc-accept" id="tnc-accept" style="opacity:.4;pointer-events:none">
+    <input type="checkbox" id="tnc-check">
+    <span>I have read and agree to the Paylode Payment Gateway Terms and Conditions. I confirm that I am authorised to enter into this agreement on behalf of the institution.</span>
+  </div>
+</div>`;
+}
+
+function setupTnC() {
+  const box = document.getElementById('tnc-scroll');
+  const accept = document.getElementById('tnc-accept');
+  const note = document.getElementById('tnc-note');
+  if (tncScrolled) { accept.style.opacity='1'; accept.style.pointerEvents='auto'; note.classList.remove('show'); }
+  box.addEventListener('scroll', function() {
+    if (this.scrollTop + this.clientHeight >= this.scrollHeight - 20) {
+      tncScrolled = true;
+      accept.style.opacity = '1';
+      accept.style.pointerEvents = 'auto';
+      note.classList.remove('show');
+    }
+  });
+}
+
+// ── Step: Signature ────────────────────────────────────────────────────────────
+function renderSignature() {
+  return `<div class="card">
+  <div class="card-title">Declaration & Signature</div>
+  <div class="card-sub">By signing below, you certify that all information provided is true and accurate, and you agree to use Paylode Payment Gateway in accordance with the Terms and Conditions.</div>
+  <div class="form-grid">
+    <div class="field">
+      <label>Full Name <span class="req">*</span></label>
+      <input type="text" name="signatory_name" placeholder="Your full legal name">
+    </div>
+    <div class="field">
+      <label>Designation <span class="req">*</span></label>
+      <input type="text" name="signatory_designation" placeholder="e.g. Managing Director, CEO">
+    </div>
+    <div class="field">
+      <label>Date <span class="req">*</span></label>
+      <input type="date" name="sign_date" value="${new Date().toISOString().split('T')[0]}">
+    </div>
+  </div>
+  <div class="section-divider"></div>
+  <label>Signature <span class="req">*</span></label>
+  <div class="hint" style="margin-bottom:8px">Draw your signature in the box below using your mouse or finger</div>
+  <div class="sig-canvas-wrap">
+    <canvas id="sigCanvas" width="700" height="150"></canvas>
+  </div>
+  <div class="sig-btns">
+    <button class="btn btn-outline btn-sm" onclick="clearSig()">Clear Signature</button>
+  </div>
+</div>`;
+}
+
+// ── Step: DD Institution ────────────────────────────────────────────────────────
+function renderDDInstitution() {
+  return `<div class="card">
+  <div class="card-title">Institution Information</div>
+  <div class="card-sub">This Due Diligence Questionnaire assists Paylode to ascertain the level of AML/CFT/CPF compliance of merchants.</div>
+  <div class="form-grid">
+    <div class="field full">
+      <label>Institution Name <span class="req">*</span></label>
+      <input type="text" name="dd_institution_name" placeholder="Registered business name">
+    </div>
+    <div class="field">
+      <label>Global Intermediary Identification Number (GIIN)</label>
+      <input type="text" name="dd_giin" placeholder="If applicable">
+    </div>
+    <div class="field">
+      <label>Registration Number <span class="req">*</span></label>
+      <input type="text" name="dd_reg_number" placeholder="CAC / RC number">
+    </div>
+    <div class="field full">
+      <label>Registered Address <span class="req">*</span></label>
+      <input type="text" name="dd_address" placeholder="Full registered address">
+    </div>
+    <div class="field">
+      <label>Location (City/State) <span class="req">*</span></label>
+      <input type="text" name="dd_location" placeholder="e.g. Lagos, Nigeria">
+    </div>
+    <div class="field">
+      <label>Principal Contact <span class="req">*</span></label>
+      <input type="text" name="dd_contact" placeholder="Name and phone number">
+    </div>
+    <div class="field full">
+      <label>Shareholders with 5%+ stake <span class="req">*</span></label>
+      <textarea name="dd_shareholders" placeholder="List names and addresses of all shareholders holding 5% or more..."></textarea>
+    </div>
+    <div class="field full">
+      <label>Ultimate Beneficial Owners (UBO) with 25%+ aggregate shares</label>
+      <textarea name="dd_ubos" placeholder="List names and addresses of all UBOs holding 25% or more..."></textarea>
+    </div>
+    <div class="field full">
+      <label>Directors and Senior Management <span class="req">*</span></label>
+      <textarea name="dd_directors" placeholder="List names and addresses of all directors and senior management..."></textarea>
+    </div>
+    <div class="field full">
+      <label>AML/CFT Compliance Officer <span class="req">*</span></label>
+      <input type="text" name="dd_aml_officer" placeholder="Name and contact details of your AML/CFT Officer">
+    </div>
+    <div class="field full">
+      <label>External Auditor(s)</label>
+      <input type="text" name="dd_auditors" placeholder="Name of external auditing firm(s)">
+    </div>
+    <div class="field">
+      <label>Is any Director or Senior Management a PEP?</label>
+      <div class="radio-group" style="margin-top:6px">
+        <label class="radio-item"><input type="radio" name="dd_pep" value="no"> <span>No</span></label>
+        <label class="radio-item"><input type="radio" name="dd_pep" value="yes"> <span>Yes — provide names</span></label>
+      </div>
+    </div>
+    <div class="field">
+      <label>PEP Names (if yes above)</label>
+      <input type="text" name="dd_pep_names" placeholder="Names of PEPs in management">
+    </div>
+  </div>
+</div>`;
+}
+
+// ── Step: DD Questions ──────────────────────────────────────────────────────────
+function renderDDQuestions() {
+  const ynQs = DD_QUESTIONS.filter(q => q.type === 'yn');
+  const mcQs = DD_QUESTIONS.filter(q => q.type === 'multicheck');
+
+  return `<div class="card">
+  <div class="card-title">AML/CFT/CPF Compliance Questions</div>
+  <div class="card-sub">Answer all questions. If you answer "No" to questions 5–12, please provide supporting explanations in the additional information box at the end.</div>
+
+  ${mcQs.map(q => `
+  <div class="field" style="margin-bottom:20px">
+    <label>Q${q.n}. ${q.q}</label>
+    <div class="check-group" style="margin-top:8px">
+      ${q.options.map(o => `<label class="check-item"><input type="checkbox" name="dd_q${q.n}_${o.replace(/[^a-z0-9]/gi,'_')}"> <span>${o}</span></label>`).join('')}
+    </div>
+  </div>`).join('')}
+
+  <table class="yn-table">
+    <thead><tr><th class="yn-num">No.</th><th class="yn-q">Question</th><th class="yn-btns">Answer</th></tr></thead>
+    <tbody>
+      ${ynQs.map(q => `<tr>
+        <td class="yn-num">${q.n}</td>
+        <td class="yn-q">${q.q}</td>
+        <td class="yn-btns">
+          <button type="button" class="yn-btn yes" id="yn-yes-${q.n}" onclick="setYN(${q.n},'yes')">Yes</button>
+          <button type="button" class="yn-btn no"  id="yn-no-${q.n}"  onclick="setYN(${q.n},'no')">No</button>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+
+  <div class="field" style="margin-top:20px">
+    <label>Additional Information / Explanations</label>
+    <textarea name="dd_additional" style="min-height:120px" placeholder="Please provide additional explanations here, indicating the question number each explanation refers to..."></textarea>
+  </div>
+</div>`;
+}
+
+function setYN(n, val) {
+  ynAnswers[n] = val;
+  document.getElementById('yn-yes-'+n).className = 'yn-btn yes' + (val==='yes'?' sel':'');
+  document.getElementById('yn-no-'+n).className  = 'yn-btn no'  + (val==='no' ?' sel':'');
+}
+
+// ── Canvas signature ───────────────────────────────────────────────────────────
+function setupCanvas() {
+  const canvas = document.getElementById('sigCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let drawing = false;
+  canvas.addEventListener('mousedown', e => { drawing=true; ctx.beginPath(); ctx.moveTo(...pos(e,canvas)); });
+  canvas.addEventListener('mousemove', e => { if (!drawing) return; ctx.lineWidth=2; ctx.lineCap='round'; ctx.strokeStyle='#1a2744'; ctx.lineTo(...pos(e,canvas)); ctx.stroke(); });
+  canvas.addEventListener('mouseup', () => { drawing=false; sigData=canvas.toDataURL(); });
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); drawing=true; ctx.beginPath(); ctx.moveTo(...pos(e.touches[0],canvas)); });
+  canvas.addEventListener('touchmove', e => { e.preventDefault(); if (!drawing) return; ctx.lineWidth=2; ctx.lineCap='round'; ctx.strokeStyle='#1a2744'; ctx.lineTo(...pos(e.touches[0],canvas)); ctx.stroke(); });
+  canvas.addEventListener('touchend', () => { drawing=false; sigData=canvas.toDataURL(); });
+}
+function pos(e, canvas) {
+  const r = canvas.getBoundingClientRect();
+  return [e.clientX - r.left, e.clientY - r.top];
+}
+function clearSig() {
+  const canvas = document.getElementById('sigCanvas');
+  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+  sigData = null;
+}
+
+// ── Collect step data ──────────────────────────────────────────────────────────
+function collectStep(stepId) {
+  const data = {};
+  document.querySelectorAll('#step-content input, #step-content select, #step-content textarea').forEach(el => {
+    if (!el.name) return;
+    if (el.type === 'checkbox') data[el.name] = el.checked ? el.value : '';
+    else if (el.type === 'radio') { if (el.checked) data[el.name] = el.value; }
+    else data[el.name] = el.value;
+  });
+  formData[stepId] = data;
+  if (stepId === 'dd_questions') formData.ynAnswers = {...ynAnswers};
+}
+
+// ── Validation ─────────────────────────────────────────────────────────────────
+function validateStep(stepId) {
+  const required = document.querySelectorAll('#step-content [required], #step-content input[name]');
+  const alert = document.getElementById('form-alert');
+
+  if (stepId === 'tnc') {
+    if (!document.getElementById('tnc-check')?.checked) {
+      showAlert('Please scroll through and accept the Terms & Conditions to continue.'); return false;
+    }
+  }
+
+  if (stepId === 'signature' || stepId === 'dd_sign') {
+    const name = document.querySelector('[name="signatory_name"]')?.value;
+    if (!name) { showAlert('Please enter your full name.'); return false; }
+    if (!sigData) { showAlert('Please draw your signature before submitting.'); return false; }
+  }
+
+  if (stepId === 'institution') {
+    const required = ['business_name','business_type','rc_number','address','city','state','account_number','account_name','bank_name','bvn','expected_monthly_vol'];
+    for (const f of required) {
+      const el = document.querySelector(`[name="${f}"]`);
+      if (!el?.value) { showAlert(`Please complete all required fields. Missing: ${f.replace(/_/g,' ')}`); el?.classList.add('err'); el?.focus(); return false; }
+    }
+    if (!document.querySelector('[name="is_pep"]:checked')) { showAlert('Please indicate whether you are a Politically Exposed Person.'); return false; }
+  }
+
+  if (stepId === 'contact') {
+    const req = ['surname','other_names','mobile','business_email'];
+    for (const f of req) {
+      const el = document.querySelector(`[name="${f}"]`);
+      if (!el?.value) { showAlert('Please fill in all contact fields.'); el?.focus(); return false; }
+    }
+  }
+
+  if (stepId === 'payments') {
+    const any = ['pay_local_cards','pay_intl_cards','pay_transfer','pay_ussd','pay_pos'].some(n => document.querySelector(`[name="${n}"]`)?.checked);
+    if (!any) { showAlert('Please select at least one payment option.'); return false; }
+  }
+
+  hideAlert(); return true;
+}
+
+// ── Navigation ─────────────────────────────────────────────────────────────────
+function nextStep() {
+  const steps = getSteps();
+  const stepId = steps[currentStep].id;
+  collectStep(stepId);
+  if (!validateStep(stepId)) return;
+  if (currentStep === steps.length - 1) { submitForm(); return; }
+  currentStep++;
+  renderStep();
+  window.scrollTo(0,0);
+}
+
+function prevStep() {
+  if (currentStep > 0) {
+    collectStep(getSteps()[currentStep].id);
+    currentStep--;
+    renderStep();
+    window.scrollTo(0,0);
+  }
+}
+
+// ── Submit ─────────────────────────────────────────────────────────────────────
+async function submitForm() {
+  const btn = document.getElementById('btn-next');
+  btn.textContent = 'Submitting...'; btn.disabled = true;
+
+  try {
+    const payload = {
+      form_type:  formType,
+      data:       formData,
+      yn_answers: ynAnswers,
+      signature:  sigData,
+      submitted_at: new Date().toISOString(),
+    };
+
+    const res = await fetch(`${API}/onboarding/submit`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+
+    const result = await res.json();
+
+    if (result.status) {
+      document.getElementById('step-content').innerHTML = '';
+      document.getElementById('nav-btns').style.display = 'none';
+      const refEl = document.getElementById('success-ref');
+      refEl.textContent = 'REF: ' + (result.data?.reference || 'PLY-' + Date.now().toString(36).toUpperCase());
+      document.getElementById('success-screen').classList.add('show');
+      document.getElementById('stepper').style.display = 'none';
+      document.getElementById('progress-wrap').style.display = 'none';
+    } else {
+      showAlert(result.message || 'Submission failed. Please try again.');
+      btn.textContent = '✓ Submit Application'; btn.disabled = false;
+    }
+  } catch (e) {
+    showAlert('Network error. Please check your connection and try again.');
+    btn.textContent = '✓ Submit Application'; btn.disabled = false;
+  }
+}
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+function showAlert(msg) {
+  const el = document.getElementById('form-alert');
+  el.textContent = msg; el.className = 'alert alert-err show';
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function hideAlert() {
+  document.getElementById('form-alert').className = 'alert alert-err';
+}
+
+// Find progress-wrap reference fix
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelector('.progress-wrap')?.remove();
+});
+</script>
+</body>
+</html>

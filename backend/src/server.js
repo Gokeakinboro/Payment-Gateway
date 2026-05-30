@@ -27,6 +27,7 @@ const kycRoutes         = require('./routes/kyc');
 const settlementRoutes  = require('./routes/settlements');
 const reportRoutes      = require('./routes/reports');
 const railRoutes        = require('./routes/rails');
+const payoutRoutes      = require('./routes/payouts');
 const checkoutRoutes    = require('./routes/checkout');
 
 const app  = express();
@@ -114,8 +115,9 @@ app.use('/api/v1/kyc',          kycRoutes);
 app.use('/api/v1/settlements',  settlementRoutes);
 app.use('/api/v1/reports',      reportRoutes);
 app.use('/api/v1/rails',        railRoutes);
-app.use('/api/v1/checkout',     checkoutRoutes);
-app.use('/api/v1/payouts',      require('./routes/payouts'));
+app.use('/api/v1/payouts',      payoutRoutes);
+app.use('/api/v1/onboarding',   require('./routes/onboarding'));
+app.use('/api/v1/checkout',     checkoutRoutes););
 
 // ── 404 handler ───────────────────────────────────────────────────────────
 app.use((req, res) => {
