@@ -307,7 +307,19 @@ function renderCompliance() {
 function renderSettings() {
   return '<div class="page-header"><div class="page-title">Platform Settings</div></div><div class="grid-2">' +
     '<div class="card"><div class="card-header"><div class="card-title">Webhook Global Settings</div></div>' +
-    '<div class="form-group"><label class="form-label">Webhook Signing Secret</label><input class="form-input mono" type="password" value="whsec_paylode_xk8m2..."></div>' +
+    '<div class="form-group"><label class="form-label">Webhook Signing Secret</label>' +
+    '<div class="password-wrapper">' +
+    '<input id="wh-secret" class="form-input mono" type="password" value="whsec_paylode_xk8m2..." style="padding-right:40px;">' +
+    '<button type="button" class="toggle-password" onclick="toggleWebhookSecret()" aria-label="Toggle Secret Visibility" tabindex="-1">' +
+    '<svg class="eye-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">' +
+    '<path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />' +
+    '<path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />' +
+    '</svg>' +
+    '<svg class="eye-slash-icon" style="display:none;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">' +
+    '<path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />' +
+    '</svg>' +
+    '</button>' +
+    '</div></div>' +
     '<div class="form-group"><label class="form-label">Retry Attempts</label><input class="form-input" type="number" value="3" style="width:80px"></div>' +
     '<div class="form-group"><label class="form-label">Retry Interval (seconds)</label><input class="form-input" type="number" value="30" style="width:80px"></div>' +
     '<button class="btn btn-primary btn-sm">Save Webhook Config</button></div>' +
@@ -661,6 +673,24 @@ function showAddRailModal() {
     '<select class="form-input form-select"><option>Cost Config Only (Pre-integration)</option><option>Testing</option><option>Live</option></select></div>' +
     '<div class="flex-between"><button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
     '<button class="btn btn-lime" onclick="alert(\'Rail added!\');document.getElementById(\'modal\').style.display=\'none\'">Add Rail</button></div>');
+}
+
+function toggleWebhookSecret() {
+  var input = document.getElementById('wh-secret');
+  if (input) {
+    var btn = input.nextElementSibling;
+    var eye = btn.querySelector('.eye-icon');
+    var eyeSlash = btn.querySelector('.eye-slash-icon');
+    if (input.type === 'password') {
+      input.type = 'text';
+      eye.style.display = 'none';
+      eyeSlash.style.display = 'block';
+    } else {
+      input.type = 'password';
+      eye.style.display = 'block';
+      eyeSlash.style.display = 'none';
+    }
+  }
 }
 
 renderNav();
