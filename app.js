@@ -695,3 +695,29 @@ function toggleWebhookSecret() {
 
 renderNav();
 renderPage();
+
+// ── Auth helpers (required by api-wiring.js) ──────────────────────────────
+function getUser() {
+  try { return JSON.parse(localStorage.getItem('paylode_user') || 'null'); }
+  catch (e) { return null; }
+}
+
+var API_BASE = '/api/v1';
+
+async function apiFetch(path, options) {
+  var token = localStorage.getItem('paylode_token');
+  var opts  = options || {};
+  var headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+
+  var res = await fetch(API_BASE + path, Object.assign({}, opts, { headers: headers }));
+
+  if (res.status === 401) {
+    localStorage.removeItem('paylode_token');
+    localStorage.removeItem('paylode_user');
+    window.location.href = '/login.html';
+    return null;
+  }
+
+  return res.json();
+}
