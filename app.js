@@ -39,7 +39,7 @@ var TRANSACTIONS = [
 var NAV = {
   superadmin: [
     { section:'Overview',       items:[{id:'overview',icon:'◉',label:'Dashboard'},{id:'transactions',icon:'↕',label:'All Transactions'}]},
-    { section:'Management',     items:[{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'revenue',icon:'₦',label:'Revenue Config'}]},
+    { section:'Management',     items:[{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'},{id:'revenue',icon:'₦',label:'Revenue Config'}]},
     { section:'Infrastructure', items:[{id:'rails',icon:'⊞',label:'Rail Costs'},{id:'settlement',icon:'✓',label:'Settlement'},{id:'compliance',icon:'⚖',label:'Compliance'}]},
     { section:'System',         items:[{id:'settings',icon:'⚙',label:'Settings'}]},
   ],
