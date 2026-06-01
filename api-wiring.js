@@ -1202,7 +1202,7 @@ async function loadAggOnboard() {
 
 async function loadAdminOnboard() {
   var el = document.getElementById('main-content');
-  var formUrl = '/onboarding.html?type=merchant&via=admin';
+  var formUrl = '/onboarding.html?via=admin';
 
   el.innerHTML =
     '<div class="page-header">' +
