@@ -194,7 +194,7 @@ async function loadMerchants(page=1) {
     el.innerHTML = `
     <div class="page-header flex-between">
       <div><div class="page-title">Merchants</div><div class="page-desc">${fmtNum(meta.total)} total merchants</div></div>
-      <button class="btn btn-primary" onclick="showModal('onboard')">+ Onboard Merchant</button>
+      <div style="display:flex;gap:8px"><button class="btn btn-outline btn-sm" onclick="copyAdminSignupLink()">Copy Sign-Up Link</button><button class="btn btn-primary" onclick="showModal('onboard')">+ Onboard Merchant</button></div>
     </div>
     <div class="card">
       <div class="table-wrap">
@@ -1121,59 +1121,58 @@ async function loadProductRevenue(period='month') {
 
 async function loadAggOnboard() {
   const el = document.getElementById('main-content');
-  el.innerHTML = `
-  <div class="page-header">
-    <div>
-      <div class="page-title">Onboard New Merchant</div>
-      <div class="page-desc">Register a new merchant under your aggregator portfolio</div>
-    </div>
-  </div>
-  <div class="card" style="max-width:660px">
-    <div class="warn-box" style="margin-bottom:20px;font-size:12px">
-      By submitting this form you confirm that you have performed due diligence on this merchant
-      and accept responsibility for their compliance with Paylode's acceptable use policy.
-    </div>
-    <div id="onboard-alert"></div>
-    <div class="form-group"><label class="form-label">Business Name *</label>
-      <input class="form-input" id="ob-biz-name" placeholder="e.g. Zenith Supermarket Ltd"></div>
-    <div class="form-grid">
-      <div class="form-group"><label class="form-label">Business Category *</label>
-        <select class="form-input form-select" id="ob-category">
-          <option value="">Select category</option>
-          <option>Retail</option><option>E-commerce</option><option>Food &amp; Beverage</option>
-          <option>Transport</option><option>Education</option><option>Healthcare</option>
-          <option>Fintech</option><option>Logistics</option><option>Other</option>
-        </select></div>
-      <div class="form-group"><label class="form-label">Expected Monthly Volume *</label>
-        <select class="form-input form-select" id="ob-volume">
-          <option value="">Select range</option>
-          <option value="below5m">Below &#8358;5M</option>
-          <option value="5to50m">&#8358;5M &ndash; &#8358;50M</option>
-          <option value="50to200m">&#8358;50M &ndash; &#8358;200M</option>
-          <option value="above200m">Above &#8358;200M</option>
-        </select></div>
-    </div>
-    <div class="form-grid">
-      <div class="form-group"><label class="form-label">Contact Name *</label>
-        <input class="form-input" id="ob-contact-name" placeholder="Full name"></div>
-      <div class="form-group"><label class="form-label">Contact Email *</label>
-        <input class="form-input" id="ob-email" type="email" placeholder="ceo@business.com"></div>
-    </div>
-    <div class="form-grid">
-      <div class="form-group"><label class="form-label">Phone Number</label>
-        <input class="form-input" id="ob-phone" placeholder="+234 800 000 0000"></div>
-      <div class="form-group"><label class="form-label">RC Number (CAC)</label>
-        <input class="form-input" id="ob-rc" placeholder="RC 123456"></div>
-    </div>
-    <div class="form-group"><label class="form-label">Business Address</label>
-      <input class="form-input" id="ob-address" placeholder="Street, City, State"></div>
-    <div class="divider" style="margin:20px 0;border-top:1px solid var(--gray-200)"></div>
-    <div class="flex-between">
-      <span style="font-size:12px;color:var(--gray-400)">All submissions are reviewed by compliance within 1-3 business days</span>
-      <button class="btn btn-lime" onclick="submitAggOnboard()">Submit for Approval &rarr;</button>
-    </div>
-  </div>`;
+  const user = getUser();
+  const aggRef = encodeURIComponent((user && (user.id || user.merchantId)) || 'agg');
+  const signupLink = window.location.origin + '/onboarding.html?type=merchant&ref=' + aggRef;
+
+  el.innerHTML =
+    '<div class="page-header">' +
+      '<div class="page-title">Onboard New Merchant</div>' +
+      '<div class="page-desc">Send the sign-up link or open the form directly</div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:860px">' +
+
+      '<div class="card">' +
+        '<div class="card-title" style="margin-bottom:6px">Shareable Sign-Up Link</div>' +
+        '<div class="card-sub">Share this link with the merchant. It opens the full onboarding form pre-set for merchant registration and tracks back to your account.</div>' +
+        '<div style="display:flex;gap:8px;align-items:center;margin:16px 0">' +
+          '<input id="signup-link-input" readonly value="' + signupLink + '"' +
+          ' style="flex:1;padding:10px 12px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:12px;font-family:monospace;color:var(--gray-600);background:var(--gray-50)">' +
+          '<button class="btn btn-lime btn-sm" onclick="copyMerchantLink()">Copy</button>' +
+        '</div>' +
+        '<div id="copy-confirm" style="font-size:12px;color:var(--green);height:18px"></div>' +
+        '<div style="margin:16px 0;border-top:1px solid var(--gray-100)"></div>' +
+        '<button class="btn btn-primary" style="width:100%" onclick="window.open('' + signupLink + '','_blank')">Open Form in New Tab &rarr;</button>' +
+      '</div>' +
+
+      '<div class="card">' +
+        '<div class="card-title" style="margin-bottom:12px">Merchant will complete:</div>' +
+        '<div style="display:flex;flex-direction:column;gap:10px;font-size:13px;color:var(--gray-700)">' +
+          '<div style="display:flex;gap:10px"><span style="color:var(--lime);font-weight:700;min-width:18px">1</span>Business &amp; settlement account details</div>' +
+          '<div style="display:flex;gap:10px"><span style="color:var(--lime);font-weight:700;min-width:18px">2</span>Authorised officer contact information</div>' +
+          '<div style="display:flex;gap:10px"><span style="color:var(--lime);font-weight:700;min-width:18px">3</span>Website &amp; product description</div>' +
+          '<div style="display:flex;gap:10px"><span style="color:var(--lime);font-weight:700;min-width:18px">4</span>Payment channels selection</div>' +
+          '<div style="display:flex;gap:10px"><span style="color:var(--lime);font-weight:700;min-width:18px">5</span>40-question AML/CFT due diligence questionnaire</div>' +
+          '<div style="display:flex;gap:10px"><span style="color:var(--lime);font-weight:700;min-width:18px">6</span>Merchant services agreement (scroll-to-accept)</div>' +
+          '<div style="display:flex;gap:10px"><span style="color:var(--lime);font-weight:700;min-width:18px">7</span>Digital signature &amp; declaration</div>' +
+        '</div>' +
+        '<div style="margin:16px 0;border-top:1px solid var(--gray-100)"></div>' +
+        '<div style="font-size:12px;color:var(--gray-400)">Compliance review within 1-3 business days. You will be notified when a merchant you referred is approved.</div>' +
+      '</div>' +
+
+    '</div>';
+
+  window.copyMerchantLink = function() {
+    var link = signupLink;
+    var done = function() {
+      var conf = document.getElementById('copy-confirm');
+      if (conf) { conf.textContent = 'Link copied to clipboard'; setTimeout(function(){ conf.textContent=''; }, 2500); }
+    };
+    if (navigator.clipboard) { navigator.clipboard.writeText(link).then(done); }
+    else { var inp = document.getElementById('signup-link-input'); inp.select(); document.execCommand('copy'); done(); }
+  };
 }
+
 
 async function submitAggOnboard() {
   const name    = document.getElementById('ob-biz-name').value.trim();

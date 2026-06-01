@@ -1065,6 +1065,7 @@ async function submitForm() {
   try {
     const payload = {
       form_type:  formType,
+      referred_by: sessionStorage.getItem('paylode_ref') || null,
       data:       formData,
       yn_answers: ynAnswers,
       signature:  sigData,
@@ -1111,6 +1112,15 @@ function hideAlert() {
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelector('.progress-wrap')?.remove();
 });
+
+// ── Auto-select type from URL param ─────────────────────────────────────────
+(function() {
+  const p = new URLSearchParams(window.location.search);
+  const t = p.get('type');
+  const ref = p.get('ref');
+  if (ref) sessionStorage.setItem('paylode_ref', ref);
+  if (t === 'merchant' || t === 'aggregator' || t === 'dd') selectType(t);
+})();
 </script>
 </body>
 </html>
