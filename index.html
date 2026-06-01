@@ -144,11 +144,9 @@ function goToLogin(role) {
   window.location.href = '/login.html';
 }
 // If already logged in redirect to dashboard
-if (localStorage.getItem('paylode_token')) {
+if (localStorage.getItem('paylode_token') && !new URLSearchParams(location.search).get('switch')) {
   window.location.href = '/dashboard.html';
 }
 </script>
-<script src="app.js"></script>
-<script src="api-wiring.js"></script>
 </body>
 </html>

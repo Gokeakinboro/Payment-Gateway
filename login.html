@@ -1,1 +1,138 @@
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Paylode Sign In</title><style>body{font-family:sans-serif;background:#1a2744;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.box{background:#fff;padding:32px;border-radius:12px;width:360px}.logo{text-align:center;margin-bottom:20px;color:#1a2744;font-size:20px;font-weight:700}input{width:100%;padding:10px;margin:6px 0 14px;border:1px solid #ccc;border-radius:6px;font-size:14px;box-sizing:border-box}.btn{width:100%;padding:12px;background:#1a2744;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer}.err{color:red;font-size:13px;display:none;margin-bottom:10px}hr{margin:16px 0}.qr{padding:8px;cursor:pointer;border-radius:4px;font-size:13px}.qr:hover{background:#f0f0f0}</style></head><body><div class="box"><div class="logo">P Paylode Services</div><div class="err" id="err"></div><input type="email" id="em" placeholder="Email"><input type="password" id="pw" placeholder="Password"><button class="btn" onclick="go()">Sign In</button><hr><div class="qr" onclick="f('admin@paylodeservices.com','Admin@Paylode2025!')">Super Admin</div><div class="qr" onclick="f('compliance@paylodeservices.com','Comply@Paylode2025!')">Compliance Officer</div><div class="qr" onclick="f('agg@finconnect.ng','Agg@Connect2025!')">Aggregator</div><div class="qr" onclick="f('payments@boltnigeria.com','Bolt@Merchant2025!')">Merchant</div></div><script>function f(e,p){document.getElementById('em').value=e;document.getElementById('pw').value=p;}async function go(){var e=document.getElementById('em').value,p=document.getElementById('pw').value,err=document.getElementById('err'),btn=document.querySelector('.btn');if(!e||!p){err.textContent='Enter email and password';err.style.display='block';return;}btn.textContent='...';try{var r=await fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})});var d=await r.json();if(d.status&&d.data.token){localStorage.setItem('paylode_token',d.data.token);localStorage.setItem('paylode_user',JSON.stringify(d.data.user));window.location.href='/index.html';}else{err.textContent=d.message||'Invalid credentials';err.style.display='block';btn.textContent='Sign In';}}catch(x){err.textContent='Connection error';err.style.display='block';btn.textContent='Sign In';}}document.addEventListener('keydown',function(e){if(e.key==='Enter')go();});if(localStorage.getItem('paylode_token'))window.location.href='/index.html';</script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paylode — Sign In</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#0f1829;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.wrap{width:100%;max-width:420px}
+.back{display:inline-flex;align-items:center;gap:6px;color:rgba(255,255,255,.4);font-size:13px;margin-bottom:24px;cursor:pointer;text-decoration:none;transition:color .15s}
+.back:hover{color:rgba(255,255,255,.8)}
+.card{background:#fff;border-radius:16px;padding:32px;box-shadow:0 24px 60px rgba(0,0,0,.4)}
+.role-header{display:flex;align-items:center;gap:14px;margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid #f1f5f9}
+.role-icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}
+.role-name{font-size:16px;font-weight:700;color:#1a2744}
+.role-desc{font-size:12px;color:#64748b;margin-top:2px}
+.err{background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;font-size:13px;color:#991b1b;margin-bottom:16px;display:none}
+.field{margin-bottom:16px}
+label{display:block;font-size:11px;font-weight:600;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:.3px}
+input{width:100%;padding:11px 13px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif;color:#1e293b;outline:none;transition:border-color .15s}
+input:focus{border-color:#1a2744;box-shadow:0 0 0 3px rgba(26,39,68,.08)}
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:42px}
+.eye{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#94a3b8;padding:4px;display:flex;align-items:center;justify-content:center;}
+.eye:hover{color:#475569}
+.btn{width:100%;padding:13px;background:#1a2744;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px;transition:background .15s}
+.btn:hover{background:#253360}
+.btn:disabled{opacity:.7;cursor:not-allowed}
+.footer-note{text-align:center;margin-top:16px;font-size:12px;color:#94a3b8}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/index.html?switch=1">← Back to portal selection</a>
+  <div class="card">
+    <div class="role-header" id="role-header">
+      <div class="role-icon" id="role-icon">🏛</div>
+      <div>
+        <div class="role-name" id="role-name">Super Admin</div>
+        <div class="role-desc" id="role-desc">Full platform access</div>
+      </div>
+    </div>
+    <div class="err" id="err"></div>
+    <div class="field">
+      <label>Email address</label>
+      <input type="email" id="em" placeholder="Enter your email address" autocomplete="email">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <div class="pw-wrap">
+        <input type="password" id="pw" placeholder="Enter your password" autocomplete="current-password">
+        <button type="button" class="eye" onclick="togglePw()" title="Show/hide password">
+          <svg id="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+    <button class="btn" id="btn" onclick="doLogin()">Sign In</button>
+    <div class="footer-note">Paylode Services Limited &nbsp;·&nbsp; CBN Licensed PSSP</div>
+  </div>
+</div>
+
+<script>
+const ROLES = {
+  superadmin:  { icon:'🏛', name:'Super Admin',        desc:'Full platform access',           bg:'#e8edf5' },
+  compliance:  { icon:'⚖',  name:'Compliance Officer', desc:'KYC & AML monitoring',            bg:'#fef3c7' },
+  aggregator:  { icon:'🔗', name:'Aggregator',          desc:'Portfolio management',            bg:'#dbeafe' },
+  merchant:    { icon:'🏪', name:'Merchant',             desc:'Transactions & API keys',        bg:'#d1fae5' },
+};
+
+// Set role display from stored selection
+const role = localStorage.getItem('paylode_selected_role') || 'superadmin';
+const r    = ROLES[role] || ROLES.superadmin;
+document.getElementById('role-icon').textContent    = r.icon;
+document.getElementById('role-icon').style.background = r.bg;
+document.getElementById('role-name').textContent    = r.name;
+document.getElementById('role-desc').textContent    = r.desc;
+
+async function doLogin() {
+  const email = document.getElementById('em').value.trim();
+  const pass  = document.getElementById('pw').value;
+  const err   = document.getElementById('err');
+  const btn   = document.getElementById('btn');
+
+  if (!email || !pass) {
+    err.textContent = 'Please enter your email and password';
+    err.style.display = 'block';
+    return;
+  }
+
+  btn.textContent = 'Signing in...';
+  btn.disabled    = true;
+  err.style.display = 'none';
+
+  try {
+    const res  = await fetch('/api/v1/auth/login', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ email, password: pass }),
+    });
+    const data = await res.json();
+
+    if (data.status && data.data && data.data.token) {
+      localStorage.setItem('paylode_token', data.data.token);
+      localStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
+      // Redirect to dashboard
+      window.location.href = '/dashboard.html';
+    } else {
+      err.textContent   = data.message || 'Invalid email or password';
+      err.style.display = 'block';
+      btn.textContent   = 'Sign In';
+      btn.disabled      = false;
+    }
+  } catch(e) {
+    err.textContent   = 'Cannot connect to server. Please try again.';
+    err.style.display = 'block';
+    btn.textContent   = 'Sign In';
+    btn.disabled      = false;
+  }
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+function togglePw() {
+  const inp = document.getElementById('pw');
+  const icon = document.getElementById('eye-icon');
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    icon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/><';
+  } else {
+    inp.type = 'password';
+    icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+  }
+}
+</script>
+</body>
+</html>
