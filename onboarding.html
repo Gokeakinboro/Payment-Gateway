@@ -1111,13 +1111,15 @@ function hideAlert() {
 
 
 // ── Auto-select type from URL param ─────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', function() {
+(function() {
   var p   = new URLSearchParams(window.location.search);
   var t   = p.get('type');
   var ref = p.get('ref');
-  if (ref) sessionStorage.setItem('paylode_ref', ref);
-  if (t === 'merchant' || t === 'aggregator' || t === 'dd') selectType(t);
-});
+  if (ref) try { sessionStorage.setItem('paylode_ref', ref); } catch(e) {}
+  if (t === 'merchant' || t === 'aggregator' || t === 'dd') {
+    setTimeout(function() { selectType(t); }, 0);
+  }
+})();
 </script>
 </body>
 </html>
