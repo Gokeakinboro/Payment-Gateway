@@ -1118,10 +1118,121 @@ async function loadProductRevenue(period='month') {
   } catch(e){ el.innerHTML = errorBox('Failed: '+e.message); }
 }
 
+
+async function loadAggOnboard() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = `
+  <div class="page-header">
+    <div>
+      <div class="page-title">Onboard New Merchant</div>
+      <div class="page-desc">Register a new merchant under your aggregator portfolio</div>
+    </div>
+  </div>
+  <div class="card" style="max-width:660px">
+    <div class="warn-box" style="margin-bottom:20px;font-size:12px">
+      By submitting this form you confirm that you have performed due diligence on this merchant
+      and accept responsibility for their compliance with Paylode's acceptable use policy.
+    </div>
+    <div id="onboard-alert"></div>
+    <div class="form-group"><label class="form-label">Business Name *</label>
+      <input class="form-input" id="ob-biz-name" placeholder="e.g. Zenith Supermarket Ltd"></div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Business Category *</label>
+        <select class="form-input form-select" id="ob-category">
+          <option value="">Select category</option>
+          <option>Retail</option><option>E-commerce</option><option>Food &amp; Beverage</option>
+          <option>Transport</option><option>Education</option><option>Healthcare</option>
+          <option>Fintech</option><option>Logistics</option><option>Other</option>
+        </select></div>
+      <div class="form-group"><label class="form-label">Expected Monthly Volume *</label>
+        <select class="form-input form-select" id="ob-volume">
+          <option value="">Select range</option>
+          <option value="below5m">Below &#8358;5M</option>
+          <option value="5to50m">&#8358;5M &ndash; &#8358;50M</option>
+          <option value="50to200m">&#8358;50M &ndash; &#8358;200M</option>
+          <option value="above200m">Above &#8358;200M</option>
+        </select></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Contact Name *</label>
+        <input class="form-input" id="ob-contact-name" placeholder="Full name"></div>
+      <div class="form-group"><label class="form-label">Contact Email *</label>
+        <input class="form-input" id="ob-email" type="email" placeholder="ceo@business.com"></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Phone Number</label>
+        <input class="form-input" id="ob-phone" placeholder="+234 800 000 0000"></div>
+      <div class="form-group"><label class="form-label">RC Number (CAC)</label>
+        <input class="form-input" id="ob-rc" placeholder="RC 123456"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Business Address</label>
+      <input class="form-input" id="ob-address" placeholder="Street, City, State"></div>
+    <div class="divider" style="margin:20px 0;border-top:1px solid var(--gray-200)"></div>
+    <div class="flex-between">
+      <span style="font-size:12px;color:var(--gray-400)">All submissions are reviewed by compliance within 1-3 business days</span>
+      <button class="btn btn-lime" onclick="submitAggOnboard()">Submit for Approval &rarr;</button>
+    </div>
+  </div>`;
+}
+
+async function submitAggOnboard() {
+  const name    = document.getElementById('ob-biz-name').value.trim();
+  const cat     = document.getElementById('ob-category').value;
+  const vol     = document.getElementById('ob-volume').value;
+  const contact = document.getElementById('ob-contact-name').value.trim();
+  const email   = document.getElementById('ob-email').value.trim();
+  const phone   = document.getElementById('ob-phone').value.trim();
+  const rc      = document.getElementById('ob-rc').value.trim();
+  const address = document.getElementById('ob-address').value.trim();
+  const alert   = document.getElementById('onboard-alert');
+
+  if (!name || !cat || !vol || !contact || !email) {
+    alert.innerHTML = '<div class="warn-box" style="margin-bottom:16px">Please fill in all required fields.</div>';
+    return;
+  }
+
+  const btn = document.querySelector('[onclick="submitAggOnboard()"]');
+  btn.textContent = 'Submitting...'; btn.disabled = true;
+
+  try {
+    const res = await apiFetch('/onboarding/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        form_type: 'merchant',
+        data: {
+          institution: { business_name: name, category: cat, expected_monthly_vol: vol, rc_number: rc, address },
+          contact: { surname: contact, business_email: email, mobile: phone },
+        },
+        submitted_at: new Date().toISOString(),
+      }),
+    });
+    if (res && res.status) {
+      document.getElementById('main-content').innerHTML = `
+        <div class="page-header"><div class="page-title">Application Submitted</div></div>
+        <div class="card" style="max-width:520px;text-align:center;padding:40px">
+          <div style="font-size:40px;margin-bottom:16px">&#10003;</div>
+          <div style="font-size:18px;font-weight:600;margin-bottom:8px">Merchant application sent</div>
+          <div style="font-size:13px;color:var(--gray-500);margin-bottom:20px">
+            Reference: <span class="mono" style="font-weight:600">${res.data?.reference || ''}</span><br>
+            Our compliance team will review within 1-3 business days.
+          </div>
+          <button class="btn btn-outline" onclick="navigate('agg_merchants')">Back to My Merchants</button>
+        </div>`;
+    } else {
+      alert.innerHTML = `<div class="warn-box" style="margin-bottom:16px">${res?.message || 'Submission failed. Please try again.'}</div>`;
+      btn.textContent = 'Submit for Approval →'; btn.disabled = false;
+    }
+  } catch(e) {
+    alert.innerHTML = `<div class="warn-box" style="margin-bottom:16px">Error: ${e.message}</div>`;
+    btn.textContent = 'Submit for Approval →'; btn.disabled = false;
+  }
+}
+
 // ── UPDATE loadPageData TO INCLUDE NEW PAGES ─────────────────────────────────
 var _origLoadPageData = loadPageData;
 loadPageData = function(page) {
   switch(page) {
+    case 'agg_onboard':     loadAggOnboard(); break;
     case 'payouts':         loadPayouts(); break;
     case 'rails':           loadRails(); break;
     case 'wallets':         loadWallets(); break;
