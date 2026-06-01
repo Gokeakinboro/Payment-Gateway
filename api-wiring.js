@@ -1132,7 +1132,7 @@ async function loadAggOnboard() {
     '</div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:860px">' +
 
-      '<div class="card" style="border:2px solid #7dc534">' +
+      '<div class="card" style="border:2px solid #7dc534;cursor:pointer" id="agg-form-card">' +
         '<div style="font-size:28px;margin-bottom:12px">&#128221;</div>' +
         '<div class="card-title" style="margin-bottom:8px">Fill Form Now</div>' +
         '<div class="card-sub" style="margin-bottom:20px">Open the full merchant onboarding form and fill it on behalf of the merchant. Ideal for in-person or phone-assisted onboarding.</div>' +
@@ -1191,7 +1191,10 @@ async function loadAggOnboard() {
   };
 
   // Wire open button after innerHTML is set — keeps formUrl in JS closure, no HTML-encoding issues
-  document.getElementById('agg-open-btn').onclick = function() { location.href = formUrl; };
+  setTimeout(function() {
+    var b = document.getElementById('agg-open-btn'); if (b) b.onclick = function() { location.href = formUrl; };
+    var card = document.getElementById('agg-form-card'); if (card) card.onclick = function() { location.href = formUrl; };
+  }, 0);
 }
 
 async function loadAdminOnboard() {
@@ -1205,7 +1208,7 @@ async function loadAdminOnboard() {
     '</div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:860px">' +
 
-      '<div class="card" style="border:2px solid #7dc534">' +
+      '<div class="card" style="border:2px solid #7dc534;cursor:pointer" id="adm-form-card">' +
         '<div style="font-size:28px;margin-bottom:12px">&#128221;</div>' +
         '<div class="card-title" style="margin-bottom:8px">Fill Form Now</div>' +
         '<div class="card-sub" style="margin-bottom:20px">Open the full onboarding form. All form types are available: Merchant, Aggregator, and Due Diligence.</div>' +
@@ -1259,7 +1262,10 @@ async function loadAdminOnboard() {
     });
   };
 
-  document.getElementById('adm-open-btn').onclick = function() { location.href = formUrl; };
+  setTimeout(function() {
+    var b = document.getElementById('adm-open-btn'); if (b) b.onclick = function() { location.href = formUrl; };
+    var card = document.getElementById('adm-form-card'); if (card) card.onclick = function() { location.href = formUrl; };
+  }, 0);
 }
 
 
