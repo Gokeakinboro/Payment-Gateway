@@ -5,7 +5,7 @@ const { requireAuth, requireSuperAdmin, requireCompliance } = require('../middle
 const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
 
-merchantRouter = router;
+
 
 router.get('/', requireAuth, async (req, res, next) => {
   try {
