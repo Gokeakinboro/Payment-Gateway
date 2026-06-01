@@ -23,7 +23,7 @@ input{width:100%;padding:11px 13px;border:1.5px solid #cbd5e1;border-radius:8px;
 input:focus{border-color:#1a2744;box-shadow:0 0 0 3px rgba(26,39,68,.08)}
 .pw-wrap{position:relative}
 .pw-wrap input{padding-right:42px}
-.eye{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#94a3b8;padding:4px;display:flex;align-items:center;justify-content:center;}
+.eye{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#94a3b8;padding:4px;display:flex;align-items:center;justify-content:center}
 .eye:hover{color:#475569}
 .btn{width:100%;padding:13px;background:#1a2744;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px;transition:background .15s}
 .btn:hover{background:#253360}
@@ -121,18 +121,6 @@ async function doLogin() {
 }
 
 document.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-
-function togglePw() {
-  const inp = document.getElementById('pw');
-  const icon = document.getElementById('eye-icon');
-  if (inp.type === 'password') {
-    inp.type = 'text';
-    icon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/><';
-  } else {
-    inp.type = 'password';
-    icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
-  }
-}
 </script>
 </body>
 </html>
