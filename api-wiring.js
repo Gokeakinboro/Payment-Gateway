@@ -1136,7 +1136,7 @@ async function loadAggOnboard() {
         '<div style="font-size:28px;margin-bottom:12px">&#128221;</div>' +
         '<div class="card-title" style="margin-bottom:8px">Fill Form Now</div>' +
         '<div class="card-sub" style="margin-bottom:20px">Open the full merchant onboarding form and fill it on behalf of the merchant. Ideal for in-person or phone-assisted onboarding.</div>' +
-        '<button class="btn btn-lime" style="width:100%" onclick="location.href=\'' + formUrl + '\'">Open Onboarding Form &rarr;</button>' +
+        '<button id="agg-open-btn" class="btn btn-lime" style="width:100%">Open Onboarding Form &rarr;</button>' +
         '<div style="font-size:12px;color:var(--gray-400);margin-top:10px;text-align:center">Merchant form only &middot; agreement &amp; signature included</div>' +
       '</div>' +
 
@@ -1189,6 +1189,9 @@ async function loadAggOnboard() {
       sendBtn.textContent = 'Send Invite Email'; sendBtn.disabled = false;
     });
   };
+
+  // Wire open button after innerHTML is set — keeps formUrl in JS closure, no HTML-encoding issues
+  document.getElementById('agg-open-btn').onclick = function() { location.href = formUrl; };
 }
 
 async function loadAdminOnboard() {
@@ -1206,7 +1209,7 @@ async function loadAdminOnboard() {
         '<div style="font-size:28px;margin-bottom:12px">&#128221;</div>' +
         '<div class="card-title" style="margin-bottom:8px">Fill Form Now</div>' +
         '<div class="card-sub" style="margin-bottom:20px">Open the full onboarding form. All form types are available: Merchant, Aggregator, and Due Diligence.</div>' +
-        '<button class="btn btn-lime" style="width:100%" onclick="location.href=\'' + formUrl + '\'">Open Onboarding Form &rarr;</button>' +
+        '<button id="adm-open-btn" class="btn btn-lime" style="width:100%">Open Onboarding Form &rarr;</button>' +
         '<div style="font-size:12px;color:var(--gray-400);margin-top:10px;text-align:center">All form types available &middot; agreement &amp; signature included</div>' +
       '</div>' +
 
@@ -1255,6 +1258,8 @@ async function loadAdminOnboard() {
       sendBtn.textContent = 'Send Invite Email'; sendBtn.disabled = false;
     });
   };
+
+  document.getElementById('adm-open-btn').onclick = function() { location.href = formUrl; };
 }
 
 
