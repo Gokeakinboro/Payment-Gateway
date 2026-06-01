@@ -1120,10 +1120,11 @@ async function loadProductRevenue(period='month') {
 
 
 async function loadAggOnboard() {
-  var el = document.getElementById('main-content');
+  var el   = document.getElementById('main-content');
   var user = getUser();
-  var aggId = encodeURIComponent((user && (user.id || user.merchantId)) || 'staff');
+  var aggId   = encodeURIComponent((user && (user.id || user.merchantId)) || 'staff');
   var formUrl = '/onboarding.html?type=merchant&ref=' + aggId + '&via=staff';
+  window._aggFormUrl = formUrl;
 
   el.innerHTML =
     '<div class="page-header">' +
@@ -1135,15 +1136,15 @@ async function loadAggOnboard() {
       '<div class="card" style="border:2px solid #7dc534">' +
         '<div style="font-size:28px;margin-bottom:12px">&#128221;</div>' +
         '<div class="card-title" style="margin-bottom:8px">Fill Form Now</div>' +
-        '<div class="card-sub" style="margin-bottom:20px">Open the full merchant onboarding form and fill it on behalf of the merchant. Ideal for in-person or phone-assisted onboarding for customers who need help.</div>' +
-        '<button class="btn btn-lime" style="width:100%" id="open-form-btn">Open Onboarding Form &rarr;</button>' +
-        '<div style="font-size:12px;color:var(--gray-400);margin-top:10px;text-align:center">Opens in a new tab &middot; includes agreement &amp; digital signature</div>' +
+        '<div class="card-sub" style="margin-bottom:20px">Open the full merchant onboarding form and fill it on behalf of the merchant. Ideal for in-person or phone-assisted onboarding.</div>' +
+        '<button class="btn btn-lime" style="width:100%" onclick="window.open(window._aggFormUrl,\'_blank\')">Open Onboarding Form &rarr;</button>' +
+        '<div style="font-size:12px;color:var(--gray-400);margin-top:10px;text-align:center">Opens in a new tab &middot; agreement &amp; signature included</div>' +
       '</div>' +
 
       '<div class="card">' +
         '<div style="font-size:28px;margin-bottom:12px">&#128231;</div>' +
         '<div class="card-title" style="margin-bottom:8px">Send Email Invite</div>' +
-        '<div class="card-sub" style="margin-bottom:16px">Send the merchant a personal sign-up link by email. They complete the form themselves at their convenience.</div>' +
+        '<div class="card-sub" style="margin-bottom:16px">Send the merchant a personal sign-up link. They complete the form themselves at their convenience.</div>' +
         '<div id="inv-alert"></div>' +
         '<div class="form-group"><label class="form-label">Merchant Name <span style="color:var(--red)">*</span></label>' +
           '<input class="form-input" id="inv-name" placeholder="e.g. Zenith Supermarket Ltd"></div>' +
@@ -1153,52 +1154,111 @@ async function loadAggOnboard() {
           '<input class="form-input" id="inv-phone" placeholder="+234 800 000 0000"></div>' +
         '<div class="form-group"><label class="form-label">Business Address</label>' +
           '<input class="form-input" id="inv-address" placeholder="Street, City, State"></div>' +
-        '<button class="btn btn-primary" style="width:100%;margin-top:4px" id="inv-btn">Send Invite Email</button>' +
+        '<button class="btn btn-primary" style="width:100%;margin-top:4px" onclick="sendMerchantInvite()">Send Invite Email</button>' +
       '</div>' +
 
     '</div>';
 
-  document.getElementById('open-form-btn').addEventListener('click', function() {
-    window.open(formUrl, '_blank');
-  });
-
-  document.getElementById('inv-btn').addEventListener('click', function() {
+  window.sendMerchantInvite = function() {
     var name    = document.getElementById('inv-name').value.trim();
     var email   = document.getElementById('inv-email').value.trim();
     var phone   = document.getElementById('inv-phone').value.trim();
     var address = document.getElementById('inv-address').value.trim();
     var alertEl = document.getElementById('inv-alert');
-    var btn     = document.getElementById('inv-btn');
-
     if (!name || !email) {
       alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Merchant name and email are required.</div>';
       return;
     }
-    btn.textContent = 'Sending...';
-    btn.disabled = true;
-
+    var sendBtn = document.querySelector('[onclick="sendMerchantInvite()"]');
+    sendBtn.textContent = 'Sending...'; sendBtn.disabled = true;
     apiFetch('/onboarding/invite', {
       method: 'POST',
       body: JSON.stringify({ name: name, email: email, phone: phone, address: address }),
     }).then(function(res) {
       if (res && res.status) {
         alertEl.innerHTML = '<div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;font-size:13px;color:#15803d;margin-bottom:12px">&#10003; Invite sent to ' + email + '. The merchant will receive a sign-up link valid for 7 days.</div>';
-        document.getElementById('inv-name').value    = '';
-        document.getElementById('inv-email').value   = '';
-        document.getElementById('inv-phone').value   = '';
+        document.getElementById('inv-name').value = '';
+        document.getElementById('inv-email').value = '';
+        document.getElementById('inv-phone').value = '';
         document.getElementById('inv-address').value = '';
       } else {
         alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + ((res && res.message) || 'Failed to send invite.') + '</div>';
       }
-      btn.textContent = 'Send Invite Email';
-      btn.disabled = false;
+      sendBtn.textContent = 'Send Invite Email'; sendBtn.disabled = false;
     }).catch(function(e) {
       alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Error: ' + e.message + '</div>';
-      btn.textContent = 'Send Invite Email';
-      btn.disabled = false;
+      sendBtn.textContent = 'Send Invite Email'; sendBtn.disabled = false;
     });
-  });
+  };
 }
+
+async function loadAdminOnboard() {
+  var el      = document.getElementById('main-content');
+  var formUrl = '/onboarding.html?via=admin';
+  window._adminFormUrl = formUrl;
+
+  el.innerHTML =
+    '<div class="page-header">' +
+      '<div class="page-title">Onboard New Merchant</div>' +
+      '<div class="page-desc">Fill the form on behalf of the merchant, or send them a personal sign-up link</div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:860px">' +
+
+      '<div class="card" style="border:2px solid #7dc534">' +
+        '<div style="font-size:28px;margin-bottom:12px">&#128221;</div>' +
+        '<div class="card-title" style="margin-bottom:8px">Fill Form Now</div>' +
+        '<div class="card-sub" style="margin-bottom:20px">Open the full onboarding form. All form types are available: Merchant, Aggregator, and Due Diligence.</div>' +
+        '<button class="btn btn-lime" style="width:100%" onclick="window.open(window._adminFormUrl,\'_blank\')">Open Onboarding Form &rarr;</button>' +
+        '<div style="font-size:12px;color:var(--gray-400);margin-top:10px;text-align:center">Opens in a new tab &middot; all form types available</div>' +
+      '</div>' +
+
+      '<div class="card">' +
+        '<div style="font-size:28px;margin-bottom:12px">&#128231;</div>' +
+        '<div class="card-title" style="margin-bottom:8px">Send Email Invite</div>' +
+        '<div class="card-sub" style="margin-bottom:16px">Send the merchant a personal sign-up link by email. They complete the form themselves.</div>' +
+        '<div id="adm-inv-alert"></div>' +
+        '<div class="form-group"><label class="form-label">Merchant Name <span style="color:var(--red)">*</span></label>' +
+          '<input class="form-input" id="adm-inv-name" placeholder="e.g. Zenith Supermarket Ltd"></div>' +
+        '<div class="form-group"><label class="form-label">Email Address <span style="color:var(--red)">*</span></label>' +
+          '<input class="form-input" id="adm-inv-email" type="email" placeholder="merchant@business.com"></div>' +
+        '<div class="form-group"><label class="form-label">Phone Number</label>' +
+          '<input class="form-input" id="adm-inv-phone" placeholder="+234 800 000 0000"></div>' +
+        '<button class="btn btn-primary" style="width:100%;margin-top:4px" onclick="sendAdminInvite()">Send Invite Email</button>' +
+      '</div>' +
+
+    '</div>';
+
+  window.sendAdminInvite = function() {
+    var name    = document.getElementById('adm-inv-name').value.trim();
+    var email   = document.getElementById('adm-inv-email').value.trim();
+    var phone   = document.getElementById('adm-inv-phone').value.trim();
+    var alertEl = document.getElementById('adm-inv-alert');
+    if (!name || !email) {
+      alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Merchant name and email are required.</div>';
+      return;
+    }
+    var sendBtn = document.querySelector('[onclick="sendAdminInvite()"]');
+    sendBtn.textContent = 'Sending...'; sendBtn.disabled = true;
+    apiFetch('/onboarding/invite', {
+      method: 'POST',
+      body: JSON.stringify({ name: name, email: email, phone: phone }),
+    }).then(function(res) {
+      if (res && res.status) {
+        alertEl.innerHTML = '<div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;font-size:13px;color:#15803d;margin-bottom:12px">&#10003; Invite sent to ' + email + '. Link valid for 7 days.</div>';
+        document.getElementById('adm-inv-name').value = '';
+        document.getElementById('adm-inv-email').value = '';
+        document.getElementById('adm-inv-phone').value = '';
+      } else {
+        alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + ((res && res.message) || 'Failed.') + '</div>';
+      }
+      sendBtn.textContent = 'Send Invite Email'; sendBtn.disabled = false;
+    }).catch(function(e) {
+      alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Error: ' + e.message + '</div>';
+      sendBtn.textContent = 'Send Invite Email'; sendBtn.disabled = false;
+    });
+  };
+}
+
 
 async function loadAdminOnboard() {
   var el = document.getElementById('main-content');

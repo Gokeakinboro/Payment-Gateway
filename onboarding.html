@@ -1087,7 +1087,7 @@ async function submitForm() {
       refEl.textContent = 'REF: ' + (result.data?.reference || 'PLY-' + Date.now().toString(36).toUpperCase());
       document.getElementById('success-screen').classList.add('show');
       document.getElementById('stepper').style.display = 'none';
-      document.getElementById('progress-wrap').style.display = 'none';
+      var pw = document.querySelector('.progress-wrap'); if(pw) pw.style.display = 'none';
     } else {
       showAlert(result.message || 'Submission failed. Please try again.');
       btn.textContent = '✓ Submit Application'; btn.disabled = false;
@@ -1108,19 +1108,16 @@ function hideAlert() {
   document.getElementById('form-alert').className = 'alert alert-err';
 }
 
-// Find progress-wrap reference fix
-document.addEventListener('DOMContentLoaded', () => {
-  document.querySelector('.progress-wrap')?.remove();
-});
+
 
 // ── Auto-select type from URL param ─────────────────────────────────────────
-(function() {
-  const p = new URLSearchParams(window.location.search);
-  const t = p.get('type');
-  const ref = p.get('ref');
+document.addEventListener('DOMContentLoaded', function() {
+  var p   = new URLSearchParams(window.location.search);
+  var t   = p.get('type');
+  var ref = p.get('ref');
   if (ref) sessionStorage.setItem('paylode_ref', ref);
   if (t === 'merchant' || t === 'aggregator' || t === 'dd') selectType(t);
-})();
+});
 </script>
 </body>
 </html>
