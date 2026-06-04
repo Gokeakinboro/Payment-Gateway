@@ -117,6 +117,7 @@ app.use('/api/v1/rails',        railRoutes);
 app.use('/api/v1/checkout',     checkoutRoutes);
 app.use('/api/v1/onboarding',   require('./routes/onboarding'));
 app.use('/api/v1/payouts',      require('./routes/payouts'));
+app.use('/api/v1/users',        require('./routes/users'));
 
 // ── 404 handler ───────────────────────────────────────────────────────────
 app.use((req, res) => {

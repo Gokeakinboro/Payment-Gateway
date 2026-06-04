@@ -1,46 +1,30 @@
 'use strict';
 /**
  * Paylode Fee Engine
- * Handles all fee calculations with caps and VAT
  * All amounts in kobo (BigInt)
  */
 
-const VAT_RATE = 0.075; // 7.5% VAT
+const VAT_RATE = 0.075;
 
-/**
- * Compute fees for a transaction with cap and VAT
- *
- * @param {BigInt} amount           Transaction amount in kobo
- * @param {number} merchantRate     e.g. 0.0150 for 1.5%
- * @param {BigInt} merchantCap      Max merchant fee in kobo (0 = no cap)
- * @param {number} railRate         e.g. 0.0150 for 1.5%
- * @param {BigInt} railCap          Max rail fee in kobo (0 = no cap)
- * @param {number} vatRate          e.g. 0.075 for 7.5% (default)
- * @param {number} aggSplitPct      e.g. 0.30 for 30%
- */
-function computeFees(amount, merchantRate, merchantCap, railRate, railCap, vatRate = VAT_RATE, aggSplitPct = 0) {
+function computeFees(amount, merchantRate, merchantCap, railRate, railCap, vatRate = VAT_RATE, aggSplitPct = 0, flatFee = 0) {
   const amt = BigInt(amount);
   const vat = BigInt(Math.round(vatRate * 1_000_000));
   const BASE = 1_000_000n;
 
-  // Merchant fee: rate × amount, then apply cap
-  let merchantFeeRaw = amt * BigInt(Math.round(merchantRate * 1_000_000)) / BASE;
+  // Merchant fee: (rate × amount + flat_fee), then apply cap
+  let merchantFeeRaw = amt * BigInt(Math.round(merchantRate * 1_000_000)) / BASE + BigInt(flatFee);
   const mCap = BigInt(merchantCap || 0);
   if (mCap > 0n && merchantFeeRaw > mCap) merchantFeeRaw = mCap;
-  // Add VAT on merchant fee
   const merchantFeeWithVat = merchantFeeRaw + (merchantFeeRaw * vat / BASE);
 
   // Rail cost: rate × amount, then apply cap
   let railCostRaw = amt * BigInt(Math.round(railRate * 1_000_000)) / BASE;
   const rCap = BigInt(railCap || 0);
   if (rCap > 0n && railCostRaw > rCap) railCostRaw = rCap;
-  // Add VAT on rail cost
   const railCostWithVat = railCostRaw + (railCostRaw * vat / BASE);
 
-  // Net revenue after VAT and caps
   const netRevenue = merchantFeeWithVat - railCostWithVat;
 
-  // Aggregator share
   const aggShare = netRevenue > 0n
     ? netRevenue * BigInt(Math.round(aggSplitPct * 1_000_000)) / BASE
     : 0n;
@@ -48,31 +32,74 @@ function computeFees(amount, merchantRate, merchantCap, railRate, railCap, vatRa
   const paylodeMargin = netRevenue - aggShare;
 
   return {
-    merchantFeeRaw,       // before VAT
-    merchantFeeWithVat,   // what merchant is charged (including VAT)
-    railCostRaw,          // before VAT
-    railCostWithVat,      // what Paylode pays rail (including VAT)
+    merchantFeeRaw,
+    merchantFeeWithVat,
+    railCostRaw,
+    railCostWithVat,
     netRevenue,
     aggShare,
     paylodeMargin,
-    vatOnMerchant:   merchantFeeWithVat - merchantFeeRaw,
-    vatOnRail:       railCostWithVat - railCostRaw,
+    vatOnMerchant: merchantFeeWithVat - merchantFeeRaw,
+    vatOnRail:     railCostWithVat - railCostRaw,
   };
 }
 
 /**
+ * Resolve the effective rate config for a merchant + channel.
+ * Priority: per-channel override → ALL override → merchant.processingRate → null (caller uses rail default)
+ */
+async function getMerchantRateConfig(prisma, merchantId, channel) {
+  const [channelOverride, allOverride, merchant] = await Promise.all([
+    prisma.merchantRateConfig.findUnique({
+      where: { merchantId_channel: { merchantId, channel } },
+    }),
+    prisma.merchantRateConfig.findUnique({
+      where: { merchantId_channel: { merchantId, channel: 'ALL' } },
+    }),
+    prisma.merchant.findUnique({
+      where: { id: merchantId },
+      select: { processingRate: true, parentMerchantId: true },
+    }),
+  ]);
+
+  if (channelOverride) return { rate: Number(channelOverride.rate), flatFee: Number(channelOverride.flatFee), cap: Number(channelOverride.cap) };
+  if (allOverride)     return { rate: Number(allOverride.rate),     flatFee: Number(allOverride.flatFee),     cap: Number(allOverride.cap) };
+
+  // Fall back to parent merchant rate config if this is an outlet
+  if (merchant?.parentMerchantId) {
+    return getMerchantRateConfig(prisma, merchant.parentMerchantId, channel);
+  }
+
+  // Fall back to flat processingRate with no cap/flat fee
+  if (merchant?.processingRate) return { rate: Number(merchant.processingRate), flatFee: 0, cap: 0 };
+
+  return null;
+}
+
+/**
+ * Resolve effective aggregator split % for a specific merchant.
+ * Priority: per-merchant override → aggregator default split
+ */
+async function getAggregatorSplit(prisma, aggregatorId, merchantId) {
+  if (!aggregatorId) return 0;
+
+  const [override, aggregator] = await Promise.all([
+    prisma.aggregatorRateConfig.findUnique({
+      where: { aggregatorId_merchantId: { aggregatorId, merchantId } },
+    }),
+    prisma.aggregator.findUnique({ where: { id: aggregatorId }, select: { revenueSplitPct: true } }),
+  ]);
+
+  if (override) return Number(override.splitPct);
+  return aggregator ? Number(aggregator.revenueSplitPct) : 0;
+}
+
+/**
  * Intelligent rail routing — finds the lowest cost rail for a service type
- *
- * @param {Object} prisma           Prisma client
- * @param {string} serviceType      VISA | MASTERCARD | VERVE | BANK_TRANSFER | USSD | PAYOUT
- * @param {BigInt} amount           Transaction amount in kobo
- * @param {string|null} designatedRailId  Merchant's designated rail (overrides routing)
- * @param {boolean} allowFallback   Whether to fall back if designated rail unavailable
  */
 async function routeTransaction(prisma, serviceType, amount, designatedRailId = null, allowFallback = true) {
   const amt = BigInt(amount);
 
-  // If merchant has designated rail, use it
   if (designatedRailId) {
     const designatedCost = await prisma.$queryRaw`
       SELECT rc.*, pr.name as rail_name, pr.status as rail_status
@@ -84,18 +111,10 @@ async function routeTransaction(prisma, serviceType, amount, designatedRailId = 
         AND pr.status = 'LIVE'
       LIMIT 1
     `;
-
-    if (designatedCost.length > 0) {
-      return formatRailResult(designatedCost[0], amt);
-    }
-
-    // Designated rail not available — fallback if allowed
-    if (!allowFallback) {
-      throw new Error(`Designated rail not available for ${serviceType} and fallback is disabled`);
-    }
+    if (designatedCost.length > 0) return formatRailResult(designatedCost[0], amt);
+    if (!allowFallback) throw new Error(`Designated rail not available for ${serviceType} and fallback is disabled`);
   }
 
-  // Get all live rails for this service type and find lowest effective cost
   const rails = await prisma.$queryRaw`
     SELECT rc.*, pr.name as rail_name, pr.id as rail_id
     FROM rail_costs rc
@@ -106,14 +125,10 @@ async function routeTransaction(prisma, serviceType, amount, designatedRailId = 
     ORDER BY rc.rate ASC
   `;
 
-  if (rails.length === 0) {
-    throw new Error(`No live rail available for service type: ${serviceType}`);
-  }
+  if (rails.length === 0) throw new Error(`No live rail available for service type: ${serviceType}`);
 
-  // Calculate effective cost for each rail (after cap) and pick lowest
   let bestRail = null;
   let lowestCost = null;
-
   for (const rail of rails) {
     const result = formatRailResult(rail, amt);
     if (lowestCost === null || result.effectiveCost < lowestCost) {
@@ -121,7 +136,6 @@ async function routeTransaction(prisma, serviceType, amount, designatedRailId = 
       bestRail = result;
     }
   }
-
   return bestRail;
 }
 
@@ -135,40 +149,32 @@ function formatRailResult(rail, amount) {
   const costWithVat = costRaw + (costRaw * BigInt(Math.round(vatRate * 1_000_000)) / 1_000_000n);
 
   return {
-    railId:        rail.rail_id || rail.id,
-    railName:      rail.rail_name,
+    railId:              rail.rail_id || rail.id,
+    railName:            rail.rail_name,
     rate,
-    cap:           Number(cap),
+    cap:                 Number(cap),
     vatRate,
-    effectiveCost: costWithVat,
+    effectiveCost:       costWithVat,
     effectiveCostNumber: Number(costWithVat),
-    serviceType:   rail.service_type,
-    merchantCap:   BigInt(rail.merchant_cap || 0),
+    serviceType:         rail.service_type,
+    merchantCap:         BigInt(rail.merchant_cap || 0),
   };
 }
 
-/**
- * Map payment channel to service type
- * Takes card BIN or channel and returns the correct service type
- */
 function channelToServiceType(channel, cardBin = null) {
   const ch = (channel || '').toUpperCase();
-
   if (ch === 'BANK_TRANSFER') return 'BANK_TRANSFER';
   if (ch === 'USSD')          return 'USSD';
   if (ch === 'DIRECT_DEBIT')  return 'BANK_TRANSFER';
   if (ch === 'PAYOUT')        return 'PAYOUT';
-
   if (ch === 'CARD' && cardBin) {
-    // Detect card scheme from BIN
     const bin = cardBin.toString().substring(0, 6);
-    if (bin.startsWith('4'))                           return 'VISA';
-    if (/^5[1-5]/.test(bin) || /^2[2-7]/.test(bin))  return 'MASTERCARD';
+    if (bin.startsWith('4'))                            return 'VISA';
+    if (/^5[1-5]/.test(bin) || /^2[2-7]/.test(bin))   return 'MASTERCARD';
     if (/^650[0-4]/.test(bin) || bin.startsWith('506')) return 'VERVE';
-    return 'VISA'; // default card type
+    return 'VISA';
   }
-
-  return 'BANK_TRANSFER'; // safe default
+  return 'BANK_TRANSFER';
 }
 
-module.exports = { computeFees, routeTransaction, channelToServiceType, VAT_RATE };
+module.exports = { computeFees, routeTransaction, channelToServiceType, getMerchantRateConfig, getAggregatorSplit, VAT_RATE };

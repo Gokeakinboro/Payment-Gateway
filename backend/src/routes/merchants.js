@@ -5,7 +5,9 @@ const { requireAuth, requireSuperAdmin, requireCompliance } = require('../middle
 const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
 
+const VALID_CHANNELS = ['CARD', 'BANK_TRANSFER', 'USSD', 'DIRECT_DEBIT', 'ALL'];
 
+// ── Merchant list / own profile ──────────────────────────────────────────────
 
 router.get('/', requireAuth, async (req, res, next) => {
   try {
@@ -14,16 +16,18 @@ router.get('/', requireAuth, async (req, res, next) => {
       return ok(res, m);
     }
     const { page=1, perPage=20, kycStatus, aggregatorId } = req.query;
-    const where = {};
+    const where = { isOutlet: false };  // top-level merchants only by default
     if (kycStatus)    where.kycStatus    = kycStatus;
     if (aggregatorId) where.aggregatorId = aggregatorId;
     const [data, total] = await Promise.all([
-      prisma.merchant.findMany({ where, skip:(parseInt(page)-1)*parseInt(perPage), take:parseInt(perPage), orderBy:{createdAt:'desc'}, include:{aggregator:{select:{companyName:true}}} }),
+      prisma.merchant.findMany({ where, skip:(parseInt(page)-1)*parseInt(perPage), take:parseInt(perPage), orderBy:{createdAt:'desc'}, include:{aggregator:{select:{companyName:true}}, _count:{select:{outlets:true}}} }),
       prisma.merchant.count({ where }),
     ]);
     ok(res, { data, meta:{ total, page:parseInt(page), pages:Math.ceil(total/parseInt(perPage)) } });
   } catch (e) { next(e); }
 });
+
+// ── Legacy single rate (kept for backwards compat) ───────────────────────────
 
 router.put('/:id/rate', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
@@ -35,6 +39,181 @@ router.put('/:id/rate', requireAuth, requireSuperAdmin, async (req, res, next) =
     ok(res, { merchant_id:m.id, processing_rate:Number(m.processingRate) });
   } catch (e) { next(e); }
 });
+
+// ── Per-channel rate configs ─────────────────────────────────────────────────
+
+router.get('/:id/rates', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.role === 'MERCHANT' ? req.user.merchant.id : req.params.id;
+    const rates = await prisma.merchantRateConfig.findMany({
+      where: { merchantId },
+      orderBy: { channel: 'asc' },
+    });
+    ok(res, rates.map(r => ({
+      ...r,
+      rate: Number(r.rate),
+      flat_fee: Number(r.flatFee),
+      cap: Number(r.cap),
+    })));
+  } catch (e) { next(e); }
+});
+
+router.post('/:id/rates', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { channel, rate, flat_fee = 0, cap = 0, notes } = req.body;
+    if (!VALID_CHANNELS.includes(channel)) return fail(res, `channel must be one of: ${VALID_CHANNELS.join(', ')}`);
+    const rateNum = parseFloat(rate);
+    if (isNaN(rateNum) || rateNum < 0 || rateNum > 0.2) return fail(res, 'rate must be between 0 and 0.2');
+
+    const config = await prisma.merchantRateConfig.upsert({
+      where: { merchantId_channel: { merchantId: req.params.id, channel } },
+      create: {
+        merchantId: req.params.id,
+        channel,
+        rate:    rateNum,
+        flatFee: parseInt(flat_fee),
+        cap:     parseInt(cap),
+        notes,
+        setBy: req.user.id,
+      },
+      update: {
+        rate:    rateNum,
+        flatFee: parseInt(flat_fee),
+        cap:     parseInt(cap),
+        notes,
+        setBy:   req.user.id,
+        updatedAt: new Date(),
+      },
+    });
+
+    await logAudit(req.user.id, 'MERCHANT_RATE_SET', 'merchant_rate_configs', config.id,
+      null, { channel, rate: rateNum, flat_fee, cap }, notes);
+
+    ok(res, { ...config, rate: Number(config.rate), flat_fee: Number(config.flatFee), cap: Number(config.cap) });
+  } catch (e) { next(e); }
+});
+
+router.delete('/:id/rates/:channel', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { id: merchantId, channel } = req.params;
+    const existing = await prisma.merchantRateConfig.findUnique({
+      where: { merchantId_channel: { merchantId, channel } },
+    });
+    if (!existing) return notFound(res);
+    await prisma.merchantRateConfig.delete({ where: { merchantId_channel: { merchantId, channel } } });
+    await logAudit(req.user.id, 'MERCHANT_RATE_DELETED', 'merchant_rate_configs', existing.id, existing, null);
+    ok(res, { message: 'Rate config removed' });
+  } catch (e) { next(e); }
+});
+
+// ── Outlets (sub-merchants) ──────────────────────────────────────────────────
+
+router.get('/:id/outlets', requireAuth, async (req, res, next) => {
+  try {
+    const parentId = req.user.role === 'MERCHANT' ? req.user.merchant.id : req.params.id;
+    const outlets = await prisma.merchant.findMany({
+      where: { parentMerchantId: parentId, isOutlet: true },
+      orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { transactions: true } } },
+    });
+    ok(res, outlets);
+  } catch (e) { next(e); }
+});
+
+router.post('/:id/outlets', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const parent = await prisma.merchant.findUnique({ where: { id: req.params.id } });
+    if (!parent) return notFound(res);
+
+    const { outlet_name, business_name, state, address, business_email, business_phone } = req.body;
+    if (!outlet_name || !business_name || !state || !business_email || !business_phone) {
+      return fail(res, 'outlet_name, business_name, state, business_email, business_phone are required');
+    }
+
+    const code = 'OUT-' + Math.random().toString(36).slice(2, 10).toUpperCase();
+
+    // Create a user account for the outlet
+    const bcrypt = require('bcryptjs');
+    const tempPassword = Math.random().toString(36).slice(2, 12);
+    const user = await prisma.user.create({
+      data: {
+        email: business_email,
+        passwordHash: await bcrypt.hash(tempPassword, 10),
+        firstName: business_name,
+        lastName: '(Outlet)',
+        role: 'MERCHANT',
+      },
+    });
+
+    const outlet = await prisma.merchant.create({
+      data: {
+        userId:           user.id,
+        merchantCode:     code,
+        businessName:     business_name,
+        businessType:     parent.businessType,
+        category:         parent.category,
+        state,
+        address:          address || parent.address,
+        businessEmail:    business_email,
+        businessPhone:    business_phone,
+        aggregatorId:     parent.aggregatorId,
+        kycStatus:        'ACTIVE',         // inherits parent KYC coverage
+        isActive:         true,
+        settlementBank:   parent.settlementBank,
+        settlementAccount:parent.settlementAccount,
+        settlementCycle:  parent.settlementCycle,
+        parentMerchantId: parent.id,
+        isOutlet:         true,
+        outletName:       outlet_name,
+      },
+    });
+
+    await logAudit(req.user.id, 'OUTLET_CREATED', 'merchants', outlet.id, null,
+      { parentMerchantId: parent.id, outletName: outlet_name });
+
+    ok(res, { ...outlet, temp_password: tempPassword });
+  } catch (e) { next(e); }
+});
+
+router.patch('/:id/outlets/:outletId', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const outlet = await prisma.merchant.findFirst({
+      where: { id: req.params.outletId, parentMerchantId: req.params.id, isOutlet: true },
+    });
+    if (!outlet) return notFound(res);
+
+    const { outlet_name, address, business_phone, is_active } = req.body;
+    const updated = await prisma.merchant.update({
+      where: { id: outlet.id },
+      data: {
+        ...(outlet_name  !== undefined && { outletName:    outlet_name }),
+        ...(address      !== undefined && { address }),
+        ...(business_phone !== undefined && { businessPhone: business_phone }),
+        ...(is_active    !== undefined && { isActive:      is_active }),
+      },
+    });
+    ok(res, updated);
+  } catch (e) { next(e); }
+});
+
+router.delete('/:id/outlets/:outletId', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const outlet = await prisma.merchant.findFirst({
+      where: { id: req.params.outletId, parentMerchantId: req.params.id, isOutlet: true },
+    });
+    if (!outlet) return notFound(res);
+
+    // Deactivate rather than hard delete (preserves transaction history)
+    await prisma.merchant.update({
+      where: { id: outlet.id },
+      data: { isActive: false, kycStatus: 'SUSPENDED' },
+    });
+    await logAudit(req.user.id, 'OUTLET_DEACTIVATED', 'merchants', outlet.id, { isActive: true }, { isActive: false });
+    ok(res, { message: 'Outlet deactivated' });
+  } catch (e) { next(e); }
+});
+
+// ── Suspend / activate ───────────────────────────────────────────────────────
 
 router.put('/:id/suspend', requireAuth, requireCompliance, async (req, res, next) => {
   try {
@@ -51,6 +230,8 @@ router.put('/:id/activate', requireAuth, requireCompliance, async (req, res, nex
     ok(res, { message:'Merchant reactivated' });
   } catch (e) { next(e); }
 });
+
+// ── API keys ──────────────────────────────────────────────────────────────────
 
 router.get('/:id/api-keys', requireAuth, async (req, res, next) => {
   try {

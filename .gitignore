@@ -35,3 +35,52 @@ composer.lock
 
 # Prisma
 backend/prisma/migrations/dev.db
+
+# Deployment & diagnostic scripts (local use only)
+*.py
+deploy*.py
+check*.py
+fetch*.py
+fix*.py
+read_*.py
+verify*.py
+diagnose*.py
+migrate*.py
+run_*.py
+write_*.py
+build_*.py
+patch_*.py
+debug_*.py
+frontend_patch.py
+hotfix.py
+quick_check.py
+startup_check.py
+
+# Downloaded server files (temp copies)
+index_live.html
+users_route.js
+server.js
+schema.prisma
+*_patched.js
+*_patch.js
+api_additions.js
+app_patched.js
+agg_onboard_patch.js
+agg_payout.js
+
+# Route file copies at root (deployed directly to server)
+admin.js
+aggregators.js
+auth.js
+auditService.js
+chargebacks.js
+checkout.js
+checkout_isw.js
+helpers.js
+interswitchService.js
+kyc.js
+kyc_bulk.js
+settlements.js
+transactions.js
+checkout_new.html
+create_txn.js

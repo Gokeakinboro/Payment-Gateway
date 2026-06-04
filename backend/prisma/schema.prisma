@@ -65,7 +65,9 @@ enum RailStatus {
 
 enum UserRole {
   SUPER_ADMIN
+  ADMIN
   COMPLIANCE_OFFICER
+  AUDIT
   AGGREGATOR
   MERCHANT
 }
@@ -85,6 +87,7 @@ model User {
   firstName    String   @map("first_name")
   lastName     String   @map("last_name")
   role         UserRole
+  permissions  String[] @default([])
   isActive     Boolean  @default(true) @map("is_active")
   lastLoginAt  DateTime? @map("last_login_at")
   createdAt    DateTime @default(now()) @map("created_at")
@@ -112,9 +115,10 @@ model Aggregator {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  user      User       @relation(fields: [userId], references: [id])
-  merchants Merchant[]
-  payouts   AggPayout[]
+  user        User       @relation(fields: [userId], references: [id])
+  merchants   Merchant[]
+  payouts     AggPayout[]
+  rateConfigs AggregatorRateConfig[]
 
   @@map("aggregators")
 }
@@ -148,17 +152,27 @@ model Merchant {
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  user         User           @relation(fields: [userId], references: [id])
-  aggregator   Aggregator?    @relation(fields: [aggregatorId], references: [id])
-  transactions Transaction[]
-  settlements  Settlement[]
+  // Sub-merchant / outlet support
+  parentMerchantId String?   @map("parent_merchant_id") @db.Uuid
+  isOutlet         Boolean   @default(false) @map("is_outlet")
+  outletName       String?   @map("outlet_name")
+
+  user           User           @relation(fields: [userId], references: [id])
+  aggregator     Aggregator?    @relation(fields: [aggregatorId], references: [id])
+  parentMerchant Merchant?      @relation("MerchantOutlets", fields: [parentMerchantId], references: [id])
+  outlets        Merchant[]     @relation("MerchantOutlets")
+  transactions   Transaction[]
+  settlements    Settlement[]
   kycSubmissions KycSubmission[]
-  amlFlags     AmlFlag[]
-  apiKeys      ApiKey[]
+  amlFlags       AmlFlag[]
+  apiKeys        ApiKey[]
+  rateConfigs    MerchantRateConfig[]
+  aggRateConfigs AggregatorRateConfig[]
 
   @@index([kycStatus])
   @@index([isActive])
   @@index([aggregatorId])
+  @@index([parentMerchantId])
   @@map("merchants")
 }
 
@@ -367,6 +381,47 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([createdAt])
   @@map("audit_log")
+}
+
+// ─── MERCHANT RATE CONFIGS ────────────────────────────────────────────────────
+
+model MerchantRateConfig {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId String   @map("merchant_id") @db.Uuid
+  channel    String   // CARD | BANK_TRANSFER | USSD | DIRECT_DEBIT | ALL
+  rate       Decimal  @db.Decimal(6, 5)  // e.g. 0.01500 = 1.5%
+  flatFee    BigInt   @default(0) @map("flat_fee")  // kobo, added on top of %
+  cap        BigInt   @default(0)                    // kobo, 0 = no cap
+  notes      String?
+  setBy      String?  @map("set_by") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, channel], name: "merchantId_channel")
+  @@index([merchantId])
+  @@map("merchant_rate_configs")
+}
+
+// ─── AGGREGATOR RATE CONFIGS ──────────────────────────────────────────────────
+
+model AggregatorRateConfig {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  aggregatorId  String   @map("aggregator_id") @db.Uuid
+  merchantId    String?  @map("merchant_id") @db.Uuid  // null = aggregator-wide default
+  splitPct      Decimal  @map("split_pct") @db.Decimal(5, 4)  // 0.3000 = 30%
+  notes         String?
+  setBy         String?  @map("set_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  aggregator Aggregator @relation(fields: [aggregatorId], references: [id], onDelete: Cascade)
+  merchant   Merchant?  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([aggregatorId, merchantId], name: "aggregatorId_merchantId")
+  @@index([aggregatorId])
+  @@map("aggregator_rate_configs")
 }
 
 // ─── WEBHOOKS LOG ─────────────────────────────────────────────────────────────

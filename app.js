@@ -4,6 +4,12 @@
 
 var currentRole = 'superadmin';
 var currentPage = 'overview';
+var __navOpen   = { 'USERS': true };  // USERS section open by default
+
+function toggleNav(section) {
+  __navOpen[section] = !__navOpen[section];
+  renderNav();
+}
 
 var RAIL_COSTS = {
   'Interswitch':    { transfer: 0.005, card: 0.015, ussd: 0.008 },
@@ -38,10 +44,40 @@ var TRANSACTIONS = [
 
 var NAV = {
   superadmin: [
-    { section:'Overview',       items:[{id:'overview',icon:'◉',label:'Dashboard'},{id:'transactions',icon:'↕',label:'All Transactions'}]},
-    { section:'Management',     items:[{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'},{id:'revenue',icon:'₦',label:'Revenue Config'}]},
-    { section:'Infrastructure', items:[{id:'rails',icon:'⊞',label:'Rail Costs'},{id:'settlement',icon:'✓',label:'Settlement'},{id:'compliance',icon:'⚖',label:'Compliance'}]},
-    { section:'System',         items:[{id:'settings',icon:'⚙',label:'Settings'}]},
+    { section:'USERS', items:[
+      {id:'merchants',       icon:'▦', label:'Merchants'       },
+      {id:'aggregators',     icon:'⬡', label:'Aggregators'     },
+      {id:'admin_onboard',   icon:'+', label:'Onboard Merchant'},
+      {id:'users',           icon:'⊕', label:'Staff Accounts'  },
+    ]},
+    { section:'REPORTS', items:[
+      {id:'overview',        icon:'◉', label:'Dashboard'       },
+      {id:'transactions',    icon:'↕', label:'Transactions'    },
+      {id:'settlement',      icon:'✓', label:'Settlements'     },
+      {id:'revenue',         icon:'₦', label:'Revenue'         },
+      {id:'compliance',      icon:'⚖', label:'Compliance'      },
+    ]},
+    { section:'SYSTEM CONFIG', items:[
+      {id:'rails',               icon:'⊞', label:'Rail Costs'       },
+      {id:'settle_verification', icon:'⊙', label:'Bank Verification'},
+      {id:'email_tpl',           icon:'✉', label:'Email Templates'  },
+      {id:'settings',            icon:'⚙', label:'Settings'         },
+    ]},
+    { section:'DEVELOPER SDK', items:[
+      {id:'sdk_start',    icon:'▶', label:'Quick Start'   },
+      {id:'sdk_payments', icon:'₦', label:'Payments API'  },
+      {id:'sdk_verify',   icon:'✓', label:'Verify Payment'},
+      {id:'sdk_webhook',  icon:'⇀', label:'Webhooks'      },
+      {id:'sdk_mobile',   icon:'□', label:'Published SDKs'},
+      {id:'sdk_errors',   icon:'!', label:'Error Codes'   },
+      {id:'sdk_test',     icon:'⚡', label:'Test Cards'    },
+    ]},
+  ],
+  admin: [
+    { section:'Overview',    items:[{id:'overview',icon:'◉',label:'Dashboard'},{id:'transactions',icon:'↕',label:'All Transactions'}]},
+    { section:'Management',  items:[{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'}]},
+    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
+    { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'}]},
   ],
   aggregator: [
     { section:'Overview', items:[{id:'agg_overview',icon:'◉',label:'Dashboard'},{id:'agg_merchants',icon:'▦',label:'My Merchants'},{id:'agg_onboard',icon:'+',label:'Onboard Merchant'}]},
@@ -53,38 +89,146 @@ var NAV = {
     { section:'Account',     items:[{id:'merch_profile',icon:'⊙',label:'Business Profile'}]},
   ],
   developer: [
-    { section:'SDK',       items:[{id:'sdk_start',icon:'▶',label:'Quick Start'},{id:'sdk_payments',icon:'₦',label:'Payments API'},{id:'sdk_verify',icon:'✓',label:'Verify Payment'},{id:'sdk_webhook',icon:'⇀',label:'Webhooks'},{id:'sdk_mobile',icon:'□',label:'Mobile SDKs'}]},
+    { section:'SDK',       items:[{id:'sdk_start',icon:'▶',label:'Quick Start'},{id:'sdk_payments',icon:'₦',label:'Payments API'},{id:'sdk_verify',icon:'✓',label:'Verify Payment'},{id:'sdk_webhook',icon:'⇀',label:'Webhooks'},{id:'sdk_mobile',icon:'□',label:'Published SDKs'}]},
     { section:'Reference', items:[{id:'sdk_errors',icon:'!',label:'Error Codes'},{id:'sdk_test',icon:'⚡',label:'Test Cards'}]},
   ],
 };
 
 var ROLE_META = {
   superadmin: { label:'Super Admin', name:'Paylode HQ',         title:'Super Admin Dashboard', defaultPage:'overview'       },
+  admin:       { label:'Admin',       name:'Paylode Admin',      title:'Admin Dashboard',       defaultPage:'overview'       },
   aggregator:  { label:'Aggregator',  name:'FinConnect Nigeria', title:'Aggregator Dashboard',  defaultPage:'agg_overview'   },
   merchant:    { label:'Merchant',    name:'Bolt Nigeria',       title:'Merchant Dashboard',    defaultPage:'merch_overview' },
   developer:   { label:'Developer',   name:'API / SDK Docs',     title:'Developer SDK',         defaultPage:'sdk_start'      },
 };
 
+// ── Permission definitions (mirrors backend src/config/permissions.js) ────────
+var PERM_GROUPS = [
+  { label:'Dashboard Panels', items:[
+    { id:'panel_dashboard',    label:'Dashboard Overview' },
+    { id:'panel_transactions', label:'All Transactions' },
+    { id:'panel_merchants',    label:'Merchants' },
+    { id:'panel_settlements',  label:'Settlements' },
+    { id:'panel_chargebacks',  label:'Chargebacks' },
+    { id:'panel_compliance',   label:'Compliance Centre' },
+    { id:'panel_audit_log',    label:'Audit Log' },
+    { id:'panel_bulk_ops',     label:'Bulk Operations' },
+    { id:'panel_kyc',          label:'KYC Management' },
+    { id:'panel_aggregators',  label:'Aggregators' },
+    { id:'panel_webhooks',     label:'Webhooks' },
+    { id:'panel_payouts',      label:'Payouts' },
+    { id:'panel_reports',      label:'Reports' },
+    { id:'panel_rails',        label:'Payment Rails' },
+  ]},
+  { label:'Actions', items:[
+    { id:'action_approve_kyc',        label:'Approve / Reject KYC' },
+    { id:'action_bulk_approve_kyc',   label:'Bulk Approve KYC' },
+    { id:'action_process_refund',     label:'Process Refunds' },
+    { id:'action_manage_webhooks',    label:'Manage Webhooks' },
+    { id:'action_mark_payout_paid',   label:'Mark Payout Paid' },
+    { id:'action_resolve_chargeback', label:'Resolve Chargebacks' },
+    { id:'action_manage_compliance',  label:'Manage Compliance (STR/DSR)' },
+    { id:'action_download_reports',   label:'Download Reports' },
+    { id:'action_csv_import',         label:'CSV Import' },
+    { id:'action_edit_merchant',      label:'Edit Merchant Details' },
+    { id:'action_edit_aggregator',    label:'Edit Aggregator Details' },
+    { id:'action_manage_rails',       label:'Manage Payment Rails' },
+  ]},
+  { label:'User Creation', items:[
+    { id:'create_admin',       label:'Create Admin Users' },
+    { id:'create_compliance',  label:'Create Compliance Officers' },
+    { id:'create_audit',       label:'Create Audit Users' },
+    { id:'create_merchant',    label:'Create Merchant Users' },
+    { id:'create_aggregator',  label:'Create Aggregator Users' },
+  ]},
+];
+
+var PERM_ROLE_DEFAULTS = {
+  ADMIN: [
+    'panel_dashboard','panel_transactions','panel_merchants','panel_settlements',
+    'panel_chargebacks','panel_bulk_ops','panel_kyc','panel_aggregators',
+    'panel_webhooks','panel_payouts','panel_reports','panel_rails',
+    'action_approve_kyc','action_bulk_approve_kyc','action_process_refund',
+    'action_manage_webhooks','action_mark_payout_paid','action_resolve_chargeback',
+    'action_download_reports','action_csv_import','action_edit_merchant',
+    'action_edit_aggregator','action_manage_rails',
+    'create_compliance','create_audit','create_merchant','create_aggregator',
+  ],
+  COMPLIANCE_OFFICER: [
+    'panel_dashboard','panel_transactions','panel_compliance','panel_reports',
+    'panel_audit_log','panel_merchants',
+    'action_manage_compliance','action_download_reports',
+  ],
+  AUDIT: [
+    'panel_dashboard','panel_transactions','panel_audit_log','panel_reports',
+    'panel_merchants','panel_settlements','panel_chargebacks','panel_kyc',
+    'panel_aggregators',
+    'action_download_reports',
+  ],
+  MERCHANT: [
+    'panel_dashboard','panel_transactions','panel_settlements','panel_reports',
+    'panel_webhooks',
+    'action_manage_webhooks','action_download_reports',
+  ],
+  AGGREGATOR: [
+    'panel_dashboard','panel_transactions','panel_settlements','panel_aggregators',
+    'panel_merchants','panel_payouts','panel_reports',
+    'action_download_reports','action_manage_webhooks',
+  ],
+};
+
 function renderNav() {
   var meta = ROLE_META[currentRole];
-  document.getElementById('role-label').textContent    = meta.label;
-  document.getElementById('role-name').textContent     = meta.name;
-  document.getElementById('topbar-title').textContent  = meta.title;
+  document.getElementById('role-label').textContent   = meta.label;
+  document.getElementById('topbar-title').textContent = meta.title;
+  // Use real business/company name from JWT if available
+  var _u = {};
+  try { _u = JSON.parse(localStorage.getItem('paylode_user') || '{}'); } catch(e) {}
+  var _name = _u.businessName || _u.companyName || _u.organizationName ||
+              (_u.firstName ? (_u.firstName + ' ' + (_u.lastName||'')).trim() : null) || meta.name;
+  document.getElementById('role-name').textContent = _name;
   var container = document.getElementById('nav-items');
-  container.innerHTML = NAV[currentRole].map(function(sec) {
-    var itemsHtml = sec.items.map(function(item) {
+  var nav = NAV[currentRole] || [];
+  // Auto-expand the section that contains the current page
+  nav.forEach(function(sec) {
+    if (sec.items.some(function(i) { return i.id === currentPage; })) {
+      __navOpen[sec.section] = true;
+    }
+  });
+  container.innerHTML = nav.map(function(sec) {
+    var open  = !!__navOpen[sec.section];
+    var arrow = open ? '&#9660;' : '&#9658;';
+    var items = open ? sec.items.map(function(item) {
       return '<div class="nav-item ' + (item.id === currentPage ? 'active' : '') + '" onclick="navigate(\'' + item.id + '\')">' +
              '<span class="nav-icon">' + item.icon + '</span>' + item.label + '</div>';
-    }).join('');
-    return '<div class="nav-section"><div class="nav-section-label">' + sec.section + '</div>' + itemsHtml + '</div>';
+    }).join('') : '';
+    return '<div class="nav-section">' +
+      '<div class="nav-section-label" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" ' +
+        'onclick="toggleNav(\'' + sec.section.replace(/'/g,"\\'") + '\')">' +
+        '<span>' + sec.section + '</span>' +
+        '<span style="font-size:10px;opacity:.5;margin-left:4px">' + arrow + '</span>' +
+      '</div>' +
+      (open ? '<div>' + items + '</div>' : '') +
+      '</div>';
   }).join('');
   document.querySelectorAll('.role-btn').forEach(function(btn, i) {
-    btn.classList.toggle('active', ['superadmin','aggregator','merchant','developer'][i] === currentRole);
+    btn.classList.toggle('active', ['superadmin','admin','aggregator','merchant','developer'][i] === currentRole);
   });
 }
 
-function switchRole(role) { currentRole = role; currentPage = ROLE_META[role].defaultPage; renderNav(); renderPage(); }
-function navigate(page)   { currentPage = page; renderNav(); renderPage(); }
+function switchRole(role) { currentRole = role; currentPage = ROLE_META[role].defaultPage; renderNav(); renderPage(); closeSidebar(); }
+function navigate(page)   { currentPage = page; renderNav(); renderPage(); closeSidebar(); }
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  var s = document.getElementById('sidebar');
+  var o = document.getElementById('sidebar-overlay');
+  if (s) s.classList.remove('open');
+  if (o) o.classList.remove('open');
+}
 
 function statusBadge(s) {
   var m = {active:'badge-green',success:'badge-green',completed:'badge-green',pending:'badge-amber',failed:'badge-red',suspended:'badge-red'};
@@ -101,6 +245,8 @@ function renderPage() {
     merchants:renderMerchants, aggregators:renderAggregators,
     revenue:renderRevenueConfig, rails:renderRailCosts,
     settlement:renderSettlement, compliance:renderCompliance, settings:renderSettings,
+    email_tpl:renderEmailTemplates,
+    users:renderUserManagement,
     agg_overview:renderAggOverview, agg_merchants:renderAggMerchants,
     agg_onboard:renderAggOnboard, agg_revenue:renderAggRevenue,
     agg_transactions:renderAggTransactions,
@@ -187,7 +333,8 @@ function renderMerchants() {
            '<td><span class="badge badge-lime">' + m.rate + '%</span></td>' +
            '<td class="mono">&#8358;' + (m.vol/1000000).toFixed(1) + 'M</td>' +
            '<td>' + statusBadge(m.status) + '</td>' +
-           '<td><button class="btn btn-outline btn-sm" onclick="showMerchantRateModal(\'' + m.id + '\')">&#9881; Rate</button></td></tr>';
+           '<td><button class="btn btn-outline btn-sm" onclick="viewMerchant(\'' + m.id + '\')">View</button>&nbsp;' +
+           '<button class="btn btn-outline btn-sm" onclick="showMerchantRateModal(\'' + m.id + '\')">&#9881; Rate</button></td></tr>';
   }).join('');
   return '<div class="page-header flex-between"><div><div class="page-title">Merchant Management</div>' +
     '<div class="page-desc">Manage all merchants, rates, and account status</div></div>' +
@@ -282,29 +429,350 @@ function renderSettlement() {
     '<tbody>' + rows + '</tbody></table></div></div>';
 }
 
+// ── Compliance Centre (tabbed) ────────────────────────────────────────────
+function compTab() { return window.__compTab || 'overview'; }
+function setCompTab(t) { window.__compTab = t; renderPage(); }
+
 function renderCompliance() {
+  var tab = compTab();
+  var tabs = [['overview','Overview'],['cbnn','CBN Returns'],['str','STR Filing'],['retention','Data Retention'],['ndpr','NDPR / Privacy']];
+  var tabBtns = tabs.map(function(t) {
+    return '<button class="tab-btn ' + (tab===t[0]?'active':'') + '" onclick="setCompTab(\'' + t[0] + '\')">' + t[1] + '</button>';
+  }).join('');
+  var pages = { overview:renderCompOverview, cbnn:renderCompCBNN, str:renderCompSTR, retention:renderCompRetention, ndpr:renderCompNDPR };
+  return '<div class="page-header"><div class="page-title">Compliance Centre</div>' +
+    '<div class="page-desc">Regulatory obligations, AML/CFT monitoring, and data governance &mdash; CBN, BOFIA &amp; NDPR</div></div>' +
+    '<div class="tab-nav">' + tabBtns + '</div>' + (pages[tab] || renderCompOverview)();
+}
+
+function renderCompOverview() {
   var licenseHtml = [['License Type','Payment Solution Service Provider (PSSP)'],['License No','CBN/PAY/2024/001847'],
     ['Issued Date','2024-03-15'],['Expiry','2027-03-14'],['Status','Active &amp; Valid']].map(function(row) {
     return '<div class="rev-row"><span class="rev-label">' + row[0] + '</span><span class="rev-value" style="font-size:12px">' + row[1] + '</span></div>';
   }).join('');
-  var checkHtml = [[true,'Merchant KYC/KYB Policy Documented'],[true,'AML/CFT Policy Filed with CBN'],
-    [true,'Transaction Monitoring System Active'],[false,'Quarterly CBN Return (Q1 2025)'],
-    [false,'Annual Audit Submission'],[true,'Data Privacy Policy (NDPR Compliant)']].map(function(row) {
+  var checks = [[true,'Merchant KYC/KYB Policy Documented'],[true,'AML/CFT Policy Filed with CBN'],
+    [true,'Transaction Monitoring System Active'],[true,'STR Filing Workflow Active'],
+    [false,'Quarterly CBN Return (Q2 2025)'],[true,'NDPR Data Subject Request Process'],
+    [true,'7-Year Data Retention Policy (BOFIA)'],[false,'Annual External Audit Submission']];
+  var checkHtml = checks.map(function(row) {
     return '<div class="flex" style="margin-bottom:10px;gap:8px">' +
            '<span style="color:' + (row[0]?'var(--green)':'var(--amber)') + ';font-weight:600">' + (row[0]?'&#10003;':'&#9675;') + '</span>' +
            '<span style="font-size:13px;color:' + (row[0]?'var(--gray-700)':'var(--amber)') + '">' + row[1] + '</span></div>';
   }).join('');
-  return '<div class="page-header"><div class="page-title">Compliance &amp; CBN Reporting</div>' +
-    '<div class="page-desc">Regulatory compliance, AML/KYC monitoring, and CBN reporting obligations</div></div>' +
-    '<div class="grid-3" style="margin-bottom:20px">' +
+  var done = checks.filter(function(c){return c[0];}).length;
+  return '<div class="grid-3" style="margin-bottom:20px">' +
     '<div class="stat-card"><div class="stat-label">KYC Pending</div><div class="stat-value text-red">3</div></div>' +
-    '<div class="stat-card"><div class="stat-label">AML Flags</div><div class="stat-value text-amber">1</div></div>' +
-    '<div class="stat-card"><div class="stat-label">CBN Reports Due</div><div class="stat-value">2</div></div></div>' +
+    '<div class="stat-card"><div class="stat-label">AML Flags (Open)</div><div class="stat-value text-amber">1</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Compliance Score</div><div class="stat-value text-lime">' + done + '/' + checks.length + '</div></div></div>' +
     '<div class="grid-2"><div class="card"><div class="card-header"><div class="card-title">CBN License Details</div></div>' + licenseHtml + '</div>' +
     '<div class="card"><div class="card-header"><div class="card-title">Compliance Checklist</div></div>' + checkHtml + '</div></div>';
 }
 
+// ── CBN Returns ───────────────────────────────────────────────────────────
+function renderCompCBNN() {
+  setTimeout(loadCBNNReturn, 0);
+  var d = new Date();
+  var mon = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  return '<div class="grid-2" style="margin-bottom:20px">' +
+    '<div class="card"><div class="card-header"><div class="card-title">Generate CBN Monthly Return</div></div>' +
+    '<div class="form-group"><label class="form-label">Reporting Month</label>' +
+    '<input class="form-input" type="month" id="cbnn-month" value="' + mon + '" style="width:200px"></div>' +
+    '<div class="flex" style="gap:8px">' +
+    '<button class="btn btn-lime" onclick="loadCBNNReturn()">&#9654; Generate</button>' +
+    '<button class="btn btn-outline" onclick="downloadCBNNReturn()">&#8681; Download CSV</button>' +
+    '</div></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">CBN Filing Reference</div></div>' +
+    '<div class="rev-row"><span class="rev-label">License</span><span class="rev-value" style="font-size:12px">CBN/PAY/2024/001847</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Form</span><span class="rev-value" style="font-size:12px">PSP Monthly Operations Return</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Due By</span><span class="rev-value" style="font-size:12px">7th of following month</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Submission</span><span class="rev-value" style="font-size:12px">CBN e-FASS Portal</span></div>' +
+    '</div></div>' +
+    '<div id="cbnn-result"><div class="info-box">Click Generate to query the database for the selected period.</div></div>';
+}
+
+async function loadCBNNReturn() {
+  var el = document.getElementById('cbnn-result');
+  if (!el) return;
+  var m = document.getElementById('cbnn-month');
+  var month = m ? m.value : '';
+  el.innerHTML = '<div class="info-box">&#8987; Querying database...</div>';
+  var res = await apiFetch('/compliance/cbnn-return' + (month ? '?month=' + month : ''));
+  if (!res || !res.status) {
+    el.innerHTML = '<div class="warn-box">&#9888; ' + (res && res.message ? res.message : 'Failed to load') + '</div>'; return;
+  }
+  var d = res.data; var s = d.summary;
+  window.__lastCBNNData = d;
+  var channelRows = Object.entries(d.by_channel || {}).map(function(e) {
+    var v = e[1];
+    return '<tr><td><span class="tag">' + e[0] + '</span></td><td class="mono">' + (v.success_count||0).toLocaleString() +
+      '</td><td class="mono">' + (v.failed_count||0).toLocaleString() + '</td><td class="mono">&#8358;' +
+      Number(v.total_volume||0).toLocaleString(undefined,{minimumFractionDigits:2}) + '</td></tr>';
+  }).join('') || '<tr><td colspan="4" style="color:var(--gray-400);text-align:center;padding:14px">No transactions for this period</td></tr>';
+  var merchantRows = (d.by_merchant || []).slice(0,10).map(function(m) {
+    return '<tr><td class="mono" style="font-size:11px">' + m.merchantCode + '</td><td>' + m.businessName +
+      '</td><td class="mono">' + (m.success_count||0).toLocaleString() + '</td><td class="mono">&#8358;' +
+      Number(m.total_volume||0).toLocaleString(undefined,{minimumFractionDigits:2}) + '</td><td class="mono text-lime">&#8358;' +
+      Number(m.total_fees||0).toLocaleString(undefined,{minimumFractionDigits:2}) + '</td></tr>';
+  }).join('') || '<tr><td colspan="5" style="color:var(--gray-400);text-align:center;padding:14px">No merchant data</td></tr>';
+  el.innerHTML = '<div class="card" style="margin-bottom:16px"><div class="card-header">' +
+    '<div><div class="card-title">Monthly Return &mdash; ' + d.period.month + '</div>' +
+    '<div class="card-subtitle">Entity: ' + d.entity + ' &middot; ' + d.cbn_license + '</div></div>' +
+    '<span class="badge badge-green">GENERATED</span></div>' +
+    '<div class="stats-grid">' +
+    '<div class="stat-card card-sm"><div class="stat-label">Total Transactions</div><div class="stat-value" style="font-size:20px">' + (s.total_transactions||0).toLocaleString() + '</div></div>' +
+    '<div class="stat-card card-sm"><div class="stat-label">Total Volume</div><div class="stat-value" style="font-size:20px">&#8358;' + Number(s.total_volume_ngn||0).toLocaleString(undefined,{maximumFractionDigits:0}) + '</div></div>' +
+    '<div class="stat-card card-sm"><div class="stat-label">Fees Collected</div><div class="stat-value" style="font-size:20px">&#8358;' + Number(s.total_fees_ngn||0).toLocaleString(undefined,{maximumFractionDigits:0}) + '</div></div>' +
+    '<div class="stat-card card-sm"><div class="stat-label">Paylode Net</div><div class="stat-value" style="font-size:20px">&#8358;' + Number(s.paylode_net_ngn||0).toLocaleString(undefined,{maximumFractionDigits:0}) + '</div></div>' +
+    '</div></div>' +
+    '<div class="grid-2">' +
+    '<div class="card"><div class="card-header"><div class="card-title">By Channel</div></div>' +
+    '<div class="table-wrap"><table><thead><tr><th>Channel</th><th>Success</th><th>Failed</th><th>Volume</th></tr></thead><tbody>' + channelRows + '</tbody></table></div></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">By Merchant (Top 10)</div></div>' +
+    '<div class="table-wrap"><table><thead><tr><th>Code</th><th>Name</th><th>Txns</th><th>Volume</th><th>Fees</th></tr></thead><tbody>' + merchantRows + '</tbody></table></div></div>' +
+    '</div>';
+}
+
+function downloadCBNNReturn() {
+  var d = window.__lastCBNNData;
+  if (!d) { alert('Generate the report first.'); return; }
+  var lines = [
+    '"CBN MONTHLY RETURN — PAYLODE SERVICES LIMITED"',
+    '"License:","' + d.cbn_license + '"',
+    '"Period:","' + d.period.month + '"',
+    '"Generated:","' + d.generated_at + '"',
+    '','"SUMMARY"',
+    '"Total Transactions",' + d.summary.total_transactions,
+    '"Total Volume (NGN)",' + d.summary.total_volume_ngn,
+    '"Fees Collected (NGN)",' + d.summary.total_fees_ngn,
+    '"Rail Costs (NGN)",' + d.summary.total_rail_cost_ngn,
+    '"Paylode Net (NGN)",' + d.summary.paylode_net_ngn,
+    '','"BY CHANNEL"','"Channel","Success Txns","Failed Txns","Volume (NGN)"',
+  ];
+  Object.entries(d.by_channel || {}).forEach(function(e) {
+    lines.push('"' + e[0] + '",' + e[1].success_count + ',' + e[1].failed_count + ',' + e[1].total_volume);
+  });
+  lines.push('','"BY MERCHANT"','"Code","Business Name","Success Txns","Volume (NGN)","Fees (NGN)"');
+  (d.by_merchant || []).forEach(function(m) {
+    lines.push('"' + m.merchantCode + '","' + m.businessName + '",' + m.success_count + ',' + m.total_volume + ',' + m.total_fees);
+  });
+  var blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'cbnn-return-' + d.period.month + '.csv'; a.click();
+}
+
+// ── STR Filing ────────────────────────────────────────────────────────────
+function renderCompSTR() {
+  setTimeout(loadSTRData, 0);
+  return '<div class="info-box" style="margin-bottom:16px">&#8505; Suspicious Transaction Reports must be filed with NFIU within <strong>72 hours</strong> of detecting suspicious activity (CBN AML/CFT Guidelines 2022, Section 7.3).</div>' +
+    '<div class="grid-2">' +
+    '<div id="str-aml-box"><div class="card"><div class="card-header"><div class="card-title">Open AML Flags</div></div><div style="padding:14px;color:var(--gray-400)">Loading...</div></div></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">File New STR</div></div>' +
+    '<div class="form-group"><label class="form-label">Merchant ID (optional)</label><input class="form-input" id="str-mid" placeholder="UUID of merchant"></div>' +
+    '<div class="form-group"><label class="form-label">Transaction References</label><input class="form-input" id="str-refs" placeholder="TXN-..., TXN-... (comma-separated)"></div>' +
+    '<div class="form-group"><label class="form-label">Risk Level</label>' +
+    '<select class="form-input form-select" id="str-risk"><option value="HIGH">HIGH</option><option value="CRITICAL">CRITICAL</option><option value="MEDIUM">MEDIUM</option></select></div>' +
+    '<div class="form-group"><label class="form-label">Narrative *</label>' +
+    '<textarea class="form-input" id="str-narrative" rows="4" placeholder="Describe the suspicious activity, patterns observed, and basis for filing..."></textarea></div>' +
+    '<button class="btn btn-lime" onclick="submitSTR()">Create STR Draft</button>' +
+    '<div id="str-msg" style="margin-top:8px"></div></div></div>' +
+    '<div class="section-gap"><div id="str-list"><div class="info-box">Loading STR history...</div></div></div>';
+}
+
+async function loadSTRData() {
+  var [flagRes, strRes] = await Promise.all([apiFetch('/compliance/aml-flags'), apiFetch('/compliance/str')]);
+  var flagEl = document.getElementById('str-aml-box');
+  if (flagEl) {
+    var flags = (flagRes && flagRes.status) ? (flagRes.data || []) : [];
+    var flagHtml = flags.map(function(f) {
+      var rb = {HIGH:'badge-red',CRITICAL:'badge-red',MEDIUM:'badge-amber',LOW:'badge-gray'}[f.riskLevel]||'badge-gray';
+      return '<div style="padding:10px 0;border-bottom:1px solid var(--gray-100)">' +
+        '<div class="flex-between" style="margin-bottom:4px"><span style="font-size:12px;font-weight:600">' + (f.merchant?f.merchant.businessName:'—') + '</span><span class="badge ' + rb + '">' + f.riskLevel + '</span></div>' +
+        '<div style="font-size:11px;color:var(--gray-500)">' + f.flagType + (f.transaction?' &middot; '+f.transaction.reference.slice(-10):'') + '</div>' +
+        '<div style="font-size:11px;color:var(--gray-400)">' + new Date(f.createdAt).toLocaleDateString() + '</div></div>';
+    }).join('') || '<div style="padding:14px;color:var(--gray-400);text-align:center">No open AML flags &#10003;</div>';
+    flagEl.innerHTML = '<div class="card"><div class="card-header"><div class="card-title">Open AML Flags</div><span class="badge badge-amber">' + flags.length + ' open</span></div>' + flagHtml + '</div>';
+  }
+  var listEl = document.getElementById('str-list');
+  if (listEl) {
+    var strs = (strRes && strRes.status) ? (strRes.data || []) : [];
+    var rows = strs.map(function(s) {
+      var sb = {draft:'badge-amber',submitted:'badge-blue',acknowledged:'badge-green'}[s.status]||'badge-gray';
+      var rb = {HIGH:'badge-red',CRITICAL:'badge-red',MEDIUM:'badge-amber'}[s.riskLevel]||'badge-gray';
+      var action = s.status==='draft'
+        ? '<button class="btn btn-lime btn-sm" onclick="submitSTRToNFIU(\'' + s.id + '\')">Submit to NFIU</button>'
+        : (s.nfiuRef ? '<span class="mono" style="font-size:11px">' + s.nfiuRef + '</span>' : '<span style="color:var(--gray-400)">Submitted</span>');
+      return '<tr><td class="mono" style="font-size:11px">' + s.reference + '</td>' +
+        '<td>' + (s.merchant?s.merchant.businessName:'—') + '</td>' +
+        '<td><span class="badge ' + rb + '">' + s.riskLevel + '</span></td>' +
+        '<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">' + s.narrative + '</td>' +
+        '<td><span class="badge ' + sb + '">' + s.status + '</span></td>' +
+        '<td style="font-size:12px">' + new Date(s.createdAt).toLocaleDateString() + '</td>' +
+        '<td>' + action + '</td></tr>';
+    }).join('') || '<tr><td colspan="7" style="text-align:center;padding:14px;color:var(--gray-400)">No STR filings yet</td></tr>';
+    listEl.innerHTML = '<div class="card"><div class="card-header"><div class="card-title">STR Filing History</div><span class="badge badge-gray">' + strs.length + ' total</span></div>' +
+      '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Merchant</th><th>Risk</th><th>Narrative</th><th>Status</th><th>Date</th><th>Action</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+  }
+}
+
+async function submitSTR() {
+  var mid = document.getElementById('str-mid').value.trim();
+  var refs = document.getElementById('str-refs').value.trim();
+  var risk = document.getElementById('str-risk').value;
+  var narrative = document.getElementById('str-narrative').value.trim();
+  var msg = document.getElementById('str-msg');
+  if (!narrative) { if (msg) msg.innerHTML = '<div class="warn-box">Narrative is required.</div>'; return; }
+  var res = await apiFetch('/compliance/str', { method:'POST', body:JSON.stringify({ merchantId:mid||undefined, transactionRefs:refs?refs.split(',').map(function(r){return r.trim();}):[], riskLevel:risk, narrative }) });
+  if (msg) msg.innerHTML = res&&res.status ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; STR draft: ' + res.data.reference + '</div>' : '<div class="warn-box">&#9888; ' + (res&&res.message||'Error') + '</div>';
+  if (res&&res.status) { document.getElementById('str-narrative').value=''; loadSTRData(); }
+}
+
+async function submitSTRToNFIU(id) {
+  var ref = prompt('NFIU acknowledgement reference (optional):');
+  if (ref === null) return;
+  var res = await apiFetch('/compliance/str/' + id + '/submit', { method:'PATCH', body:JSON.stringify({nfiuRef:ref||undefined}) });
+  if (res&&res.status) { alert('STR marked as submitted to NFIU.'); loadSTRData(); }
+  else alert('Error: ' + (res&&res.message||'Failed'));
+}
+
+// ── Data Retention ────────────────────────────────────────────────────────
+function renderCompRetention() {
+  setTimeout(loadRetentionData, 0);
+  var policyRows = [['Transaction Records','7 years','BOFIA 2020 s.59'],['Customer ID / KYC','10 years post-closure','CBN AML/CFT Guidelines'],
+    ['Audit Logs','7 years (immutable)','CBN Guidelines'],['Webhook Logs','3 years','Best practice'],
+    ['Settlement Records','7 years','BOFIA 2020'],['Chargeback Records','7 years','CBN Dispute Rules']].map(function(r) {
+    return '<div class="rev-row"><div><div class="rev-label" style="font-size:12px">' + r[0] + '</div><div style="font-size:10px;color:var(--gray-400)">' + r[2] + '</div></div><span class="rev-value" style="font-size:12px;color:var(--gray-600)">' + r[1] + '</span></div>';
+  }).join('');
+  return '<div class="warn-box" style="margin-bottom:16px">&#9888; <strong>BOFIA 2020, Section 59</strong> requires all transaction and customer records to be retained for a minimum of <strong>7 years</strong>. Deletion requires written CCO approval and must be audit-logged.</div>' +
+    '<div id="retention-stats"><div class="info-box">Loading retention statistics...</div></div>' +
+    '<div class="section-gap"><div class="grid-2">' +
+    '<div class="card"><div class="card-header"><div class="card-title">Retention Schedule</div></div>' + policyRows + '</div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">Disposition Controls</div></div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:16px">&#8505; Permanent deletion requires written approval from the Chief Compliance Officer and is logged to the immutable audit trail.</div>' +
+    '<div class="form-group"><label class="form-label">Retention Review Cycle</label><select class="form-input form-select"><option>Annually (Recommended)</option><option>Quarterly</option></select></div>' +
+    '<div class="form-group"><label class="form-label">Auto-Archive Threshold</label><select class="form-input form-select"><option>5 years (move to cold storage)</option><option>7 years</option></select></div>' +
+    '<button class="btn btn-outline btn-sm" onclick="alert(\'Config saved (demo)\')">Save Config</button></div></div></div>';
+}
+
+async function loadRetentionData() {
+  var el = document.getElementById('retention-stats');
+  if (!el) return;
+  var res = await apiFetch('/compliance/retention');
+  if (!res || !res.status) { el.innerHTML = '<div class="warn-box">&#9888; Failed to load retention data.</div>'; return; }
+  var d = res.data; var t = d.transactions;
+  var ok = d.status === 'COMPLIANT';
+  var bg = ok?'#f0fdf4':'#fffbeb'; var br = ok?'#bbf7d0':'#fde68a'; var tx = ok?'#166534':'#92400e';
+  var oldest = t.oldest_record ? new Date(t.oldest_record).toLocaleDateString() : 'No records yet';
+  el.innerHTML = '<div style="background:' + bg + ';border:1px solid ' + br + ';border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">' +
+    '<div><div style="font-weight:700;font-size:14px;color:' + tx + '">' + (ok?'&#10003; Retention Compliant':'&#9888; Review Required — Records Exist Past 7 Years') + '</div>' +
+    '<div style="font-size:12px;color:' + tx + ';margin-top:2px">' + d.policy.regulation + '</div></div>' +
+    '<span class="badge ' + (ok?'badge-green':'badge-amber') + '">' + (ok?'COMPLIANT':'ACTION NEEDED') + '</span></div>' +
+    '<div class="stats-grid" style="margin-bottom:16px">' +
+    '<div class="stat-card card-sm"><div class="stat-label"><span class="dot" style="background:var(--green)"></span>Under 1 Year</div><div class="stat-value" style="font-size:20px">' + (t.under_1yr||0).toLocaleString() + '</div><div class="stat-sub">transactions</div></div>' +
+    '<div class="stat-card card-sm"><div class="stat-label"><span class="dot" style="background:var(--blue)"></span>1 &ndash; 3 Years</div><div class="stat-value" style="font-size:20px">' + (t['1_to_3yr']||0).toLocaleString() + '</div><div class="stat-sub">transactions</div></div>' +
+    '<div class="stat-card card-sm"><div class="stat-label"><span class="dot" style="background:var(--amber)"></span>3 &ndash; 7 Years</div><div class="stat-value" style="font-size:20px">' + (t['3_to_7yr']||0).toLocaleString() + '</div><div class="stat-sub">transactions</div></div>' +
+    '<div class="stat-card card-sm"><div class="stat-label"><span class="dot" style="background:' + (t.over_7yr>0?'var(--red)':'var(--gray-300)') + '"></span>Over 7 Years</div><div class="stat-value" style="font-size:20px;color:' + (t.over_7yr>0?'var(--red)':'var(--gray-400)') + '">' + (t.over_7yr||0).toLocaleString() + '</div><div class="stat-sub">' + (t.over_7yr>0?'&#9888; review for disposition':'compliant') + '</div></div></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">Record Inventory</div></div>' +
+    '<div class="rev-row"><span class="rev-label">User Accounts</span><span class="rev-value">' + (d.other_records.user_accounts||0).toLocaleString() + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">KYC Submissions</span><span class="rev-value">' + (d.other_records.kyc_submissions||0).toLocaleString() + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Audit Log Entries</span><span class="rev-value">' + (d.other_records.audit_logs||0).toLocaleString() + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Oldest Transaction</span><span class="rev-value">' + oldest + '</span></div></div>';
+}
+
+// ── NDPR / Privacy ────────────────────────────────────────────────────────
+function renderCompNDPR() {
+  setTimeout(loadDSRData, 0);
+  var oblRows = [['Response Deadline','72 hours from receipt'],['Regulator','NITDA — nitda.gov.ng'],
+    ['Penalty (breach)','Up to 2% annual turnover or ₦10M'],['DPO Requirement','Mandatory for data processors'],
+    ['Lawful Basis','Consent or legitimate interest'],['Privacy Policy','Published and current']].map(function(r) {
+    return '<div class="rev-row"><span class="rev-label" style="font-size:12px">' + r[0] + '</span><span class="rev-value" style="font-size:12px;color:var(--gray-600)">' + r[1] + '</span></div>';
+  }).join('');
+  return '<div class="info-box" style="margin-bottom:16px">&#8505; Under <strong>NDPR 2019</strong>, data subjects have the right to <strong>access</strong>, <strong>correct</strong>, <strong>delete</strong>, and <strong>port</strong> their personal data. All requests must be processed within 72 hours.</div>' +
+    '<div class="grid-2">' +
+    '<div class="card"><div class="card-header"><div class="card-title">Log Data Subject Request</div></div>' +
+    '<div class="form-group"><label class="form-label">Subject Name *</label><input class="form-input" id="dsr-name" placeholder="Full name"></div>' +
+    '<div class="form-group"><label class="form-label">Subject Email *</label><input class="form-input" type="email" id="dsr-email" placeholder="email@example.com"></div>' +
+    '<div class="form-group"><label class="form-label">Request Type *</label>' +
+    '<select class="form-input form-select" id="dsr-type">' +
+    '<option value="access">Right of Access &mdash; export personal data</option>' +
+    '<option value="deletion">Right to Erasure &mdash; delete personal data</option>' +
+    '<option value="correction">Right to Rectification &mdash; correct inaccurate data</option>' +
+    '<option value="portability">Right to Portability &mdash; structured data transfer</option>' +
+    '</select></div>' +
+    '<div class="form-group"><label class="form-label">Request Details *</label>' +
+    '<textarea class="form-input" id="dsr-details" rows="3" placeholder="Describe what the subject is requesting..."></textarea></div>' +
+    '<button class="btn btn-lime" onclick="submitDSR()">Log Request</button>' +
+    '<div id="dsr-msg" style="margin-top:8px"></div></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">NDPR Obligations</div></div>' + oblRows + '</div></div>' +
+    '<div class="section-gap"><div id="dsr-list"><div class="info-box">Loading requests...</div></div></div>';
+}
+
+async function loadDSRData() {
+  var el = document.getElementById('dsr-list');
+  if (!el) return;
+  var res = await apiFetch('/compliance/dsr');
+  var dsrs = (res && res.status) ? (res.data || []) : [];
+  var pending = dsrs.filter(function(d){return d.status==='pending';}).length;
+  var rows = dsrs.map(function(d) {
+    var sb = {pending:'badge-amber',processing:'badge-blue',fulfilled:'badge-green',rejected:'badge-red'}[d.status]||'badge-gray';
+    var tb = {access:'badge-blue',deletion:'badge-red',correction:'badge-amber',portability:'badge-purple'}[d.requestType]||'badge-gray';
+    var actions = (d.status==='pending'||d.status==='processing')
+      ? '<button class="btn btn-outline btn-sm" onclick="fulfillDSR(\'' + d.id + '\')">&#10003; Fulfill</button>&nbsp;<button class="btn btn-outline btn-sm" onclick="rejectDSR(\'' + d.id + '\')">Reject</button>'
+      : (d.responseNotes ? '<span style="font-size:11px;color:var(--gray-400)">' + d.responseNotes.slice(0,40) + (d.responseNotes.length>40?'...':'') + '</span>' : '&mdash;');
+    return '<tr><td class="mono" style="font-size:11px">' + d.reference + '</td>' +
+      '<td>' + d.subjectName + '<div style="font-size:11px;color:var(--gray-400)">' + d.subjectEmail + '</div></td>' +
+      '<td><span class="badge ' + tb + '">' + d.requestType + '</span></td>' +
+      '<td><span class="badge ' + sb + '">' + d.status + '</span></td>' +
+      '<td style="font-size:12px">' + new Date(d.createdAt).toLocaleDateString() + '</td>' +
+      '<td>' + actions + '</td></tr>';
+  }).join('') || '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--gray-400)">No data subject requests yet</td></tr>';
+  el.innerHTML = '<div class="card"><div class="card-header"><div class="card-title">Data Subject Request Log</div><span class="badge badge-amber">' + pending + ' pending</span></div>' +
+    '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Subject</th><th>Type</th><th>Status</th><th>Received</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+}
+
+async function submitDSR() {
+  var name = document.getElementById('dsr-name').value.trim();
+  var email = document.getElementById('dsr-email').value.trim();
+  var type = document.getElementById('dsr-type').value;
+  var details = document.getElementById('dsr-details').value.trim();
+  var msg = document.getElementById('dsr-msg');
+  if (!name || !email || !details) { if(msg) msg.innerHTML = '<div class="warn-box">All fields are required.</div>'; return; }
+  var res = await apiFetch('/compliance/dsr', { method:'POST', body:JSON.stringify({subjectName:name, subjectEmail:email, requestType:type, details}) });
+  if (msg) msg.innerHTML = res&&res.status ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; Request logged: ' + res.data.reference + '</div>' : '<div class="warn-box">&#9888; ' + (res&&res.message||'Error') + '</div>';
+  if (res&&res.status) { document.getElementById('dsr-name').value=''; document.getElementById('dsr-email').value=''; document.getElementById('dsr-details').value=''; loadDSRData(); }
+}
+
+async function fulfillDSR(id) {
+  var notes = prompt('Response notes (optional):');
+  if (notes === null) return;
+  var res = await apiFetch('/compliance/dsr/' + id + '/fulfill', { method:'PATCH', body:JSON.stringify({responseNotes:notes||undefined}) });
+  if (res&&res.status) loadDSRData(); else alert('Error: ' + (res&&res.message||'Failed'));
+}
+
+async function rejectDSR(id) {
+  var notes = prompt('Reason for rejection:');
+  if (!notes) return;
+  var res = await apiFetch('/compliance/dsr/' + id + '/reject', { method:'PATCH', body:JSON.stringify({responseNotes:notes}) });
+  if (res&&res.status) loadDSRData(); else alert('Error: ' + (res&&res.message||'Failed'));
+}
+
 function renderSettings() {
+  var user = {};
+  try { user = JSON.parse(localStorage.getItem('paylode_user') || '{}'); } catch(e) {}
+  var isStaff = ['SUPER_ADMIN','COMPLIANCE_OFFICER','ADMIN'].indexOf(user.role) > -1;
+  var tfaEnabled = user.totpEnabled;
+  var tfaSection = isStaff ? (
+    '<div class="section-gap"><div class="card"><div class="card-header"><div class="card-title">Two-Factor Authentication</div>' +
+    '<span class="badge ' + (tfaEnabled?'badge-green':'badge-amber') + '">' + (tfaEnabled?'Enabled':'Not enabled') + '</span></div>' +
+    (tfaEnabled
+      ? '<div class="info-box" style="margin-bottom:16px;font-size:12px">&#10003; 2FA is active. Every login requires your authenticator code.</div>' +
+        '<div class="form-grid"><div class="form-group"><label class="form-label">Current Password</label><input class="form-input" type="password" id="tfa-dis-pw"></div>' +
+        '<div class="form-group"><label class="form-label">Authenticator Code</label><input class="form-input" id="tfa-dis-code" placeholder="6-digit code" maxlength="6"></div></div>' +
+        '<button class="btn btn-outline" onclick="disable2FA()">Disable 2FA</button>'
+      : '<div class="warn-box" style="margin-bottom:16px;font-size:12px">&#9888; 2FA is not enabled. All staff accounts must enable 2FA before go-live.</div>' +
+        '<button class="btn btn-lime" onclick="setup2FA()">Set Up 2FA (Recommended)</button>'
+    ) +
+    '<div id="tfa-msg" style="margin-top:8px"></div></div></div>'
+  ) : '';
   return '<div class="page-header"><div class="page-title">Platform Settings</div></div><div class="grid-2">' +
     '<div class="card"><div class="card-header"><div class="card-title">Webhook Global Settings</div></div>' +
     '<div class="form-group"><label class="form-label">Webhook Signing Secret</label><input class="form-input mono" type="password" value="whsec_paylode_xk8m2..."></div>' +
@@ -315,7 +783,7 @@ function renderSettings() {
     '<div class="form-group"><label class="form-label">Single Transaction Cap (&#8358;)</label><input class="form-input" value="5,000,000"></div>' +
     '<div class="form-group"><label class="form-label">Daily Merchant Limit Default (&#8358;)</label><input class="form-input" value="50,000,000"></div>' +
     '<div class="form-group"><label class="form-label">USSD Transaction Limit (&#8358;)</label><input class="form-input" value="100,000"></div>' +
-    '<button class="btn btn-primary btn-sm">Save Limits</button></div></div>';
+    '<button class="btn btn-primary btn-sm">Save Limits</button></div></div>' + tfaSection;
 }
 
 function renderAggOverview() {
@@ -412,14 +880,21 @@ function renderMerchOverview() {
            '<td class="mono">&#8358;' + t.amount.toLocaleString() + '</td>' +
            '<td><span class="tag">' + t.channel + '</span></td><td>' + statusBadge(t.status) + '</td></tr>';
   }).join('');
+  setTimeout(initMerchCharts, 0);
   return '<div class="page-header"><div class="page-title">Merchant Dashboard</div>' +
     '<div class="page-desc">Bolt Nigeria &mdash; Payment performance overview</div></div>' +
     '<div class="stats-grid">' +
     '<div class="stat-card"><div class="stat-label">Today\'s Volume</div><div class="stat-value">&#8358;12.1M</div><div class="stat-sub"><span class="stat-change up">&#8593; 8.2%</span> vs yesterday</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Success Rate</div><div class="stat-value">98.6%</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Success Rate</div><div class="stat-value">98.6%</div><div class="stat-sub"><span class="stat-change up">&#8593; 0.3%</span> vs last week</div></div>' +
     '<div class="stat-card"><div class="stat-label">Settled Today</div><div class="stat-value">&#8358;11.8M</div><div class="stat-sub">T+1 settlement</div></div>' +
     '<div class="stat-card"><div class="stat-label">Processing Rate</div><div class="stat-value text-lime">1.2%</div><div class="stat-sub">Growth tier rate</div></div></div>' +
-    '<div class="grid-2">' +
+    '<div class="section-gap"><div class="grid-2">' +
+    '<div class="card"><div class="card-header"><div><div class="card-title">Daily Volume (7 Days)</div><div class="card-subtitle">Transaction volume in &#8358;M</div></div></div>' +
+    '<div style="position:relative;height:200px"><canvas id="merch-vol-chart"></canvas></div></div>' +
+    '<div class="card"><div class="card-header"><div><div class="card-title">Payment Channels</div><div class="card-subtitle">Today\'s split by method</div></div></div>' +
+    '<div style="position:relative;height:200px"><canvas id="merch-channel-chart"></canvas></div></div>' +
+    '</div></div>' +
+    '<div class="section-gap"><div class="grid-2">' +
     '<div class="card"><div class="card-header"><div class="card-title">Recent Transactions</div>' +
     '<button class="btn btn-outline btn-sm" onclick="navigate(\'merch_transactions\')">View All</button></div>' +
     '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Amount</th><th>Channel</th><th>Status</th></tr></thead>' +
@@ -429,7 +904,61 @@ function renderMerchOverview() {
     '<div class="rev-row"><span class="rev-label">Processing Fees (1.2%)</span><span class="rev-value text-red">&#8358;145,200</span></div>' +
     '<div class="rev-net"><span style="font-weight:700;font-size:13px;color:#166534">Your Net Settlement</span><span style="font-weight:800;font-size:18px;color:#166534">&#8358;11,954,800</span></div>' +
     '<div class="divider"></div><div style="font-size:12px;color:var(--gray-400)">Settlement disbursed by 9AM next business day to GTBank ****1234</div>' +
-    '</div></div>';
+    '</div></div></div>';
+}
+
+function initMerchCharts() {
+  if (typeof Chart === 'undefined') return;
+  var ctx1 = document.getElementById('merch-vol-chart');
+  if (ctx1) {
+    new Chart(ctx1, {
+      type: 'bar',
+      data: {
+        labels: ['Mon','Tue','Wed','Thu','Fri','Sat','Today'],
+        datasets: [{
+          label: 'Volume (₦M)',
+          data: [8.2, 11.4, 9.8, 13.1, 10.7, 6.4, 12.1],
+          backgroundColor: 'rgba(125,197,52,0.75)',
+          borderColor: '#5fa01f',
+          borderWidth: 1,
+          borderRadius: 4,
+          borderSkipped: false
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, border: { display: false }, grid: { color: 'rgba(0,0,0,0.05)' },
+               ticks: { font: { size: 11 }, color: '#64748b', callback: function(v) { return '₦' + v + 'M'; } } },
+          x: { grid: { display: false }, border: { display: false },
+               ticks: { font: { size: 11 }, color: '#64748b' } }
+        }
+      }
+    });
+  }
+  var ctx2 = document.getElementById('merch-channel-chart');
+  if (ctx2) {
+    new Chart(ctx2, {
+      type: 'doughnut',
+      data: {
+        labels: ['Card', 'Bank Transfer', 'USSD'],
+        datasets: [{
+          data: [58, 29, 13],
+          backgroundColor: ['#3b82f6', '#7dc534', '#f59e0b'],
+          borderWidth: 0,
+          hoverOffset: 6
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 14, usePointStyle: true, color: '#475569' } }
+        },
+        cutout: '68%'
+      }
+    });
+  }
 }
 
 function renderMerchTransactions() {
@@ -448,12 +977,20 @@ function renderMerchTransactions() {
 }
 
 function renderMerchSettlements() {
+  var d = new Date();
+  var mon = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
   var rows = [['26 May 2025','25 May','&#8358;11,200,000','&#8358;134,400','&#8358;11,065,600','GTB ****1234','pending'],
     ['25 May 2025','24 May','&#8358;9,800,000','&#8358;117,600','&#8358;9,682,400','GTB ****1234','completed'],
     ['24 May 2025','23 May','&#8358;12,400,000','&#8358;148,800','&#8358;12,251,200','GTB ****1234','completed']].map(function(r) {
     return '<tr>' + r.map(function(v,i){ return '<td class="' + (i>=2&&i<=4?'mono':'') + '">' + (i===6?statusBadge(v):v) + '</td>'; }).join('') + '</tr>';
   }).join('');
-  return '<div class="page-header"><div class="page-title">Settlements</div></div>' +
+  return '<div class="page-header flex-between"><div><div class="page-title">Settlements</div></div></div>' +
+    '<div class="card" style="margin-bottom:16px"><div class="card-header"><div class="card-title">Monthly Statement</div></div>' +
+    '<div class="flex" style="gap:10px;align-items:center;flex-wrap:wrap">' +
+    '<input class="form-input" type="month" id="stmt-month" value="' + mon + '" style="width:180px">' +
+    '<button class="btn btn-lime btn-sm" onclick="downloadStatement()">&#8681; Download PDF</button>' +
+    '<button class="btn btn-outline btn-sm" onclick="emailStatement()">&#9993; Email to Me</button>' +
+    '</div><div class="form-hint" style="margin-top:8px">Statement is generated from live transaction data for the selected month.</div></div>' +
     '<div class="card"><div class="table-wrap"><table>' +
     '<thead><tr><th>Settlement Date</th><th>Period</th><th>Gross</th><th>Fees</th><th>Net Settled</th><th>Destination</th><th>Status</th></tr></thead>' +
     '<tbody>' + rows + '</tbody></table></div></div>';
@@ -549,11 +1086,68 @@ function renderSdkWebhookDocs() {
 }
 
 function renderSdkMobile() {
-  return '<div class="page-header"><div class="page-title">Mobile SDKs</div></div><div class="grid-2">' +
-    '<div class="card"><div style="font-size:18px;margin-bottom:8px">&#128241; Android (Kotlin)</div>' +
-    '<div class="code-block"><span class="comment">// build.gradle</span>\nimplementation <span class="str">\'ng.paylode:android-sdk:1.4.0\'</span>\n\n<span class="kw">val</span> p = PaylodeSDK.<span class="fn">Builder</span>(this).<span class="fn">setPublicKey</span>(<span class="str">"pk_live_..."</span>).<span class="fn">build</span>()\np.<span class="fn">charge</span>(email=<span class="str">"user@email.com"</span>, amount=<span class="num">5000000</span>, onSuccess={ ref -&gt; <span class="fn">verify</span>(ref) })</div></div>' +
-    '<div class="card"><div style="font-size:18px;margin-bottom:8px">&#127822; iOS (Swift)</div>' +
-    '<div class="code-block"><span class="kw">let</span> config = PaylodeConfig(publicKey: <span class="str">"pk_live_..."</span>, email: <span class="str">"user@email.com"</span>, amount: <span class="num">5000000</span>)\nPaylodeCheckout.<span class="fn">present</span>(config, from: self) { result <span class="kw">in</span>\n  <span class="kw">switch</span> result {\n  <span class="kw">case</span> .<span class="fn">success</span>(<span class="kw">let</span> ref): <span class="fn">verify</span>(ref)\n  <span class="kw">case</span> .<span class="fn">failure</span>(<span class="kw">let</span> e): <span class="fn">showError</span>(e)\n  }\n}</div></div></div>';
+  return '<div class="page-header"><div class="page-title">Published SDKs</div>' +
+    '<div class="page-desc">Official Paylode server-side libraries — available on npm, PyPI, and Packagist.</div></div>' +
+    '<div class="grid-3" style="margin-bottom:24px">' +
+
+    '<div class="card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+    '<div style="width:38px;height:38px;background:#026e00;border-radius:8px;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:13px">JS</div>' +
+    '<div><div style="font-weight:700;font-size:14px">Node.js SDK</div>' +
+    '<div style="font-size:11px;color:var(--gray-400)">npm install paylode-node</div></div></div>' +
+    '<div class="code-block" style="font-size:11px">' +
+    '<span class="kw">const</span> Paylode = <span class="fn">require</span>(<span class="str">\'paylode-node\'</span>);\n' +
+    '<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">Paylode</span>(<span class="str">\'sk_live_...\'</span>);\n\n' +
+    '<span class="comment">// Initialize transaction</span>\n' +
+    '<span class="kw">const</span> txn = <span class="kw">await</span> client.transaction.<span class="fn">initialize</span>({\n' +
+    '  email: <span class="str">\'user@example.com\'</span>,\n' +
+    '  amount: <span class="num">5000000</span>, <span class="comment">// kobo</span>\n' +
+    '  reference: <span class="str">\'TXN-\'</span> + Date.<span class="fn">now</span>()\n' +
+    '});\n\n' +
+    '<span class="comment">// Verify payment</span>\n' +
+    '<span class="kw">const</span> result = <span class="kw">await</span> client.transaction.<span class="fn">verify</span>(ref);</div></div>' +
+
+    '<div class="card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+    '<div style="width:38px;height:38px;background:#3776ab;border-radius:8px;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:13px">PY</div>' +
+    '<div><div style="font-weight:700;font-size:14px">Python SDK</div>' +
+    '<div style="font-size:11px;color:var(--gray-400)">pip install paylode-python</div></div></div>' +
+    '<div class="code-block" style="font-size:11px">' +
+    '<span class="kw">import</span> paylode\nclient = paylode.<span class="fn">Paylode</span>(<span class="str">\'sk_live_...\'</span>)\n\n' +
+    '<span class="comment"># Initialize transaction</span>\n' +
+    'txn = client.transaction.<span class="fn">initialize</span>(\n' +
+    '  email=<span class="str">\'user@example.com\'</span>,\n' +
+    '  amount=<span class="num">5000000</span>,\n' +
+    '  reference=<span class="fn">generate_ref</span>()\n' +
+    ')\n\n' +
+    '<span class="comment"># Verify payment</span>\n' +
+    'result = client.transaction.<span class="fn">verify</span>(reference)</div></div>' +
+
+    '<div class="card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+    '<div style="width:38px;height:38px;background:#777bb4;border-radius:8px;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:13px">PHP</div>' +
+    '<div><div style="font-weight:700;font-size:14px">PHP SDK</div>' +
+    '<div style="font-size:11px;color:var(--gray-400)">composer require paylode/paylode-php</div></div></div>' +
+    '<div class="code-block" style="font-size:11px">' +
+    '<span class="kw">use</span> Paylode\\Paylode;\n$client = <span class="kw">new</span> <span class="fn">Paylode</span>(<span class="str">\'sk_live_...\'</span>);\n\n' +
+    '<span class="comment">// Initialize transaction</span>\n' +
+    '$txn = $client->transaction-><span class="fn">initialize</span>([\n' +
+    '  <span class="str">\'email\'</span> => <span class="str">\'user@example.com\'</span>,\n' +
+    '  <span class="str">\'amount\'</span> => <span class="num">5000000</span>\n' +
+    ']);\n\n' +
+    '<span class="comment">// Verify payment</span>\n' +
+    '$result = $client->transaction-><span class="fn">verify</span>($reference);</div></div>' +
+
+    '</div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">Package Registries</div></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">' +
+    '<div style="padding:14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;text-align:center">' +
+    '<div style="font-size:12px;font-weight:700;color:var(--gray-700)">paylode-node</div>' +
+    '<div style="font-size:11px;color:var(--gray-400);margin-top:2px">npmjs.com</div></div>' +
+    '<div style="padding:14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;text-align:center">' +
+    '<div style="font-size:12px;font-weight:700;color:var(--gray-700)">paylode-python</div>' +
+    '<div style="font-size:11px;color:var(--gray-400);margin-top:2px">pypi.org</div></div>' +
+    '<div style="padding:14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;text-align:center">' +
+    '<div style="font-size:12px;font-weight:700;color:var(--gray-700)">paylode/paylode-php</div>' +
+    '<div style="font-size:11px;color:var(--gray-400);margin-top:2px">packagist.org</div></div>' +
+    '</div></div>';
 }
 
 function renderSdkErrors() {
@@ -663,6 +1257,350 @@ function showAddRailModal() {
     '<button class="btn btn-lime" onclick="alert(\'Rail added!\');document.getElementById(\'modal\').style.display=\'none\'">Add Rail</button></div>');
 }
 
+// ── Email Templates page ──────────────────────────────────────────────────
+function renderEmailTemplates() {
+  setTimeout(loadEmailTemplates, 0);
+  return '<div class="page-header flex-between"><div><div class="page-title">Email Templates</div>' +
+    '<div class="page-desc">Branded email templates used for KYC notifications, activations, and statements. Changes apply immediately to all outgoing emails.</div></div>' +
+    '<button class="btn btn-lime" onclick="showNewTplModal()">+ New Template</button></div>' +
+    '<div class="grid-2"><div id="tpl-list"><div class="info-box">Loading templates...</div></div>' +
+    '<div id="tpl-editor" style="display:none"></div></div>';
+}
+
+async function loadEmailTemplates() {
+  var el = document.getElementById('tpl-list');
+  if (!el) return;
+  var res = await apiFetch('/admin/email-templates');
+  var tpls = (res && res.status) ? res.data : [];
+  var html = tpls.map(function(t) {
+    return '<div class="rev-row"><div><div style="font-weight:600;font-size:13px">' + t.name + (t.isSystem ? ' <span class="badge badge-gray" style="font-size:10px">system</span>' : '') + '</div>' +
+      '<div class="mono" style="font-size:10px;color:var(--gray-400);margin-top:2px">' + t.slug + '</div>' +
+      '<div style="font-size:11px;color:var(--gray-500);margin-top:2px">' + t.subject + '</div></div>' +
+      '<div class="flex" style="gap:6px">' +
+      '<span class="badge ' + (t.isActive?'badge-green':'badge-gray') + '">' + (t.isActive?'Active':'Off') + '</span>' +
+      '<button class="btn btn-outline btn-sm" onclick="editTpl(\'' + t.id + '\')">Edit</button>' +
+      (!t.isSystem ? '<button class="btn btn-outline btn-sm" onclick="deleteTpl(\'' + t.id + '\',\'' + t.name.replace(/'/g,"\\'") + '\')">Del</button>' : '') +
+      '</div></div>';
+  }).join('') || '<div style="padding:16px;color:var(--gray-400);text-align:center">No templates yet.</div>';
+  el.innerHTML = '<div class="card"><div class="card-header"><div class="card-title">All Templates</div><span class="badge badge-gray">' + tpls.length + '</span></div>' + html + '</div>';
+}
+
+async function editTpl(id) {
+  var res = await apiFetch('/admin/email-templates/' + id);
+  if (!res||!res.status) return;
+  var t = res.data;
+  var el = document.getElementById('tpl-editor');
+  if (!el) return;
+  el.style.display = 'block';
+  var vars = Array.isArray(t.variables) ? t.variables : [];
+  el.innerHTML = '<div class="card"><div class="card-header"><div class="card-title">Editing: ' + t.name + '</div>' +
+    '<button class="btn btn-outline btn-sm" onclick="document.getElementById(\'tpl-editor\').style.display=\'none\'">Close</button></div>' +
+    (t.isSystem ? '<div class="info-box" style="font-size:12px;margin-bottom:12px">&#8505; System template — slug is read-only.</div>' : '') +
+    '<div class="form-group"><label class="form-label">Name</label><input class="form-input" id="te-name" value="' + t.name.replace(/"/g,'&quot;') + '"></div>' +
+    '<div class="form-group"><label class="form-label">Subject</label><input class="form-input" id="te-subj" value="' + t.subject.replace(/"/g,'&quot;') + '"></div>' +
+    '<div class="form-group"><label class="form-label">Variables</label>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:4px">' + vars.map(function(v){return '<span class="tag" style="cursor:pointer" onclick="insertVar(\'{{'+v+'}}\')">{{'+v+'}}</span>';}).join('') + '</div>' +
+    '<div style="font-size:11px;color:var(--gray-400);margin-top:4px">Click a variable to insert at cursor</div></div>' +
+    '<div class="form-group"><label class="form-label">HTML Body</label>' +
+    '<textarea class="form-input" id="te-body" rows="14" style="font-family:var(--mono);font-size:11px;line-height:1.6" oninput="updateTplPreview()">' + t.htmlBody.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea></div>' +
+    '<div class="form-group"><label class="form-label">Preview</label>' +
+    '<iframe id="te-preview" style="width:100%;height:320px;border:1px solid var(--gray-200);border-radius:8px;background:#fff"></iframe></div>' +
+    '<div class="flex-between"><div class="flex" style="gap:8px">' +
+    '<button class="btn btn-lime" onclick="saveTpl(\'' + t.id + '\')">Save</button>' +
+    '<button class="btn btn-outline" onclick="previewTpl(\'' + t.id + '\')">&#9993; Test Email</button></div>' +
+    '<label class="flex" style="gap:6px;cursor:pointer"><input type="checkbox" id="te-active" ' + (t.isActive?'checked':'') + '> <span style="font-size:12px">Active</span></label></div>' +
+    '<div id="te-msg" style="margin-top:8px"></div>';
+  updateTplPreview();
+}
+
+function insertVar(v) {
+  var ta = document.getElementById('te-body');
+  if (!ta) return;
+  var s = ta.selectionStart, e = ta.selectionEnd;
+  ta.value = ta.value.slice(0,s) + v + ta.value.slice(e);
+  ta.selectionStart = ta.selectionEnd = s + v.length;
+  ta.focus(); updateTplPreview();
+}
+
+function updateTplPreview() {
+  var body = document.getElementById('te-body');
+  var frame = document.getElementById('te-preview');
+  if (!body||!frame) return;
+  frame.srcdoc = body.value;
+}
+
+async function saveTpl(id) {
+  var msg = document.getElementById('te-msg');
+  var res = await apiFetch('/admin/email-templates/' + id, { method:'PATCH', body:JSON.stringify({
+    name: document.getElementById('te-name').value.trim(),
+    subject: document.getElementById('te-subj').value.trim(),
+    htmlBody: document.getElementById('te-body').value,
+    isActive: document.getElementById('te-active').checked,
+  })});
+  if (msg) msg.innerHTML = res&&res.status
+    ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; Saved.</div>'
+    : '<div class="warn-box">&#9888; ' + (res&&res.message||'Error') + '</div>';
+  if (res&&res.status) loadEmailTemplates();
+}
+
+async function previewTpl(id) {
+  var to = prompt('Send preview to email address:');
+  if (!to) return;
+  var res = await apiFetch('/admin/email-templates/' + id + '/preview', { method:'POST', body:JSON.stringify({to}) });
+  alert(res&&res.status ? 'Preview sent to ' + to : 'Error: ' + (res&&res.message||'Failed'));
+}
+
+async function deleteTpl(id, name) {
+  if (!confirm('Delete template "' + name + '"?')) return;
+  var res = await apiFetch('/admin/email-templates/' + id, { method:'DELETE' });
+  if (res&&res.status) { loadEmailTemplates(); document.getElementById('tpl-editor').style.display='none'; }
+  else alert(res&&res.message||'Error');
+}
+
+function showNewTplModal() {
+  showModal('<div class="modal-header"><div class="modal-title">New Email Template</div><button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="form-group"><label class="form-label">Name *</label><input class="form-input" id="nt-name" placeholder="e.g. Welcome Email"></div>' +
+    '<div class="form-group"><label class="form-label">Slug * (unique key)</label><input class="form-input" id="nt-slug" placeholder="e.g. welcome_email"></div>' +
+    '<div class="form-group"><label class="form-label">Subject *</label><input class="form-input" id="nt-subj" placeholder="e.g. Welcome to Paylode, {{merchant_name}}!"></div>' +
+    '<div class="form-group"><label class="form-label">Variables (comma-separated)</label><input class="form-input" id="nt-vars" placeholder="merchant_name, email"></div>' +
+    '<div class="form-group"><label class="form-label">HTML Body *</label><textarea class="form-input" id="nt-body" rows="6" placeholder="<p>Dear {{merchant_name}},</p>..."></textarea></div>' +
+    '<div class="flex-between"><button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" onclick="createTpl()">Create</button></div>' +
+    '<div id="nt-msg" style="margin-top:8px"></div>');
+}
+
+async function createTpl() {
+  var name=document.getElementById('nt-name').value.trim(), slug=document.getElementById('nt-slug').value.trim();
+  var subj=document.getElementById('nt-subj').value.trim(), body=document.getElementById('nt-body').value;
+  var vars=document.getElementById('nt-vars').value.trim();
+  var msg=document.getElementById('nt-msg');
+  if (!name||!slug||!subj||!body) { if(msg) msg.innerHTML='<div class="warn-box">All fields except variables are required.</div>'; return; }
+  var res=await apiFetch('/admin/email-templates',{method:'POST',body:JSON.stringify({name,slug,subject:subj,htmlBody:body,variables:vars?vars.split(',').map(function(v){return v.trim();}).filter(Boolean):[]})});
+  if(msg) msg.innerHTML=res&&res.status?'<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; Created!</div>':'<div class="warn-box">&#9888; '+(res&&res.message||'Error')+'</div>';
+  if(res&&res.status){document.getElementById('modal').style.display='none';loadEmailTemplates();}
+}
+
+// ── 2FA setup helpers (used in settings page) ─────────────────────────────
+async function setup2FA() {
+  var res = await apiFetch('/auth/2fa/setup', { method:'POST' });
+  if (!res||!res.status) { alert('Error: '+(res&&res.message||'Failed')); return; }
+  var d = res.data;
+  showModal('<div class="modal-header"><div class="modal-title">Set Up Two-Factor Authentication</div><button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:12px">&#8505; Scan this QR code with Google Authenticator, Authy, or any TOTP app, then enter the 6-digit code to confirm.</div>' +
+    '<div style="text-align:center;margin-bottom:16px"><img src="' + d.qr_code + '" style="width:200px;height:200px;border:1px solid var(--gray-200);border-radius:8px"></div>' +
+    '<div class="form-group"><label class="form-label">Manual Entry Key</label><input class="form-input mono" value="' + d.secret + '" readonly onclick="this.select()" style="font-size:12px"></div>' +
+    '<div class="form-group"><label class="form-label">Enter 6-digit code to activate</label>' +
+    '<input class="form-input" id="tfa-code" placeholder="000000" maxlength="6" style="font-size:20px;letter-spacing:4px;text-align:center"></div>' +
+    '<div class="flex-between"><button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" onclick="enable2FA()">Enable 2FA</button></div>' +
+    '<div id="tfa-setup-msg" style="margin-top:8px"></div>');
+}
+
+async function enable2FA() {
+  var code = document.getElementById('tfa-code').value.trim();
+  var msg  = document.getElementById('tfa-setup-msg');
+  var res  = await apiFetch('/auth/2fa/enable', { method:'POST', body:JSON.stringify({code}) });
+  if (msg) msg.innerHTML = res&&res.status
+    ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; 2FA enabled!</div>'
+    : '<div class="warn-box">&#9888; '+(res&&res.message||'Invalid code')+'</div>';
+  if (res&&res.status) setTimeout(function(){document.getElementById('modal').style.display='none'; renderPage();}, 1200);
+}
+
+async function disable2FA() {
+  var pw   = document.getElementById('tfa-dis-pw').value;
+  var code = document.getElementById('tfa-dis-code').value.trim();
+  var msg  = document.getElementById('tfa-msg');
+  var res  = await apiFetch('/auth/2fa/disable', { method:'POST', body:JSON.stringify({password:pw,code}) });
+  if (msg) msg.innerHTML = res&&res.status
+    ? '<div class="info-box">2FA disabled.</div>'
+    : '<div class="warn-box">&#9888; '+(res&&res.message||'Error')+'</div>';
+  if (res&&res.status) setTimeout(function(){renderPage();}, 1000);
+}
+
+// ── Statement download helpers (merchant role) ────────────────────────────
+async function downloadStatement() {
+  var month = (document.getElementById('stmt-month')||{}).value || new Date().toISOString().slice(0,7);
+  var token = localStorage.getItem('paylode_token');
+  var res = await fetch('/api/v1/statements/my?month=' + month, { headers:{'Authorization':'Bearer '+token} });
+  if (!res.ok) { alert('Failed to generate statement.'); return; }
+  var blob = await res.blob();
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a'); a.href=url; a.download='paylode-statement-'+month+'.pdf';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+async function emailStatement() {
+  var month = (document.getElementById('stmt-month')||{}).value || new Date().toISOString().slice(0,7);
+  var res   = await apiFetch('/statements/my/email?month=' + month, { method:'POST' });
+  alert(res&&res.status ? '&#10003; ' + res.message : 'Error: '+(res&&res.message||'Failed'));
+}
+
+// ── User Management ───────────────────────────────────────────────────────
+var __usersData = [];
+
+function renderUserManagement() {
+  setTimeout(loadUsers, 0);
+  return '<div class="page-header"><div class="page-title">User Management</div>' +
+    '<div class="page-desc">Create and manage platform staff. Role defaults pre-fill permissions — Super Admin can adjust any checkbox.</div></div>' +
+    '<div style="display:flex;justify-content:flex-end;margin-bottom:16px">' +
+    '<button class="btn btn-lime" onclick="showCreateUserModal()">+ Create User</button></div>' +
+    '<div id="users-list"><div class="card"><div style="padding:24px;text-align:center;color:var(--gray-400)">Loading...</div></div></div>';
+}
+
+async function loadUsers() {
+  var res = await apiFetch('/users');
+  var el = document.getElementById('users-list');
+  if (!el) return;
+  if (!res || !res.status) {
+    el.innerHTML = '<div class="warn-box">Failed to load users.</div>';
+    return;
+  }
+  __usersData = res.data || [];
+  var roleBadge = { SUPER_ADMIN:'badge-red', ADMIN:'badge-blue', COMPLIANCE_OFFICER:'badge-amber',
+                    AUDIT:'badge-gray', MERCHANT:'badge-green', AGGREGATOR:'badge-lime' };
+  var rows = __usersData.map(function(u) {
+    var rb = roleBadge[u.role] || 'badge-gray';
+    var lastLogin = u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : 'Never';
+    var actions = u.role !== 'SUPER_ADMIN'
+      ? '<button class="btn btn-outline btn-sm" onclick="showEditPermissionsModal(\'' + u.id + '\')" style="margin-right:4px">Permissions</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="toggleUserActive(\'' + u.id + '\',' + u.isActive + ')">' + (u.isActive ? 'Suspend' : 'Activate') + '</button>'
+      : '<span style="font-size:11px;color:var(--gray-400)">Protected</span>';
+    return '<tr>' +
+      '<td style="font-weight:500">' + u.firstName + ' ' + u.lastName + '</td>' +
+      '<td class="mono" style="font-size:11px">' + u.email + '</td>' +
+      '<td><span class="badge ' + rb + '">' + u.role.replace(/_/g,' ') + '</span></td>' +
+      '<td><span class="badge ' + (u.isActive ? 'badge-green' : 'badge-gray') + '">' + (u.isActive ? 'Active' : 'Inactive') + '</span></td>' +
+      '<td style="font-size:11px;color:var(--gray-400)">' + lastLogin + '</td>' +
+      '<td>' + new Date(u.createdAt).toLocaleDateString() + '</td>' +
+      '<td><div class="flex" style="gap:4px">' + actions + '</div></td></tr>';
+  }).join('') || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--gray-400)">No users yet. Click "+ Create User" to add one.</td></tr>';
+  el.innerHTML = '<div class="card"><div class="card-header"><div class="card-title">Platform Users</div>' +
+    '<span class="badge badge-gray">' + __usersData.length + '</span></div>' +
+    '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th>' +
+    '<th>Status</th><th>Last Login</th><th>Created</th><th>Actions</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table></div></div>';
+}
+
+function renderPermCheckboxes(activePerms) {
+  return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 24px">' +
+    PERM_GROUPS.map(function(group) {
+      var checks = group.items.map(function(item) {
+        var checked = Array.isArray(activePerms) && activePerms.includes(item.id) ? 'checked' : '';
+        return '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;margin-bottom:5px;white-space:nowrap">' +
+          '<input type="checkbox" class="perm-cb" data-perm="' + item.id + '" ' + checked + '> ' + item.label + '</label>';
+      }).join('');
+      return '<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;' +
+        'color:var(--gray-500);margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--gray-100)">' +
+        group.label + '</div>' + checks + '</div>';
+    }).join('') + '</div>';
+}
+
+function getCheckedPerms() {
+  var perms = [];
+  document.querySelectorAll('.perm-cb:checked').forEach(function(cb) { perms.push(cb.dataset.perm); });
+  return perms;
+}
+
+function onRoleChange() {
+  var role = document.getElementById('cu-role').value;
+  var defaults = role && PERM_ROLE_DEFAULTS[role] ? PERM_ROLE_DEFAULTS[role] : [];
+  document.querySelectorAll('.perm-cb').forEach(function(cb) {
+    cb.checked = defaults.includes(cb.dataset.perm);
+  });
+}
+
+function showCreateUserModal() {
+  var opts = ['ADMIN','COMPLIANCE_OFFICER','AUDIT','MERCHANT','AGGREGATOR'].map(function(r) {
+    return '<option value="' + r + '">' + r.replace(/_/g,' ') + '</option>';
+  }).join('');
+  showModal(
+    '<div class="modal-header"><div class="modal-title">Create User</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+    '<div class="form-group"><label class="form-label">First Name *</label><input class="form-input" id="cu-fname" placeholder="First name"></div>' +
+    '<div class="form-group"><label class="form-label">Last Name *</label><input class="form-input" id="cu-lname" placeholder="Last name"></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">Email *</label><input class="form-input" id="cu-email" type="email" placeholder="user@paylodeservices.com"></div>' +
+    '<div class="form-group"><label class="form-label">Password *</label><input class="form-input" id="cu-pw" type="password" placeholder="Minimum 8 characters"></div>' +
+    '<div class="form-group"><label class="form-label">Role *</label>' +
+    '<select class="form-input form-select" id="cu-role" onchange="onRoleChange()">' +
+    '<option value="">— Select role —</option>' + opts + '</select>' +
+    '<div style="font-size:11px;color:var(--gray-400);margin-top:4px">Selecting a role auto-fills the permissions below. You can adjust them.</div></div>' +
+    '<div style="border-top:1px solid var(--gray-100);margin:4px 0 12px;padding-top:12px">' +
+    '<div style="font-size:13px;font-weight:600;margin-bottom:10px">Permissions</div>' +
+    '<div id="perm-boxes" style="max-height:300px;overflow-y:auto;padding-right:4px">' + renderPermCheckboxes([]) + '</div></div>' +
+    '<div class="flex-between" style="margin-top:8px">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" onclick="createUser()">Create User</button></div>' +
+    '<div id="cu-msg" style="margin-top:8px"></div>'
+  );
+}
+
+async function createUser() {
+  var fname = document.getElementById('cu-fname').value.trim();
+  var lname = document.getElementById('cu-lname').value.trim();
+  var email = document.getElementById('cu-email').value.trim();
+  var pw    = document.getElementById('cu-pw').value;
+  var role  = document.getElementById('cu-role').value;
+  var msg   = document.getElementById('cu-msg');
+  if (!fname || !lname || !email || !pw || !role) {
+    if (msg) msg.innerHTML = '<div class="warn-box">All fields are required.</div>';
+    return;
+  }
+  var perms = getCheckedPerms();
+  var res = await apiFetch('/users', { method:'POST', body:JSON.stringify({
+    firstName:fname, lastName:lname, email, password:pw, role, permissions:perms,
+  })});
+  if (msg) msg.innerHTML = res && res.status
+    ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; User created successfully.</div>'
+    : '<div class="warn-box">&#9888; ' + (res && res.message || 'Error') + '</div>';
+  if (res && res.status) setTimeout(function() {
+    document.getElementById('modal').style.display = 'none';
+    loadUsers();
+  }, 900);
+}
+
+function showEditPermissionsModal(userId) {
+  var u = __usersData.find(function(x) { return x.id === userId; });
+  if (!u) return;
+  showModal(
+    '<div class="modal-header"><div class="modal-title">Permissions — ' + u.firstName + ' ' + u.lastName + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="font-size:12px;color:var(--gray-500);margin-bottom:12px">' +
+    'Role: <strong>' + u.role.replace(/_/g,' ') + '</strong> &nbsp;|&nbsp; ' +
+    '<span style="color:var(--gray-400)">' + (u.permissions||[]).length + ' permissions active</span></div>' +
+    '<div style="max-height:380px;overflow-y:auto;padding-right:4px">' + renderPermCheckboxes(u.permissions || []) + '</div>' +
+    '<div class="flex-between" style="margin-top:16px">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" onclick="saveUserPermissions(\'' + userId + '\')">Save Permissions</button></div>' +
+    '<div id="ep-msg" style="margin-top:8px"></div>'
+  );
+}
+
+async function saveUserPermissions(userId) {
+  var perms = getCheckedPerms();
+  var msg = document.getElementById('ep-msg');
+  var res = await apiFetch('/users/' + userId + '/permissions', {
+    method:'PATCH', body:JSON.stringify({ permissions:perms }),
+  });
+  if (msg) msg.innerHTML = res && res.status
+    ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; Permissions saved.</div>'
+    : '<div class="warn-box">&#9888; ' + (res && res.message || 'Error') + '</div>';
+  if (res && res.status) setTimeout(function() {
+    document.getElementById('modal').style.display = 'none';
+    loadUsers();
+  }, 700);
+}
+
+async function toggleUserActive(userId, currentlyActive) {
+  if (!confirm((currentlyActive ? 'Suspend' : 'Activate') + ' this user?')) return;
+  var res = await apiFetch('/users/' + userId, {
+    method:'PATCH', body:JSON.stringify({ isActive: !currentlyActive }),
+  });
+  if (!res || !res.status) { alert(res && res.message || 'Error'); return; }
+  loadUsers();
+}
+
 renderNav();
 renderPage();
 
@@ -694,18 +1632,33 @@ async function apiFetch(path, options) {
 // ── Inactivity timeout (5 minutes) ───────────────────────────────────────────
 (function() {
   var TIMEOUT_MS = 5 * 60 * 1000;
+  var lastActive  = Date.now();
   var timer;
 
-  function resetTimer() {
-    clearTimeout(timer);
-    timer = setTimeout(function() {
-      localStorage.removeItem('paylode_token');
-      localStorage.removeItem('paylode_user');
-      window.location.href = '/login.html?reason=timeout';
-    }, TIMEOUT_MS);
+  function doLogout() {
+    localStorage.removeItem('paylode_token');
+    localStorage.removeItem('paylode_user');
+    localStorage.removeItem('paylode_selected_role');
+    window.location.href = '/login.html?reason=timeout';
   }
 
-  ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'].forEach(function(evt) {
+  function checkElapsed() {
+    if (Date.now() - lastActive >= TIMEOUT_MS) doLogout();
+  }
+
+  function resetTimer() {
+    lastActive = Date.now();
+    clearTimeout(timer);
+    timer = setTimeout(doLogout, TIMEOUT_MS);
+  }
+
+  // Catch browsers that throttle background-tab timers:
+  // when tab becomes visible again, check if idle time has passed
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) checkElapsed();
+  });
+
+  ['mousemove', 'mousedown', 'keypress', 'touchstart', 'scroll', 'click'].forEach(function(evt) {
     document.addEventListener(evt, resetTimer, true);
   });
 
