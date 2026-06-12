@@ -147,11 +147,25 @@ body{font-family:'DM Sans',sans-serif;background:#0f1829;min-height:100vh;color:
 <script>
 function goToLogin(role) {
   localStorage.setItem('paylode_selected_role', role);
+  var token = localStorage.getItem('paylode_token');
+  if (token) {
+    try {
+      var p = JSON.parse(atob(token.split('.')[1]));
+      if (!p.exp || p.exp * 1000 > Date.now()) {
+        // Only skip login if the token's role matches the selected portal
+        var tr = (p.role || '').toUpperCase();
+        var match = (role === 'superadmin'  && (tr === 'SUPER_ADMIN' || tr === 'COMPLIANCE_OFFICER')) ||
+                    (role === 'compliance'  && tr === 'COMPLIANCE_OFFICER') ||
+                    (role === 'aggregator'  && tr === 'AGGREGATOR') ||
+                    (role === 'merchant'    && tr === 'MERCHANT');
+        if (match) { window.location.href = '/dashboard.html'; return; }
+      }
+    } catch(e) {}
+    // Token missing, expired, or wrong role — clear and go to login
+    localStorage.removeItem('paylode_token');
+    localStorage.removeItem('paylode_user');
+  }
   window.location.href = '/login.html';
-}
-// If already logged in redirect to dashboard
-if (localStorage.getItem('paylode_token') && !new URLSearchParams(location.search).get('switch')) {
-  window.location.href = '/dashboard.html';
 }
 </script>
 </body>

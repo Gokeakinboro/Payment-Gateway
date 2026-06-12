@@ -362,17 +362,17 @@ function renderStep() {
   document.getElementById('success-screen').classList.remove('show');
   document.getElementById('nav-btns').style.display = 'flex';
 
-  if (stepId === 'institution')    el.innerHTML = renderInstitution();
-  else if (stepId === 'contact')   el.innerHTML = renderContact();
-  else if (stepId === 'website')   el.innerHTML = renderWebsite();
-  else if (stepId === 'payments')  el.innerHTML = renderPayments();
-  else if (stepId === 'portfolio') el.innerHTML = renderPortfolio();
-  else if (stepId === 'documents') el.innerHTML = renderDocuments();
-  else if (stepId === 'tnc')       el.innerHTML = renderTnC(); setupTnC();
-  else if (stepId === 'signature') el.innerHTML = renderSignature(); setupCanvas();
-  else if (stepId === 'dd_institution') el.innerHTML = renderDDInstitution();
-  else if (stepId === 'dd_questions')   el.innerHTML = renderDDQuestions();
-  else if (stepId === 'dd_sign')        el.innerHTML = renderSignature(); setupCanvas();
+  if      (stepId === 'institution')    { el.innerHTML = renderInstitution(); }
+  else if (stepId === 'contact')        { el.innerHTML = renderContact(); }
+  else if (stepId === 'website')        { el.innerHTML = renderWebsite(); }
+  else if (stepId === 'payments')       { el.innerHTML = renderPayments(); }
+  else if (stepId === 'portfolio')      { el.innerHTML = renderPortfolio(); }
+  else if (stepId === 'documents')      { el.innerHTML = renderDocuments(); }
+  else if (stepId === 'tnc')            { el.innerHTML = renderTnC(); setupTnC(); }
+  else if (stepId === 'signature')      { el.innerHTML = renderSignature(); setupCanvas(); }
+  else if (stepId === 'dd_institution') { el.innerHTML = renderDDInstitution(); }
+  else if (stepId === 'dd_questions')   { el.innerHTML = renderDDQuestions(); }
+  else if (stepId === 'dd_sign')        { el.innerHTML = renderSignature(); setupCanvas(); }
 
   restoreValues(stepId);
 }

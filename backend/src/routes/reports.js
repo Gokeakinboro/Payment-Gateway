@@ -1,8 +1,18 @@
 'use strict';
-const router = require('express').Router();
+const router     = require('express').Router();
+const nodemailer = require('nodemailer');
 const { prisma } = require('../utils/db');
 const { requireAuth, requireCompliance, requireSuperAdmin } = require('../middleware/auth');
 const { ok, fail, koboToNaira } = require('../utils/helpers');
+
+function getMailer() {
+  return nodemailer.createTransport({
+    host:   process.env.SMTP_HOST   || 'smtp.gmail.com',
+    port:   parseInt(process.env.SMTP_PORT || '587'),
+    secure: false,
+    auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+}
 
 // ── GET /api/v1/reports/daily-summary ────────────────────────────────────
 router.get('/daily-summary', requireAuth, requireCompliance, async (req, res, next) => {
@@ -432,6 +442,106 @@ router.get('/cbn-monthly', requireAuth, requireCompliance, async (req, res, next
       total_active_merchants: merchantCount,
       strs_filed:     amlCount,
     });
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/reports/statement-email ─────────────────────────────────────
+// Email a merchant statement to the logged-in user's email.
+router.post('/statement-email', requireAuth, async (req, res, next) => {
+  try {
+    const { from, to } = req.body;
+    let targetMerchantId;
+
+    if (req.user.role === 'MERCHANT') {
+      targetMerchantId = req.user.merchant?.id;
+      if (!targetMerchantId) return fail(res, 'No merchant account');
+    } else {
+      return fail(res, 'Only merchant users can email their own statement');
+    }
+
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const toDate   = to   ? new Date(to + 'T23:59:59Z') : new Date();
+
+    const [merchant, totals, txns] = await Promise.all([
+      prisma.merchant.findUnique({ where:{ id: targetMerchantId }, select:{ businessName:true, merchantCode:true, user:{ select:{ email:true }} } }),
+      prisma.transaction.aggregate({
+        where:{ merchantId: targetMerchantId, isSandbox: false, status: 'SUCCESS', createdAt:{ gte: fromDate, lte: toDate } },
+        _count: true, _sum:{ amount: true, merchantFee: true },
+      }),
+      prisma.transaction.findMany({
+        where:{ merchantId: targetMerchantId, isSandbox: false, createdAt:{ gte: fromDate, lte: toDate } },
+        orderBy:{ createdAt: 'desc' }, take: 200,
+      }),
+    ]);
+
+    const recipientEmail = req.user.email || merchant?.user?.email;
+    if (!recipientEmail) return fail(res, 'Could not determine recipient email');
+
+    const fmt = (kobo) => new Intl.NumberFormat('en-NG',{ style:'currency', currency:'NGN', minimumFractionDigits:2 }).format(Number(kobo||0)/100);
+    const rows = txns.map(t => `<tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:8px 12px;font-family:monospace;font-size:11px">${t.reference}</td>
+      <td style="padding:8px 12px;font-size:12px">${new Date(t.createdAt).toLocaleDateString('en-NG')}</td>
+      <td style="padding:8px 12px">${t.channel}</td>
+      <td style="padding:8px 12px;font-weight:600">${fmt(t.amount)}</td>
+      <td style="padding:8px 12px;color:#ef4444">${fmt(t.merchantFee)}</td>
+      <td style="padding:8px 12px;font-weight:700;color:#10b981">${fmt(t.amount - t.merchantFee)}</td>
+      <td style="padding:8px 12px"><span style="background:${t.status==='SUCCESS'?'#d1fae5':t.status==='FAILED'?'#fee2e2':'#fef3c7'};color:${t.status==='SUCCESS'?'#065f46':t.status==='FAILED'?'#991b1b':'#92400e'};padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">${t.status}</span></td>
+    </tr>`).join('');
+
+    const html = `
+    <div style="font-family:'DM Sans',Arial,sans-serif;max-width:700px;margin:0 auto">
+      <div style="background:#1a2744;padding:24px;border-radius:12px 12px 0 0">
+        <div style="color:#7dc534;font-size:20px;font-weight:700">Paylode Services Limited</div>
+        <div style="color:rgba(255,255,255,.6);font-size:12px">CBN Licensed PSSP · Account Statement</div>
+      </div>
+      <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:none">
+        <h2 style="margin:0 0 4px;font-size:18px;color:#1a2744">Transaction Statement</h2>
+        <div style="font-size:13px;color:#64748b;margin-bottom:20px">
+          ${merchant?.businessName} · ${merchant?.merchantCode}<br>
+          Period: ${fromDate.toLocaleDateString('en-NG')} – ${toDate.toLocaleDateString('en-NG')}
+        </div>
+        <div style="display:flex;gap:16px;margin-bottom:24px">
+          <div style="flex:1;background:#f8fafc;border-radius:8px;padding:16px">
+            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Total Collections</div>
+            <div style="font-size:20px;font-weight:700;color:#1a2744">${fmt(totals._sum.amount)}</div>
+          </div>
+          <div style="flex:1;background:#f8fafc;border-radius:8px;padding:16px">
+            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Fees Paid</div>
+            <div style="font-size:20px;font-weight:700;color:#ef4444">${fmt(totals._sum.merchantFee)}</div>
+          </div>
+          <div style="flex:1;background:#f0fdf4;border-radius:8px;padding:16px;border:1px solid #bbf7d0">
+            <div style="font-size:11px;color:#065f46;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Net Settled</div>
+            <div style="font-size:20px;font-weight:700;color:#10b981">${fmt((totals._sum.amount||0n)-(totals._sum.merchantFee||0n))}</div>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:#f8fafc">
+            <th style="padding:10px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Reference</th>
+            <th style="padding:10px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Date</th>
+            <th style="padding:10px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Channel</th>
+            <th style="padding:10px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Amount</th>
+            <th style="padding:10px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Fee</th>
+            <th style="padding:10px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Net</th>
+            <th style="padding:10px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px">Status</th>
+          </tr></thead>
+          <tbody>${rows || '<tr><td colspan="7" style="padding:20px;text-align:center;color:#94a3b8">No transactions in this period</td></tr>'}</tbody>
+        </table>
+        <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;text-align:center">
+          This statement was auto-generated by Paylode Services Limited<br>
+          For queries: support@paylodeservices.com
+        </div>
+      </div>
+    </div>`;
+
+    const mailer = getMailer();
+    await mailer.sendMail({
+      from:    `"Paylode Services" <${process.env.SMTP_USER}>`,
+      to:      recipientEmail,
+      subject: `Your Paylode Statement — ${merchant?.businessName} (${fromDate.toLocaleDateString('en-NG')} to ${toDate.toLocaleDateString('en-NG')})`,
+      html,
+    });
+
+    ok(res, { sent_to: recipientEmail }, 'Statement emailed successfully');
   } catch (e) { next(e); }
 });
 

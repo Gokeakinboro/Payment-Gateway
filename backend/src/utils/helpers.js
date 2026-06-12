@@ -29,22 +29,73 @@ function generateRef(prefix = 'TXN') {
 
 // ── Revenue netting formula ─────────────────────────────────────────────
 /**
- * Compute all fee fields for a transaction.
+ * Compute all fee fields for a transaction (legacy — simple % only).
  * All amounts in kobo (BigInt).
- *
- * @param {BigInt} amount          Transaction amount in kobo
- * @param {number} merchantRate    e.g. 0.0120 for 1.2%
- * @param {number} railRate        e.g. 0.0150 for 1.5%
- * @param {number} aggSplitPct     e.g. 0.30 for 30%
  */
 function computeFees(amount, merchantRate, railRate, aggSplitPct) {
-  const amtBig      = BigInt(amount);
-  // Use integer arithmetic — multiply by 1,000,000 then divide to preserve 4dp
-  const merchantFee = amtBig * BigInt(Math.round(merchantRate * 1_000_000)) / 1_000_000n;
-  const railCost    = amtBig * BigInt(Math.round(railRate    * 1_000_000)) / 1_000_000n;
-  const netRevenue  = merchantFee - railCost;
-  const aggShare    = netRevenue > 0n
-    ? netRevenue * BigInt(Math.round(aggSplitPct * 1_000_000)) / 1_000_000n
+  return computeFeesWithConfig(amount, { rate: merchantRate }, railRate, aggSplitPct);
+}
+
+/**
+ * Compute fee for a single product using its rate config.
+ * Supports four fee models: PCT, FLAT, PCT_PLUS_FLAT, GREATER_OF.
+ * Applies min/max clamping and returns fee + VAT separately.
+ *
+ * @param {BigInt|number} amount     Transaction amount in kobo
+ * @param {object}        rateConfig { rate, flat_fee|flatFee, cap, min_charge|minCharge,
+ *                                     fee_model|feeModel, vat_rate|vatRate }
+ * @returns {{ fee: BigInt, vat: BigInt, total: BigInt }}
+ */
+function computeProductFee(amount, rateConfig) {
+  const amt       = BigInt(amount);
+  const rate      = Number(rateConfig.rate      || 0);
+  const flatFee   = BigInt(rateConfig.flat_fee  || rateConfig.flatFee   || 0);
+  const capFee    = BigInt(rateConfig.cap       || 0);
+  const minCharge = BigInt(rateConfig.min_charge|| rateConfig.minCharge || 0);
+  const feeModel  = rateConfig.fee_model        || rateConfig.feeModel  || 'PCT';
+  const vatRate   = Number(rateConfig.vat_rate  || rateConfig.vatRate   || 0.075);
+
+  const pctFee  = amt * BigInt(Math.round(rate * 1_000_000)) / 1_000_000n;
+
+  let fee;
+  switch (feeModel) {
+    case 'FLAT':           fee = flatFee; break;
+    case 'PCT_PLUS_FLAT':  fee = pctFee + flatFee; break;
+    case 'GREATER_OF':     fee = pctFee > flatFee ? pctFee : flatFee; break;
+    case 'PCT':
+    default:               fee = pctFee + flatFee; break; // flatFee is additive even in PCT mode
+  }
+
+  if (minCharge > 0n && fee < minCharge) fee = minCharge;
+  if (capFee    > 0n && fee > capFee)    fee = capFee;
+
+  const vat   = fee * BigInt(Math.round(vatRate * 1_000_000)) / 1_000_000n;
+  return { fee, vat, total: fee + vat };
+}
+
+/**
+ * Compute all fee fields for a transaction (legacy — simple % only).
+ * All amounts in kobo (BigInt).
+ */
+function computeFees(amount, merchantRate, railRate, aggSplitPct) {
+  return computeFeesWithConfig(amount, { rate: merchantRate }, railRate, aggSplitPct);
+}
+
+/**
+ * Compute fees using a full rate config.
+ * @param {BigInt|number} amount     Transaction amount in kobo
+ * @param {object}        rateConfig { rate, flat_fee, cap, min_charge, fee_model, vat_rate }
+ * @param {number}        railRate   e.g. 0.0150 for 1.5%
+ * @param {number}        aggSplitPct e.g. 0.30 for 30%
+ */
+function computeFeesWithConfig(amount, rateConfig, railRate, aggSplitPct) {
+  const amtBig          = BigInt(amount);
+  const { fee: merchantFee } = computeProductFee(amount, rateConfig);
+
+  const railCost      = amtBig * BigInt(Math.round((railRate || 0) * 1_000_000)) / 1_000_000n;
+  const netRevenue    = merchantFee - railCost;
+  const aggShare      = netRevenue > 0n
+    ? netRevenue * BigInt(Math.round((aggSplitPct || 0) * 1_000_000)) / 1_000_000n
     : 0n;
   const paylodeMargin = netRevenue - aggShare;
   return { merchantFee, railCost, netRevenue, aggShare, paylodeMargin };
@@ -99,7 +150,8 @@ function verifyWebhookSig(rawBody, signature, secret) {
 
 module.exports = {
   ok, created, fail, notFound, unauthorized, forbidden,
-  generateRef, computeFees, koboToNaira, nairaToKobo,
+  generateRef, computeFees, computeFeesWithConfig, computeProductFee,
+  koboToNaira, nairaToKobo,
   encrypt, decrypt, hashApiKey, generateApiKey,
   signWebhook, verifyWebhookSig,
 };

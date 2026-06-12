@@ -54,10 +54,12 @@ var NAV = {
       {id:'overview',        icon:'◉', label:'Dashboard'       },
       {id:'transactions',    icon:'↕', label:'Transactions'    },
       {id:'settlement',      icon:'✓', label:'Settlements'     },
+      {id:'payout_report',   icon:'⇄', label:'Payout Report'   },
       {id:'revenue',         icon:'₦', label:'Revenue'         },
       {id:'compliance',      icon:'⚖', label:'Compliance'      },
     ]},
     { section:'SYSTEM CONFIG', items:[
+      {id:'fee_config',          icon:'₦', label:'Fee Configuration'},
       {id:'rails',               icon:'⊞', label:'Rail Costs'       },
       {id:'settle_verification', icon:'⊙', label:'Bank Verification'},
       {id:'email_tpl',           icon:'✉', label:'Email Templates'  },
@@ -67,6 +69,7 @@ var NAV = {
       {id:'sdk_start',    icon:'▶', label:'Quick Start'   },
       {id:'sdk_payments', icon:'₦', label:'Payments API'  },
       {id:'sdk_verify',   icon:'✓', label:'Verify Payment'},
+      {id:'sdk_payouts',  icon:'⇄', label:'Payouts API'   },
       {id:'sdk_webhook',  icon:'⇀', label:'Webhooks'      },
       {id:'sdk_mobile',   icon:'□', label:'Published SDKs'},
       {id:'sdk_errors',   icon:'!', label:'Error Codes'   },
@@ -85,11 +88,20 @@ var NAV = {
   ],
   merchant: [
     { section:'Overview',    items:[{id:'merch_overview',icon:'◉',label:'Dashboard'},{id:'merch_transactions',icon:'↕',label:'Transactions'},{id:'merch_settlements',icon:'✓',label:'Settlements'}]},
+    { section:'Payouts',     items:[{id:'payouts',icon:'⇄',label:'Send Payouts'},{id:'payout_logs',icon:'≡',label:'Payout Logs'}]},
     { section:'Integration', items:[{id:'merch_apikeys',icon:'⚿',label:'API Keys'},{id:'merch_webhooks',icon:'⇀',label:'Webhooks'}]},
     { section:'Account',     items:[{id:'merch_profile',icon:'⊙',label:'Business Profile'}]},
   ],
   developer: [
-    { section:'SDK',       items:[{id:'sdk_start',icon:'▶',label:'Quick Start'},{id:'sdk_payments',icon:'₦',label:'Payments API'},{id:'sdk_verify',icon:'✓',label:'Verify Payment'},{id:'sdk_webhook',icon:'⇀',label:'Webhooks'},{id:'sdk_mobile',icon:'□',label:'Published SDKs'}]},
+    { section:'SDK',       items:[
+      {id:'sdk_start',    icon:'▶',label:'Quick Start'       },
+      {id:'sdk_payments', icon:'₦',label:'Card Payments'     },
+      {id:'sdk_va',       icon:'⇆',label:'Virtual Accounts'  },
+      {id:'sdk_payouts',  icon:'⇄',label:'Payouts (Send)'    },
+      {id:'sdk_verify',   icon:'✓',label:'Verify Payment'    },
+      {id:'sdk_webhook',  icon:'⇀',label:'Webhooks'          },
+      {id:'sdk_mobile',   icon:'□',label:'Published SDKs'    },
+    ]},
     { section:'Reference', items:[{id:'sdk_errors',icon:'!',label:'Error Codes'},{id:'sdk_test',icon:'⚡',label:'Test Cards'}]},
   ],
 };
@@ -254,7 +266,9 @@ function renderPage() {
     merch_settlements:renderMerchSettlements, merch_apikeys:renderMerchApiKeys,
     merch_webhooks:renderMerchWebhooks, merch_profile:renderMerchProfile,
     sdk_start:renderSdkStart, sdk_payments:renderSdkPayments,
-    sdk_verify:renderSdkVerify, sdk_webhook:renderSdkWebhookDocs,
+    sdk_va:renderSdkVirtualAccounts,
+    sdk_verify:renderSdkVerify, sdk_payouts:renderSdkPayouts,
+    sdk_webhook:renderSdkWebhookDocs,
     sdk_mobile:renderSdkMobile, sdk_errors:renderSdkErrors, sdk_test:renderSdkTestCards,
   };
   document.getElementById('main-content').innerHTML = (pages[currentPage] || renderSuperOverview)();
@@ -366,13 +380,38 @@ function renderAggregators() {
     '<button class="btn btn-lime" onclick="showAddAggModal()">+ Add Aggregator</button></div>' + cards;
 }
 
+function editRateTier(name, rate, desc) {
+  var rateNum = parseFloat(rate) || 1.5;
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Edit Rate Tier — ' + name + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:12px">Changes apply to new merchants assigned this tier. Existing merchants keep their individually set rates unless manually updated.</div>' +
+    '<div class="form-group"><label class="form-label">Tier Name</label><input class="form-input" id="tier-name" value="' + name + '"></div>' +
+    '<div class="form-group"><label class="form-label">Processing Rate (%)</label><input class="form-input" id="tier-rate" type="number" step="0.1" min="0" max="5" value="' + rateNum + '"></div>' +
+    '<div class="form-group"><label class="form-label">Description</label><input class="form-input" id="tier-desc" value="' + desc + '"></div>' +
+    '<div class="flex-between" style="margin-top:4px">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" onclick="saveRateTier()">Save Tier</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+function saveRateTier() {
+  var name = document.getElementById('tier-name').value;
+  var rate = parseFloat(document.getElementById('tier-rate').value);
+  if (!name || isNaN(rate)) { alert('Please fill in all fields'); return; }
+  alert('Rate tier "' + name + '" updated to ' + rate.toFixed(1) + '%.\n\nNote: This affects new merchant assignments. Existing merchants require individual rate updates via Merchant Management.');
+  document.getElementById('modal').style.display = 'none';
+}
+
 function renderRevenueConfig() {
-  var tierHtml = [['Standard','1.5%','Default for new merchants'],['Growth (&#8358;50M+/mo)','1.2%','Auto-applied at threshold'],
-    ['Enterprise (&#8358;200M+/mo)','0.9%','Manual application required'],['Non-Profit/NGO','0.5%','Requires CBN approval letter']].map(function(row) {
+  var tiers = [['Standard','1.5%','Default for new merchants'],['Growth (&#8358;50M+/mo)','1.2%','Auto-applied at threshold'],
+    ['Enterprise (&#8358;200M+/mo)','0.9%','Manual application required'],['Non-Profit/NGO','0.5%','Requires CBN approval letter']];
+  var tierHtml = tiers.map(function(row) {
+    var safeName = row[0].replace(/&amp;/g,'&').replace(/&#8358;/g,'₦').replace(/&gt;/g,'>').replace(/&lt;/g,'<');
     return '<div class="rev-row"><div><div style="font-size:13px;font-weight:600">' + row[0] + '</div>' +
            '<div style="font-size:11px;color:var(--gray-400)">' + row[2] + '</div></div>' +
            '<div class="flex" style="gap:8px"><span class="badge badge-lime">' + row[1] + '</span>' +
-           '<button class="btn btn-outline btn-sm" style="font-size:11px">Edit</button></div></div>';
+           '<button class="btn btn-outline btn-sm" style="font-size:11px" onclick="editRateTier(\'' + safeName.replace(/'/g,"\\'") + '\',' + parseFloat(row[1]) + ',\'' + row[2].replace(/'/g,"\\'") + '\')">Edit</button></div></div>';
   }).join('');
   return '<div class="page-header"><div class="page-title">Revenue Configuration</div>' +
     '<div class="page-desc">Set merchant processing rates, Paylode margin, and aggregator revenue sharing rules</div></div>' +
@@ -856,9 +895,21 @@ function renderAggRevenue() {
     '<div class="stat-card"><div class="stat-label">Earned (Apr 2025)</div><div class="stat-value">&#8358;391K</div></div>' +
     '<div class="stat-card"><div class="stat-label">Earned (Mar 2025)</div><div class="stat-value">&#8358;344K</div></div>' +
     '<div class="stat-card"><div class="stat-label">Total Earned (YTD)</div><div class="stat-value">&#8358;2.1M</div></div></div>' +
-    '<div class="card"><div class="card-header"><div class="card-title">Monthly Statements</div><button class="btn btn-outline btn-sm">&#8681; Download All</button></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">Monthly Statements</div><button class="btn btn-outline btn-sm" onclick="downloadAggRevenueCsv()">&#8681; Download All</button></div>' +
     '<div class="table-wrap"><table><thead><tr><th>Period</th><th>Merchant Volume</th><th>Gross Revenue</th><th>Rail Deduction</th><th>Net Pool</th><th>Your Share (30%)</th><th>Status</th></tr></thead>' +
     '<tbody>' + tableRows + '</tbody></table></div></div>';
+}
+function downloadAggRevenueCsv() {
+  var rows = [['Period','Merchant Volume','Gross Revenue','Rail Deduction','Net Pool','Your Share','Status'],
+    ['May 2025','139000000','1980000','389000','1590000','478000','pending'],
+    ['Apr 2025','114000000','1620000','318000','1300000','391000','completed'],
+    ['Mar 2025','101000000','1430000','281000','1150000','344000','completed']];
+  var csv = rows.map(function(r){ return r.map(function(v){ return '"'+v+'"'; }).join(','); }).join('\n');
+  var blob = new Blob([csv], { type:'text/csv' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'paylode-revenue-share-' + new Date().toISOString().split('T')[0] + '.csv';
+  a.click();
 }
 
 function renderAggTransactions() {
@@ -1070,6 +1121,77 @@ function renderSdkVerify() {
     '<span class="badge badge-blue" style="font-size:12px">GET</span> ' +
     '<span class="mono" style="font-size:13px">/v1/transaction/verify/:reference</span></div>' +
     '<div class="code-block">app.<span class="fn">post</span>(<span class="str">\'/callback\'</span>, <span class="kw">async</span> (req, res) =&gt; {\n  <span class="kw">const</span> txn = <span class="kw">await</span> client.transaction.<span class="fn">verify</span>(req.body.reference);\n  <span class="kw">if</span> (txn.data.status === <span class="str">\'success\'</span>) {\n    <span class="kw">await</span> <span class="fn">fulfillOrder</span>(txn.data.metadata.order_id);\n    res.<span class="fn">json</span>({ ok: <span class="kw">true</span> });\n  }\n});</div></div>';
+}
+
+function renderSdkVirtualAccounts() {
+  return '<div class="page-header"><div class="page-title">Virtual Accounts API</div>' +
+    '<div class="page-desc">Accept bank transfers by assigning dedicated virtual accounts to customers</div></div>' +
+
+    '<div class="info-box" style="margin-bottom:16px">Virtual accounts allow customers to pay via bank transfer. Each transaction generates a unique Paylode reference you can verify server-side.</div>' +
+
+    '<div class="card" style="margin-bottom:12px"><div class="card-header">' +
+    '<div><div class="card-title"><span class="badge badge-green" style="margin-right:8px">POST</span>/v1/transaction/initialize</div>' +
+    '<div class="card-subtitle">Initialize a transaction with bank_transfer channel to get a virtual account</div></div>' +
+    '<span class="badge badge-amber">Requires Secret Key</span></div>' +
+    '<div class="code-block"><span class="comment">// Request — specify bank_transfer as the channel</span>\n{\n  <span class="str">"email"</span>: <span class="str">"customer@example.com"</span>,\n  <span class="str">"amount"</span>: <span class="num">2500000</span>,        <span class="comment">// ₦25,000 in kobo</span>\n  <span class="str">"currency"</span>: <span class="str">"NGN"</span>,\n  <span class="str">"reference"</span>: <span class="str">"ORDER-001"</span>,\n  <span class="str">"channels"</span>: [<span class="str">"bank_transfer"</span>],\n  <span class="str">"metadata"</span>: { <span class="str">"order_id"</span>: <span class="str">"001"</span>, <span class="str">"customer_name"</span>: <span class="str">"Ada Okafor"</span> }\n}</div>' +
+    '<div class="code-block" style="margin-top:8px"><span class="comment">// Response — includes virtual account details</span>\n{\n  <span class="str">"status"</span>: <span class="kw">true</span>,\n  <span class="str">"data"</span>: {\n    <span class="str">"reference"</span>: <span class="str">"ORDER-001"</span>,\n    <span class="str">"payment_method"</span>: <span class="str">"bank_transfer"</span>,\n    <span class="str">"virtual_account"</span>: {\n      <span class="str">"bank_name"</span>: <span class="str">"Wema Bank"</span>,\n      <span class="str">"account_number"</span>: <span class="str">"0123456789"</span>,\n      <span class="str">"account_name"</span>: <span class="str">"PAYLODE/ORDER-001"</span>,\n      <span class="str">"expires_at"</span>: <span class="str">"2026-06-12T22:00:00Z"</span>\n    },\n    <span class="str">"amount"</span>: <span class="num">2500000</span>,\n    <span class="str">"status"</span>: <span class="str">"pending"</span>\n  }\n}</div></div>' +
+
+    '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Fee Structure for Virtual Accounts</div></div>' +
+    '<div class="info-box" style="margin-bottom:12px;font-size:12px">Virtual account fees are charged when the transfer is <strong>received</strong>, not when the account is created. The default is a <strong>flat fee</strong> per transfer received.</div>' +
+    '<div class="rev-row"><span class="rev-label">Fee Model</span><span class="rev-value">Flat fee per transfer received</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Default Fee</span><span class="rev-value">₦50 per transfer</span></div>' +
+    '<div class="rev-row"><span class="rev-label">VAT</span><span class="rev-value">7.5% of fee (₦3.75)</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Total per transfer</span><span class="rev-value"><strong>₦53.75</strong></span></div>' +
+    '<div class="warn-box" style="margin-top:12px;font-size:12px">Merchant-specific rates can override the flat fee with a % rate. Contact support to configure.</div></div>' +
+
+    '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title">Webhook — Payment Notification</div></div>' +
+    '<div class="code-block"><span class="comment">// Paylode sends this to your webhook URL when transfer is confirmed</span>\n{\n  <span class="str">"event"</span>: <span class="str">"payment.success"</span>,\n  <span class="str">"data"</span>: {\n    <span class="str">"reference"</span>: <span class="str">"ORDER-001"</span>,\n    <span class="str">"amount"</span>: <span class="num">2500000</span>,\n    <span class="str">"channel"</span>: <span class="str">"BANK_TRANSFER"</span>,\n    <span class="str">"status"</span>: <span class="str">"SUCCESS"</span>,\n    <span class="str">"paid_at"</span>: <span class="str">"2026-06-12T14:30:00Z"</span>,\n    <span class="str">"sender_name"</span>: <span class="str">"Ada Okafor"</span>,\n    <span class="str">"sender_bank"</span>: <span class="str">"GTBank"</span>\n  }\n}</div>' +
+    '<div class="info-box" style="margin-top:12px;font-size:12px">Always verify the payment server-side using GET /v1/transaction/verify/:reference before fulfilling the order.</div></div>' +
+
+    '<div class="card"><div class="card-header"><div class="card-title">Sandbox Testing</div></div>' +
+    '<div class="rev-row"><span class="rev-label">Test key prefix</span><span class="rev-value mono">sk_test_...</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Simulate transfer</span><span class="rev-value">POST /v1/sandbox/transfer-confirm with reference</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Auto-confirm delay</span><span class="rev-value">Sandbox transfers confirm instantly</span></div>' +
+    '<div class="code-block" style="margin-top:12px"><span class="comment">// Trigger a simulated bank transfer confirmation (sandbox only)</span>\n<span class="kw">const</span> res = <span class="kw">await</span> fetch(<span class="str">\'/api/v1/sandbox/confirm-transfer\'</span>, {\n  method: <span class="str">\'POST\'</span>,\n  headers: { <span class="str">\'Authorization\'</span>: <span class="str">\'Bearer sk_test_...\'</span>, <span class="str">\'Content-Type\'</span>: <span class="str">\'application/json\'</span> },\n  body: JSON.stringify({ reference: <span class="str">\'ORDER-001\'</span> })\n});</div></div>';
+}
+
+function renderSdkPayouts() {
+  return '<div class="page-header"><div class="page-title">Payouts API</div>' +
+    '<div class="page-desc">Send money to your customers and beneficiaries programmatically</div></div>' +
+    '<div class="warn-box" style="margin-bottom:16px">&#9888; <strong>Wallet must be funded first.</strong> Contact Paylode support to fund your payout wallet before making payout calls. Use <span class="mono">GET /v1/payouts/wallet</span> to check your balance.</div>' +
+
+    '<div class="card" style="margin-bottom:12px"><div class="card-header"><div><div class="card-title">Authentication</div><div class="card-subtitle">Use your Secret Key — same as for payment initiation</div></div></div>' +
+    '<div class="code-block"><span class="comment">// Use your Secret Key in the Authorization header</span>\n<span class="str">"Authorization: Bearer sk_live_your_secret_key"</span></div>' +
+    '<div class="info-box" style="margin-top:12px;font-size:12px">Both <strong>sk_live_</strong> (production) and <strong>sk_test_</strong> (sandbox) keys are supported. Sandbox payouts are simulated and do not move real funds.</div></div>' +
+
+    '<div class="card" style="margin-bottom:12px"><div class="card-header">' +
+    '<div><div class="card-title"><span class="badge badge-blue" style="margin-right:8px">GET</span>/v1/payouts/wallet</div><div class="card-subtitle">Check your wallet balance before initiating payouts</div></div></div>' +
+    '<div class="code-block"><span class="comment">// Response</span>\n{\n  <span class="str">"status"</span>: <span class="kw">true</span>,\n  <span class="str">"data"</span>: {\n    <span class="str">"balance"</span>: <span class="num">5000000</span>,           <span class="comment">// kobo</span>\n    <span class="str">"balance_naira"</span>: <span class="num">50000</span>,        <span class="comment">// ₦50,000</span>\n    <span class="str">"last_funded_at"</span>: <span class="str">"2026-06-12"</span>\n  }\n}</div></div>' +
+
+    '<div class="card" style="margin-bottom:12px"><div class="card-header">' +
+    '<div><div class="card-title"><span class="badge badge-green" style="margin-right:8px">POST</span>/v1/payouts/batches</div><div class="card-subtitle">Create a payout batch — single or bulk beneficiaries</div></div>' +
+    '<span class="badge badge-amber">Requires Secret Key</span></div>' +
+    '<div class="code-block"><span class="comment">// Request body</span>\n{\n  <span class="str">"description"</span>: <span class="str">"May salary payments"</span>,\n  <span class="str">"scheduled_at"</span>: <span class="str">"2026-06-15T09:00:00Z"</span>,  <span class="comment">// optional, omit for instant</span>\n  <span class="str">"items"</span>: [\n    {\n      <span class="str">"account_number"</span>: <span class="str">"0123456789"</span>,\n      <span class="str">"bank_code"</span>: <span class="str">"058"</span>,           <span class="comment">// GTBank</span>\n      <span class="str">"amount"</span>: <span class="num">500000</span>,             <span class="comment">// ₦5,000 in kobo</span>\n      <span class="str">"narration"</span>: <span class="str">"May salary"</span>,\n      <span class="str">"account_name"</span>: <span class="str">"John Doe"</span>    <span class="comment">// optional</span>\n    }\n  ]\n}</div>' +
+    '<div class="code-block" style="margin-top:8px"><span class="comment">// Response (201)</span>\n{\n  <span class="str">"status"</span>: <span class="kw">true</span>,\n  <span class="str">"data"</span>: {\n    <span class="str">"batch_id"</span>: <span class="str">"uuid"</span>,\n    <span class="str">"batch_ref"</span>: <span class="str">"PAY-LX4F-A1B2"</span>,\n    <span class="str">"total_amount"</span>: <span class="num">5000</span>,           <span class="comment">// naira</span>\n    <span class="str">"total_items"</span>: <span class="num">1</span>,\n    <span class="str">"status"</span>: <span class="str">"processing"</span>,        <span class="comment">// or "scheduled"</span>\n    <span class="str">"wallet_balance_after"</span>: <span class="num">45000</span>  <span class="comment">// naira remaining</span>\n  }\n}</div>' +
+    '<div class="info-box" style="margin-top:12px;font-size:12px">Funds are <strong>reserved immediately</strong> when the batch is created. If the payout fails, funds are returned to your wallet.</div></div>' +
+
+    '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title"><span class="badge badge-blue" style="margin-right:8px">GET</span>/v1/payouts/batches/:id</div></div>' +
+    '<div class="code-block"><span class="comment">// Response</span>\n{\n  <span class="str">"data"</span>: {\n    <span class="str">"batch"</span>: { <span class="str">"batch_ref"</span>: <span class="str">"PAY-LX4F-A1B2"</span>, <span class="str">"status"</span>: <span class="str">"completed"</span>, ... },\n    <span class="str">"items"</span>: [\n      { <span class="str">"account_number"</span>: <span class="str">"0123456789"</span>, <span class="str">"status"</span>: <span class="str">"success"</span>, ... }\n    ]\n  }\n}</div></div>' +
+
+    '<div class="card"><div class="card-header"><div class="card-title">Common Bank Codes</div></div>' +
+    '<div class="table-wrap"><table>' +
+    '<thead><tr><th>Bank</th><th>Code</th><th>Bank</th><th>Code</th></tr></thead>' +
+    '<tbody>' +
+    [['Zenith Bank','057'],['Guaranty Trust Bank (GTB)','058'],['Access Bank','044'],['UBA','033'],['First Bank','011'],['FCMB','214'],['Sterling Bank','232'],['Stanbic IBTC','221'],['Union Bank','032'],['Ecobank','050'],['Keystone Bank','082'],['Wema Bank','035']].reduce(function(acc,item,i) {
+      if (i%2===0) acc.push([item]);
+      else acc[acc.length-1].push(item);
+      return acc;
+    },[]).map(function(pair) {
+      return '<tr><td>' + pair[0][0] + '</td><td class="mono">' + pair[0][1] + '</td>' +
+        (pair[1] ? '<td>' + pair[1][0] + '</td><td class="mono">' + pair[1][1] + '</td>' : '<td></td><td></td>') + '</tr>';
+    }).join('') +
+    '</tbody></table></div>' +
+    '<div class="info-box" style="margin-top:12px;font-size:12px">Get the full live bank list via <span class="mono">GET /v1/payouts/banks</span> — returns current CBN-registered bank codes.</div></div>';
 }
 
 function renderSdkWebhookDocs() {

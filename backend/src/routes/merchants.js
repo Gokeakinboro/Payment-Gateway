@@ -5,7 +5,18 @@ const { requireAuth, requireSuperAdmin, requireCompliance } = require('../middle
 const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
 
-const VALID_CHANNELS = ['CARD', 'BANK_TRANSFER', 'USSD', 'DIRECT_DEBIT', 'ALL'];
+const VALID_CHANNELS = [
+  'CARD_LOCAL',       // Local Naira-issued cards (Verve, local Visa/MC)
+  'CARD_INTL',        // International / foreign-issued cards
+  'VIRTUAL_ACCOUNT',  // Virtual account receipts / bank transfer in
+  'USSD',             // USSD payments
+  'PAYOUT',           // Outbound transfers (merchant sends money)
+  'ALL',              // Applies to all channels (fallback)
+  // Legacy aliases kept for backward compat
+  'CARD', 'BANK_TRANSFER', 'DIRECT_DEBIT',
+];
+const VALID_FEE_MODELS = ['PCT', 'FLAT', 'PCT_PLUS_FLAT', 'GREATER_OF'];
+const VALID_PRODUCT_GROUPS = ['CARDS', 'VIRTUAL_ACCOUNT', 'PAYOUT', 'CUSTOM'];
 
 // ── Merchant list / own profile ──────────────────────────────────────────────
 
@@ -51,45 +62,54 @@ router.get('/:id/rates', requireAuth, async (req, res, next) => {
     });
     ok(res, rates.map(r => ({
       ...r,
-      rate: Number(r.rate),
-      flat_fee: Number(r.flatFee),
-      cap: Number(r.cap),
+      rate:       Number(r.rate),
+      flat_fee:   Number(r.flatFee),
+      cap:        Number(r.cap),
+      min_charge: Number(r.minCharge),
     })));
   } catch (e) { next(e); }
 });
 
 router.post('/:id/rates', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
-    const { channel, rate, flat_fee = 0, cap = 0, notes } = req.body;
+    const { channel, rate, flat_fee = 0, cap = 0, min_charge = 0, notes } = req.body;
     if (!VALID_CHANNELS.includes(channel)) return fail(res, `channel must be one of: ${VALID_CHANNELS.join(', ')}`);
     const rateNum = parseFloat(rate);
-    if (isNaN(rateNum) || rateNum < 0 || rateNum > 0.2) return fail(res, 'rate must be between 0 and 0.2');
+    if (isNaN(rateNum) || rateNum < 0 || rateNum > 0.2) return fail(res, 'rate must be between 0 and 0.2 (20%)');
 
     const config = await prisma.merchantRateConfig.upsert({
       where: { merchantId_channel: { merchantId: req.params.id, channel } },
       create: {
         merchantId: req.params.id,
         channel,
-        rate:    rateNum,
-        flatFee: parseInt(flat_fee),
-        cap:     parseInt(cap),
+        rate:      rateNum,
+        flatFee:   BigInt(Math.round(Number(flat_fee))),
+        cap:       BigInt(Math.round(Number(cap))),
+        minCharge: BigInt(Math.round(Number(min_charge))),
         notes,
         setBy: req.user.id,
       },
       update: {
-        rate:    rateNum,
-        flatFee: parseInt(flat_fee),
-        cap:     parseInt(cap),
+        rate:      rateNum,
+        flatFee:   BigInt(Math.round(Number(flat_fee))),
+        cap:       BigInt(Math.round(Number(cap))),
+        minCharge: BigInt(Math.round(Number(min_charge))),
         notes,
-        setBy:   req.user.id,
+        setBy:     req.user.id,
         updatedAt: new Date(),
       },
     });
 
     await logAudit(req.user.id, 'MERCHANT_RATE_SET', 'merchant_rate_configs', config.id,
-      null, { channel, rate: rateNum, flat_fee, cap }, notes);
+      null, { channel, rate: rateNum, flat_fee, cap, min_charge }, notes);
 
-    ok(res, { ...config, rate: Number(config.rate), flat_fee: Number(config.flatFee), cap: Number(config.cap) });
+    ok(res, {
+      ...config,
+      rate:       Number(config.rate),
+      flat_fee:   Number(config.flatFee),
+      cap:        Number(config.cap),
+      min_charge: Number(config.minCharge),
+    });
   } catch (e) { next(e); }
 });
 
@@ -233,6 +253,171 @@ router.put('/:id/activate', requireAuth, requireCompliance, async (req, res, nex
 
 // ── API keys ──────────────────────────────────────────────────────────────────
 
+router.get('/me/api-keys', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const keys = await prisma.apiKey.findMany({
+      where: { merchantId, isActive: true },
+      select: { id:true, keyPrefix:true, label:true, isSandbox:true, lastUsedAt:true, createdAt:true },
+      orderBy: { createdAt: 'desc' },
+    });
+    ok(res, keys);
+  } catch (e) { next(e); }
+});
+
+router.post('/me/api-keys/rotate', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const { prefix } = req.body;
+    if (!prefix) return fail(res, 'prefix required');
+    await prisma.apiKey.updateMany({ where:{ merchantId, keyPrefix:prefix }, data:{ isActive:false } });
+    const newKey = generateApiKey(prefix);
+    await prisma.apiKey.create({ data:{ merchantId, keyHash:hashApiKey(newKey), keyPrefix:prefix, label:req.body.label||'Rotated Key', isSandbox:prefix.includes('test') } });
+    ok(res, { key:newKey, prefix, message:'Key rotated. Save this key now — it will not be shown again.' });
+  } catch (e) { next(e); }
+});
+
+// ── Merchant self-service profile update ─────────────────────────────────────
+router.put('/me/profile', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const allowed = ['businessPhone','address','website'];
+    const data = {};
+    for (const key of allowed) { if (req.body[key] !== undefined) data[key] = req.body[key]; }
+    if (!Object.keys(data).length) return fail(res, 'No updatable fields provided');
+    const m = await prisma.merchant.update({ where:{ id:merchantId }, data });
+    await logAudit(req.user.id, 'MERCHANT_PROFILE_UPDATE', 'merchants', merchantId, {}, data);
+    ok(res, m, 'Profile updated');
+  } catch (e) { next(e); }
+});
+
+// ── Settlement bank update (merchant self-service) ────────────────────────────
+router.put('/me/settlement', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const { settlementBank, settlementAccount, settlementAccountName } = req.body;
+    if (!settlementBank || !settlementAccount || !settlementAccountName)
+      return fail(res, 'Bank, account number and account name are required');
+    const m = await prisma.merchant.update({
+      where: { id: merchantId },
+      data:  { settlementBank, settlementAccount, settlementAccountName, settleVerifyStatus: 'pending_manual' },
+    });
+    await logAudit(req.user.id, 'SETTLEMENT_BANK_UPDATE', 'merchants', merchantId, {}, { settlementBank, settlementAccount });
+    ok(res, m, 'Settlement details submitted for verification');
+  } catch (e) { next(e); }
+});
+
+// ── Platform-wide default rate configs ───────────────────────────────────────
+// GET /api/v1/merchants/platform-rates — any authenticated user can read defaults
+router.get('/platform-rates', requireAuth, async (req, res, next) => {
+  try {
+    const { group } = req.query;
+    const where = group ? { productGroup: group } : {};
+    const rates = await prisma.platformRateConfig.findMany({
+      where,
+      orderBy: [{ productGroup: 'asc' }, { channel: 'asc' }],
+    });
+    ok(res, rates.map(_serializeRate));
+  } catch (e) { next(e); }
+});
+
+// PUT /api/v1/merchants/platform-rates — super admin sets or updates a channel default
+router.put('/platform-rates', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const {
+      channel, rate = 0, flat_fee = 0, cap = 0, min_charge = 0,
+      fee_model = 'PCT', vat_rate = 0.075,
+      product_group = 'OTHER', label, description, notes,
+      is_custom = false,
+    } = req.body;
+
+    if (!channel) return fail(res, 'channel is required');
+    // Allow custom channels (CUSTOM_*) plus standard ones
+    if (!channel.startsWith('CUSTOM_') && !VALID_CHANNELS.includes(channel))
+      return fail(res, `channel must be one of: ${VALID_CHANNELS.join(', ')}, or start with CUSTOM_`);
+    if (!VALID_FEE_MODELS.includes(fee_model))
+      return fail(res, `fee_model must be one of: ${VALID_FEE_MODELS.join(', ')}`);
+
+    const rateNum   = parseFloat(rate);
+    const vatRateNum= parseFloat(vat_rate);
+    if (isNaN(rateNum) || rateNum < 0 || rateNum > 1)
+      return fail(res, 'rate must be between 0 and 1.0 (100%)');
+    if (isNaN(vatRateNum) || vatRateNum < 0 || vatRateNum > 1)
+      return fail(res, 'vat_rate must be between 0 and 1.0');
+
+    const data = {
+      productGroup: product_group,
+      feeModel:     fee_model,
+      rate:         rateNum,
+      flatFee:      BigInt(Math.round(Number(flat_fee))),
+      cap:          BigInt(Math.round(Number(cap))),
+      minCharge:    BigInt(Math.round(Number(min_charge))),
+      vatRate:      vatRateNum,
+      label,
+      description,
+      notes,
+      isCustom:     Boolean(is_custom),
+      setBy:        req.user.id,
+    };
+
+    const config = await prisma.platformRateConfig.upsert({
+      where:  { channel },
+      create: { channel, ...data },
+      update: { ...data, updatedAt: new Date() },
+    });
+
+    await logAudit(req.user.id, 'PLATFORM_RATE_SET', 'platform_rate_configs', config.id,
+      null, { channel, fee_model, rate: rateNum, flat_fee, cap, min_charge, vat_rate: vatRateNum }, notes);
+
+    ok(res, _serializeRate(config), 'Platform default rate updated');
+  } catch (e) { next(e); }
+});
+
+// DELETE /api/v1/merchants/platform-rates/:channel — super admin deletes a custom charge
+router.delete('/platform-rates/:channel', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { channel } = req.params;
+    const existing = await prisma.platformRateConfig.findUnique({ where: { channel } });
+    if (!existing) return notFound(res, 'Rate config');
+    if (!existing.isCustom) return fail(res, 'Only custom charges can be deleted. Standard product rates can be disabled but not deleted.');
+    await prisma.platformRateConfig.delete({ where: { channel } });
+    await logAudit(req.user.id, 'PLATFORM_RATE_DELETED', 'platform_rate_configs', existing.id, existing, null);
+    ok(res, null, 'Custom charge deleted');
+  } catch (e) { next(e); }
+});
+
+// Helper to serialize a rate config for API responses
+function _serializeRate(r) {
+  return {
+    id:               r.id,
+    channel:          r.channel,
+    product_group:    r.productGroup,
+    fee_model:        r.feeModel,
+    label:            r.label,
+    description:      r.description,
+    notes:            r.notes,
+    is_custom:        r.isCustom,
+    is_active:        r.isActive,
+    rate:             Number(r.rate),
+    rate_pct:         (Number(r.rate) * 100).toFixed(4) + '%',
+    flat_fee:         Number(r.flatFee),
+    flat_fee_naira:   Number(r.flatFee) / 100,
+    cap:              Number(r.cap),
+    cap_naira:        Number(r.cap) / 100,
+    min_charge:       Number(r.minCharge),
+    min_charge_naira: Number(r.minCharge) / 100,
+    vat_rate:         Number(r.vatRate),
+    vat_rate_pct:     (Number(r.vatRate) * 100).toFixed(1) + '%',
+    set_by:           r.setBy,
+    updated_at:       r.updatedAt,
+  };
+}
+
+// ── Admin-facing API key routes (backward compat) ────────────────────────────
 router.get('/:id/api-keys', requireAuth, async (req, res, next) => {
   try {
     const merchantId = req.user.role==='MERCHANT' ? req.user.merchant.id : req.params.id;

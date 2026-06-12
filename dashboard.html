@@ -125,6 +125,12 @@ tbody tr:last-child td { border-bottom: none; }
 .modal-title { font-size: 16px; font-weight: 700; }
 .modal-close { width: 28px; height: 28px; border-radius: 6px; background: var(--gray-100); border: none; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; }
 .notif-dot { width: 8px; height: 8px; background: var(--red); border-radius: 50%; position: absolute; top: -2px; right: -2px; }
+/* Mobile page-header utility — JS pages use .page-header with inline flex-between */
+.page-header { position: relative; }
+.mob-wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 24px; }
+.mob-wrap .page-title { font-size: 20px; font-weight: 700; color: var(--gray-900); }
+.mob-wrap .page-desc { font-size: 13px; color: var(--gray-500); margin-top: 4px; }
+.mob-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 
 /* ── Mobile responsiveness ── */
 .hamburger { display: none; background: none; border: none; cursor: pointer; padding: 4px 6px; flex-shrink: 0; line-height: 0; }
@@ -150,6 +156,21 @@ tbody tr:last-child td { border-bottom: none; }
   .page-title { font-size: 17px; }
   .stat-value { font-size: 20px; }
   .card { padding: 14px; }
+  /* Modal full-width on tablet/mobile */
+  .modal-overlay { padding: 12px; align-items: flex-end; }
+  .modal { max-width: 100%; border-radius: 16px 16px 0 0; max-height: 88vh; }
+  /* Tab nav scrollable */
+  .tab-nav { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tab-nav::-webkit-scrollbar { display: none; }
+  .tab-btn { white-space: nowrap; flex-shrink: 0; }
+  /* Page headers with actions: stack vertically */
+  .page-header.flex-between { flex-direction: column !important; align-items: flex-start !important; gap: 10px; }
+  /* Card headers wrap when crowded */
+  .card-header { flex-wrap: wrap; gap: 8px; }
+  /* Flex-between rows in cards: allow wrap */
+  .rev-row { flex-wrap: wrap; gap: 4px; }
+  /* Code blocks scroll on mobile */
+  .code-block { font-size: 11px; }
 }
 @media (max-width: 480px) {
   .stats-grid { gap: 8px; }
@@ -157,6 +178,47 @@ tbody tr:last-child td { border-bottom: none; }
   .stat-value { font-size: 17px; }
   .content { padding: 10px; }
   .section-gap { margin-top: 14px; }
+  /* Stack inline flex headers on very small screens */
+  .flex-between { flex-wrap: wrap; gap: 8px; }
+  /* Hide less important table columns handled per-page */
+  thead th, tbody td { padding: 8px 10px; font-size: 12px; }
+  /* Badges smaller */
+  .badge { font-size: 10px; padding: 2px 6px; }
+  /* Tags smaller */
+  .tag { font-size: 10px; }
+  /* Modal slides up from bottom */
+  .modal-overlay { align-items: flex-end; padding: 0; }
+  .modal { border-radius: 16px 16px 0 0; max-height: 92vh; width: 100%; }
+  /* Topbar tighter */
+  .topbar { height: 50px; }
+  .topbar-title { font-size: 13px; }
+  /* Stat grid 2-col for all widths */
+  .stats-grid { grid-template-columns: 1fr 1fr; }
+  /* Page title smaller */
+  .page-title { font-size: 15px; }
+  .page-desc { font-size: 12px; }
+  /* Card padding minimal */
+  .card { padding: 12px; }
+  .card-title { font-size: 13px; }
+  /* Form inputs ok as-is but reduce gap */
+  .form-group { margin-bottom: 12px; }
+  /* Grid always 1 col on tiny screens */
+  .grid-2, .grid-3, .form-grid { grid-template-columns: 1fr !important; }
+  /* Button sizing */
+  .btn { padding: 7px 12px; font-size: 12px; }
+  .btn-sm { padding: 4px 10px; font-size: 11px; }
+  /* Rev rows label/value smaller */
+  .rev-label { font-size: 12px; }
+  .rev-value { font-size: 12px; }
+  /* Code block */
+  .code-block { font-size: 10px; padding: 12px; }
+  /* Section gap tighter */
+  .section-gap { margin-top: 12px; }
+  /* Table: enable horizontal scroll, pin first col */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 500px; }
+  /* Hide help button text on tiny screens */
+  .topbar-right { gap: 4px; }
 }
 </style>
 </head>
@@ -195,6 +257,7 @@ tbody tr:last-child td { border-bottom: none; }
     <div class="topbar-right">
       <span class="topbar-badge">CBN Licensed</span>
       <div id="topbar-user" style="font-size:12px;color:var(--gray-500)"></div>
+      <button onclick="showHelpModal()" title="Help & FAQ" style="background:none;border:1px solid var(--gray-300);border-radius:8px;width:32px;height:32px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--gray-500)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background='none'">?</button>
       <div style="position:relative">
         <button class="signout-btn" onclick="logout()" style="background:none;border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.6);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit">Sign Out</button>
         <div class="avatar" id="user-avatar" style="cursor:pointer" onclick="toggleUserMenu(event)">?</div>
@@ -213,7 +276,35 @@ tbody tr:last-child td { border-bottom: none; }
   <div class="modal" id="modal-inner"></div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script src="app.js?v=13"></script>
-<script src="api-wiring.js?v=24"></script>
+<script src="app.js?v=16"></script>
+<script src="api-wiring.js?v=28"></script>
+<script>
+function showHelpModal() {
+  var faqs = [
+    ['How do I process a payment?', 'Use your API keys to call POST /api/v1/transaction/initialize. Pass email, amount (in kobo), currency, and reference. Redirect the customer to the authorization_url returned. After payment, verify server-side with GET /api/v1/transaction/verify/:reference.'],
+    ['Where do I find my API keys?', 'Go to API Keys in the Integration section of your sidebar. Your public key (pk_) is safe for frontend use. Never expose your secret key (sk_) in client-side code.'],
+    ['How do settlements work?', 'Successful transactions are batched and settled to your registered bank account. Default cycle is T+1 (next business day). You can view detailed settlement reports in the Settlements section.'],
+    ['How do I configure webhooks?', 'Go to Webhooks under Integration. Add your endpoint URL (must be HTTPS). Paylode will send POST requests to your endpoint for events like payment.success, payment.failed, and refund.processed.'],
+    ['What is 2FA and why should I enable it?', 'Two-Factor Authentication adds a second layer of security to your account. After entering your password, you also enter a code from an authenticator app (Google Authenticator, Authy, etc.). Enable it in Platform Settings.'],
+    ['How do I update my settlement bank?', 'Go to Business Profile → Change Settlement Account. Enter your new bank details. The account will go through a verification process before being activated for payouts.'],
+    ['What transaction channels are supported?', 'Paylode supports Card payments (Visa, Mastercard, Verve via Interswitch), Bank Transfer, and USSD. Channel availability depends on your KYC tier.'],
+    ['Who do I contact for support?', 'Email support@paylodeservices.com or use the developer chat at paylodeservices.com/developer-chat. For urgent issues, call our operations line.'],
+  ];
+  var html = '<div class="modal-header"><div class="modal-title">Help & FAQ</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="font-size:12px;color:var(--gray-400);margin-bottom:16px">Common questions about using the Paylode dashboard</div>' +
+    faqs.map(function(f,i) {
+      return '<div style="margin-bottom:12px;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden">' +
+        '<button onclick="var d=document.getElementById(\'faq-'+i+'\');d.style.display=d.style.display===\'none\'?\'block\':\'none\'" ' +
+          'style="width:100%;text-align:left;padding:12px 16px;background:var(--gray-50);border:none;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;color:var(--gray-700);display:flex;justify-content:space-between;align-items:center">' +
+          f[0] + '<span style="font-size:16px;opacity:.5">&#43;</span></button>' +
+        '<div id="faq-' + i + '" style="display:none;padding:12px 16px;font-size:13px;color:var(--gray-600);line-height:1.6;background:#fff">' + f[1] + '</div>' +
+      '</div>';
+    }).join('') +
+    '<div class="info-box" style="margin-top:16px;font-size:12px">Still need help? Email <strong>support@paylodeservices.com</strong></div>';
+  document.getElementById('modal-inner').innerHTML = html;
+  document.getElementById('modal').style.display = 'flex';
+}
+</script>
 </body>
 </html>

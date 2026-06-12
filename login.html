@@ -34,6 +34,9 @@ input:focus{border-color:#1a2744;box-shadow:0 0 0 3px rgba(26,39,68,.08)}
 <body>
 <div class="wrap">
   <a class="back" href="/index.html?switch=1">← Back to portal selection</a>
+
+  <!-- Step 1: Password login -->
+  <div id="login-step">
   <div class="card">
     <div class="role-header" id="role-header">
       <div class="role-icon" id="role-icon">🏛</div>
@@ -59,6 +62,29 @@ input:focus{border-color:#1a2744;box-shadow:0 0 0 3px rgba(26,39,68,.08)}
     <button class="btn" id="btn" onclick="doLogin()">Sign In</button>
     <div class="footer-note">Paylode Services Limited &nbsp;·&nbsp; CBN Licensed PSSP</div>
   </div>
+  </div><!-- /login-step -->
+
+  <!-- Step 2: 2FA verification -->
+  <div id="twofa-step" style="display:none">
+  <div class="card">
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="width:56px;height:56px;background:#e8edf5;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:12px">🔐</div>
+      <div style="font-size:17px;font-weight:700;color:#1a2744">Two-Factor Authentication</div>
+      <div id="twofa-hint" style="font-size:12px;color:#64748b;margin-top:6px"></div>
+    </div>
+    <div class="err" id="twofa-err"></div>
+    <div class="field">
+      <label>Authenticator Code</label>
+      <input type="text" id="twofa-code" placeholder="000 000" maxlength="7" autocomplete="one-time-code"
+        style="font-size:24px;letter-spacing:6px;text-align:center;font-family:monospace">
+    </div>
+    <button class="btn" id="twofa-btn" onclick="do2FA()">Verify</button>
+    <div style="text-align:center;margin-top:14px">
+      <button onclick="back2Login()" style="background:none;border:none;color:#94a3b8;font-size:12px;cursor:pointer;font-family:inherit">← Back to login</button>
+    </div>
+  </div>
+  </div><!-- /twofa-step -->
+
 </div>
 
 <script>
@@ -77,50 +103,79 @@ document.getElementById('role-icon').style.background = r.bg;
 document.getElementById('role-name').textContent    = r.name;
 document.getElementById('role-desc').textContent    = r.desc;
 
+var _2faTempToken = null;
+
 async function doLogin() {
   const email = document.getElementById('em').value.trim();
   const pass  = document.getElementById('pw').value;
   const err   = document.getElementById('err');
   const btn   = document.getElementById('btn');
-
-  if (!email || !pass) {
-    err.textContent = 'Please enter your email and password';
-    err.style.display = 'block';
-    return;
-  }
-
-  btn.textContent = 'Signing in...';
-  btn.disabled    = true;
-  err.style.display = 'none';
-
+  if (!email || !pass) { err.textContent='Please enter your email and password'; err.style.display='block'; return; }
+  btn.textContent='Signing in...'; btn.disabled=true; err.style.display='none';
   try {
-    const res  = await fetch('/api/v1/auth/login', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ email, password: pass }),
-    });
+    const res  = await fetch('/api/v1/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ email, password:pass }) });
     const data = await res.json();
-
-    if (data.status && data.data && data.data.token) {
+    if (data.status && data.data && data.data.twofa_required) {
+      _2faTempToken = data.data.temp_token;
+      show2FAStep(data.data.user_email);
+    } else if (data.status && data.data && data.data.token) {
       localStorage.setItem('paylode_token', data.data.token);
       localStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
-      // Redirect to dashboard
       window.location.href = '/dashboard.html';
     } else {
-      err.textContent   = data.message || 'Invalid email or password';
-      err.style.display = 'block';
-      btn.textContent   = 'Sign In';
-      btn.disabled      = false;
+      err.textContent=data.message||'Invalid email or password'; err.style.display='block';
+      btn.textContent='Sign In'; btn.disabled=false;
     }
   } catch(e) {
-    err.textContent   = 'Cannot connect to server. Please try again.';
-    err.style.display = 'block';
-    btn.textContent   = 'Sign In';
-    btn.disabled      = false;
+    err.textContent='Cannot connect to server. Please try again.'; err.style.display='block';
+    btn.textContent='Sign In'; btn.disabled=false;
   }
 }
 
-document.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+function show2FAStep(email) {
+  document.getElementById('login-step').style.display = 'none';
+  document.getElementById('twofa-step').style.display = 'block';
+  document.getElementById('twofa-hint').textContent   = 'Enter the 6-digit code from your authenticator app for ' + email;
+  setTimeout(function(){ var el=document.getElementById('twofa-code'); if(el) el.focus(); }, 100);
+}
+
+async function do2FA() {
+  const code = document.getElementById('twofa-code').value.replace(/\s/g,'');
+  const err  = document.getElementById('twofa-err');
+  const btn  = document.getElementById('twofa-btn');
+  if (code.length !== 6) { err.textContent='Enter your 6-digit code'; err.style.display='block'; return; }
+  btn.textContent='Verifying...'; btn.disabled=true; err.style.display='none';
+  try {
+    const res  = await fetch('/api/v1/auth/2fa/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ temp_token:_2faTempToken, code }) });
+    const data = await res.json();
+    if (data.status && data.data && data.data.token) {
+      localStorage.setItem('paylode_token', data.data.token);
+      localStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
+      window.location.href = '/dashboard.html';
+    } else {
+      err.textContent=data.message||'Invalid code'; err.style.display='block';
+      btn.textContent='Verify'; btn.disabled=false;
+    }
+  } catch(e) {
+    err.textContent='Cannot connect. Please try again.'; err.style.display='block';
+    btn.textContent='Verify'; btn.disabled=false;
+  }
+}
+
+function back2Login() {
+  _2faTempToken=null;
+  document.getElementById('twofa-step').style.display='none';
+  document.getElementById('login-step').style.display='block';
+  document.getElementById('btn').textContent='Sign In';
+  document.getElementById('btn').disabled=false;
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key==='Enter') {
+    if (document.getElementById('twofa-step').style.display!=='none') do2FA();
+    else doLogin();
+  }
+});
 
 function togglePw() {
   var inp = document.getElementById('pw');

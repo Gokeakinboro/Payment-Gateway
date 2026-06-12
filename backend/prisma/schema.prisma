@@ -91,6 +91,8 @@ model User {
   isActive     Boolean  @default(true) @map("is_active")
   lastLoginAt  DateTime? @map("last_login_at")
   createdAt    DateTime @default(now()) @map("created_at")
+  totpSecret   String?  @map("totp_secret")
+  totpEnabled  Boolean  @default(false) @map("totp_enabled")
 
   merchant     Merchant?
   aggregator   Aggregator?
@@ -143,9 +145,14 @@ model Merchant {
   kycStatus         KycStatus @default(PENDING_KYC) @map("kyc_status")
   kycTier           Int?      @map("kyc_tier")
   processingRate    Decimal?  @map("processing_rate") @db.Decimal(5, 4)
-  settlementBank    String?   @map("settlement_bank")
-  settlementAccount String?   @map("settlement_account") // encrypted at app layer
-  settlementCycle   String    @default("t1") @map("settlement_cycle")
+  settlementBank        String?   @map("settlement_bank")
+  settlementAccount     String?   @map("settlement_account")      // encrypted at app layer
+  settlementAccountName String?   @map("settlement_account_name")
+  settleVerifyStatus    String    @default("unverified") @map("settle_verify_status")
+  settleEnquiryName     String?   @map("settle_enquiry_name")
+  settleVerifyNotes     String?   @map("settle_verify_notes")
+  settleVerifiedAt      DateTime? @map("settle_verified_at")
+  settlementCycle       String    @default("t1") @map("settlement_cycle")
   isActive          Boolean   @default(false) @map("is_active") // false until KYC done
   webhookUrl        String?   @map("webhook_url")
   webhookSecret     String?   @map("webhook_secret")
@@ -168,6 +175,9 @@ model Merchant {
   apiKeys        ApiKey[]
   rateConfigs    MerchantRateConfig[]
   aggRateConfigs AggregatorRateConfig[]
+  wallet         MerchantWallet?
+  payoutBatches  PayoutBatch[]
+  payoutItems    PayoutItem[]
 
   @@index([kycStatus])
   @@index([isActive])
@@ -326,7 +336,17 @@ model KycSubmission {
   ninVerified    Boolean  @default(false) @map("nin_verified")
   cacVerified    Boolean  @default(false) @map("cac_verified")
   pepClear       Boolean  @default(false) @map("pep_clear")
-  amlScore       String?  @map("aml_score") // low | medium | high
+  amlScore       String?  @map("aml_score")
+  // YouVerify automated checks
+  bvnCheckStatus String   @default("pending") @map("bvn_check_status")
+  ninCheckStatus String   @default("pending") @map("nin_check_status")
+  cacCheckStatus String   @default("not_required") @map("cac_check_status")
+  yvBvnRef       String?  @map("yv_bvn_ref")
+  yvNinRef       String?  @map("yv_nin_ref")
+  yvCacRef       String?  @map("yv_cac_ref")
+  bvnData        Json?    @map("bvn_data")
+  ninData        Json?    @map("nin_data")
+  cacData        Json?    @map("cac_data")
   submittedAt    DateTime @default(now()) @map("submitted_at")
   approvedAt     DateTime? @map("approved_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -388,10 +408,13 @@ model AuditLog {
 model MerchantRateConfig {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   merchantId String   @map("merchant_id") @db.Uuid
-  channel    String   // CARD | BANK_TRANSFER | USSD | DIRECT_DEBIT | ALL
-  rate       Decimal  @db.Decimal(6, 5)  // e.g. 0.01500 = 1.5%
-  flatFee    BigInt   @default(0) @map("flat_fee")  // kobo, added on top of %
-  cap        BigInt   @default(0)                    // kobo, 0 = no cap
+  channel    String   // CARD_LOCAL | CARD_INTL | VIRTUAL_ACCOUNT | USSD | PAYOUT | ALL | CUSTOM_*
+  feeModel   String   @default("PCT") @map("fee_model")   // PCT | FLAT | PCT_PLUS_FLAT | GREATER_OF
+  rate       Decimal  @default(0) @db.Decimal(7, 5)       // e.g. 0.01500 = 1.5%
+  flatFee    BigInt   @default(0) @map("flat_fee")         // kobo
+  cap        BigInt   @default(0)                           // kobo max fee, 0 = no cap
+  minCharge  BigInt   @default(0) @map("min_charge")        // kobo min fee, 0 = no minimum
+  vatRate    Decimal  @default(0.075) @map("vat_rate") @db.Decimal(5, 4)  // default 7.5%
   notes      String?
   setBy      String?  @map("set_by") @db.Uuid
   createdAt  DateTime @default(now()) @map("created_at")
@@ -402,6 +425,30 @@ model MerchantRateConfig {
   @@unique([merchantId, channel], name: "merchantId_channel")
   @@index([merchantId])
   @@map("merchant_rate_configs")
+}
+
+// ─── PLATFORM-WIDE DEFAULT RATES ─────────────────────────────────────────────
+// Super admin sets these; used as fallback when no per-merchant rate config exists.
+model PlatformRateConfig {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channel      String   @unique  // CARD_LOCAL | CARD_INTL | VIRTUAL_ACCOUNT | USSD | PAYOUT | CUSTOM_*
+  productGroup String   @default("OTHER") @map("product_group")  // CARDS | VIRTUAL_ACCOUNT | PAYOUT | CUSTOM
+  feeModel     String   @default("PCT") @map("fee_model")        // PCT | FLAT | PCT_PLUS_FLAT | GREATER_OF
+  rate         Decimal  @default(0) @db.Decimal(7, 5)            // e.g. 0.01500 = 1.5%
+  flatFee      BigInt   @default(0) @map("flat_fee")             // kobo
+  cap          BigInt   @default(0)                               // kobo max fee, 0 = no cap
+  minCharge    BigInt   @default(0) @map("min_charge")            // kobo min fee, 0 = no minimum
+  vatRate      Decimal  @default(0.075) @map("vat_rate") @db.Decimal(5, 4)  // 7.5% statutory VAT
+  label        String?                                            // display name
+  description  String?                                            // what this charge is for
+  isActive     Boolean  @default(true) @map("is_active")
+  isCustom     Boolean  @default(false) @map("is_custom")        // custom charges added by admin
+  notes        String?
+  setBy        String?  @map("set_by") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_rate_configs")
 }
 
 // ─── AGGREGATOR RATE CONFIGS ──────────────────────────────────────────────────
@@ -422,6 +469,111 @@ model AggregatorRateConfig {
   @@unique([aggregatorId, merchantId], name: "aggregatorId_merchantId")
   @@index([aggregatorId])
   @@map("aggregator_rate_configs")
+}
+
+// ─── MERCHANT WALLETS ────────────────────────────────────────────────────────
+
+model MerchantWallet {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId   String    @unique @map("merchant_id") @db.Uuid
+  balance      BigInt    @default(0)
+  lastFundedAt DateTime? @map("last_funded_at")
+  fundedBy     String?   @map("funded_by") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  merchant  Merchant       @relation(fields: [merchantId], references: [id])
+  ledger    WalletLedger[]
+
+  @@map("merchant_wallets")
+}
+
+model WalletLedger {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId    String   @map("merchant_id") @db.Uuid
+  entryType     String   @map("entry_type")   // CREDIT | DEBIT | FEE | VAT | REFUND
+  amount        BigInt
+  balanceBefore BigInt   @map("balance_before")
+  balanceAfter  BigInt   @map("balance_after")
+  reference     String
+  description   String?
+  createdBy     String?  @map("created_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  wallet MerchantWallet @relation(fields: [merchantId], references: [merchantId])
+
+  @@index([merchantId])
+  @@index([reference])
+  @@map("wallet_ledger")
+}
+
+// ─── PAYOUT BATCHES ───────────────────────────────────────────────────────────
+
+model PayoutBatch {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId     String    @map("merchant_id") @db.Uuid
+  batchRef       String    @unique @map("batch_ref")
+  description    String?
+  totalAmount    BigInt    @map("total_amount")
+  totalFee       BigInt    @default(0) @map("total_fee")    // Paylode payout fee
+  totalVat       BigInt    @default(0) @map("total_vat")    // VAT on fee
+  feeRate        Decimal   @default(0) @map("fee_rate") @db.Decimal(6,5)
+  totalItems     Int       @map("total_items")
+  processedItems Int       @default(0) @map("processed_items")
+  failedItems    Int       @default(0) @map("failed_items")
+  status         String    @default("pending")              // pending | processing | completed | partially_failed | failed
+  railId         String?   @map("rail_id") @db.Uuid
+  scheduledAt    DateTime? @map("scheduled_at")
+  completedAt    DateTime? @map("completed_at")
+  createdBy      String?   @map("created_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  merchant Merchant      @relation(fields: [merchantId], references: [id])
+  items    PayoutItem[]
+
+  @@index([merchantId])
+  @@index([status])
+  @@map("payout_batches")
+}
+
+model PayoutItem {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId       String    @map("batch_id") @db.Uuid
+  merchantId    String    @map("merchant_id") @db.Uuid
+  accountNumber String    @map("account_number")
+  accountName   String?   @map("account_name")
+  bankCode      String    @map("bank_code")
+  bankName      String?   @map("bank_name")
+  amount        BigInt                         // actual payout to beneficiary
+  itemFee       BigInt    @default(0) @map("item_fee")   // Paylode fee
+  itemVat       BigInt    @default(0) @map("item_vat")   // VAT on fee
+  narration     String?
+  status        String    @default("queued")  // queued | processing | success | failed | refunded
+  failureReason String?   @map("failure_reason")
+  providerRef   String?   @map("provider_ref")
+  scheduledAt   DateTime? @map("scheduled_at")
+  processedAt   DateTime? @map("processed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  batch    PayoutBatch @relation(fields: [batchId], references: [id])
+  merchant Merchant    @relation(fields: [merchantId], references: [id])
+
+  @@index([batchId])
+  @@index([merchantId, status])
+  @@map("payout_items")
+}
+
+// ─── NIGERIAN BANKS ───────────────────────────────────────────────────────────
+
+model NigerianBank {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bankCode  String  @unique @map("bank_code")
+  bankName  String  @map("bank_name")
+  bankType  String? @map("bank_type")
+  isActive  Boolean @default(true) @map("is_active")
+
+  @@map("nigerian_banks")
 }
 
 // ─── WEBHOOKS LOG ─────────────────────────────────────────────────────────────

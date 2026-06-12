@@ -5,7 +5,7 @@ const { prisma }        = require('../utils/db');
 const { requireAuth, requireApiKey, requireCompliance } = require('../middleware/auth');
 const {
   ok, fail, notFound, created,
-  generateRef, computeFees, koboToNaira,
+  generateRef, computeFees, computeFeesWithConfig, koboToNaira,
 } = require('../utils/helpers');
 const { dispatchWebhook } = require('../services/webhookService');
 const { checkAmlRules }   = require('../services/amlService');
@@ -67,7 +67,26 @@ router.post('/initialize', requireApiKey,
       const aggSplitPct = merchant.aggregator
         ? Number(merchant.aggregator.revenueSplitPct) : 0;
 
-      const fees = computeFees(amount, Number(merchant.processingRate || 0.015), railRate, aggSplitPct);
+      // Look up per-merchant rate config, then platform default, then legacy processingRate
+      const channel  = (req.body.channels?.[0] || 'CARD').toUpperCase();
+      const [merchantRate, platformRate] = await Promise.all([
+        prisma.merchantRateConfig.findFirst({
+          where: { merchantId: merchant.id, channel: { in: [channel, 'ALL'] } },
+          orderBy: { channel: 'asc' }, // channel-specific wins over ALL
+        }),
+        prisma.platformRateConfig.findFirst({
+          where: { channel: { in: [channel, 'ALL'] } },
+          orderBy: { channel: 'asc' },
+        }),
+      ]);
+
+      const rateConfig = merchantRate
+        ? { rate: Number(merchantRate.rate), flat_fee: Number(merchantRate.flatFee), cap: Number(merchantRate.cap), min_charge: Number(merchantRate.minCharge) }
+        : platformRate
+          ? { rate: Number(platformRate.rate), flat_fee: Number(platformRate.flatFee), cap: Number(platformRate.cap), min_charge: Number(platformRate.minCharge) }
+          : { rate: Number(merchant.processingRate || 0.015), flat_fee: 0, cap: 0, min_charge: 0 };
+
+      const fees = computeFeesWithConfig(amount, rateConfig, railRate, aggSplitPct);
       const ref  = reference || generateRef('TXN');
 
       const txn = await prisma.transaction.create({ data: {

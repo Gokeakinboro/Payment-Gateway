@@ -14,7 +14,7 @@ async function requireAuth(req, res, next) {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id:true, email:true, role:true, isActive:true,
+      select: { id:true, email:true, role:true, permissions:true, isActive:true,
                 merchant:{ select:{ id:true, merchantCode:true, kycStatus:true, isActive:true, kycTier:true, processingRate:true, aggregatorId:true }},
                 aggregator:{ select:{ id:true, revenueSplitPct:true }} },
     });
@@ -68,10 +68,13 @@ const requireRole = (...roles) => (req, res, next) => {
   next();
 };
 
-const requireSuperAdmin  = requireRole('SUPER_ADMIN');
-const requireCompliance  = requireRole('SUPER_ADMIN', 'COMPLIANCE_OFFICER');
-const requireAggregator  = requireRole('SUPER_ADMIN', 'AGGREGATOR');
-const requireMerchant    = requireRole('SUPER_ADMIN', 'MERCHANT');
+const requireSuperAdmin        = requireRole('SUPER_ADMIN');
+const requireAdmin             = requireRole('SUPER_ADMIN', 'ADMIN');
+const requireCompliance        = requireRole('SUPER_ADMIN', 'COMPLIANCE_OFFICER');
+const requireAdminOrCompliance = requireRole('SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER');
+const requireAggregator        = requireRole('SUPER_ADMIN', 'AGGREGATOR');
+const requireMerchant          = requireRole('SUPER_ADMIN', 'MERCHANT');
 
 module.exports = { requireAuth, requireApiKey, requireRole,
-                   requireSuperAdmin, requireCompliance, requireAggregator, requireMerchant };
+                   requireSuperAdmin, requireAdmin, requireCompliance,
+                   requireAdminOrCompliance, requireAggregator, requireMerchant };

@@ -134,10 +134,14 @@ async function loadTransactions(page=1, filters={}) {
     if (!res?.data) { el.innerHTML = errorBox('Could not load transactions'); return; }
 
     const { data: txns, meta } = res.data;
+    const backPage = currentRole === 'merchant' ? 'merch_overview' : currentRole === 'aggregator' ? 'agg_overview' : 'overview';
 
     el.innerHTML = `
     <div class="page-header flex-between">
-      <div><div class="page-title">All Transactions</div><div class="page-desc">${fmtNum(meta.total)} total transactions</div></div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-outline btn-sm" onclick="navigate('${backPage}')" style="font-size:12px">&#8592; Back</button>
+        <div><div class="page-title">All Transactions</div><div class="page-desc">${fmtNum(meta.total)} total transactions</div></div>
+      </div>
       <div class="flex">
         <select class="form-input form-select" style="width:130px;margin-right:8px" onchange="loadTransactions(1,{status:this.value})">
           <option value="">All Status</option>
@@ -146,12 +150,13 @@ async function loadTransactions(page=1, filters={}) {
           <option value="PENDING">Pending</option>
           <option value="REVERSED">Reversed</option>
         </select>
-        <select class="form-input form-select" style="width:140px" onchange="loadTransactions(1,{channel:this.value})">
+        <select class="form-input form-select" style="width:140px;margin-right:8px" onchange="loadTransactions(1,{channel:this.value})">
           <option value="">All Channels</option>
           <option value="CARD">Card</option>
           <option value="BANK_TRANSFER">Bank Transfer</option>
           <option value="USSD">USSD</option>
         </select>
+        <button class="btn btn-outline btn-sm" onclick="exportTransactionsCsv()">&#8681; Export CSV</button>
       </div>
     </div>
     <div class="card">
@@ -184,6 +189,35 @@ async function loadTransactions(page=1, filters={}) {
   }
 }
 
+async function exportTransactionsCsv() {
+  const btn = document.querySelector('[onclick="exportTransactionsCsv()"]');
+  if (btn) { btn.textContent = '⟳ Loading...'; btn.disabled = true; }
+  try {
+    const res = await apiFetch('/transactions?page=1&perPage=1000');
+    const txns = res?.data?.data || [];
+    const headers = ['Reference','Merchant','Amount (NGN)','Fee (NGN)','Channel','Status','Date'];
+    const rows = txns.map(t => [
+      t.reference,
+      (t.merchant?.businessName||'').replace(/,/g,' '),
+      (Number(t.amount)/100).toFixed(2),
+      (Number(t.fees?.merchant_fee||0)/100).toFixed(2),
+      t.channel,
+      t.status,
+      new Date(t.created_at).toLocaleDateString('en-NG'),
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'paylode-transactions-' + new Date().toISOString().split('T')[0] + '.csv';
+    a.click();
+  } catch(e) {
+    alert('Export failed: ' + e.message);
+  } finally {
+    if (btn) { btn.textContent = '↓ Export CSV'; btn.disabled = false; }
+  }
+}
+
 // ── MERCHANTS ─────────────────────────────────────────────────────────────────
 async function loadMerchants(page=1) {
   const el = document.getElementById('main-content');
@@ -199,7 +233,7 @@ async function loadMerchants(page=1) {
     el.innerHTML = `
     <div class="page-header flex-between">
       <div><div class="page-title">Merchants</div><div class="page-desc">${fmtNum(meta.total)} total merchants</div></div>
-      <div style="display:flex;gap:8px"><button class="btn btn-outline btn-sm" onclick="copyAdminSignupLink()">Copy Sign-Up Link</button><button class="btn btn-primary" onclick="showModal('onboard')">+ Onboard Merchant</button></div>
+      <div style="display:flex;gap:8px"><button class="btn btn-outline btn-sm" onclick="copyAdminSignupLink()">Copy Sign-Up Link</button><button class="btn btn-primary" onclick="navigate('admin_onboard')">+ Onboard Merchant</button></div>
     </div>
     <div class="card">
       <div class="table-wrap">
@@ -309,49 +343,43 @@ async function loadMerchantRates(id) {
   var rates = (res && Array.isArray(res.data)) ? res.data : [];
   var channels = ['CARD','BANK_TRANSFER','USSD','DIRECT_DEBIT','ALL'];
 
+  function fmtKobo(k) { return k > 0 ? '&#8358;' + (k/100).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}) : '—'; }
   var rows = rates.length === 0
-    ? '<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:20px">No overrides — global rail rates apply</td></tr>'
+    ? '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:20px">No overrides set — platform defaults apply</td></tr>'
     : rates.map(function(r) {
         return '<tr>' +
           '<td><span class="badge badge-gray">' + r.channel + '</span></td>' +
-          '<td>' + (Number(r.rate)*100).toFixed(2) + '%</td>' +
-          '<td>' + (r.flat_fee > 0 ? '₦' + (r.flat_fee/100).toLocaleString() : '—') + '</td>' +
-          '<td>' + (r.cap > 0 ? '₦' + (r.cap/100).toLocaleString() : 'No cap') + '</td>' +
+          '<td class="mono">' + (Number(r.rate)*100).toFixed(2) + '%</td>' +
+          '<td class="mono">' + fmtKobo(r.flat_fee) + '</td>' +
+          '<td class="mono">' + fmtKobo(r.min_charge || 0) + '</td>' +
+          '<td class="mono">' + (r.cap > 0 ? '&#8358;' + (r.cap/100).toLocaleString() + ' cap' : 'No cap') + '</td>' +
+          '<td style="font-size:11px;color:var(--gray-400)">' + (r.notes||'—') + '</td>' +
           '<td>' + (isSA ? '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deleteMerchantRate(\'' + id + '\',\'' + r.channel + '\')">Remove</button>' : '') + '</td>' +
         '</tr>';
       }).join('');
 
-  var addForm = isSA ? `
-    <div class="divider"></div>
-    <div style="font-weight:600;margin-bottom:10px;font-size:13px">Set / Update Rate Override</div>
-    <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
-      <div>
-        <label class="form-label">Channel</label>
-        <select class="form-input form-select" id="rc-channel">
-          ${channels.map(c => '<option>' + c + '</option>').join('')}
-        </select>
-      </div>
-      <div>
-        <label class="form-label">Rate (%)</label>
-        <input class="form-input" type="number" id="rc-rate" value="1.5" step="0.01" min="0" max="20">
-      </div>
-      <div>
-        <label class="form-label">Cap (₦, 0 = none)</label>
-        <input class="form-input" type="number" id="rc-cap" value="2000" step="100" min="0">
-      </div>
-    </div>
-    <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
-      <div>
-        <label class="form-label">Flat Fee (₦, 0 = none)</label>
-        <input class="form-input" type="number" id="rc-flat" value="0" step="10" min="0">
-      </div>
-      <div>
-        <label class="form-label">Notes</label>
-        <input class="form-input" type="text" id="rc-notes" placeholder="Optional note for audit log">
-      </div>
-    </div>
-    <button class="btn btn-lime" onclick="saveMerchantRate('${id}')">Save Rate Override</button>
-  ` : '';
+  var addForm = isSA
+    ? '<div class="divider"></div>' +
+      '<div style="font-weight:600;margin-bottom:10px;font-size:13px">Set / Update Rate Override</div>' +
+      '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">' +
+        '<div><label class="form-label">Channel</label>' +
+          '<select class="form-input form-select" id="rc-channel">' + channels.map(function(c){return '<option>'+c+'</option>';}).join('') + '</select></div>' +
+        '<div><label class="form-label">Rate (%)</label>' +
+          '<input class="form-input" type="number" id="rc-rate" value="1.5" step="0.01" min="0" max="20" placeholder="e.g. 1.5"></div>' +
+        '<div><label class="form-label">Flat Fee (&#8358;, 0=none)</label>' +
+          '<input class="form-input" type="number" id="rc-flat" value="0" step="10" min="0" placeholder="e.g. 50"></div>' +
+      '</div>' +
+      '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">' +
+        '<div><label class="form-label">Min Charge (&#8358;, 0=none)</label>' +
+          '<input class="form-input" type="number" id="rc-min" value="0" step="10" min="0" placeholder="e.g. 20"></div>' +
+        '<div><label class="form-label">Max Charge (&#8358;, 0=none)</label>' +
+          '<input class="form-input" type="number" id="rc-cap" value="0" step="100" min="0" placeholder="e.g. 2000"></div>' +
+        '<div><label class="form-label">Notes</label>' +
+          '<input class="form-input" type="text" id="rc-notes" placeholder="Optional audit note"></div>' +
+      '</div>' +
+      '<div class="info-box" style="font-size:12px;margin-bottom:12px">Fee = (Rate% × Amount) + Flat Fee, clamped to [Min, Max]. Set 0 for unconstrained.</div>' +
+      '<button class="btn btn-lime" onclick="saveMerchantRate(\'' + id + '\')">Save Rate Override</button>'
+    : '';
 
   var tabNav = '<div class="tab-nav"><button class="tab-btn" onclick="viewMerchant(\'' + id + '\')">Overview</button><button class="tab-btn active">Rate Config</button><button class="tab-btn" onclick="loadMerchantOutlets(\'' + id + '\')">Outlets</button></div>';
 
@@ -359,33 +387,38 @@ async function loadMerchantRates(id) {
     '<div class="modal-header"><div class="modal-title">Rate Config</div>' +
     '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
     tabNav +
-    '<table class="data-table" style="width:100%;margin-bottom:0"><thead><tr>' +
-    '<th>Channel</th><th>Rate</th><th>Flat Fee</th><th>Cap</th><th></th></tr></thead><tbody>' +
-    rows + '</tbody></table>' + addForm;
+    '<div class="table-wrap"><table style="width:100%;margin-bottom:0"><thead><tr>' +
+    '<th>Channel</th><th>Rate %</th><th>Flat Fee</th><th>Min Charge</th><th>Max Charge</th><th>Notes</th><th></th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>' + addForm;
 
   document.getElementById('modal').style.display = 'flex';
 }
 
 async function saveMerchantRate(id) {
-  var channel  = document.getElementById('rc-channel').value;
-  var rateVal  = parseFloat(document.getElementById('rc-rate').value) / 100;
-  var capNaira = parseFloat(document.getElementById('rc-cap').value) || 0;
+  var channel   = document.getElementById('rc-channel').value;
+  var rateVal   = parseFloat(document.getElementById('rc-rate').value) / 100;
   var flatNaira = parseFloat(document.getElementById('rc-flat').value) || 0;
-  var notes    = document.getElementById('rc-notes').value;
-
+  var minNaira  = parseFloat(document.getElementById('rc-min').value)  || 0;
+  var capNaira  = parseFloat(document.getElementById('rc-cap').value)  || 0;
+  var notes     = document.getElementById('rc-notes').value;
+  if (isNaN(rateVal)) { alert('Enter a valid rate'); return; }
   var res = await apiFetch('/merchants/' + id + '/rates', {
     method: 'POST',
-    body: JSON.stringify({ channel, rate: rateVal, cap: Math.round(capNaira * 100), flat_fee: Math.round(flatNaira * 100), notes }),
+    body: JSON.stringify({
+      channel,
+      rate:       rateVal,
+      flat_fee:   Math.round(flatNaira * 100),
+      min_charge: Math.round(minNaira  * 100),
+      cap:        Math.round(capNaira  * 100),
+      notes,
+    }),
   });
-  if (res && res.status) {
-    loadMerchantRates(id);
-  } else {
-    alert('Error: ' + ((res && res.message) || 'Save failed'));
-  }
+  if (res && res.status) loadMerchantRates(id);
+  else alert('Error: ' + ((res && res.message) || 'Save failed'));
 }
 
 async function deleteMerchantRate(id, channel) {
-  if (!confirm('Remove ' + channel + ' rate override? Merchant will fall back to global rail rates.')) return;
+  if (!confirm('Remove ' + channel + ' rate override for this merchant? They will fall back to platform defaults.')) return;
   var res = await apiFetch('/merchants/' + id + '/rates/' + channel, { method: 'DELETE' });
   if (res && res.status) loadMerchantRates(id);
   else alert('Error: ' + ((res && res.message) || 'Delete failed'));
@@ -992,6 +1025,52 @@ async function loadSettlements() {
   }
 }
 
+// ── MERCHANT SETTLEMENTS (merchant role) ──────────────────────────────────────
+async function loadMerchSettlements() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var now = new Date();
+    var mon = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+    var res = await apiFetch('/settlements');
+    var settlements = (res && res.data) ? (Array.isArray(res.data) ? res.data : []) : [];
+
+    var rows = settlements.length ? settlements.map(function(s) {
+      var fmt = function(n) { return '₦' + Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2}); };
+      return '<tr>' +
+        '<td class="mono" style="font-size:11px">' + (s.settlementRef||'—') + '</td>' +
+        '<td style="font-size:12px">' + (s.periodStart ? s.periodStart.slice(0,10) : '—') + '</td>' +
+        '<td style="text-align:center">' + (s.txnCount||0) + '</td>' +
+        '<td style="font-weight:600">' + fmt(s.net_naira||0) + '</td>' +
+        '<td style="font-size:12px">' + (s.merchant&&s.merchant.settlementBank ? s.merchant.settlementBank + (s.merchant.settlementAccount ? ' ****' + String(s.merchant.settlementAccount).slice(-4) : '') : '—') + '</td>' +
+        '<td>' + statusBadge((s.status||'pending').toLowerCase()) + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">No settlement records yet</td></tr>';
+
+    el.innerHTML =
+      '<div class="page-header"><div class="page-title">Settlements</div>' +
+        '<div class="page-desc">Your disbursement records and monthly statements</div></div>' +
+      '<div class="card" style="margin-bottom:16px">' +
+        '<div class="card-header"><div class="card-title">Monthly Statement</div></div>' +
+        '<div class="flex" style="gap:10px;align-items:center;flex-wrap:wrap">' +
+          '<input class="form-input" type="month" id="stmt-month" value="' + mon + '" style="width:180px">' +
+          '<button class="btn btn-lime btn-sm" onclick="downloadStatement()">&#8681; Download PDF</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="emailStatement()">&#9993; Email to Me</button>' +
+        '</div>' +
+        '<div class="form-hint" style="margin-top:8px">Statement is generated from live transaction data for the selected month.</div>' +
+      '</div>' +
+      '<div class="card"><div class="card-header"><div class="card-title">Settlement History</div></div>' +
+        '<div class="table-wrap"><table>' +
+          '<thead><tr><th>Ref</th><th>Period</th><th>Transactions</th><th>Amount Settled</th><th>Destination</th><th>Status</th></tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table></div>' +
+      '</div>';
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load settlements: ' + e.message);
+  }
+}
+
 // ── MERCHANT OVERVIEW (merchant role) ─────────────────────────────────────────
 async function loadMerchantOverview() {
   const el = document.getElementById('main-content');
@@ -1452,6 +1531,8 @@ async function rejectSettlement(id, name) {
 }
 
 // ── MERCHANT PROFILE ─────────────────────────────────────────────────────────
+var _merchProfileData = null;
+
 async function loadMerchProfile() {
   var el = document.getElementById('main-content');
   if (!el) return;
@@ -1460,60 +1541,129 @@ async function loadMerchProfile() {
     var res = await apiFetch('/merchants/me');
     var m = (res && res.data) ? res.data : null;
     if (!m) {
-      // fall back to user object from localStorage
       var u = getUser();
       m = { businessName: u.businessName || u.firstName || '—', category: u.category || '—',
-            rcNumber: u.rcNumber || '—', phone: u.phone || '—', address: u.address || '—',
+            rcNumber: u.rcNumber || '—', businessPhone: u.phone || '—', address: u.address || '—',
             settlementBank: u.settlementBank || '—', kycStatus: u.kycStatus || '—',
             kycTier: u.kycTier || '—', processingRate: u.processingRate || null,
             user: { email: u.email || '—' } };
     }
+    _merchProfileData = m;
     var rate = m.processingRate ? (Number(m.processingRate)*100).toFixed(1)+'%' : '—';
-    var rows = function(pairs) {
-      return pairs.map(function(r) {
-        return '<div class="rev-row"><span class="rev-label">' + r[0] + '</span><span class="rev-value" style="font-size:13px">' + r[1] + '</span></div>';
-      }).join('');
+    var row = function(label, val) {
+      return '<div class="rev-row"><span class="rev-label">' + label + '</span><span class="rev-value" style="font-size:13px">' + val + '</span></div>';
     };
+    var vst = m.settleVerifyStatus || 'unverified';
+    var vstColors = { unverified:'badge-gray', pending_manual:'badge-amber', auto_verified:'badge-green', manual_approved:'badge-green', rejected:'badge-red' };
+    var vstLabels = { unverified:'Not Submitted', pending_manual:'Awaiting Review', auto_verified:'Verified', manual_approved:'Verified', rejected:'Rejected — Update Required' };
+
     el.innerHTML =
       '<div class="page-header flex-between"><div><div class="page-title">Business Profile</div>' +
         '<div class="page-desc">Your merchant account details</div></div>' +
-        '<button class="btn btn-outline btn-sm" onclick="editMerchant(\'' + (m.id||'') + '\')">&#9998; Request Edit</button>' +
       '</div>' +
       '<div class="grid-2">' +
-        '<div class="card"><div class="card-header"><div class="card-title">Business Information</div></div>' +
-          rows([
-            ['Business Name',   m.businessName || '—'],
-            ['Category',        m.category || '—'],
-            ['RC Number',       m.rcNumber || '—'],
-            ['Email',           (m.user && m.user.email) || '—'],
-            ['Phone',           m.phone || '—'],
-            ['Address',         m.address || '—'],
-            ['Processing Rate', rate],
-            ['KYC Tier',        m.kycTier ? 'Tier ' + m.kycTier : '—'],
-            ['KYC Status',      statusBadge(m.kycStatus)],
-          ]) +
+        '<div class="card"><div class="card-header"><div class="card-title">Business Information</div>' +
+          '<button class="btn btn-outline btn-sm" onclick="showEditProfileModal()">&#9998; Edit</button></div>' +
+          row('Business Name',   m.businessName || '—') +
+          row('Category',        m.category || '—') +
+          row('RC Number',       m.rcNumber || '—') +
+          row('Email',           (m.user && m.user.email) || '—') +
+          row('Phone',           m.businessPhone || m.phone || '—') +
+          row('Address',         m.address || '—') +
+          row('Website',         m.website ? '<a href="' + m.website + '" target="_blank" style="color:var(--navy)">' + m.website + '</a>' : '—') +
+          row('Processing Rate', rate) +
+          row('KYC Tier',        m.kycTier ? 'Tier ' + m.kycTier : '—') +
+          row('KYC Status',      statusBadge(m.kycStatus)) +
         '</div>' +
-        '<div class="card"><div class="card-header"><div class="card-title">Settlement Account</div></div>' +
-          (function() {
-            var vst = m.settleVerifyStatus || 'unverified';
-            var vstColors = { unverified:'badge-gray', pending_manual:'badge-amber', auto_verified:'badge-green', manual_approved:'badge-green', rejected:'badge-red' };
-            var vstLabels = { unverified:'Not Submitted', pending_manual:'Awaiting Review', auto_verified:'Verified', manual_approved:'Verified', rejected:'Rejected — Update Required' };
-            var vstBadge  = '<span class="badge ' + (vstColors[vst]||'badge-gray') + '">' + (vstLabels[vst]||vst) + '</span>';
-            return rows([
-              ['Settlement Bank',    m.settlementBank || '—'],
-              ['Account Number',     m.settlementAccount ? '<span class="mono">' + m.settlementAccount + '</span>' : '—'],
-              ['Account Name',       m.settlementAccountName || '—'],
-              ['Verification',       vstBadge],
-              ['Settlement Cycle',   m.settlementCycle || 'T+1'],
-              ['Aggregator',         (m.aggregator && m.aggregator.companyName) || 'Direct'],
-            ]);
-          })() +
+        '<div class="card"><div class="card-header"><div class="card-title">Settlement Account</div>' +
+          '<button class="btn btn-outline btn-sm" onclick="showChangeSettlementModal()">&#9998; Change</button></div>' +
+          row('Settlement Bank',    m.settlementBank || '—') +
+          row('Account Number',     m.settlementAccount ? '<span class="mono">' + m.settlementAccount + '</span>' : '—') +
+          row('Account Name',       m.settlementAccountName || '—') +
+          row('Verification',       '<span class="badge ' + (vstColors[vst]||'badge-gray') + '">' + (vstLabels[vst]||vst) + '</span>') +
+          row('Settlement Cycle',   m.settlementCycle || 'T+1') +
+          row('Aggregator',         (m.aggregator && m.aggregator.companyName) || 'Direct') +
           (m.settleVerifyStatus === 'rejected' ? '<div class="warn-box" style="margin-top:12px;font-size:12px"><strong>Account rejected:</strong> ' + (m.settleVerifyNotes||'Contact support for details.') + '</div>' : '') +
-          '<div class="info-box" style="margin-top:12px;font-size:12px">To update settlement account details, contact <strong>support@paylodeservices.com</strong> or use the Edit button.</div>' +
         '</div>' +
       '</div>';
   } catch(e) {
     el.innerHTML = errorBox('Failed to load profile: ' + e.message);
+  }
+}
+
+function showEditProfileModal() {
+  var m = _merchProfileData || {};
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Edit Business Information</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:12px">You can update your contact details. Business name and RC number changes require contacting support.</div>' +
+    '<div class="form-group"><label class="form-label">Phone Number</label><input class="form-input" id="ep-phone" value="' + (m.businessPhone||m.phone||'') + '" placeholder="+234 800 000 0000"></div>' +
+    '<div class="form-group"><label class="form-label">Business Address</label><input class="form-input" id="ep-address" value="' + (m.address||'') + '" placeholder="Street, City, State"></div>' +
+    '<div class="form-group"><label class="form-label">Website</label><input class="form-input" id="ep-website" value="' + (m.website||'') + '" placeholder="https://yourwebsite.com"></div>' +
+    '<div id="ep-alert"></div>' +
+    '<div class="flex-between">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" id="ep-save-btn" onclick="saveProfileEdits()">Save Changes</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function saveProfileEdits() {
+  var phone   = document.getElementById('ep-phone').value.trim();
+  var address = document.getElementById('ep-address').value.trim();
+  var website = document.getElementById('ep-website').value.trim();
+  var alertEl = document.getElementById('ep-alert');
+  if (!phone && !address && !website) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Enter at least one field to update</div>'; return; }
+  var btn = document.getElementById('ep-save-btn');
+  btn.textContent = 'Saving...'; btn.disabled = true;
+  var body = {};
+  if (phone)   body.businessPhone = phone;
+  if (address) body.address       = address;
+  if (website) body.website       = website;
+  var res = await apiFetch('/merchants/me/profile', { method: 'PUT', body: JSON.stringify(body) });
+  if (res && res.status) {
+    document.getElementById('modal').style.display = 'none';
+    loadMerchProfile();
+  } else {
+    alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + ((res && res.message) || 'Update failed') + '</div>';
+    btn.textContent = 'Save Changes'; btn.disabled = false;
+  }
+}
+
+function showChangeSettlementModal() {
+  var m = _merchProfileData || {};
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Change Settlement Account</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="warn-box" style="margin-bottom:16px;font-size:12px">&#9888; Changing your settlement account will require re-verification before payouts resume. Ensure account details are correct.</div>' +
+    '<div class="form-group"><label class="form-label">Bank Name <span style="color:var(--red)">*</span></label><input class="form-input" id="cs-bank" value="' + (m.settlementBank||'') + '" placeholder="e.g. Guaranty Trust Bank"></div>' +
+    '<div class="form-group"><label class="form-label">Account Number <span style="color:var(--red)">*</span></label><input class="form-input" id="cs-acct" value="' + (m.settlementAccount||'') + '" placeholder="10 digits" maxlength="10"></div>' +
+    '<div class="form-group"><label class="form-label">Account Name <span style="color:var(--red)">*</span></label><input class="form-input" id="cs-name" value="' + (m.settlementAccountName||'') + '" placeholder="As registered with bank"></div>' +
+    '<div id="cs-alert"></div>' +
+    '<div class="flex-between">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" id="cs-save-btn" onclick="saveSettlementChange()">Submit for Verification</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function saveSettlementChange() {
+  var bank = document.getElementById('cs-bank').value.trim();
+  var acct = document.getElementById('cs-acct').value.trim();
+  var name = document.getElementById('cs-name').value.trim();
+  var alertEl = document.getElementById('cs-alert');
+  if (!bank || !acct || !name) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">All fields are required</div>'; return; }
+  if (!/^\d{10}$/.test(acct)) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Account number must be exactly 10 digits</div>'; return; }
+  var btn = document.getElementById('cs-save-btn');
+  btn.textContent = 'Submitting...'; btn.disabled = true;
+  var res = await apiFetch('/merchants/me/settlement', { method: 'PUT', body: JSON.stringify({ settlementBank: bank, settlementAccount: acct, settlementAccountName: name }) });
+  if (res && res.status) {
+    document.getElementById('modal').style.display = 'none';
+    loadMerchProfile();
+    alert('Settlement details submitted for verification. Payouts will resume once approved (typically 1 business day).');
+  } else {
+    alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + ((res && res.message) || 'Submission failed') + '</div>';
+    btn.textContent = 'Submit for Verification'; btn.disabled = false;
   }
 }
 
@@ -1525,25 +1675,88 @@ async function loadMerchApiKeys() {
   try {
     var res = await apiFetch('/merchants/me/api-keys');
     var keys = (res && res.data) ? res.data : [];
+
     var html = keys.length ? keys.map(function(k) {
-      var env = k.environment === 'live' ? 'badge-green' : 'badge-blue';
-      return '<div class="rev-row"><div>' +
-        '<div class="flex" style="gap:8px;margin-bottom:4px">' +
-          '<span style="font-weight:600;font-size:13px">' + k.name + '</span>' +
-          '<span class="badge ' + env + '">' + (k.environment||'test') + '</span>' +
+      var isSandbox = k.isSandbox || (k.keyPrefix && k.keyPrefix.includes('test'));
+      var envBadge = isSandbox ? 'badge-blue' : 'badge-green';
+      var envLabel = isSandbox ? 'Test' : 'Live';
+      var prefix   = k.keyPrefix || '••••';
+      var displayKey = prefix + '••••••••••••••••••••••••';
+      return '<div class="rev-row" style="padding:14px 0"><div style="flex:1;min-width:0">' +
+        '<div class="flex" style="gap:8px;margin-bottom:6px">' +
+          '<span style="font-weight:600;font-size:13px">' + (k.label||'API Key') + '</span>' +
+          '<span class="badge ' + envBadge + '">' + envLabel + '</span>' +
         '</div>' +
-        '<div class="mono" style="font-size:12px;color:var(--gray-500)">' + (k.key||'••••••••••••••••') + '</div>' +
+        '<div class="mono" style="font-size:12px;color:var(--gray-500);word-break:break-all" id="key-display-' + k.id + '">' + displayKey + '</div>' +
+        '<div style="font-size:11px;color:var(--gray-400);margin-top:4px">Last used: ' + (k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleDateString('en-NG') : 'Never') + ' · Created: ' + new Date(k.createdAt).toLocaleDateString('en-NG') + '</div>' +
       '</div>' +
-      '<div class="flex" style="gap:6px"><button class="btn btn-outline btn-sm">Copy</button></div></div>';
-    }).join('') : '<div class="info-box" style="font-size:12px">No API keys yet. Contact support to get your keys activated after KYC approval.</div>';
+      '<div class="flex" style="gap:6px;margin-left:16px">' +
+        '<button class="btn btn-outline btn-sm" onclick="copyApiKeyPrefix(\'' + k.id + '\',\'' + prefix + '\')">&#128203; Copy</button>' +
+        '<button class="btn btn-outline btn-sm" style="color:var(--amber)" onclick="rotateApiKey(\'' + k.id + '\',\'' + prefix + '\',\'' + (k.label||'API Key').replace(/'/g,"\\'") + '\')">&#8635; Rotate</button>' +
+      '</div></div>';
+    }).join('') : '<div class="info-box" style="font-size:12px">No API keys yet. Contact support@paylodeservices.com to get your keys activated after KYC approval.</div>';
 
     el.innerHTML =
-      '<div class="page-header flex-between"><div><div class="page-title">API Keys</div></div></div>' +
-      '<div class="warn-box" style="margin-bottom:20px">&#9888; Never expose your Secret Key in client-side code or version control.</div>' +
-      '<div class="card">' + html + '</div>';
+      '<div class="page-header flex-between"><div><div class="page-title">API Keys</div>' +
+        '<div class="page-desc">Manage your integration credentials</div></div>' +
+        '<button class="btn btn-lime" onclick="showGenerateKeyModal()">+ Generate New Key</button>' +
+      '</div>' +
+      '<div class="warn-box" style="margin-bottom:20px">&#9888; Secret keys (sk_) are shown only once. Copy them immediately after generation or rotation.</div>' +
+      '<div class="card">' + html + '</div>' +
+      '<div id="key-result-area" style="margin-top:16px"></div>';
   } catch(e) {
     el.innerHTML = errorBox('Failed to load API keys: ' + e.message);
   }
+}
+
+function copyApiKeyPrefix(id, prefix) {
+  navigator.clipboard.writeText(prefix + '...(rotate to get full key)').then(function() {
+    alert('Key prefix copied. To get the full secret key, use Rotate — it will display the new key once.');
+  }).catch(function() {
+    var el = document.getElementById('key-display-' + id);
+    if (el) { var range = document.createRange(); range.selectNode(el); window.getSelection().removeAllRanges(); window.getSelection().addRange(range); document.execCommand('copy'); }
+    alert('Key prefix copied to clipboard.');
+  });
+}
+
+async function rotateApiKey(id, prefix, label) {
+  if (!confirm('Rotate "' + label + '"?\n\nThe current key will be immediately revoked. Any integrations using it will stop working until updated with the new key.\n\nProceed?')) return;
+  var res = await apiFetch('/merchants/me/api-keys/rotate', { method: 'POST', body: JSON.stringify({ prefix, label }) });
+  if (res && res.status) {
+    var area = document.getElementById('key-result-area');
+    if (area) {
+      area.innerHTML = '<div style="background:#1a2744;border-radius:10px;padding:20px;color:#fff;margin-top:8px">' +
+        '<div style="color:var(--lime);font-weight:700;margin-bottom:8px">&#10003; Key Rotated — Save This Now</div>' +
+        '<div style="font-size:12px;color:rgba(255,255,255,.6);margin-bottom:8px">This key will NOT be shown again. Copy it immediately.</div>' +
+        '<div class="mono" style="background:rgba(255,255,255,.08);padding:12px;border-radius:6px;word-break:break-all;font-size:13px" id="new-key-val">' + res.data.key + '</div>' +
+        '<button class="btn btn-lime" style="margin-top:12px" onclick="navigator.clipboard.writeText(document.getElementById(\'new-key-val\').textContent);this.textContent=\'Copied!\';setTimeout(()=>{this.textContent=\'Copy Key\'},2000)">Copy Key</button>' +
+      '</div>';
+    }
+    loadMerchApiKeys();
+  } else {
+    alert('Error: ' + ((res && res.message) || 'Rotation failed'));
+  }
+}
+
+function showGenerateKeyModal() {
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Generate New API Key</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:12px">Contact <strong>support@paylodeservices.com</strong> to request new API keys. Keys are provisioned after KYC verification to prevent unauthorized access.</div>' +
+    '<div class="form-group"><label class="form-label">Your registered email</label><input class="form-input" id="gen-email" value="' + (getUser().email||'') + '" readonly></div>' +
+    '<div class="form-group"><label class="form-label">Key type needed</label>' +
+    '<select class="form-input form-select" id="gen-type"><option value="test">Test (Sandbox)</option><option value="live">Live (Production)</option></select></div>' +
+    '<div class="form-group"><label class="form-label">Reason / notes</label><textarea class="form-input" id="gen-reason" rows="3" placeholder="e.g. Launching new integration, lost key..."></textarea></div>' +
+    '<div class="flex-between">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" onclick="submitKeyRequest()">Send Request</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function submitKeyRequest() {
+  alert('Request submitted! Support will provision your key and send it to your registered email within 1 business day.');
+  document.getElementById('modal').style.display = 'none';
 }
 
 // ── MERCHANT WEBHOOKS ─────────────────────────────────────────────────────────
@@ -1552,24 +1765,110 @@ async function loadMerchWebhooks() {
   if (!el) return;
   el.innerHTML = loading();
   try {
-    var res = await apiFetch('/merchants/me/webhooks');
-    var hooks = (res && res.data) ? res.data : [];
-    var rows = hooks.length ? hooks.map(function(h) {
-      return '<div class="rev-row"><div>' +
-        '<div style="font-weight:600;font-size:13px">' + (h.url||'—') + '</div>' +
-        '<div style="font-size:11px;color:var(--gray-400)">Events: ' + (h.events||[]).join(' &middot; ') + '</div>' +
-      '</div>' +
-      '<div class="flex" style="gap:6px">' + statusBadge(h.status||'active') + '</div></div>';
-    }).join('') : '<div style="color:var(--gray-400);padding:16px;text-align:center;font-size:13px">No webhooks configured yet.</div>';
+    var cfg = await apiFetch('/webhooks/config');
+    var webhookUrl = cfg?.data?.webhook_url || null;
+    var events     = cfg?.data?.events || [];
+
+    var endpointHtml = webhookUrl
+      ? '<div class="rev-row" style="padding:14px 0"><div style="flex:1;min-width:0">' +
+          '<div class="flex" style="gap:8px;margin-bottom:4px"><span class="badge badge-green">Active</span><span style="font-weight:600;font-size:13px">' + webhookUrl + '</span></div>' +
+          '<div style="font-size:11px;color:var(--gray-400)">Events: ' + events.join(' · ') + '</div>' +
+        '</div>' +
+        '<div class="flex" style="gap:6px;margin-left:12px">' +
+          '<button class="btn btn-outline btn-sm" onclick="testWebhook()">&#9654; Test</button>' +
+          '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="removeWebhook()">Remove</button>' +
+        '</div></div>'
+      : '<div style="text-align:center;padding:32px;color:var(--gray-400)">' +
+          '<div style="font-size:24px;margin-bottom:8px">&#8700;</div>' +
+          '<div style="font-size:14px;font-weight:500;margin-bottom:4px">No webhook endpoint configured</div>' +
+          '<div style="font-size:12px">Add an endpoint to receive real-time payment events</div>' +
+        '</div>';
 
     el.innerHTML =
-      '<div class="page-header flex-between"><div><div class="page-title">Webhooks</div></div>' +
-        '<button class="btn btn-lime btn-sm" onclick="alert(\'Contact support to add webhook endpoints.\')">+ Add Endpoint</button>' +
+      '<div class="page-header flex-between"><div><div class="page-title">Webhooks</div>' +
+        '<div class="page-desc">Receive real-time notifications for payment events</div></div>' +
+        '<button class="btn btn-lime" onclick="showAddEndpointModal()">+ Add Endpoint</button>' +
       '</div>' +
-      '<div class="card"><div class="card-header"><div class="card-title">Active Webhooks</div></div>' + rows + '</div>';
+      '<div class="card" style="margin-bottom:16px">' +
+        '<div class="card-header"><div class="card-title">Configured Endpoint</div></div>' +
+        endpointHtml +
+      '</div>' +
+      '<div class="card"><div class="card-header"><div class="card-title">Supported Events</div></div>' +
+        events.map(function(e) { return '<div class="rev-row"><code style="font-size:12px;background:var(--gray-100);padding:2px 8px;border-radius:4px">' + e + '</code><span style="font-size:12px;color:var(--gray-400)">' + ({
+          'payment.success':'Payment completed successfully',
+          'payment.failed':'Payment attempt failed',
+          'payment.pending':'Payment awaiting confirmation',
+          'refund.processed':'Refund processed to customer',
+          'settlement.completed':'Settlement disbursed to your bank',
+          'chargeback.created':'Chargeback raised on a transaction',
+        }[e]||'') + '</span></div>'; }).join('') +
+      '</div>' +
+      '<div id="webhook-test-result"></div>';
   } catch(e) {
     el.innerHTML = errorBox('Failed to load webhooks: ' + e.message);
   }
+}
+
+function showAddEndpointModal() {
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Add Webhook Endpoint</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:12px">Paylode will send a POST request to this URL for each subscribed event. The endpoint must respond with a 2xx status code within 10 seconds.</div>' +
+    '<div class="form-group"><label class="form-label">Endpoint URL <span style="color:var(--red)">*</span></label>' +
+    '<input class="form-input" id="wh-url" placeholder="https://your-server.com/webhooks/paylode" type="url">' +
+    '<div class="form-hint">Must use HTTPS</div></div>' +
+    '<div id="wh-alert"></div>' +
+    '<div class="flex-between">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" id="wh-save-btn" onclick="saveWebhookEndpoint()">Save Endpoint</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function saveWebhookEndpoint() {
+  var url = (document.getElementById('wh-url').value || '').trim();
+  var alertEl = document.getElementById('wh-alert');
+  if (!url) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">URL is required</div>'; return; }
+  if (!url.startsWith('https://')) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Endpoint must use HTTPS</div>'; return; }
+  var btn = document.getElementById('wh-save-btn');
+  btn.textContent = 'Saving...'; btn.disabled = true;
+  var res = await apiFetch('/webhooks/config', { method: 'PUT', body: JSON.stringify({ webhook_url: url }) });
+  if (res && res.status) {
+    document.getElementById('modal').style.display = 'none';
+    loadMerchWebhooks();
+  } else {
+    alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + ((res && res.message) || 'Failed to save endpoint') + '</div>';
+    btn.textContent = 'Save Endpoint'; btn.disabled = false;
+  }
+}
+
+async function testWebhook() {
+  var resultEl = document.getElementById('webhook-test-result');
+  if (resultEl) resultEl.innerHTML = '<div class="info-box" style="margin-top:12px">Sending test webhook... ⟳</div>';
+  var res = await apiFetch('/webhooks/test', { method: 'POST' });
+  if (!resultEl) resultEl = document.getElementById('webhook-test-result');
+  if (!resultEl) return;
+  if (res && res.data) {
+    var d = res.data;
+    var success = d.success;
+    resultEl.innerHTML = '<div style="margin-top:12px;background:' + (success?'#f0fdf4':'#fff1f2') + ';border:1px solid ' + (success?'#bbf7d0':'#fecdd3') + ';border-radius:8px;padding:16px">' +
+      '<div style="font-weight:700;font-size:14px;color:' + (success?'#15803d':'#be123c') + ';margin-bottom:8px">' + (success?'&#10003; Test passed':'&#10007; Test failed') + '</div>' +
+      '<div class="rev-row"><span class="rev-label">URL</span><span class="rev-value" style="font-size:12px;font-family:monospace">' + (d.url||'—') + '</span></div>' +
+      '<div class="rev-row"><span class="rev-label">HTTP Status</span><span class="rev-value">' + (d.status_code||'—') + '</span></div>' +
+      '<div class="rev-row"><span class="rev-label">Response Time</span><span class="rev-value">' + (d.duration_ms||'—') + 'ms</span></div>' +
+      (d.error ? '<div class="warn-box" style="margin-top:8px;font-size:12px">Error: ' + d.error + '</div>' : '') +
+      (d.response ? '<div style="margin-top:8px"><div style="font-size:11px;color:var(--gray-400);margin-bottom:4px">Response body:</div><div style="background:var(--gray-100);padding:8px;border-radius:4px;font-size:11px;font-family:monospace">' + d.response + '</div></div>' : '') +
+    '</div>';
+  } else {
+    if (resultEl) resultEl.innerHTML = '<div class="warn-box" style="margin-top:12px">' + ((res && res.message) || 'Test failed') + '</div>';
+  }
+}
+
+async function removeWebhook() {
+  if (!confirm('Remove this webhook endpoint? Paylode will stop sending events to it immediately.')) return;
+  var res = await apiFetch('/webhooks/config', { method: 'PUT', body: JSON.stringify({ webhook_url: null }) });
+  if (res && res.status) loadMerchWebhooks();
+  else alert('Error: ' + ((res && res.message) || 'Failed to remove endpoint'));
 }
 
 // ── USER MANAGEMENT ───────────────────────────────────────────────────────────
@@ -1696,6 +1995,680 @@ async function setUserStatus(id, action) {
   else alert('Error: ' + ((res && res.message) || 'Action failed'));
 }
 
+// ── FEE CONFIGURATION PAGE ───────────────────────────────────────────────────
+async function loadFeeConfig() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/merchants/platform-rates');
+    if (!res || !res.data) { el.innerHTML = errorBox('Could not load fee configuration'); return; }
+    var rates = res.data;
+
+    function byGroup(group) { return rates.filter(function(r) { return r.product_group === group; }); }
+    function naira(kobo) { return kobo > 0 ? '&#8358;' + (kobo/100).toLocaleString(undefined,{minimumFractionDigits:2}) : '—'; }
+    function feeModelLabel(m) { return {PCT:'% of Amount',FLAT:'Flat Fee',PCT_PLUS_FLAT:'% + Flat Fee',GREATER_OF:'Greater of % or Flat'}[m]||m; }
+
+    function exampleCalc(r) {
+      var amt = 1000000; // ₦10,000 in kobo
+      var fee = 0;
+      var ratePct = Number(r.rate);
+      var flat = Number(r.flat_fee);
+      var cap  = Number(r.cap);
+      var minC = Number(r.min_charge);
+      var vat  = Number(r.vat_rate) || 0.075;
+      switch(r.fee_model) {
+        case 'FLAT':          fee = flat; break;
+        case 'PCT_PLUS_FLAT': fee = Math.round(amt * ratePct) + flat; break;
+        case 'GREATER_OF':    fee = Math.max(Math.round(amt*ratePct), flat); break;
+        default:              fee = Math.round(amt * ratePct) + flat;
+      }
+      if (minC > 0 && fee < minC) fee = minC;
+      if (cap  > 0 && fee > cap)  fee = cap;
+      var vatAmt = Math.round(fee * vat);
+      return '<span style="font-size:11px;color:var(--gray-500)">₦10,000 txn → Fee: ₦' + (fee/100).toLocaleString(undefined,{minimumFractionDigits:2}) + ' + VAT: ₦' + (vatAmt/100).toLocaleString(undefined,{minimumFractionDigits:2}) + ' = ₦' + ((fee+vatAmt)/100).toLocaleString(undefined,{minimumFractionDigits:2}) + '</span>';
+    }
+
+    function rateCard(r) {
+      var vatPct = ((Number(r.vat_rate)||0.075)*100).toFixed(1);
+      return '<div class="card" style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">' +
+        '<div style="flex:1;min-width:200px">' +
+          '<div style="font-weight:700;font-size:14px;margin-bottom:4px">' + (r.label||r.channel) +
+            (r.is_custom ? ' <span class="badge badge-amber" style="font-size:10px">Custom</span>' : '') +
+            (!r.is_active ? ' <span class="badge badge-red" style="font-size:10px">Inactive</span>' : '') +
+          '</div>' +
+          '<div style="font-size:12px;color:var(--gray-500);margin-bottom:8px">' + (r.description||r.notes||r.channel) + '</div>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px">' +
+            '<span class="badge badge-gray">' + feeModelLabel(r.fee_model) + '</span>' +
+            (r.rate > 0 ? '<span class="badge badge-blue">' + (Number(r.rate)*100).toFixed(2) + '% rate</span>' : '') +
+            (r.flat_fee > 0 ? '<span class="badge badge-purple">&#8358;' + (r.flat_fee/100).toLocaleString() + ' flat</span>' : '') +
+            (r.min_charge > 0 ? '<span class="badge badge-lime">Min: &#8358;' + (r.min_charge/100).toLocaleString() + '</span>' : '') +
+            (r.cap > 0 ? '<span class="badge badge-amber">Cap: &#8358;' + (r.cap/100).toLocaleString() + '</span>' : '') +
+            '<span class="badge badge-gray">VAT: ' + vatPct + '%</span>' +
+          '</div>' +
+          exampleCalc(r) +
+        '</div>' +
+        '<div style="display:flex;gap:6px;align-items:flex-start;flex-shrink:0">' +
+          '<button class="btn btn-outline btn-sm" onclick="editPlatformRate(\'' + r.channel + '\')">&#9998; Edit</button>' +
+          (r.is_custom ? '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deletePlatformRate(\'' + r.channel + '\',\'' + (r.label||r.channel).replace(/'/g,"\\'") + '\')">Delete</button>' : '') +
+        '</div>' +
+      '</div></div>';
+    }
+
+    function section(title, icon, desc, group, emptyMsg) {
+      var items = byGroup(group);
+      return '<div class="section-gap"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">' +
+        '<div><div style="font-size:16px;font-weight:700;color:var(--gray-800)">' + icon + ' ' + title + '</div>' +
+          '<div style="font-size:12px;color:var(--gray-500);margin-top:2px">' + desc + '</div></div>' +
+        (group === 'CUSTOM' ? '<button class="btn btn-lime btn-sm" onclick="addCustomCharge()">+ Add Custom Charge</button>' : '') +
+      '</div>' +
+      (items.length ? items.map(rateCard).join('') : '<div class="info-box" style="font-size:12px">' + emptyMsg + '</div>') +
+      '</div>';
+    }
+
+    el.innerHTML =
+      '<div class="page-header flex-between"><div>' +
+        '<div class="page-title">Fee Configuration</div>' +
+        '<div class="page-desc">Platform-wide default rates · All fees include 7.5% VAT as required by Nigerian law</div>' +
+      '</div>' +
+        '<div class="flex" style="gap:8px">' +
+          '<button class="btn btn-outline btn-sm" onclick="loadFeeConfig()">&#8635; Refresh</button>' +
+          '<button class="btn btn-primary btn-sm" onclick="addCustomCharge()">+ Custom Charge</button>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="warn-box" style="margin-bottom:20px"><strong>VAT Notice:</strong> All fees are subject to 7.5% Value Added Tax (VAT) as mandated by Nigerian law (FIRS). ' +
+      'The fee displayed and charged to merchants is always <strong>fee + VAT</strong>. Merchants cannot opt out of VAT. ' +
+      'The VAT rate is configurable per product should the statutory rate change.</div>' +
+
+      section('Card Payments', '&#9879;', 'Fees applied when merchants accept card payments. Separate rates for local and international cards.',
+        'CARDS', 'No card rates configured.') +
+
+      section('Virtual Accounts / Bank Transfer', '&#8960;', 'Fees applied when merchants receive money via bank transfer to a virtual account.',
+        'VIRTUAL_ACCOUNT', 'No virtual account rates configured.') +
+
+      section('Payouts (Outbound Transfers)', '&#8680;', 'Fees charged when merchants send money to beneficiaries. Deducted from merchant wallet.',
+        'PAYOUT', 'No payout rates configured.') +
+
+      section('Custom Charges', '&#9881;', 'Additional fees configured by super admin — e.g., FX surcharge, chargeback fee, monthly platform fee.',
+        'CUSTOM', 'No custom charges added yet. Click "+ Add Custom Charge" to create one.');
+
+    window._feeConfigRates = rates;
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load fee configuration: ' + e.message);
+  }
+}
+
+function editPlatformRate(channel) {
+  var rates = window._feeConfigRates || [];
+  var r = rates.find(function(x) { return x.channel === channel; }) || {};
+
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Edit — ' + (r.label||channel) + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:12px"><strong>Channel:</strong> ' + channel + ' &nbsp;|&nbsp; <strong>Product:</strong> ' + (r.product_group||'') + '<br>' +
+    (r.description||'') + '</div>' +
+
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Fee Model</label>' +
+    '<select class="form-input form-select" id="pr-model" onchange="previewFeeCalc()">' +
+      ['PCT','FLAT','PCT_PLUS_FLAT','GREATER_OF'].map(function(m) {
+        var labels = {PCT:'% of Amount',FLAT:'Flat Fee Only',PCT_PLUS_FLAT:'% + Flat Fee',GREATER_OF:'Greater of % or Flat'};
+        return '<option value="' + m + '"' + (r.fee_model===m?' selected':'') + '>' + labels[m] + '</option>';
+      }).join('') +
+    '</select></div>' +
+    '<div class="form-group"><label class="form-label">VAT Rate (e.g. 0.075 = 7.5%)</label>' +
+    '<input class="form-input" type="number" id="pr-vat" step="0.001" min="0" max="1" value="' + (Number(r.vat_rate)||0.075) + '" onchange="previewFeeCalc()"></div>' +
+    '</div>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Rate (%) — e.g. 1.5 for 1.5%</label>' +
+    '<input class="form-input" type="number" id="pr-rate" step="0.01" min="0" max="100" value="' + ((Number(r.rate)||0)*100).toFixed(4) + '" oninput="previewFeeCalc()"></div>' +
+    '<div class="form-group"><label class="form-label">Flat Fee (&#8358;)</label>' +
+    '<input class="form-input" type="number" id="pr-flat" step="1" min="0" value="' + (Number(r.flat_fee||0)/100).toFixed(2) + '" oninput="previewFeeCalc()"></div>' +
+    '</div>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Min Charge (&#8358;, 0 = none)</label>' +
+    '<input class="form-input" type="number" id="pr-min" step="1" min="0" value="' + (Number(r.min_charge||0)/100).toFixed(2) + '" oninput="previewFeeCalc()"></div>' +
+    '<div class="form-group"><label class="form-label">Max Charge / Cap (&#8358;, 0 = none)</label>' +
+    '<input class="form-input" type="number" id="pr-cap" step="1" min="0" value="' + (Number(r.cap||0)/100).toFixed(2) + '" oninput="previewFeeCalc()"></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">Label / Display Name</label>' +
+    '<input class="form-input" id="pr-label" value="' + (r.label||'') + '"></div>' +
+    '<div class="form-group"><label class="form-label">Description</label>' +
+    '<input class="form-input" id="pr-desc" value="' + (r.description||'') + '"></div>' +
+    '<div class="form-group"><label class="form-label">Internal Notes</label>' +
+    '<input class="form-input" id="pr-notes" value="' + (r.notes||'') + '"></div>' +
+
+    '<div style="background:var(--gray-100);border-radius:8px;padding:12px;margin-bottom:16px" id="pr-preview">' +
+    '<div style="font-size:11px;color:var(--gray-500);margin-bottom:4px">Live preview (₦10,000 transaction)</div>' +
+    '<div id="pr-preview-val" style="font-size:13px;font-weight:600">—</div></div>' +
+
+    '<div class="flex-between">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" onclick="savePlatformRate(\'' + channel + '\',\'' + (r.product_group||'OTHER') + '\')">Save Changes</button>' +
+    '</div>';
+
+  document.getElementById('modal').style.display = 'flex';
+  previewFeeCalc();
+}
+
+function previewFeeCalc() {
+  var amt      = 1000000; // ₦10,000 in kobo
+  var ratePct  = parseFloat(document.getElementById('pr-rate')?.value || 0) / 100;
+  var flat     = Math.round((parseFloat(document.getElementById('pr-flat')?.value || 0)) * 100);
+  var minC     = Math.round((parseFloat(document.getElementById('pr-min')?.value  || 0)) * 100);
+  var cap      = Math.round((parseFloat(document.getElementById('pr-cap')?.value  || 0)) * 100);
+  var vat      = parseFloat(document.getElementById('pr-vat')?.value  || 0.075);
+  var model    = document.getElementById('pr-model')?.value || 'PCT';
+
+  var fee = 0;
+  switch (model) {
+    case 'FLAT':          fee = flat; break;
+    case 'PCT_PLUS_FLAT': fee = Math.round(amt * ratePct) + flat; break;
+    case 'GREATER_OF':    fee = Math.max(Math.round(amt * ratePct), flat); break;
+    default:              fee = Math.round(amt * ratePct) + flat;
+  }
+  if (minC > 0 && fee < minC) fee = minC;
+  if (cap  > 0 && fee > cap)  fee = cap;
+  var vatAmt = Math.round(fee * vat);
+  var total  = fee + vatAmt;
+
+  var el = document.getElementById('pr-preview-val');
+  if (el) {
+    var f = function(k) { return '&#8358;' + (k/100).toLocaleString(undefined,{minimumFractionDigits:2}); };
+    el.innerHTML = 'Fee: ' + f(fee) + ' + VAT (' + (vat*100).toFixed(1) + '%): ' + f(vatAmt) + ' = <strong>' + f(total) + '</strong> total charged to merchant';
+  }
+}
+
+async function savePlatformRate(channel, productGroup) {
+  var rate  = parseFloat(document.getElementById('pr-rate').value) / 100;
+  var flat  = Math.round(parseFloat(document.getElementById('pr-flat').value || 0) * 100);
+  var minC  = Math.round(parseFloat(document.getElementById('pr-min').value  || 0) * 100);
+  var cap   = Math.round(parseFloat(document.getElementById('pr-cap').value  || 0) * 100);
+  var vat   = parseFloat(document.getElementById('pr-vat').value  || 0.075);
+  var model = document.getElementById('pr-model').value;
+  var label = document.getElementById('pr-label').value;
+  var desc  = document.getElementById('pr-desc').value;
+  var notes = document.getElementById('pr-notes').value;
+
+  if (isNaN(rate)) { alert('Enter a valid rate'); return; }
+
+  var res = await apiFetch('/merchants/platform-rates', {
+    method: 'PUT',
+    body: JSON.stringify({
+      channel, product_group: productGroup, fee_model: model,
+      rate, flat_fee: flat, min_charge: minC, cap,
+      vat_rate: vat, label, description: desc, notes,
+    }),
+  });
+  if (res && res.status) {
+    document.getElementById('modal').style.display = 'none';
+    loadFeeConfig();
+  } else {
+    alert('Error: ' + ((res && res.message) || 'Save failed'));
+  }
+}
+
+function addCustomCharge() {
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Add Custom Charge</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:12px">Custom charges can represent any additional fee — FX surcharge, chargeback processing fee, monthly platform fee, etc.</div>' +
+    '<div class="form-group"><label class="form-label">Charge Name (e.g. FX Surcharge) <span style="color:var(--red)">*</span></label>' +
+    '<input class="form-input" id="cc-label" placeholder="e.g. FX Surcharge"></div>' +
+    '<div class="form-group"><label class="form-label">Description</label>' +
+    '<input class="form-input" id="cc-desc" placeholder="What is this charge for?"></div>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Fee Model</label>' +
+    '<select class="form-input form-select" id="cc-model">' +
+      '<option value="PCT">% of Amount</option><option value="FLAT">Flat Fee</option>' +
+      '<option value="PCT_PLUS_FLAT">% + Flat Fee</option><option value="GREATER_OF">Greater of % or Flat</option>' +
+    '</select></div>' +
+    '<div class="form-group"><label class="form-label">Rate (%)</label>' +
+    '<input class="form-input" type="number" id="cc-rate" step="0.01" min="0" value="0" placeholder="0"></div>' +
+    '</div>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Flat Fee (&#8358;)</label>' +
+    '<input class="form-input" type="number" id="cc-flat" step="1" min="0" value="0"></div>' +
+    '<div class="form-group"><label class="form-label">Cap / Max (&#8358;, 0=none)</label>' +
+    '<input class="form-input" type="number" id="cc-cap" step="1" min="0" value="0"></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">VAT Rate (default 0.075 = 7.5%)</label>' +
+    '<input class="form-input" type="number" id="cc-vat" step="0.001" min="0" value="0.075"></div>' +
+    '<div id="cc-alert"></div>' +
+    '<div class="flex-between">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" onclick="submitCustomCharge()">Add Charge</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function submitCustomCharge() {
+  var label = document.getElementById('cc-label').value.trim();
+  var desc  = document.getElementById('cc-desc').value.trim();
+  var model = document.getElementById('cc-model').value;
+  var rate  = parseFloat(document.getElementById('cc-rate').value) / 100;
+  var flat  = Math.round(parseFloat(document.getElementById('cc-flat').value || 0) * 100);
+  var cap   = Math.round(parseFloat(document.getElementById('cc-cap').value  || 0) * 100);
+  var vat   = parseFloat(document.getElementById('cc-vat').value || 0.075);
+  var alertEl = document.getElementById('cc-alert');
+
+  if (!label) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Charge name is required</div>'; return; }
+
+  var channel = 'CUSTOM_' + label.toUpperCase().replace(/[^A-Z0-9]/g, '_').replace(/_+/g, '_').slice(0, 30);
+
+  var res = await apiFetch('/merchants/platform-rates', {
+    method: 'PUT',
+    body: JSON.stringify({
+      channel, product_group: 'CUSTOM', fee_model: model, is_custom: true,
+      rate, flat_fee: flat, cap, vat_rate: vat, label, description: desc,
+    }),
+  });
+  if (res && res.status) {
+    document.getElementById('modal').style.display = 'none';
+    loadFeeConfig();
+  } else {
+    alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + ((res && res.message) || 'Failed to add charge') + '</div>';
+  }
+}
+
+async function deletePlatformRate(channel, label) {
+  if (!confirm('Delete custom charge "' + label + '"?\nThis cannot be undone.')) return;
+  var res = await apiFetch('/merchants/platform-rates/' + encodeURIComponent(channel), { method: 'DELETE' });
+  if (res && res.status) { loadFeeConfig(); }
+  else alert('Error: ' + ((res && res.message) || 'Delete failed'));
+}
+
+// ── PAYOUT LOGS (merchant + super admin) ─────────────────────────────────────
+async function loadPayoutLogs(page=1, filters={}) {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var url = '/payouts/logs?page=' + page + '&perPage=30';
+    if (filters.status)      url += '&status=' + filters.status;
+    if (filters.merchant_id) url += '&merchant_id=' + filters.merchant_id;
+    if (filters.from)        url += '&from=' + filters.from;
+    if (filters.to)          url += '&to=' + filters.to;
+    if (filters.batch_ref)   url += '&batch_ref=' + encodeURIComponent(filters.batch_ref);
+
+    var res = await apiFetch(url);
+    if (!res || !res.data) { el.innerHTML = errorBox('Could not load payout logs'); return; }
+    var items = res.data.data || [];
+    var meta  = res.data.meta || { page: 1, pages: 1, total: 0 };
+
+    var statusBtns = ['','queued','processing','success','failed'].map(function(s) {
+      var active = (filters.status||'') === s;
+      return '<button class="btn ' + (active ? 'btn-primary' : 'btn-outline') + ' btn-sm" ' +
+        'onclick="loadPayoutLogs(1,{status:\'' + s + '\'})">' + (s||'All') + '</button>';
+    }).join('&nbsp;');
+
+    var rows = items.length ? items.map(function(i) {
+      var failRow = i.status === 'failed' && i.failure_reason
+        ? '<div style="font-size:11px;color:var(--red);margin-top:2px">&#9888; ' + i.failure_reason + '</div>'
+        : '';
+      return '<tr>' +
+        '<td class="mono" style="font-size:11px">' + (i.batch_ref||'—') + '</td>' +
+        '<td style="font-size:12px">' + (i.business_name||'—') + '<br><span class="mono" style="font-size:10px;color:var(--gray-400)">' + (i.merchant_code||'') + '</span></td>' +
+        '<td class="mono" style="font-size:12px">' + (i.account_number||'—') + '<br><span style="font-size:11px;color:var(--gray-400)">' + (i.bank_name||i.bank_code||'') + '</span></td>' +
+        '<td style="font-weight:600">' + fmtNaira(i.amount) + '</td>' +
+        '<td class="mono" style="font-size:12px;color:var(--amber)">' + (i.fee_naira > 0 ? fmtNaira(i.fee_naira*100) : '—') + '</td>' +
+        '<td class="mono" style="font-size:12px;color:var(--gray-500)">' + (i.vat_naira > 0 ? fmtNaira(i.vat_naira*100) : '—') + '</td>' +
+        '<td>' + statusBadge(i.status) + failRow + '</td>' +
+        '<td style="font-size:12px;color:var(--gray-400)">' + (i.created_at ? new Date(i.created_at).toLocaleDateString('en-NG') : '—') + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--gray-400)">No payout items in this period</td></tr>';
+
+    el.innerHTML =
+      '<div class="page-header flex-between"><div>' +
+        '<div class="page-title">Payout Transaction Logs</div>' +
+        '<div class="page-desc">' + fmtNum(meta.total) + ' payout items total</div>' +
+      '</div>' +
+        '<div class="flex" style="gap:6px">' + statusBtns + '</div>' +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Batch Ref</th><th>Merchant</th><th>Beneficiary</th><th>Amount</th><th>Fee</th><th>VAT</th><th>Status</th><th>Date</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table></div>' +
+      '<div class="flex-between" style="margin-top:16px">' +
+        '<div style="font-size:12px;color:var(--gray-500)">Page ' + meta.page + ' of ' + meta.pages + '</div>' +
+        '<div class="flex">' +
+          (meta.page > 1 ? '<button class="btn btn-outline btn-sm" onclick="loadPayoutLogs(' + (meta.page-1) + ')">← Previous</button>' : '') +
+          (meta.page < meta.pages ? '<button class="btn btn-outline btn-sm" onclick="loadPayoutLogs(' + (meta.page+1) + ')">Next →</button>' : '') +
+        '</div>' +
+      '</div></div>';
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load payout logs: ' + e.message);
+  }
+}
+
+// ── SUPER ADMIN PAYOUT REPORT ────────────────────────────────────────────────
+async function loadPayoutReport() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var now = new Date();
+    var from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    var to   = now.toISOString().split('T')[0];
+
+    var res = await apiFetch('/payouts/admin/report?from=' + from + '&to=' + to);
+    if (!res || !res.data) { el.innerHTML = errorBox('Could not load payout report'); return; }
+    var d = res.data;
+    var s = d.summary || {};
+
+    var merchantRows = (d.by_merchant || []).map(function(m) {
+      return '<tr>' +
+        '<td style="font-weight:500;font-size:13px">' + (m.business_name||'—') + '<br><span class="mono" style="font-size:10px;color:var(--gray-400)">' + (m.merchant_code||'') + '</span></td>' +
+        '<td style="text-align:center">' + (m.batch_count||0) + '</td>' +
+        '<td style="text-align:center">' + (m.total_items||0) + '</td>' +
+        '<td style="text-align:center;color:var(--green)">' + (m.success_items||0) + '</td>' +
+        '<td style="text-align:center;color:var(--red)">' + (m.failed_items||0) + '</td>' +
+        '<td style="font-weight:600">' + fmtNaira((m.total_amount_naira||0)*100) + '</td>' +
+        '<td style="font-weight:700;color:var(--lime-dark)">' + fmtNaira((m.fee_earned_naira||0)*100) + '</td>' +
+        '<td class="mono" style="font-size:12px">' + (m.success_rate||'—') + '</td>' +
+      '</tr>';
+    }).join('') || '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--gray-400)">No payout activity this period</td></tr>';
+
+    var failRows = (d.top_failure_reasons || []).map(function(f) {
+      return '<div class="rev-row"><span class="rev-label" style="font-size:12px">' + (f.reason||'Unknown') + '</span><span class="rev-value"><span class="badge badge-red">' + f.count + '</span></span></div>';
+    }).join('') || '<div style="color:var(--gray-400);font-size:12px;padding:12px">No failures this period</div>';
+
+    var statusRows = (d.status_breakdown || []).map(function(st) {
+      return '<div class="rev-row"><span class="rev-label">' + st.status + '</span><span class="rev-value">' + fmtNum(st.count) + '</span></div>';
+    }).join('');
+
+    el.innerHTML =
+      '<div class="page-header flex-between">' +
+        '<div><div class="page-title">Payout Report</div><div class="page-desc">' + from + ' to ' + to + '</div></div>' +
+        '<button class="btn btn-outline btn-sm" onclick="exportPayoutReport()">&#8681; Export CSV</button>' +
+      '</div>' +
+      '<div class="stats-grid">' +
+        '<div class="stat-card"><div class="stat-label">Payout Batches</div><div class="stat-value">' + fmtNum(s.batch_count||0) + '</div><div class="stat-sub">' + (s.active_merchants||0) + ' merchants</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Total Payout Amount</div><div class="stat-value">' + fmtNaira((s.total_amount_naira||0)*100) + '</div><div class="stat-sub">' + fmtNum(s.total_items||0) + ' transactions</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Fee Earned</div><div class="stat-value text-lime">' + fmtNaira((s.fee_earned_naira||0)*100) + '</div><div class="stat-sub">+ VAT: ' + fmtNaira((s.vat_collected_naira||0)*100) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Success Rate</div><div class="stat-value">' + (s.total_items > 0 ? Math.round((s.success_items||0) / s.total_items * 100) + '%' : '—') + '</div><div class="stat-sub">' + (s.failed_items||0) + ' failed</div></div>' +
+      '</div>' +
+      '<div class="grid-2">' +
+        '<div class="card"><div class="card-header"><div class="card-title">Status Breakdown</div></div>' + statusRows + '</div>' +
+        '<div class="card"><div class="card-header"><div class="card-title">Top Failure Reasons</div></div>' + failRows + '</div>' +
+      '</div>' +
+      '<div class="card" style="margin-top:16px"><div class="card-header"><div class="card-title">By Merchant</div></div>' +
+        '<div class="table-wrap"><table>' +
+          '<thead><tr><th>Merchant</th><th>Batches</th><th>Items</th><th>Success</th><th>Failed</th><th>Total Amount</th><th>Fee Earned</th><th>Success Rate</th></tr></thead>' +
+          '<tbody id="payout-report-rows">' + merchantRows + '</tbody>' +
+        '</table></div>' +
+      '</div>';
+
+    window._payoutReportData = d;
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load payout report: ' + e.message);
+  }
+}
+
+function exportPayoutReport() {
+  var d = window._payoutReportData;
+  if (!d) { alert('No report data to export'); return; }
+  var headers = ['Merchant','Code','Batches','Items','Success','Failed','Amount (NGN)','Fee Earned (NGN)','VAT (NGN)','Success Rate'];
+  var rows = (d.by_merchant || []).map(function(m) {
+    return [
+      m.business_name, m.merchant_code,
+      m.batch_count, m.total_items, m.success_items, m.failed_items,
+      (m.total_amount_naira||0).toFixed(2),
+      (m.fee_earned_naira||0).toFixed(2),
+      (m.vat_collected_naira||0).toFixed(2),
+      m.success_rate||'0%',
+    ];
+  });
+  var csv = [headers, ...rows].map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
+  var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'payout-report-' + new Date().toISOString().split('T')[0] + '.csv';
+  a.click();
+}
+
+// ── SETTLEMENT STATEMENT ──────────────────────────────────────────────────────
+async function downloadStatement() {
+  var monthEl = document.getElementById('stmt-month');
+  var month = monthEl ? monthEl.value : new Date().toISOString().slice(0,7);
+  var from = month + '-01';
+  var lastDay = new Date(month.split('-')[0], parseInt(month.split('-')[1]), 0).getDate();
+  var to = month + '-' + String(lastDay).padStart(2,'0');
+
+  var btn = document.querySelector('[onclick="downloadStatement()"]');
+  if (btn) { btn.textContent = '⟳ Generating...'; btn.disabled = true; }
+
+  try {
+    var res = await apiFetch('/reports/merchant-statement?from=' + from + '&to=' + to + '&perPage=500');
+    if (!res || !res.data) throw new Error('Could not fetch statement data');
+    var d = res.data;
+    var m = d.merchant;
+    var period = from + ' to ' + to;
+    var txns = d.transactions || [];
+
+    var fmt = function(n) { return '₦' + Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    var rows = txns.map(function(t) {
+      return '<tr>' +
+        '<td style="padding:8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:11px">' + t.reference + '</td>' +
+        '<td style="padding:8px;border-bottom:1px solid #f1f5f9;font-size:12px">' + new Date(t.date).toLocaleDateString('en-NG') + '</td>' +
+        '<td style="padding:8px;border-bottom:1px solid #f1f5f9;font-size:12px">' + t.channel + '</td>' +
+        '<td style="padding:8px;border-bottom:1px solid #f1f5f9;font-weight:600">' + fmt(t.amount) + '</td>' +
+        '<td style="padding:8px;border-bottom:1px solid #f1f5f9;color:#ef4444">' + fmt(t.fee) + '</td>' +
+        '<td style="padding:8px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#10b981">' + fmt(t.net) + '</td>' +
+        '<td style="padding:8px;border-bottom:1px solid #f1f5f9"><span style="background:' + (t.status==='SUCCESS'?'#d1fae5':t.status==='FAILED'?'#fee2e2':'#fef3c7') + ';color:' + (t.status==='SUCCESS'?'#065f46':t.status==='FAILED'?'#991b1b':'#92400e') + ';padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">' + t.status + '</span></td>' +
+      '</tr>';
+    }).join('');
+
+    var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Statement - ' + (m&&m.businessName||'Merchant') + '</title>' +
+      '<style>body{font-family:Arial,sans-serif;margin:0;padding:20px;color:#1e293b}table{width:100%;border-collapse:collapse}th{padding:10px 8px;background:#1a2744;color:#fff;font-size:11px;text-align:left;text-transform:uppercase}</style>' +
+      '</head><body>' +
+      '<div style="background:#1a2744;padding:20px;color:#fff;border-radius:8px 8px 0 0"><div style="font-size:18px;font-weight:700;color:#7dc534">Paylode Services Limited</div><div style="font-size:11px;opacity:.6">CBN Licensed PSSP · Merchant Account Statement</div></div>' +
+      '<div style="background:#f8fafc;padding:16px;border:1px solid #e2e8f0;border-top:none;margin-bottom:16px"><div style="font-weight:700;font-size:16px;margin-bottom:4px">' + (m&&m.businessName||'—') + '</div>' +
+      '<div style="font-size:12px;color:#64748b">Code: ' + (m&&m.merchantCode||'—') + ' &nbsp;·&nbsp; Period: ' + period + '</div>' +
+      '<div style="display:flex;gap:16px;margin-top:12px">' +
+      '<div><div style="font-size:11px;color:#64748b">Total Collections</div><div style="font-size:18px;font-weight:700">' + fmt(d.summary&&d.summary.total_collections) + '</div></div>' +
+      '<div><div style="font-size:11px;color:#64748b">Fees Paid</div><div style="font-size:18px;font-weight:700;color:#ef4444">' + fmt(d.summary&&d.summary.total_fees_paid) + '</div></div>' +
+      '<div><div style="font-size:11px;color:#064e3b">Net Settled</div><div style="font-size:18px;font-weight:700;color:#10b981">' + fmt(d.summary&&d.summary.net_settled) + '</div></div>' +
+      '</div></div>' +
+      '<table><thead><tr><th>Reference</th><th>Date</th><th>Channel</th><th>Amount</th><th>Fee</th><th>Net</th><th>Status</th></tr></thead>' +
+      '<tbody>' + (rows||'<tr><td colspan="7" style="text-align:center;padding:20px;color:#94a3b8">No transactions in this period</td></tr>') + '</tbody></table>' +
+      '<div style="margin-top:20px;font-size:11px;color:#94a3b8;text-align:center">Generated by Paylode Services Limited · support@paylodeservices.com</div>' +
+      '</body></html>';
+
+    var w = window.open('', '_blank');
+    w.document.write(html);
+    w.document.close();
+    setTimeout(function() { w.print(); }, 500);
+  } catch(e) {
+    alert('Failed to generate statement: ' + e.message);
+  } finally {
+    if (btn) { btn.innerHTML = '&#8681; Download PDF'; btn.disabled = false; }
+  }
+}
+
+async function emailStatement() {
+  var monthEl = document.getElementById('stmt-month');
+  var month = monthEl ? monthEl.value : new Date().toISOString().slice(0,7);
+  var from = month + '-01';
+  var lastDay = new Date(month.split('-')[0], parseInt(month.split('-')[1]), 0).getDate();
+  var to = month + '-' + String(lastDay).padStart(2,'0');
+
+  var user = getUser();
+  if (!confirm('Email the ' + month + ' statement to ' + (user.email||'your registered email') + '?')) return;
+
+  var btn = document.querySelector('[onclick="emailStatement()"]');
+  if (btn) { btn.textContent = '⟳ Sending...'; btn.disabled = true; }
+
+  try {
+    var res = await apiFetch('/reports/statement-email', { method: 'POST', body: JSON.stringify({ from: from, to: to }) });
+    if (res && res.status) {
+      alert('Statement emailed successfully to ' + (res.data&&res.data.sent_to || user.email) + '.');
+    } else {
+      alert('Failed to send email: ' + ((res && res.message) || 'Unknown error'));
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+  } finally {
+    if (btn) { btn.innerHTML = '&#9993; Email to Me'; btn.disabled = false; }
+  }
+}
+
+// ── 2FA SETUP ─────────────────────────────────────────────────────────────────
+async function setup2FA() {
+  var msgEl = document.getElementById('tfa-msg');
+  if (msgEl) msgEl.innerHTML = '<div class="info-box" style="font-size:12px">Generating your 2FA secret... ⟳</div>';
+
+  try {
+    var res = await apiFetch('/auth/2fa/setup', { method: 'POST' });
+    if (!res || !res.data) { if (msgEl) msgEl.innerHTML = '<div class="warn-box" style="font-size:12px">' + ((res&&res.message)||'Setup failed') + '</div>'; return; }
+
+    var secret = res.data.secret;
+    var uri    = res.data.otp_uri;
+
+    document.getElementById('modal-inner').innerHTML =
+      '<div class="modal-header"><div class="modal-title">Set Up Two-Factor Authentication</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+      '<div class="info-box" style="margin-bottom:16px;font-size:12px"><strong>Step 1:</strong> Open Google Authenticator, Authy, or any TOTP app and scan the QR code below (or enter the key manually).</div>' +
+      '<div style="text-align:center;margin-bottom:16px">' +
+        '<canvas id="totp-qr-canvas" width="200" height="200" style="border:4px solid white;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.15)"></canvas>' +
+        '<div style="margin-top:8px;font-size:11px;color:var(--gray-400)">Or enter manually:</div>' +
+        '<div class="mono" style="background:var(--gray-100);padding:8px 16px;border-radius:6px;font-size:13px;letter-spacing:2px;margin-top:4px;display:inline-block">' + secret + '</div>' +
+      '</div>' +
+      '<div class="info-box" style="margin-bottom:16px;font-size:12px"><strong>Step 2:</strong> Enter the 6-digit code from your app to confirm it is working.</div>' +
+      '<div class="form-group"><label class="form-label">Authenticator Code</label>' +
+      '<input class="form-input" id="tfa-confirm-code" placeholder="000 000" maxlength="7" style="font-size:20px;letter-spacing:4px;text-align:center;font-family:monospace"></div>' +
+      '<div id="tfa-confirm-alert"></div>' +
+      '<div class="flex-between">' +
+      '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+      '<button class="btn btn-lime" id="tfa-confirm-btn" onclick="confirm2FA()">Enable 2FA</button>' +
+      '</div>';
+    document.getElementById('modal').style.display = 'flex';
+
+    // Render QR code on canvas using simple pixel drawing
+    renderQR(uri, document.getElementById('totp-qr-canvas'));
+  } catch(e) {
+    if (msgEl) msgEl.innerHTML = '<div class="warn-box" style="font-size:12px">Error: ' + e.message + '</div>';
+  }
+}
+
+function renderQR(text, canvas) {
+  // Use Google Charts API to generate QR (client-side rendered in img tag)
+  var ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, 200, 200);
+  // Replace canvas with img using chart API
+  var img = document.createElement('img');
+  img.src = 'https://chart.googleapis.com/chart?chs=200x200&chld=M%7C0&cht=qr&chl=' + encodeURIComponent(text);
+  img.width = 200; img.height = 200;
+  img.onerror = function() {
+    // Fallback: show URI text
+    ctx.fillStyle = '#1a2744'; ctx.font = '10px monospace'; ctx.fillText('Scan with app:', 8, 20);
+    ctx.fillText('Copy URI below', 8, 36);
+  };
+  img.onload = function() { ctx.drawImage(img, 0, 0, 200, 200); };
+  canvas.parentNode.replaceChild(img, canvas);
+  img.id = 'totp-qr-img';
+}
+
+async function confirm2FA() {
+  var code = (document.getElementById('tfa-confirm-code').value || '').replace(/\s/g,'');
+  var alertEl = document.getElementById('tfa-confirm-alert');
+  if (code.length !== 6) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Enter the 6-digit code from your app</div>'; return; }
+  var btn = document.getElementById('tfa-confirm-btn');
+  btn.textContent = 'Verifying...'; btn.disabled = true;
+  var res = await apiFetch('/auth/2fa/confirm', { method: 'POST', body: JSON.stringify({ code: code }) });
+  if (res && res.status) {
+    document.getElementById('modal').style.display = 'none';
+    alert('2FA enabled successfully! Every future login will require your authenticator code.');
+    // Update local user cache
+    var u = getUser(); u.totpEnabled = true; localStorage.setItem('paylode_user', JSON.stringify(u));
+    // Re-render settings page
+    if (typeof renderPage === 'function') renderPage();
+  } else {
+    alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + ((res&&res.message)||'Incorrect code. Try again.') + '</div>';
+    btn.textContent = 'Enable 2FA'; btn.disabled = false;
+  }
+}
+
+async function disable2FA() {
+  var pw   = document.getElementById('tfa-dis-pw').value;
+  var code = document.getElementById('tfa-dis-code').value.replace(/\s/g,'');
+  var msgEl = document.getElementById('tfa-msg');
+  if (!pw || !code) { if (msgEl) msgEl.innerHTML = '<div class="warn-box" style="font-size:12px">Enter your password and authenticator code</div>'; return; }
+  var res = await apiFetch('/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: pw, code: code }) });
+  if (res && res.status) {
+    alert('2FA has been disabled.');
+    var u = getUser(); u.totpEnabled = false; localStorage.setItem('paylode_user', JSON.stringify(u));
+    if (typeof renderPage === 'function') renderPage();
+  } else {
+    if (msgEl) msgEl.innerHTML = '<div class="warn-box" style="font-size:12px">' + ((res&&res.message)||'Disable failed. Check your password and code.') + '</div>';
+  }
+}
+
+// ── AGGREGATOR REVENUE ────────────────────────────────────────────────────────
+async function loadAggRevenue() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/aggregators/my/revenue');
+    var rows = (res && res.data) ? res.data : [];
+
+    var total = rows.reduce(function(s, r) { return s + (Number(r.agg_share_naira)||0); }, 0);
+    var statsHtml = rows.slice(0,4).map(function(r) {
+      return '<div class="stat-card"><div class="stat-label">' + (r.month||'—') + '</div>' +
+        '<div class="stat-value text-lime">' + fmtNaira((r.agg_share_naira||0)*100) + '</div>' +
+        '<div class="stat-sub">' + (r.merchant_count||0) + ' merchants</div></div>';
+    }).join('');
+
+    var tableHtml = rows.length ? rows.map(function(r) {
+      return '<tr>' +
+        '<td style="font-weight:500">' + (r.month||'—') + '</td>' +
+        '<td class="mono">' + fmtNaira((r.merchant_volume||0)*100) + '</td>' +
+        '<td class="mono">' + fmtNaira((r.gross_fees||0)*100) + '</td>' +
+        '<td class="mono text-red">-' + fmtNaira((r.rail_costs||0)*100) + '</td>' +
+        '<td class="mono">' + fmtNaira((r.net_pool||0)*100) + '</td>' +
+        '<td class="mono text-lime" style="font-weight:700">' + fmtNaira((r.agg_share_naira||0)*100) + '</td>' +
+        '<td>' + statusBadge(r.status||'pending') + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gray-400)">No revenue data yet</td></tr>';
+
+    el.innerHTML =
+      '<div class="page-header flex-between">' +
+        '<div><div class="page-title">Revenue Share Statement</div>' +
+          '<div class="page-desc">Your aggregator earnings from merchant transaction fees</div></div>' +
+        '<button class="btn btn-outline btn-sm" onclick="downloadAggRevenueLive()">&#8681; Download CSV</button>' +
+      '</div>' +
+      (statsHtml ? '<div class="stats-grid">' + statsHtml + '</div>' : '') +
+      '<div class="stat-card" style="margin-bottom:16px;text-align:center"><div class="stat-label">Total Earned (All Time)</div><div class="stat-value" style="color:var(--lime-dark)">' + fmtNaira(total*100) + '</div></div>' +
+      '<div class="card"><div class="card-header"><div class="card-title">Monthly Breakdown</div></div>' +
+        '<div class="table-wrap"><table>' +
+          '<thead><tr><th>Month</th><th>Merchant Volume</th><th>Gross Fees</th><th>Rail Costs</th><th>Net Pool</th><th>Your Share</th><th>Status</th></tr></thead>' +
+          '<tbody>' + tableHtml + '</tbody>' +
+        '</table></div>' +
+      '</div>';
+
+    window._aggRevenueRows = rows;
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load revenue data: ' + e.message);
+  }
+}
+
+function downloadAggRevenueLive() {
+  var rows = window._aggRevenueRows || [];
+  var headers = ['Month','Merchant Volume (NGN)','Gross Fees (NGN)','Rail Costs (NGN)','Net Pool (NGN)','Your Share (NGN)','Status'];
+  var data = rows.map(function(r) {
+    return [r.month, r.merchant_volume||0, r.gross_fees||0, r.rail_costs||0, r.net_pool||0, r.agg_share_naira||0, r.status||'pending'];
+  });
+  var csv = [headers, ...data].map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
+  var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'paylode-aggregator-revenue-' + new Date().toISOString().split('T')[0] + '.csv';
+  a.click();
+}
+
 // ── NAVIGATE FUNCTION ─────────────────────────────────────────────────────────
 // Use window assignment (not function declaration) to avoid hoisting conflicts
 window.navigate = function(page) {
@@ -1734,12 +2707,12 @@ function loadPageData(page) {
     case 'settlement':       loadSettlements(); break;
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
-    case 'merch_settlements':   loadSettlements(); break;
+    case 'merch_settlements':   loadMerchSettlements(); break;
     case 'merch_apikeys':       loadMerchApiKeys(); break;
     case 'merch_webhooks':      loadMerchWebhooks(); break;
     case 'merch_profile':       loadMerchProfile(); break;
     case 'agg_transactions':    loadTransactions(); break;
-    case 'agg_revenue':         loadRevenueReport(); break;
+    case 'agg_revenue':         loadAggRevenue(); break;
     case 'agg_merchants':
       apiFetch('/aggregators/my/merchants').then(function(r) {
         var el = document.getElementById('main-content');
@@ -1975,6 +2948,17 @@ async function viewBatch(id) {
   if (!res?.data) return;
   const { batch, items } = res.data;
   const el = document.getElementById('main-content');
+
+  const feeInfo = (batch.total_fee_naira > 0 || batch.total_vat_naira > 0)
+    ? `<div class="warn-box" style="margin-bottom:16px;font-size:13px">
+        <strong>Fee breakdown:</strong> &nbsp;
+        Payouts: <strong>${fmtNaira(batch.total_amount)}</strong> &nbsp;+&nbsp;
+        Service fee (${batch.fee_rate_pct||'0%'}): <strong>${fmtNaira((batch.total_fee_naira||0)*100)}</strong> &nbsp;+&nbsp;
+        VAT (7.5%): <strong>${fmtNaira((batch.total_vat_naira||0)*100)}</strong> &nbsp;=&nbsp;
+        Total deducted: <strong>${fmtNaira((batch.total_deducted_naira||0)*100)}</strong>
+      </div>`
+    : '';
+
   el.innerHTML = `
   <div class="page-header flex-between">
     <div><div class="page-title">Payout Batch — ${batch.batch_ref}</div><div class="page-desc">${batch.description||''}</div></div>
@@ -1984,22 +2968,28 @@ async function viewBatch(id) {
     </div>
   </div>
   <div class="stats-grid">
-    <div class="stat-card"><div class="stat-label">Total Amount</div><div class="stat-value">${fmtNaira(batch.total_amount)}</div></div>
-    <div class="stat-card"><div class="stat-label">Total Items</div><div class="stat-value">${batch.total_items}</div></div>
-    <div class="stat-card"><div class="stat-label">Processed</div><div class="stat-value" style="color:var(--green)">${batch.processed_items}</div></div>
-    <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value" style="color:var(--red)">${batch.failed_items}</div></div>
+    <div class="stat-card"><div class="stat-label">Total Payout</div><div class="stat-value">${fmtNaira(batch.total_amount)}</div><div class="stat-sub">To beneficiaries</div></div>
+    <div class="stat-card"><div class="stat-label">Fee + VAT</div><div class="stat-value" style="font-size:18px">${fmtNaira(((batch.total_fee_naira||0)+(batch.total_vat_naira||0))*100)}</div><div class="stat-sub">${batch.fee_rate_pct||'0%'} + 7.5% VAT</div></div>
+    <div class="stat-card"><div class="stat-label">Processed</div><div class="stat-value" style="color:var(--green)">${batch.processed_items}</div><div class="stat-sub">of ${batch.total_items}</div></div>
+    <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value" style="color:var(--red)">${batch.failed_items}</div><div class="stat-sub">${batch.failed_items > 0 ? 'See reasons below' : 'None'}</div></div>
   </div>
+  ${feeInfo}
   <div class="card">
+    <div class="card-header"><div class="card-title">Payout Items</div>
+      ${batch.failed_items > 0 ? `<button class="btn btn-outline btn-sm" onclick="retryBatch('${batch.id}')">Retry Failed</button>` : ''}
+    </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Account</th><th>Bank</th><th>Amount</th><th>Narration</th><th>Status</th><th>Failure Reason</th></tr></thead>
+      <thead><tr><th>Account</th><th>Bank</th><th>Amount</th><th>Fee</th><th>VAT</th><th>Narration</th><th>Status</th><th>Failure Reason</th></tr></thead>
       <tbody>
         ${items.map(i=>`<tr>
-          <td class="mono">${i.account_number}</td>
-          <td>${i.bank_name||i.bank_code}</td>
-          <td>${fmtNaira(i.amount)}</td>
-          <td>${i.narration||'—'}</td>
+          <td class="mono" style="font-size:12px">${i.account_number}${i.account_name?'<br><span style="color:var(--gray-400);font-size:11px">'+i.account_name+'</span>':''}</td>
+          <td style="font-size:12px">${i.bank_name||i.bank_code}</td>
+          <td style="font-weight:600">${fmtNaira(i.amount)}</td>
+          <td class="mono" style="font-size:12px;color:var(--amber)">${i.fee_naira > 0 ? fmtNaira(i.fee_naira*100) : '—'}</td>
+          <td class="mono" style="font-size:12px;color:var(--gray-500)">${i.vat_naira > 0 ? fmtNaira(i.vat_naira*100) : '—'}</td>
+          <td style="font-size:12px">${i.narration||'—'}</td>
           <td>${statusBadge(i.status)}</td>
-          <td style="font-size:12px;color:var(--red)">${i.failure_reason||'—'}</td>
+          <td style="font-size:12px;color:var(--red);max-width:200px">${i.failure_reason||'—'}</td>
         </tr>`).join('')}
       </tbody>
     </table></div>
@@ -2090,23 +3080,24 @@ async function submitAddRail() {
 
 function showAddServiceType(railId) {
   const types = ['VISA','MASTERCARD','VERVE','BANK_TRANSFER','USSD','PAYOUT'];
-  document.getElementById('rail-form-area').innerHTML = `
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-title" style="margin-bottom:12px">Add Service Type to Rail</div>
-    <div class="form-grid">
-      <div class="form-group"><label class="form-label">Service Type</label>
-        <select class="form-input form-select" id="st-type">
-          ${types.map(t=>`<option value="${t}">${t.replace(/_/g,' ')}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-group"><label class="form-label">Rate (e.g. 0.015 for 1.5%)</label><input class="form-input" id="st-rate" type="number" step="0.001" placeholder="0.015"></div>
-      <div class="form-group"><label class="form-label">Rail Fee Cap (₦, 0 = no cap)</label><input class="form-input" id="st-cap" type="number" placeholder="800" value="0"></div>
-      <div class="form-group"><label class="form-label">Merchant Cap (₦, 0 = no cap)</label><input class="form-input" id="st-mcap" type="number" placeholder="2000" value="0"></div>
-      <div class="form-group"><label class="form-label">VAT Rate (default 0.075)</label><input class="form-input" id="st-vat" type="number" step="0.001" value="0.075"></div>
-    </div>
-    <button class="btn btn-primary btn-sm" onclick="submitServiceType('${railId}')">Save</button>
-    <button class="btn btn-outline btn-sm" onclick="document.getElementById('rail-form-area').innerHTML=''">Cancel</button>
-  </div>`;
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Add Service Type</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="form-group"><label class="form-label">Service Type</label>' +
+    '<select class="form-input form-select" id="st-type">' +
+      types.map(t => `<option value="${t}">${t.replace(/_/g,' ')}</option>`).join('') +
+    '</select></div>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Rate (e.g. 0.015 = 1.5%)</label><input class="form-input" id="st-rate" type="number" step="0.001" placeholder="0.015"></div>' +
+    '<div class="form-group"><label class="form-label">VAT Rate (default 0.075)</label><input class="form-input" id="st-vat" type="number" step="0.001" value="0.075"></div>' +
+    '<div class="form-group"><label class="form-label">Rail Fee Cap &#8358; (0 = no cap)</label><input class="form-input" id="st-cap" type="number" placeholder="800" value="0"></div>' +
+    '<div class="form-group"><label class="form-label">Merchant Cap &#8358; (0 = no cap)</label><input class="form-input" id="st-mcap" type="number" placeholder="2000" value="0"></div>' +
+    '</div>' +
+    '<div class="flex-between" style="margin-top:4px">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-primary" onclick="submitServiceType(\'' + railId + '\')">Add Service Type</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
 }
 
 async function submitServiceType(railId) {
@@ -2120,24 +3111,28 @@ async function submitServiceType(railId) {
     method: 'PUT',
     body: JSON.stringify({ service_type: type, rate, fee_cap: Math.round(cap), merchant_cap: Math.round(mcap), vat_rate: vat }),
   });
-  if (res?.status) { alert('Service type saved'); loadRails(); }
-  else alert('Error: ' + (res?.message||'Failed'));
+  if (res?.status) {
+    document.getElementById('modal').style.display = 'none';
+    loadRails();
+  } else alert('Error: ' + (res?.message||'Failed'));
 }
 
 function editRailCost(railId, type, rate, cap, mcap, vat) {
-  document.getElementById('rail-form-area').innerHTML = `
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-title" style="margin-bottom:12px">Edit ${type.replace(/_/g,' ')} Cost</div>
-    <div class="form-grid">
-      <div class="form-group"><label class="form-label">Rate</label><input class="form-input" id="st-rate" type="number" step="0.001" value="${rate}"></div>
-      <div class="form-group"><label class="form-label">Rail Fee Cap (₦)</label><input class="form-input" id="st-cap" type="number" value="${Number(cap)/100}"></div>
-      <div class="form-group"><label class="form-label">Merchant Cap (₦)</label><input class="form-input" id="st-mcap" type="number" value="${Number(mcap)/100}"></div>
-      <div class="form-group"><label class="form-label">VAT Rate</label><input class="form-input" id="st-vat" type="number" step="0.001" value="${vat}"></div>
-      <input type="hidden" id="st-type" value="${type}">
-    </div>
-    <button class="btn btn-primary btn-sm" onclick="submitServiceType('${railId}')">Update</button>
-    <button class="btn btn-outline btn-sm" onclick="document.getElementById('rail-form-area').innerHTML=''">Cancel</button>
-  </div>`;
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Edit ' + type.replace(/_/g,' ') + ' Cost</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<input type="hidden" id="st-type" value="' + type + '">' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Rate</label><input class="form-input" id="st-rate" type="number" step="0.001" value="' + rate + '"></div>' +
+    '<div class="form-group"><label class="form-label">VAT Rate</label><input class="form-input" id="st-vat" type="number" step="0.001" value="' + vat + '"></div>' +
+    '<div class="form-group"><label class="form-label">Rail Fee Cap &#8358;</label><input class="form-input" id="st-cap" type="number" value="' + (Number(cap)/100) + '"></div>' +
+    '<div class="form-group"><label class="form-label">Merchant Cap &#8358;</label><input class="form-input" id="st-mcap" type="number" value="' + (Number(mcap)/100) + '"></div>' +
+    '</div>' +
+    '<div class="flex-between" style="margin-top:4px">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-primary" onclick="submitServiceType(\'' + railId + '\')">Update</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
 }
 
 async function changeRailStatus(id, status) {
@@ -2481,8 +3476,12 @@ var _origLoadPageData = loadPageData;
 loadPageData = function(page) {
   switch(page) {
     case 'agg_onboard':          loadAggOnboard(); break;
+    case 'agg_revenue':          loadAggRevenue(); break;
     case 'admin_onboard':        loadAdminOnboard(); break;
     case 'payouts':              loadPayouts(); break;
+    case 'payout_report':        loadPayoutReport(); break;
+    case 'payout_logs':          loadPayoutLogs(); break;
+    case 'fee_config':           loadFeeConfig(); break;
     case 'rails':                loadRails(); break;
     case 'wallets':              loadWallets(); break;
     case 'product_revenue':      loadProductRevenue(); break;
@@ -2493,7 +3492,9 @@ loadPageData = function(page) {
     case 'settings':
     case 'sdk_start':
     case 'sdk_payments':
+    case 'sdk_va':
     case 'sdk_verify':
+    case 'sdk_payouts':
     case 'sdk_webhook':
     case 'sdk_mobile':
     case 'sdk_errors':

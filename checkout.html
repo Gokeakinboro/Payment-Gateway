@@ -560,6 +560,30 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
           </div>
         </div>
 
+        <!-- ── OTP PANEL ── -->
+        <div class="panel" id="panel-otp">
+          <div style="text-align:center;margin-bottom:20px">
+            <div style="width:52px;height:52px;border-radius:50%;background:rgba(26,39,68,.08);display:flex;align-items:center;justify-content:center;margin:0 auto 12px">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2" stroke-linecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+            </div>
+            <div style="font-size:15px;font-weight:600;color:var(--navy);margin-bottom:6px">Enter OTP</div>
+            <div style="font-size:13px;color:var(--g500);line-height:1.6" id="otp-hint">Enter the one-time password sent to your phone</div>
+          </div>
+          <div class="field">
+            <label>One-Time Password</label>
+            <input type="tel" id="otp-input" class="mono-input" placeholder="• • • • • •"
+              maxlength="8" inputmode="numeric" autocomplete="one-time-code"
+              style="text-align:center;font-size:22px;letter-spacing:8px">
+          </div>
+          <button class="pay-btn" id="pay-btn-otp" onclick="submitOtp()">
+            <div class="spinner"></div>
+            <span class="btn-label">Verify OTP</span>
+          </button>
+          <button class="back-btn" style="width:100%;margin-top:10px;text-align:center" onclick="cancelOtp()">
+            ← Back to card entry
+          </button>
+        </div>
+
         <!-- ── TRANSFER PANEL ── -->
         <div class="panel" id="panel-transfer">
           <div class="transfer-steps">
@@ -728,7 +752,7 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
 
 <script>
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-const API_URL = 'https://api.paylodeservices.com/api/v1';
+const API_URL = window.location.origin + '/api/v1';
 
 // ─── STATE ───────────────────────────────────────────────────────────────────
 let state = {
@@ -777,12 +801,56 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('sandbox-banner').classList.add('show');
   }
 
+  // Fetch real transaction data from API (overrides URL params if ref is valid)
+  loadTransaction();
+
   // Virtual account (in production, fetch from API)
   fetchVirtualAccount();
 
   // Start countdown timer for transfer
   startTimer();
 });
+
+// ─── LOAD TRANSACTION FROM API ────────────────────────────────────────────────
+async function loadTransaction() {
+  if (!state.reference || state.reference.startsWith('TXN-DEMO')) return;
+  try {
+    const res = await fetch(`${API_URL}/checkout/${state.reference}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.status || !data.data) return;
+
+    const txn = data.data;
+
+    // Already processed — show result immediately
+    if (txn.already_processed) {
+      if (txn.status === 'SUCCESS') showSuccess('card');
+      else if (txn.status === 'FAILED' || txn.status === 'REVERSED')
+        showFailed('This transaction has already been processed.');
+      return;
+    }
+
+    // Populate UI with real data
+    state.amount          = txn.amount;
+    state.amountFormatted = formatNaira(txn.amount);
+    state.merchantName    = txn.merchant_name || state.merchantName;
+    state.customerEmail   = txn.customer_email || state.customerEmail;
+    state.description     = txn.description || state.description;
+    state.isSandbox       = txn.is_sandbox || false;
+
+    document.getElementById('merchant-name').querySelector('span').textContent = state.merchantName;
+    document.getElementById('order-amount').textContent  = state.amountFormatted;
+    document.getElementById('order-desc').textContent    = state.description;
+    document.getElementById('order-email').querySelector('span').textContent = state.customerEmail;
+    document.getElementById('card-pay-amount').textContent = state.amountFormatted;
+    document.getElementById('transfer-amount-display').textContent = state.amountFormatted;
+    document.getElementById('ussd-amt').textContent = (txn.amount / 100).toFixed(2);
+    state.ussdAmt = (txn.amount / 100).toFixed(2);
+
+    if (state.isSandbox) document.getElementById('sandbox-banner').classList.add('show');
+    else document.getElementById('sandbox-banner').classList.remove('show');
+  } catch (e) { /* use URL params */ }
+}
 
 // ─── VIRTUAL ACCOUNT (Transfer) ───────────────────────────────────────────────
 async function fetchVirtualAccount() {
@@ -848,44 +916,35 @@ async function payWithCard() {
   setLoading(btn, true);
 
   try {
-    // In production: POST to your backend which calls the card processor
-    const payload = {
-      reference:   state.reference,
-      card_number: number,
-      card_expiry: expiry,
-      card_cvv:    cvv,
-      card_pin:    pin,
-      card_name:   name,
-    };
+    const res = await fetch(`${API_URL}/checkout/${state.reference}/charge/card`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        card_number: number,
+        card_expiry: expiry,
+        card_cvv:    cvv,
+        card_pin:    pin,
+        card_name:   name,
+      }),
+    });
+    const data = await res.json();
+    setLoading(btn, false);
 
-    let success, failReason;
-
-    if (state.isSandbox) {
-      // Sandbox — simulate based on test card numbers
-      await sleep(1800);
-      if (number === '4084080000000409') {
-        success = false; failReason = 'Insufficient funds';
-      } else if (number === '4000000000000002') {
-        success = false; failReason = 'Card declined by issuer';
-      } else if (number === '4187427415564246') {
-        success = false; failReason = 'Transaction timed out';
-      } else {
-        success = true;
-      }
-    } else {
-      const res = await fetch(`${API_URL}/transactions/${state.reference}/charge/card`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload),
-      });
-      const data = await res.json();
-      success    = data.status && data.data?.status === 'SUCCESS';
-      failReason = data.message || 'Payment failed';
+    if (data.data?.status === 'OTP_REQUIRED') {
+      // Show OTP input panel
+      document.getElementById('otp-hint').textContent =
+        data.data.otp_hint || 'Enter the one-time password sent to your registered phone number';
+      hideAllPanels();
+      document.getElementById('panel-otp').classList.add('active');
+      document.getElementById('otp-input').focus();
+      return;
     }
 
-    setLoading(btn, false);
-    if (success) showSuccess('card');
-    else showFailed(failReason);
+    if (data.status && data.data?.status === 'SUCCESS') {
+      showSuccess('card');
+    } else {
+      showFailed(data.message || 'Payment failed. Please try again.');
+    }
 
   } catch (e) {
     setLoading(btn, false);
@@ -893,26 +952,61 @@ async function payWithCard() {
   }
 }
 
+// ─── OTP SUBMIT ───────────────────────────────────────────────────────────────
+async function submitOtp() {
+  const otp = document.getElementById('otp-input').value.trim();
+  if (otp.length < 4) { shake('otp-input'); return; }
+
+  const btn = document.getElementById('pay-btn-otp');
+  setLoading(btn, true);
+
+  try {
+    const res = await fetch(`${API_URL}/checkout/${state.reference}/charge/card/otp`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ otp }),
+    });
+    const data = await res.json();
+    setLoading(btn, false);
+
+    if (data.status && data.data?.status === 'SUCCESS') {
+      showSuccess('card');
+    } else {
+      document.getElementById('otp-input').value = '';
+      document.getElementById('otp-hint').textContent =
+        (data.message || 'Incorrect OTP') + ' — please try again';
+      document.getElementById('otp-input').classList.add('error');
+      setTimeout(() => document.getElementById('otp-input').classList.remove('error'), 1500);
+    }
+  } catch (e) {
+    setLoading(btn, false);
+    showFailed('Network error. Please check your connection and try again.');
+  }
+}
+
+function cancelOtp() {
+  document.getElementById('otp-input').value = '';
+  hideAllPanels();
+  document.getElementById('panel-card').classList.add('active');
+}
+
 // ─── CHECK TRANSFER STATUS ────────────────────────────────────────────────────
 async function checkTransferStatus() {
   const btn = document.querySelector('#panel-transfer .pay-btn');
   setLoading(btn, true);
-  await sleep(2000);
-  setLoading(btn, false);
 
-  if (state.isSandbox) {
-    showSuccess('transfer');
-  } else {
-    try {
-      const res  = await fetch(`${API_URL}/transactions/verify/${state.reference}`, {
-        headers: { 'Authorization': `Bearer ${getPublicKey()}` },
-      });
-      const data = await res.json();
-      if (data.data?.status === 'SUCCESS') showSuccess('transfer');
-      else showFailed('Transfer not yet confirmed. Please wait a moment and try again.');
-    } catch {
-      showFailed('Could not check status. Please try again.');
+  try {
+    const res  = await fetch(`${API_URL}/checkout/${state.reference}/confirm`, { method: 'POST' });
+    const data = await res.json();
+    setLoading(btn, false);
+    if (data.status && (data.data?.status === 'SUCCESS' || data.data?.already_processed)) {
+      showSuccess('transfer');
+    } else {
+      showFailed('Transfer not yet confirmed. Please wait a moment and try again.');
     }
+  } catch {
+    setLoading(btn, false);
+    showFailed('Could not check status. Please try again.');
   }
 }
 
@@ -929,18 +1023,18 @@ function selectBank(el, code, name, color) {
 async function checkUssdStatus() {
   const btn = document.querySelector('#panel-ussd .pay-btn');
   setLoading(btn, true);
-  await sleep(2000);
-  setLoading(btn, false);
-  if (state.isSandbox) showSuccess('ussd');
-  else {
-    try {
-      const res  = await fetch(`${API_URL}/transactions/verify/${state.reference}`);
-      const data = await res.json();
-      if (data.data?.status === 'SUCCESS') showSuccess('ussd');
-      else showFailed('Payment not yet received. Please check you dialled the correct code.');
-    } catch {
-      showFailed('Could not check status. Please try again.');
+  try {
+    const res  = await fetch(`${API_URL}/checkout/${state.reference}/confirm`, { method: 'POST' });
+    const data = await res.json();
+    setLoading(btn, false);
+    if (data.status && (data.data?.status === 'SUCCESS' || data.data?.already_processed)) {
+      showSuccess('ussd');
+    } else {
+      showFailed('Payment not yet received. Please check you dialled the correct code.');
     }
+  } catch {
+    setLoading(btn, false);
+    showFailed('Could not check status. Please try again.');
   }
 }
 
