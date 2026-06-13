@@ -1107,12 +1107,25 @@ function renderSdkStart() {
 }
 
 function renderSdkPayments() {
-  return '<div class="page-header"><div class="page-title">Payments API</div></div><div class="card">' +
+  return '<div class="page-header"><div class="page-title">Card Payments API</div>' +
+    '<div class="page-desc">Local (NGN) and International (USD) card charges</div></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:12px"><strong>Currency drives the product.</strong> Pass <span class="mono">currency:"NGN"</span> for local cards (charged in kobo) or <span class="mono">currency:"USD"</span> for international cards (charged in cents). International card transactions are billed, settled and reported entirely in <strong>USD</strong>, separate from your Naira balance.</div>' +
+    '<div class="card" style="margin-bottom:12px">' +
     '<div class="flex-between" style="margin-bottom:12px"><div><span class="badge badge-green" style="font-size:12px">POST</span> ' +
     '<span class="mono" style="font-size:13px">/v1/transaction/initialize</span></div><span class="badge badge-amber">Requires Secret Key</span></div>' +
-    '<div class="code-block">{\n  <span class="str">"email"</span>: <span class="str">"customer@example.com"</span>,\n  <span class="str">"amount"</span>: <span class="num">5000000</span>,\n  <span class="str">"currency"</span>: <span class="str">"NGN"</span>,\n  <span class="str">"reference"</span>: <span class="str">"TXN-20250526-001"</span>,\n  <span class="str">"channels"</span>: [<span class="str">"card"</span>, <span class="str">"bank_transfer"</span>]\n}</div>' +
-    '<div style="font-size:12px;font-weight:700;color:var(--gray-700);margin:12px 0 8px">Success Response (201)</div>' +
-    '<div class="code-block">{\n  <span class="str">"status"</span>: <span class="kw">true</span>,\n  <span class="str">"data"</span>: {\n    <span class="str">"authorization_url"</span>: <span class="str">"https://checkout.paylode.ng/pay/abc123"</span>,\n    <span class="str">"reference"</span>: <span class="str">"TXN-20250526-001"</span>\n  }\n}</div></div>';
+    '<div style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:6px">Local card (NGN) — amount in kobo</div>' +
+    '<div class="code-block">{\n  <span class="str">"email"</span>: <span class="str">"customer@example.com"</span>,\n  <span class="str">"amount"</span>: <span class="num">5000000</span>,        <span class="comment">// ₦50,000 in kobo</span>\n  <span class="str">"currency"</span>: <span class="str">"NGN"</span>,\n  <span class="str">"reference"</span>: <span class="str">"TXN-001"</span>,\n  <span class="str">"channels"</span>: [<span class="str">"card"</span>]\n}</div>' +
+    '<div style="font-size:12px;font-weight:700;color:#1e40af;margin:14px 0 6px">🌍 International card (USD) — amount in cents</div>' +
+    '<div class="code-block">{\n  <span class="str">"email"</span>: <span class="str">"customer@example.com"</span>,\n  <span class="str">"amount"</span>: <span class="num">50000</span>,          <span class="comment">// $500.00 in cents</span>\n  <span class="str">"currency"</span>: <span class="str">"USD"</span>,         <span class="comment">// → routed as International Card (CARD_INTL)</span>\n  <span class="str">"reference"</span>: <span class="str">"TXN-INTL-001"</span>,\n  <span class="str">"channels"</span>: [<span class="str">"card"</span>]\n}</div>' +
+    '<div style="font-size:12px;font-weight:700;color:var(--gray-700);margin:14px 0 6px">Success Response (201)</div>' +
+    '<div class="code-block">{\n  <span class="str">"status"</span>: <span class="kw">true</span>,\n  <span class="str">"data"</span>: {\n    <span class="str">"authorization_url"</span>: <span class="str">"https://checkout.paylodeservices.com/pay/..."</span>,\n    <span class="str">"reference"</span>: <span class="str">"TXN-INTL-001"</span>,\n    <span class="str">"currency"</span>: <span class="str">"USD"</span>,\n    <span class="str">"product"</span>: <span class="str">"CARD_INTL"</span>,\n    <span class="str">"is_international"</span>: <span class="kw">true</span>,\n    <span class="str">"fee_preview"</span>: { <span class="str">"display"</span>: <span class="str">"$17.50"</span>, <span class="str">"currency"</span>: <span class="str">"USD"</span> }\n  }\n}</div></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">Currency rules</div></div>' +
+    '<div class="rev-row"><span class="rev-label">NGN amounts</span><span class="rev-value">in kobo (₦1 = 100)</span></div>' +
+    '<div class="rev-row"><span class="rev-label">USD amounts</span><span class="rev-value">in cents ($1 = 100)</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Local card rate</span><span class="rev-value">CARD_LOCAL (default 1.5%)</span></div>' +
+    '<div class="rev-row"><span class="rev-label">International card rate</span><span class="rev-value">CARD_INTL (default 3.5%)</span></div>' +
+    '<div class="rev-row"><span class="rev-label">USD settlement</span><span class="rev-value">separate USD settlement batch</span></div>' +
+    '</div>';
 }
 
 function renderSdkVerify() {

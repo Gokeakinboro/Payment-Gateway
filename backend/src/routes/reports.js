@@ -76,6 +76,7 @@ router.get('/revenue', requireAuth, requireCompliance, async (req, res, next) =>
     const rows = await prisma.$queryRaw`
       SELECT
         DATE_TRUNC(${groupBy}, t.created_at) AS period,
+        t.currency                      AS currency,
         m.kyc_tier,
         t.channel::text,
         COUNT(*)::int                   AS txn_count,
@@ -93,25 +94,38 @@ router.get('/revenue', requireAuth, requireCompliance, async (req, res, next) =>
       WHERE t.status = 'SUCCESS'
         AND t.is_sandbox = false
         AND t.created_at BETWEEN ${fromDate} AND ${toDate}
-      GROUP BY period, m.kyc_tier, t.channel
+      GROUP BY period, t.currency, m.kyc_tier, t.channel
       ORDER BY period DESC, paylode_margin DESC
     `;
 
-    ok(res, {
-      period: { from: fromDate, to: toDate, group_by: groupBy },
-      data: rows.map(r => ({
+    const mapRow = r => {
+      const ccy = r.currency || 'NGN';
+      return {
         period:           r.period,
+        currency:         ccy,
+        is_international: ccy === 'USD',
         kyc_tier:         r.kyc_tier,
         channel:          r.channel,
+        product:          (r.channel === 'CARD') ? (ccy === 'USD' ? 'International Card' : 'Local Card') : r.channel,
         txn_count:        r.txn_count,
-        volume_naira:     koboToNaira(r.volume),
-        gross_revenue:    koboToNaira(r.gross_revenue),
-        rail_costs:       koboToNaira(r.rail_costs),
-        net_after_rails:  koboToNaira(r.net_after_rails),
-        agg_payouts:      koboToNaira(r.agg_payouts),
-        paylode_margin:   koboToNaira(r.paylode_margin),
+        volume_major:     Number(r.volume) / 100,
+        gross_revenue:    Number(r.gross_revenue) / 100,
+        rail_costs:       Number(r.rail_costs) / 100,
+        net_after_rails:  Number(r.net_after_rails) / 100,
+        agg_payouts:      Number(r.agg_payouts) / 100,
+        paylode_margin:   Number(r.paylode_margin) / 100,
         margin_pct:       Number(r.margin_pct || 0),
-      })),
+        // legacy naira keys
+        volume_naira:     koboToNaira(r.volume),
+      };
+    };
+    const all = rows.map(mapRow);
+
+    ok(res, {
+      period: { from: fromDate, to: toDate, group_by: groupBy },
+      data:     all.filter(r => r.currency === 'NGN'),  // legacy: NGN-only
+      data_ngn: all.filter(r => r.currency === 'NGN'),
+      data_usd: all.filter(r => r.currency === 'USD'),
     });
   } catch (e) { next(e); }
 });
@@ -268,7 +282,7 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const toDate   = to ? new Date(to + 'T23:59:59Z') : new Date();
 
-    const [txns, totals] = await Promise.all([
+    const [txns, byCcy] = await Promise.all([
       prisma.transaction.findMany({
         where: {
           merchantId: targetMerchantId,
@@ -279,7 +293,8 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
         take:    parseInt(perPage),
         orderBy: { createdAt: 'desc' },
       }),
-      prisma.transaction.aggregate({
+      prisma.transaction.groupBy({
+        by: ['currency'],
         where: { merchantId: targetMerchantId, isSandbox: false, status: 'SUCCESS', createdAt: { gte: fromDate, lte: toDate } },
         _count: true,
         _sum: { amount: true, merchantFee: true },
@@ -288,24 +303,36 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
 
     const merchant = await prisma.merchant.findUnique({ where: { id: targetMerchantId }, select: { businessName:true, merchantCode:true } });
 
+    // Per-currency summary blocks (always include NGN + USD)
+    const blank = () => ({ successful_transactions:0, total_collections:0, total_fees_paid:0, net_settled:0 });
+    const summaryBy = { NGN: blank(), USD: blank() };
+    byCcy.forEach(g => {
+      const c = g.currency === 'USD' ? 'USD' : 'NGN';
+      summaryBy[c] = {
+        successful_transactions: g._count,
+        total_collections:       Number(g._sum.amount || 0) / 100,
+        total_fees_paid:         Number(g._sum.merchantFee || 0) / 100,
+        net_settled:             Number((g._sum.amount || 0n) - (g._sum.merchantFee || 0n)) / 100,
+      };
+    });
+
     ok(res, {
       merchant,
       period:    { from: fromDate, to: toDate },
-      summary: {
-        successful_transactions: totals._count,
-        total_collections:       koboToNaira(totals._sum.amount || 0),
-        total_fees_paid:         koboToNaira(totals._sum.merchantFee || 0),
-        net_settled:             koboToNaira((totals._sum.amount || 0n) - (totals._sum.merchantFee || 0n)),
-      },
+      // legacy NGN-only summary (kept for existing callers)
+      summary: summaryBy.NGN,
+      summary_by_currency: summaryBy,
       transactions: txns.map(t => ({
         reference:       t.reference,
         date:            t.createdAt,
         customer_email:  t.customerEmail,
-        amount:          koboToNaira(t.amount),
+        currency:        t.currency || 'NGN',
+        is_international: t.currency === 'USD',
+        amount:          Number(t.amount) / 100,
         channel:         t.channel,
         status:          t.status,
-        fee:             koboToNaira(t.merchantFee),
-        net:             koboToNaira(t.amount - t.merchantFee),
+        fee:             Number(t.merchantFee) / 100,
+        net:             Number(t.amount - t.merchantFee) / 100,
         failure_reason:  t.failureReason,
         metadata:        t.metadata,
       })),
@@ -553,12 +580,13 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const toDate   = to   ? new Date(to + 'T23:59:59Z') : new Date();
 
-    // Per rail + channel breakdown (successful, non-sandbox)
+    // Per rail + product + CURRENCY breakdown (successful, non-sandbox)
     const rows = await prisma.$queryRaw`
       SELECT
         COALESCE(pr.name, 'Unrouted / Pending') AS rail_name,
         pr.status                               AS rail_status,
-        t.channel::text                         AS product,
+        t.currency                              AS currency,
+        t.channel::text                         AS channel,
         COUNT(*)::int                           AS txn_count,
         SUM(t.amount)::bigint                    AS volume,
         SUM(t.merchant_fee)::bigint             AS fee_revenue,
@@ -570,14 +598,15 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
         AND t.is_sandbox = false
         AND t.created_at >= ${fromDate}
         AND t.created_at <= ${toDate}
-      GROUP BY pr.name, pr.status, t.channel
-      ORDER BY pr.name NULLS LAST, t.channel
+      GROUP BY pr.name, pr.status, t.currency, t.channel
+      ORDER BY t.currency, pr.name NULLS LAST, t.channel
     `;
 
-    // Per-rail rollup
+    // Per-rail + currency rollup
     const railTotals = await prisma.$queryRaw`
       SELECT
         COALESCE(pr.name, 'Unrouted / Pending') AS rail_name,
+        t.currency                              AS currency,
         COUNT(*)::int                           AS txn_count,
         SUM(t.amount)::bigint                    AS volume,
         SUM(t.merchant_fee)::bigint             AS fee_revenue,
@@ -589,32 +618,46 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
         AND t.is_sandbox = false
         AND t.created_at >= ${fromDate}
         AND t.created_at <= ${toDate}
-      GROUP BY pr.name
-      ORDER BY SUM(t.amount) DESC NULLS LAST
+      GROUP BY pr.name, t.currency
+      ORDER BY t.currency, SUM(t.amount) DESC NULLS LAST
     `;
 
-    const ser = r => ({
-      rail_name:         r.rail_name,
-      rail_status:       r.rail_status || null,
-      product:           r.product || null,
-      txn_count:         Number(r.txn_count || 0),
-      volume_naira:      koboToNaira(r.volume || 0),
-      fee_revenue_naira: koboToNaira(r.fee_revenue || 0),
-      rail_cost_naira:   koboToNaira(r.rail_cost || 0),
-      margin_naira:      koboToNaira(r.paylode_margin || 0),
-    });
+    const productName = (channel, ccy) =>
+      channel === 'CARD' ? (ccy === 'USD' ? 'International Card (USD)' : 'Local Card') :
+      channel === 'BANK_TRANSFER' ? 'Virtual Account' : channel;
+
+    const ser = r => {
+      const ccy = r.currency || 'NGN';
+      return {
+        rail_name:    r.rail_name,
+        rail_status:  r.rail_status || null,
+        currency:     ccy,
+        product:      r.channel ? productName(r.channel, ccy) : null,
+        channel:      r.channel || null,
+        txn_count:    Number(r.txn_count || 0),
+        volume_major: Number(r.volume || 0) / 100,
+        fee_revenue_major: Number(r.fee_revenue || 0) / 100,
+        rail_cost_major:   Number(r.rail_cost || 0) / 100,
+        margin_major:      Number(r.paylode_margin || 0) / 100,
+      };
+    };
+
+    const totalsFor = (ccy) => {
+      const f = rows.filter(r => (r.currency || 'NGN') === ccy);
+      return {
+        txn_count:         f.reduce((s, r) => s + Number(r.txn_count || 0), 0),
+        volume_major:      f.reduce((s, r) => s + Number(r.volume || 0), 0) / 100,
+        fee_revenue_major: f.reduce((s, r) => s + Number(r.fee_revenue || 0), 0) / 100,
+        rail_cost_major:   f.reduce((s, r) => s + Number(r.rail_cost || 0), 0) / 100,
+        margin_major:      f.reduce((s, r) => s + Number(r.paylode_margin || 0), 0) / 100,
+      };
+    };
 
     ok(res, {
-      period:      { from: fromDate, to: toDate },
+      period: { from: fromDate, to: toDate },
       by_rail_product: rows.map(ser),
-      by_rail:     railTotals.map(ser),
-      totals: {
-        txn_count:         rows.reduce((s, r) => s + Number(r.txn_count || 0), 0),
-        volume_naira:      koboToNaira(rows.reduce((s, r) => s + BigInt(r.volume || 0), 0n)),
-        fee_revenue_naira: koboToNaira(rows.reduce((s, r) => s + BigInt(r.fee_revenue || 0), 0n)),
-        rail_cost_naira:   koboToNaira(rows.reduce((s, r) => s + BigInt(r.rail_cost || 0), 0n)),
-        margin_naira:      koboToNaira(rows.reduce((s, r) => s + BigInt(r.paylode_margin || 0), 0n)),
-      },
+      by_rail:         railTotals.map(ser),
+      totals_by_currency: { NGN: totalsFor('NGN'), USD: totalsFor('USD') },
     });
   } catch (e) { next(e); }
 });

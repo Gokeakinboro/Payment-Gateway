@@ -282,6 +282,7 @@ model Transaction {
 model Settlement {
   id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   merchantId     String           @map("merchant_id") @db.Uuid
+  currency       String           @default("NGN") @db.Char(3)  // NGN | USD — USD = international card settlements
   periodStart    DateTime         @map("period_start") @db.Date
   periodEnd      DateTime         @map("period_end") @db.Date
   grossAmount    BigInt           @map("gross_amount")

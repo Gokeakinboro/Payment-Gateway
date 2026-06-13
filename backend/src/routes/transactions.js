@@ -22,8 +22,8 @@ const validate = rules => async (req, res, next) => {
 router.post('/initialize', requireApiKey,
   validate([
     body('email').isEmail().withMessage('Valid customer email required'),
-    body('amount').isInt({ min: 10000 }).withMessage('amount must be an integer in kobo, minimum ₦100 (10000 kobo)'),
-    body('currency').optional().equals('NGN').withMessage('Only NGN supported'),
+    body('amount').isInt({ min: 100 }).withMessage('amount must be an integer in minor units (kobo for NGN, cents for USD)'),
+    body('currency').optional().isIn(['NGN', 'USD']).withMessage('currency must be NGN or USD'),
     body('channels').optional().isArray(),
   ]),
   async (req, res, next) => {
@@ -32,62 +32,81 @@ router.post('/initialize', requireApiKey,
       const isSandbox   = req.isSandbox;
       const { email, amount, currency='NGN', reference, channels, metadata, callback_url } = req.body;
 
-      // KYC tier limit enforcement
-      const tierLimits = { 1: 5_000_000n, 2: 100_000_000n, 3: 500_000_000n };
-      const singleLimit = tierLimits[merchant.kycTier] || 5_000_000n;
-      if (BigInt(amount) > singleLimit)
-        return fail(res, `Transaction exceeds your Tier ${merchant.kycTier} single transaction limit of ₦${koboToNaira(singleLimit).toLocaleString()}`, 'KYC_LIMIT_EXCEEDED');
+      const channel  = (channels?.[0] || 'CARD').toUpperCase();
+      const isUSD    = currency === 'USD';
+      const sym      = isUSD ? '$' : '₦';
 
-      // Check daily limit
-      const today     = new Date(); today.setHours(0,0,0,0);
-      const dailyLimits = { 1: 30_000_000n, 2: 1_000_000_000n, 3: 10_000_000_000n };
-      const dailyLimit  = dailyLimits[merchant.kycTier];
-      if (dailyLimit) {
-        const { _sum } = await prisma.transaction.aggregate({
-          where: { merchantId: merchant.id, status: 'SUCCESS', createdAt: { gte: today }, isSandbox },
-          _sum: { amount: true },
-        });
-        const usedToday = _sum.amount ? BigInt(_sum.amount) : 0n;
-        if (usedToday + BigInt(amount) > dailyLimit)
-          return fail(res, `Transaction would exceed your daily limit of ₦${koboToNaira(dailyLimit).toLocaleString()}`, 'DAILY_LIMIT_EXCEEDED');
+      // ── Derive the fee PRODUCT from (channel, currency) ──────────────────────
+      // International card = card paid in USD → CARD_INTL. Otherwise map normally.
+      let product;
+      if (channel === 'CARD')              product = isUSD ? 'CARD_INTL' : 'CARD_LOCAL';
+      else if (channel === 'BANK_TRANSFER') product = 'VIRTUAL_ACCOUNT';
+      else if (channel === 'USSD')          product = 'USSD';
+      else                                  product = channel;
+
+      // ── Limits — applied per currency (NGN tier limits; USD has its own caps) ─
+      const today = new Date(); today.setHours(0,0,0,0);
+      if (isUSD) {
+        // USD single-txn cap (cents). Tier 1 $5k, Tier 2 $100k, Tier 3 $500k.
+        const usdSingle = { 1: 500_000n, 2: 10_000_000n, 3: 50_000_000n }[merchant.kycTier] || 500_000n;
+        if (BigInt(amount) > usdSingle)
+          return fail(res, `Transaction exceeds your Tier ${merchant.kycTier} international single-transaction limit of $${(Number(usdSingle)/100).toLocaleString()}`, 'KYC_LIMIT_EXCEEDED');
+      } else {
+        const tierLimits = { 1: 5_000_000n, 2: 100_000_000n, 3: 500_000_000n };
+        const singleLimit = tierLimits[merchant.kycTier] || 5_000_000n;
+        if (BigInt(amount) > singleLimit)
+          return fail(res, `Transaction exceeds your Tier ${merchant.kycTier} single transaction limit of ₦${koboToNaira(singleLimit).toLocaleString()}`, 'KYC_LIMIT_EXCEEDED');
+
+        const dailyLimits = { 1: 30_000_000n, 2: 1_000_000_000n, 3: 10_000_000_000n };
+        const dailyLimit  = dailyLimits[merchant.kycTier];
+        if (dailyLimit) {
+          const { _sum } = await prisma.transaction.aggregate({
+            where: { merchantId: merchant.id, status: 'SUCCESS', currency: 'NGN', createdAt: { gte: today }, isSandbox },
+            _sum: { amount: true },
+          });
+          const usedToday = _sum.amount ? BigInt(_sum.amount) : 0n;
+          if (usedToday + BigInt(amount) > dailyLimit)
+            return fail(res, `Transaction would exceed your daily limit of ₦${koboToNaira(dailyLimit).toLocaleString()}`, 'DAILY_LIMIT_EXCEEDED');
+        }
       }
 
-      // Get active rail (default to first available for channel, or skip in sandbox)
+      // ── Rail routing: prefer the product's configured default rail, else cheapest LIVE rail for the channel ──
       let rail = null; let railRate = 0;
+      // Exact product rate wins; fall back to the platform 'ALL' default.
+      const platformRate = (await prisma.platformRateConfig.findUnique({ where: { channel: product } }))
+        || (await prisma.platformRateConfig.findFirst({ where: { channel: 'ALL' } }));
       if (!isSandbox) {
-        const ch = channels?.[0] || 'CARD';
-        const railCost = await prisma.railCost.findFirst({
-          where: { channel: ch.toUpperCase(), effectiveTo: null, rail: { status: 'LIVE' } },
-          include: { rail: true },
-          orderBy: { rate: 'asc' },
-        });
-        if (railCost) { rail = railCost.rail; railRate = Number(railCost.rate); }
+        if (platformRate?.defaultRailId) {
+          const dr = await prisma.paymentRail.findUnique({ where: { id: platformRate.defaultRailId } });
+          if (dr && dr.status === 'LIVE') {
+            rail = dr;
+            const rc = await prisma.railCost.findFirst({ where: { railId: dr.id, channel, effectiveTo: null }, orderBy: { rate: 'asc' } });
+            railRate = rc ? Number(rc.rate) : 0;
+          }
+        }
+        if (!rail) {
+          const railCost = await prisma.railCost.findFirst({
+            where: { channel, effectiveTo: null, rail: { status: 'LIVE' } },
+            include: { rail: true }, orderBy: { rate: 'asc' },
+          });
+          if (railCost) { rail = railCost.rail; railRate = Number(railCost.rate); }
+        }
       }
 
-      const aggSplitPct = merchant.aggregator
-        ? Number(merchant.aggregator.revenueSplitPct) : 0;
+      const aggSplitPct = merchant.aggregator ? Number(merchant.aggregator.revenueSplitPct) : 0;
 
-      // Look up per-merchant rate config, then platform default, then legacy processingRate
-      const channel  = (req.body.channels?.[0] || 'CARD').toUpperCase();
-      const [merchantRate, platformRate] = await Promise.all([
-        prisma.merchantRateConfig.findFirst({
-          where: { merchantId: merchant.id, channel: { in: [channel, 'ALL'] } },
-          orderBy: { channel: 'asc' }, // channel-specific wins over ALL
-        }),
-        prisma.platformRateConfig.findFirst({
-          where: { channel: { in: [channel, 'ALL'] } },
-          orderBy: { channel: 'asc' },
-        }),
-      ]);
-
+      // ── Rate config: per-merchant override → platform product default → legacy ─
+      // Exact product override wins over the merchant's 'ALL' override.
+      const merchantRate = (await prisma.merchantRateConfig.findFirst({ where: { merchantId: merchant.id, channel: product } }))
+        || (await prisma.merchantRateConfig.findFirst({ where: { merchantId: merchant.id, channel: 'ALL' } }));
       const rateConfig = merchantRate
-        ? { rate: Number(merchantRate.rate), flat_fee: Number(merchantRate.flatFee), cap: Number(merchantRate.cap), min_charge: Number(merchantRate.minCharge) }
+        ? { rate: Number(merchantRate.rate), flat_fee: Number(merchantRate.flatFee), cap: Number(merchantRate.cap), min_charge: Number(merchantRate.minCharge), fee_model: merchantRate.feeModel, vat_rate: Number(merchantRate.vatRate) }
         : platformRate
-          ? { rate: Number(platformRate.rate), flat_fee: Number(platformRate.flatFee), cap: Number(platformRate.cap), min_charge: Number(platformRate.minCharge) }
+          ? { rate: Number(platformRate.rate), flat_fee: Number(platformRate.flatFee), cap: Number(platformRate.cap), min_charge: Number(platformRate.minCharge), fee_model: platformRate.feeModel, vat_rate: Number(platformRate.vatRate) }
           : { rate: Number(merchant.processingRate || 0.015), flat_fee: 0, cap: 0, min_charge: 0 };
 
       const fees = computeFeesWithConfig(amount, rateConfig, railRate, aggSplitPct);
-      const ref  = reference || generateRef('TXN');
+      const ref  = reference || generateRef(isUSD ? 'TXNUSD' : 'TXN');
 
       const txn = await prisma.transaction.create({ data: {
         reference:     ref,
@@ -96,7 +115,7 @@ router.post('/initialize', requireApiKey,
         amount:        BigInt(amount),
         currency,
         status:        'PENDING',
-        channel:       (channels?.[0] || 'CARD').toUpperCase(),
+        channel,
         railId:        rail?.id || null,
         merchantFee:   fees.merchantFee,
         railCost:      fees.railCost,
@@ -108,11 +127,10 @@ router.post('/initialize', requireApiKey,
           : `https://checkout.paylodeservices.com/pay/${ref}`,
         accessCode:    ref,
         callbackUrl:   callback_url,
-        metadata:      metadata || {},
+        metadata:      Object.assign({}, metadata || {}, { product, is_international: isUSD }),
         isSandbox,
       }});
 
-      // AML check (non-blocking)
       checkAmlRules(txn, merchant).catch(() => {});
 
       created(res, {
@@ -121,10 +139,14 @@ router.post('/initialize', requireApiKey,
         reference:         txn.reference,
         amount:            Number(txn.amount),
         currency,
+        product,
+        is_international:  isUSD,
         sandbox:           isSandbox,
         fee_preview: {
-          merchant_fee:   Number(fees.merchantFee),
-          merchant_fee_naira: koboToNaira(fees.merchantFee),
+          merchant_fee:       Number(fees.merchantFee),
+          merchant_fee_major: Number(fees.merchantFee) / 100,
+          currency,
+          display:            sym + (Number(fees.merchantFee) / 100).toLocaleString(),
         },
       }, 'Transaction initialized');
     } catch (e) { next(e); }
@@ -189,7 +211,7 @@ router.post('/:id/confirm', requireApiKey,
 // Works for merchants (their own) and admin (all)
 router.get('/', requireAuth, async (req, res, next) => {
   try {
-    const { page=1, perPage=50, status, from, to, channel } = req.query;
+    const { page=1, perPage=50, status, from, to, channel, currency } = req.query;
     const skip  = (parseInt(page)-1) * parseInt(perPage);
     const where = {};
 
@@ -198,8 +220,9 @@ router.get('/', requireAuth, async (req, res, next) => {
       if (!req.user.merchant) return fail(res, 'No merchant account found');
       where.merchantId = req.user.merchant.id;
     }
-    if (status)  where.status  = status.toUpperCase();
-    if (channel) where.channel = channel.toUpperCase();
+    if (status)   where.status   = status.toUpperCase();
+    if (channel)  where.channel  = channel.toUpperCase();
+    if (currency) where.currency = currency.toUpperCase();
     if (from || to) where.createdAt = {};
     if (from) where.createdAt.gte = new Date(from);
     if (to)   where.createdAt.lte = new Date(to + 'T23:59:59Z');

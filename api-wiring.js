@@ -17,6 +17,21 @@ function logout(){
 function fmtNaira(kobo) {
   return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(Number(kobo) / 100);
 }
+// Format a MAJOR-unit amount (already divided by 100) in the given currency.
+function fmtMajor(major, ccy) {
+  ccy = (ccy === 'USD') ? 'USD' : 'NGN';
+  return new Intl.NumberFormat(ccy === 'USD' ? 'en-US' : 'en-NG',
+    { style: 'currency', currency: ccy, minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(major) || 0);
+}
+// Format a MINOR-unit amount (kobo/cents) in the given currency.
+function fmtMoney(minor, ccy) { return fmtMajor((Number(minor) || 0) / 100, ccy); }
+// Small badge marking an international (USD) line wherever it appears.
+function intlBadge() { return '<span class="badge badge-blue" style="font-size:10px">🌍 Int\'l · USD</span>'; }
+function ccyChip(ccy) {
+  return ccy === 'USD'
+    ? '<span class="badge badge-blue" style="font-size:10px">$ USD</span>'
+    : '<span class="badge badge-gray" style="font-size:10px">₦ NGN</span>';
+}
 function fmtNum(n) {
   if (n >= 1e9) return (n/1e9).toFixed(1) + 'B';
   if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
@@ -51,21 +66,36 @@ async function loadSuperOverview() {
     const d = dash.data;
     const rows = txns?.data?.data || [];
 
+    // Currency-separated blocks (fall back to legacy NGN-only shape if needed)
+    const tNGN = (d.today_by_currency && d.today_by_currency.NGN) || d.today || {txn_count:0,volume:0,fees:0,paylode_net:0};
+    const tUSD = (d.today_by_currency && d.today_by_currency.USD) || {txn_count:0,volume:0,fees:0,paylode_net:0};
+    const mNGN = (d.mtd_by_currency && d.mtd_by_currency.NGN) || d.mtd || {txn_count:0,volume:0,fees:0,paylode_net:0};
+    const mUSD = (d.mtd_by_currency && d.mtd_by_currency.USD) || {txn_count:0,volume:0,fees:0,paylode_net:0};
+
+    // A money cell that shows the amount in its own currency
+    const txnAmt = (t) => fmtMoney(t.amount, t.currency);
+
     el.innerHTML = `
     <div class="page-header">
       <div class="page-title">Platform Overview</div>
       <div class="page-desc">Live data — ${new Date().toLocaleDateString('en-NG',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div>
     </div>
+
+    <!-- LOCAL (NGN) block -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <span class="badge badge-gray">₦ Local (NGN)</span>
+      <span style="font-size:12px;color:var(--gray-400)">Local cards, virtual accounts, USSD &amp; payouts</span>
+    </div>
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-label"><span class="dot" style="background:var(--lime)"></span>Today Volume</div>
-        <div class="stat-value">${fmtNaira(d.today.volume*100)}</div>
-        <div class="stat-sub">${fmtNum(d.today.txn_count)} transactions</div>
+        <div class="stat-value">${fmtMajor(tNGN.volume,'NGN')}</div>
+        <div class="stat-sub">${fmtNum(tNGN.txn_count)} transactions</div>
       </div>
       <div class="stat-card">
         <div class="stat-label"><span class="dot" style="background:var(--blue)"></span>Today Net Revenue</div>
-        <div class="stat-value">${fmtNaira(d.today.paylode_net*100)}</div>
-        <div class="stat-sub">Fees: ${fmtNaira(d.today.fees*100)}</div>
+        <div class="stat-value">${fmtMajor(tNGN.paylode_net,'NGN')}</div>
+        <div class="stat-sub">Fees: ${fmtMajor(tNGN.fees,'NGN')}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label"><span class="dot" style="background:var(--purple)"></span>Active Merchants</div>
@@ -78,17 +108,55 @@ async function loadSuperOverview() {
         <div class="stat-sub">Active partners</div>
       </div>
     </div>
-    <div class="grid-2">
+
+    <!-- INTERNATIONAL (USD) block — always shown, separate -->
+    <div class="section-gap" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <span class="badge badge-blue">🌍 International (USD)</span>
+      <span style="font-size:12px;color:var(--gray-400)">International card transactions — settled in US Dollars</span>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff">
+        <div class="stat-label"><span class="dot" style="background:var(--blue)"></span>Today USD Volume</div>
+        <div class="stat-value">${fmtMajor(tUSD.volume,'USD')}</div>
+        <div class="stat-sub">${fmtNum(tUSD.txn_count)} intl transactions</div>
+      </div>
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff">
+        <div class="stat-label"><span class="dot" style="background:var(--blue)"></span>Today USD Net Revenue</div>
+        <div class="stat-value">${fmtMajor(tUSD.paylode_net,'USD')}</div>
+        <div class="stat-sub">Fees: ${fmtMajor(tUSD.fees,'USD')}</div>
+      </div>
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff">
+        <div class="stat-label"><span class="dot" style="background:var(--blue)"></span>MTD USD Volume</div>
+        <div class="stat-value">${fmtMajor(mUSD.volume,'USD')}</div>
+        <div class="stat-sub">${fmtNum(mUSD.txn_count)} this month</div>
+      </div>
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff">
+        <div class="stat-label"><span class="dot" style="background:var(--blue)"></span>MTD USD Margin</div>
+        <div class="stat-value">${fmtMajor(mUSD.paylode_net,'USD')}</div>
+        <div class="stat-sub">Fees: ${fmtMajor(mUSD.fees,'USD')}</div>
+      </div>
+    </div>
+
+    <div class="grid-2 section-gap">
       <div class="card">
         <div class="card-header">
-          <div><div class="card-title">Month to Date</div><div class="card-subtitle">Current month performance</div></div>
+          <div><div class="card-title">Month to Date</div><div class="card-subtitle">Current month — local &amp; international shown separately</div></div>
         </div>
-        <div class="rev-row"><span class="rev-label">Total Volume</span><span class="rev-value">${fmtNaira(d.mtd.volume*100)}</span></div>
-        <div class="rev-row"><span class="rev-label">Gross Fees</span><span class="rev-value">${fmtNaira(d.mtd.fees*100)}</span></div>
-        <div class="rev-row"><span class="rev-label">Transactions</span><span class="rev-value">${fmtNum(d.mtd.txn_count)}</span></div>
+        <div style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">₦ Local (NGN)</div>
+        <div class="rev-row"><span class="rev-label">Total Volume</span><span class="rev-value">${fmtMajor(mNGN.volume,'NGN')}</span></div>
+        <div class="rev-row"><span class="rev-label">Gross Fees</span><span class="rev-value">${fmtMajor(mNGN.fees,'NGN')}</span></div>
+        <div class="rev-row"><span class="rev-label">Transactions</span><span class="rev-value">${fmtNum(mNGN.txn_count)}</span></div>
         <div class="rev-net">
-          <span style="font-weight:600;font-size:13px;color:#166534">Paylode Net Margin</span>
-          <span style="font-weight:800;font-size:18px;color:#166534">${fmtNaira(d.mtd.paylode_net*100)}</span>
+          <span style="font-weight:600;font-size:13px;color:#166534">Net Margin (NGN)</span>
+          <span style="font-weight:800;font-size:18px;color:#166534">${fmtMajor(mNGN.paylode_net,'NGN')}</span>
+        </div>
+        <div style="font-size:11px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.5px;margin:14px 0 4px">🌍 International (USD)</div>
+        <div class="rev-row"><span class="rev-label">Total Volume</span><span class="rev-value">${fmtMajor(mUSD.volume,'USD')}</span></div>
+        <div class="rev-row"><span class="rev-label">Gross Fees</span><span class="rev-value">${fmtMajor(mUSD.fees,'USD')}</span></div>
+        <div class="rev-row"><span class="rev-label">Transactions</span><span class="rev-value">${fmtNum(mUSD.txn_count)}</span></div>
+        <div class="rev-net" style="background:#eff6ff;border-color:#bfdbfe">
+          <span style="font-weight:600;font-size:13px;color:#1e40af">Net Margin (USD)</span>
+          <span style="font-weight:800;font-size:18px;color:#1e40af">${fmtMajor(mUSD.paylode_net,'USD')}</span>
         </div>
       </div>
       <div class="card">
@@ -100,10 +168,10 @@ async function loadSuperOverview() {
           <table>
             <thead><tr><th>Reference</th><th>Amount</th><th>Channel</th><th>Status</th></tr></thead>
             <tbody>
-              ${rows.length ? rows.map(t => `<tr>
+              ${rows.length ? rows.map(t => `<tr ${t.currency==='USD'?'style="background:#f8fbff"':''}>
                 <td class="mono" style="font-size:11px">${t.reference}</td>
-                <td>${fmtNaira(t.amount)}</td>
-                <td><span class="tag">${t.channel}</span></td>
+                <td style="white-space:nowrap">${txnAmt(t)} ${t.currency==='USD'?ccyChip('USD'):''}</td>
+                <td><span class="tag">${t.channel}${t.currency==='USD'?' · Int\\'l':''}</span></td>
                 <td>${statusBadge(t.status)}</td>
               </tr>`).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:20px">No transactions yet</td></tr>'}
             </tbody>
@@ -125,10 +193,11 @@ async function loadTransactions(page=1, filters={}) {
 
   try {
     let url = `/transactions?page=${page}&perPage=20`;
-    if (filters.status)  url += `&status=${filters.status}`;
-    if (filters.channel) url += `&channel=${filters.channel}`;
-    if (filters.from)    url += `&from=${filters.from}`;
-    if (filters.to)      url += `&to=${filters.to}`;
+    if (filters.status)   url += `&status=${filters.status}`;
+    if (filters.channel)  url += `&channel=${filters.channel}`;
+    if (filters.currency) url += `&currency=${filters.currency}`;
+    if (filters.from)     url += `&from=${filters.from}`;
+    if (filters.to)       url += `&to=${filters.to}`;
 
     const res = await apiFetch(url);
     if (!res?.data) { el.innerHTML = errorBox('Could not load transactions'); return; }
@@ -156,23 +225,29 @@ async function loadTransactions(page=1, filters={}) {
           <option value="BANK_TRANSFER">Bank Transfer</option>
           <option value="USSD">USSD</option>
         </select>
+        <select class="form-input form-select" style="width:150px;margin-right:8px" onchange="loadTransactions(1,{currency:this.value})">
+          <option value="">All Currencies</option>
+          <option value="NGN"${filters.currency==='NGN'?' selected':''}>₦ Local (NGN)</option>
+          <option value="USD"${filters.currency==='USD'?' selected':''}>$ International (USD)</option>
+        </select>
         <button class="btn btn-outline btn-sm" onclick="exportTransactionsCsv()">&#8681; Export CSV</button>
       </div>
     </div>
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Reference</th><th>Merchant</th><th>Amount</th><th>Fee</th><th>Channel</th><th>Status</th><th>Date</th></tr></thead>
+          <thead><tr><th>Reference</th><th>Merchant</th><th>Amount</th><th>Fee</th><th>Channel</th><th>Currency</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${txns.length ? txns.map(t => `<tr>
+            ${txns.length ? txns.map(t => `<tr ${t.currency==='USD'?'style="background:#f8fbff"':''}>
               <td class="mono" style="font-size:11px">${t.reference}</td>
               <td>${t.merchant?.businessName||'—'}</td>
-              <td style="font-weight:600">${fmtNaira(t.amount)}</td>
-              <td class="mono" style="font-size:12px">${fmtNaira(t.fees?.merchant_fee||0)}</td>
-              <td><span class="tag">${t.channel}</span></td>
+              <td style="font-weight:600;white-space:nowrap">${fmtMoney(t.amount, t.currency)}</td>
+              <td class="mono" style="font-size:12px">${fmtMoney(t.fees?.merchant_fee||0, t.currency)}</td>
+              <td><span class="tag">${t.channel}${t.currency==='USD'?' · Int\\'l':''}</span></td>
+              <td>${ccyChip(t.currency)}</td>
               <td>${statusBadge(t.status)}</td>
               <td style="font-size:12px;color:var(--gray-400)">${new Date(t.created_at).toLocaleDateString('en-NG')}</td>
-            </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:20px">No transactions found</td></tr>'}
+            </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:20px">No transactions found</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -195,13 +270,15 @@ async function exportTransactionsCsv() {
   try {
     const res = await apiFetch('/transactions?page=1&perPage=1000');
     const txns = res?.data?.data || [];
-    const headers = ['Reference','Merchant','Amount (NGN)','Fee (NGN)','Channel','Status','Date'];
+    const headers = ['Reference','Merchant','Currency','Amount','Fee','Channel','International','Status','Date'];
     const rows = txns.map(t => [
       t.reference,
       (t.merchant?.businessName||'').replace(/,/g,' '),
+      t.currency || 'NGN',
       (Number(t.amount)/100).toFixed(2),
       (Number(t.fees?.merchant_fee||0)/100).toFixed(2),
       t.channel,
+      t.currency === 'USD' ? 'YES' : 'NO',
       t.status,
       new Date(t.created_at).toLocaleDateString('en-NG'),
     ]);
@@ -932,53 +1009,64 @@ async function loadRevenueReport() {
       apiFetch(`/reports/aggregator-revenue?month=${from.slice(0,7)}`),
     ]);
 
-    const rows = rev?.data?.data || [];
+    const rowsNGN = rev?.data?.data_ngn || rev?.data?.data || [];
+    const rowsUSD = rev?.data?.data_usd || [];
     const aggRows = agg?.data?.data || [];
 
-    const totalGross  = rows.reduce((s,r)=>s+(Number(r.gross_revenue)||0),0);
-    const totalMargin = rows.reduce((s,r)=>s+(Number(r.paylode_margin)||0),0);
+    const sum = (rows, key) => rows.reduce((s,r)=>s+(Number(r[key])||0),0);
+
+    const breakdownCard = (title, rows, ccy) =>
+      `<div class="card"${ccy==='USD'?' style="border:1px solid #bfdbfe"':''}>
+        <div class="card-header"><div class="card-title">${title}</div>${ccy==='USD'?intlBadge():ccyChip('NGN')}</div>
+        ${rows.length ? rows.slice(0,12).map(r => `
+        <div class="rev-row">
+          <span class="rev-label">${(r.period||'').slice(0,10)||'—'} · ${r.product||r.channel}</span>
+          <div style="text-align:right">
+            <div style="font-weight:600;font-size:13px">${fmtMajor(r.gross_revenue, ccy)}</div>
+            <div style="font-size:11px;color:var(--gray-400)">Margin: ${fmtMajor(r.paylode_margin, ccy)}</div>
+          </div>
+        </div>`).join('') : `<div style="color:var(--gray-400);padding:24px;text-align:center">No ${ccy==='USD'?'international (USD)':'local (NGN)'} revenue this period.</div>`}
+      </div>`;
 
     el.innerHTML = `
     <div class="page-header flex-between">
       <div>
         <div class="page-title">Revenue Report</div>
-        <div class="page-desc">Earnings this month — ${from} to ${to}</div>
+        <div class="page-desc">Earnings this month — local &amp; international reported separately — ${from} to ${to}</div>
       </div>
       <button class="btn btn-outline btn-sm" onclick="navigate('fee_config')">⚙ Configure Rates →</button>
     </div>
-    <div class="info-box" style="margin-bottom:16px;font-size:12px">This page <strong>reports</strong> revenue already earned. To set or change merchant fees and rates, use <strong>Fee Configuration</strong> under System Config.</div>
+    <div class="info-box" style="margin-bottom:16px;font-size:12px">This page <strong>reports</strong> earned revenue. Set rates in <strong>Fee Configuration</strong>. International card revenue is shown in <strong>USD</strong>, separate from local NGN revenue.</div>
+
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span></div>
     <div class="stats-grid">
-      <div class="stat-card"><div class="stat-label">Gross Revenue (MTD)</div><div class="stat-value">${fmtNaira(totalGross*100)}</div></div>
-      <div class="stat-card"><div class="stat-label">Paylode Margin (MTD)</div><div class="stat-value text-lime">${fmtNaira(totalMargin*100)}</div></div>
-      <div class="stat-card"><div class="stat-label">Aggregator Payouts Due</div><div class="stat-value">${fmtNaira(aggRows.reduce((s,a)=>s+(Number(a.agg_payout_due)||0),0)*100)}</div></div>
-      <div class="stat-card"><div class="stat-label">Reporting Days</div><div class="stat-value">${rows.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Gross Revenue</div><div class="stat-value">${fmtMajor(sum(rowsNGN,'gross_revenue'),'NGN')}</div></div>
+      <div class="stat-card"><div class="stat-label">Paylode Margin</div><div class="stat-value text-lime">${fmtMajor(sum(rowsNGN,'paylode_margin'),'NGN')}</div></div>
+      <div class="stat-card"><div class="stat-label">Volume</div><div class="stat-value">${fmtMajor(sum(rowsNGN,'volume_major'),'NGN')}</div></div>
+      <div class="stat-card"><div class="stat-label">Aggregator Payouts Due</div><div class="stat-value">${fmtMajor(aggRows.reduce((s,a)=>s+(Number(a.agg_payout_due)||0),0),'NGN')}</div></div>
     </div>
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-header"><div class="card-title">Daily Revenue Breakdown</div></div>
-        ${rows.length ? rows.slice(0,12).map(r => `
-        <div class="rev-row">
-          <span class="rev-label">${r.period?.slice(0,10)||'—'} · ${r.channel}</span>
-          <div style="text-align:right">
-            <div style="font-weight:600;font-size:13px">${fmtNaira(r.gross_revenue*100)}</div>
-            <div style="font-size:11px;color:var(--gray-400)">Margin: ${fmtNaira(r.paylode_margin*100)}</div>
-          </div>
-        </div>`).join('') : '<div style="color:var(--gray-400);padding:24px;text-align:center">No transactions recorded this month yet.<br><span style="font-size:12px">Revenue appears here once merchants start transacting.</span></div>'}
-      </div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">Aggregator Revenue Share</div></div>
-        ${aggRows.length ? aggRows.map(a => `
-        <div class="rev-row">
-          <div>
-            <div style="font-weight:500;font-size:13px">${a.company_name}</div>
-            <div style="font-size:11px;color:var(--gray-400)">${a.split_pct} split · ${a.merchant_count} merchants</div>
-          </div>
-          <div style="text-align:right">
-            <div style="font-weight:600;font-size:13px">${fmtNaira(a.agg_payout_due*100)}</div>
-            <div style="font-size:11px;color:var(--gray-400)">Due this month</div>
-          </div>
-        </div>`).join('') : '<div style="color:var(--gray-400);padding:24px;text-align:center">No aggregator payouts due this month.<br><span style="font-size:12px">Shares appear once aggregator-linked merchants transact.</span></div>'}
-      </div>
+
+    <div class="section-gap" style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-blue">🌍 International (USD)</span><span style="font-size:12px;color:var(--gray-400)">International card revenue — settled in US Dollars</span></div>
+    <div class="stats-grid">
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Gross Revenue (USD)</div><div class="stat-value">${fmtMajor(sum(rowsUSD,'gross_revenue'),'USD')}</div></div>
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Paylode Margin (USD)</div><div class="stat-value" style="color:#1e40af">${fmtMajor(sum(rowsUSD,'paylode_margin'),'USD')}</div></div>
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Volume (USD)</div><div class="stat-value">${fmtMajor(sum(rowsUSD,'volume_major'),'USD')}</div></div>
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Intl Transactions</div><div class="stat-value">${fmtNum(sum(rowsUSD,'txn_count'))}</div></div>
+    </div>
+
+    <div class="grid-2 section-gap">
+      ${breakdownCard('NGN — Daily Breakdown', rowsNGN, 'NGN')}
+      ${breakdownCard('USD — Daily Breakdown', rowsUSD, 'USD')}
+    </div>
+    <div class="card section-gap">
+      <div class="card-header"><div class="card-title">Aggregator Revenue Share (NGN)</div></div>
+      ${aggRows.length ? aggRows.map(a => `
+      <div class="rev-row">
+        <div><div style="font-weight:500;font-size:13px">${a.company_name}</div>
+          <div style="font-size:11px;color:var(--gray-400)">${a.split_pct} split · ${a.merchant_count} merchants</div></div>
+        <div style="text-align:right"><div style="font-weight:600;font-size:13px">${fmtMajor(a.agg_payout_due,'NGN')}</div>
+          <div style="font-size:11px;color:var(--gray-400)">Due this month</div></div>
+      </div>`).join('') : '<div style="color:var(--gray-400);padding:24px;text-align:center">No aggregator payouts due this month.</div>'}
     </div>`;
   } catch(e) {
     el.innerHTML = errorBox('Failed to load revenue data: ' + e.message);
@@ -1007,30 +1095,28 @@ async function loadSettlements() {
           '<button class="btn btn-primary btn-sm" onclick="runSandboxSettlement()">Run Batch (Sandbox)</button>' +
         '</div>' +
       '</div>' +
+      '<div class="info-box" style="margin-bottom:12px;font-size:12px">Settlements are generated <strong>per currency</strong>. International card transactions settle in <strong>USD</strong> on their own settlement lines (marked 🌍).</div>' +
       '<div class="card"><div class="table-wrap"><table>' +
-        '<thead><tr><th>Ref</th><th>Merchant</th><th>Period</th><th>Txns</th><th>Fee Revenue</th><th>Rail Cost</th><th>Agg Share</th><th>Paylode Margin</th><th>Due to Merchant</th><th>Paid</th><th>Outstanding</th><th>Status</th><th>Action</th></tr></thead>' +
+        '<thead><tr><th>Ref</th><th>Merchant</th><th>Currency</th><th>Period</th><th>Txns</th><th>Gross</th><th>Fees</th><th>Net to Merchant</th><th>Status</th><th>Action</th></tr></thead>' +
         '<tbody>' +
         (settlements.length ? settlements.map(function(s) {
-          var outstanding = (s.outstanding || s.net_naira || 0);
-          var markPaid = (s.status !== 'SETTLED')
-            ? '<button class="btn btn-lime btn-sm" onclick="markSettlementPaid(\'' + s.id + '\',\'' + (s.merchant && s.merchant.businessName ? s.merchant.businessName.replace(/'/g,'') : '') + '\',' + (s.net_naira||0) + ')">Mark Paid</button>'
+          var ccy = s.currency || 'NGN';
+          var markPaid = (s.status !== 'COMPLETED' && s.status !== 'SETTLED')
+            ? '<button class="btn btn-lime btn-sm" onclick="markSettlementPaid(\'' + s.id + '\',\'' + (s.merchant && s.merchant.businessName ? s.merchant.businessName.replace(/\'/g,\'\') : \'\') + '\',' + (s.net_major||0) + ')">Mark Paid</button>'
             : '<span style="color:var(--green);font-size:12px">&#10003; Paid</span>';
-          return '<tr>' +
+          return '<tr' + (ccy==='USD'?' style="background:#f8fbff"':'') + '>' +
             '<td class="mono" style="font-size:10px">' + (s.settlementRef||'—') + '</td>' +
             '<td style="font-weight:500;font-size:12px">' + (s.merchant && s.merchant.businessName ? s.merchant.businessName : '—') + '</td>' +
-            '<td style="font-size:11px">' + (s.periodStart ? s.periodStart.slice(0,10) : '—') + '</td>' +
+            '<td>' + (ccy==='USD' ? intlBadge() : ccyChip('NGN')) + '</td>' +
+            '<td style="font-size:11px">' + (s.periodStart ? String(s.periodStart).slice(0,10) : '—') + '</td>' +
             '<td style="text-align:center">' + (s.txnCount||0) + '</td>' +
-            '<td class="mono text-lime" style="font-size:12px">₦' + ((s.fee_revenue||0)).toLocaleString(undefined,{minimumFractionDigits:2}) + '</td>' +
-            '<td class="mono text-red" style="font-size:12px">₦' + ((s.rail_cost||0)).toLocaleString(undefined,{minimumFractionDigits:2}) + '</td>' +
-            '<td class="mono" style="font-size:12px;color:var(--purple)">₦' + ((s.agg_share||0)).toLocaleString(undefined,{minimumFractionDigits:2}) + '</td>' +
-            '<td class="mono" style="font-size:12px;font-weight:600">₦' + ((s.paylode_margin||0)).toLocaleString(undefined,{minimumFractionDigits:2}) + '</td>' +
-            '<td class="mono" style="font-size:12px;font-weight:700">₦' + ((s.net_naira||0)).toLocaleString(undefined,{minimumFractionDigits:2}) + '</td>' +
-            '<td class="mono" style="font-size:12px;color:var(--green)">₦' + ((s.amount_paid||0)).toLocaleString(undefined,{minimumFractionDigits:2}) + '</td>' +
-            '<td class="mono" style="font-size:12px;color:' + (outstanding > 0 ? 'var(--red)' : 'var(--green)') + '">₦' + outstanding.toLocaleString(undefined,{minimumFractionDigits:2}) + '</td>' +
+            '<td class="mono" style="font-size:12px">' + (s.gross_display || fmtMajor(s.gross_major||0, ccy)) + '</td>' +
+            '<td class="mono text-red" style="font-size:12px">' + (s.fees_display || fmtMajor(s.fees_major||0, ccy)) + '</td>' +
+            '<td class="mono" style="font-size:12px;font-weight:700">' + (s.net_display || fmtMajor(s.net_major||0, ccy)) + '</td>' +
             '<td>' + statusBadge((s.status||'pending').toLowerCase()) + '</td>' +
             '<td>' + markPaid + '</td>' +
           '</tr>';
-        }).join('') : '<tr><td colspan="13" style="text-align:center;color:var(--gray-400);padding:24px">No settlement records yet — run a batch to generate</td></tr>') +
+        }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--gray-400);padding:24px">No settlement records yet — run a batch to generate</td></tr>') +
         '</tbody>' +
       '</table></div></div>';
   } catch(e) {
@@ -1050,16 +1136,17 @@ async function loadMerchSettlements() {
     var settlements = (res && res.data) ? (Array.isArray(res.data) ? res.data : []) : [];
 
     var rows = settlements.length ? settlements.map(function(s) {
-      var fmt = function(n) { return '₦' + Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2}); };
-      return '<tr>' +
+      var ccy = s.currency || 'NGN';
+      return '<tr' + (ccy==='USD'?' style="background:#f8fbff"':'') + '>' +
         '<td class="mono" style="font-size:11px">' + (s.settlementRef||'—') + '</td>' +
-        '<td style="font-size:12px">' + (s.periodStart ? s.periodStart.slice(0,10) : '—') + '</td>' +
+        '<td>' + (ccy==='USD' ? intlBadge() : ccyChip('NGN')) + '</td>' +
+        '<td style="font-size:12px">' + (s.periodStart ? String(s.periodStart).slice(0,10) : '—') + '</td>' +
         '<td style="text-align:center">' + (s.txnCount||0) + '</td>' +
-        '<td style="font-weight:600">' + fmt(s.net_naira||0) + '</td>' +
+        '<td style="font-weight:600">' + (s.net_display || fmtMajor(s.net_major||0, ccy)) + '</td>' +
         '<td style="font-size:12px">' + (s.merchant&&s.merchant.settlementBank ? s.merchant.settlementBank + (s.merchant.settlementAccount ? ' ****' + String(s.merchant.settlementAccount).slice(-4) : '') : '—') + '</td>' +
         '<td>' + statusBadge((s.status||'pending').toLowerCase()) + '</td>' +
       '</tr>';
-    }).join('') : '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">No settlement records yet</td></tr>';
+    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--gray-400)">No settlement records yet</td></tr>';
 
     el.innerHTML =
       '<div class="page-header"><div class="page-title">Settlements</div>' +
@@ -1073,9 +1160,10 @@ async function loadMerchSettlements() {
         '</div>' +
         '<div class="form-hint" style="margin-top:8px">Statement is generated from live transaction data for the selected month.</div>' +
       '</div>' +
-      '<div class="card"><div class="card-header"><div class="card-title">Settlement History</div></div>' +
+      '<div class="card"><div class="card-header"><div class="card-title">Settlement History</div>' +
+        '<span style="font-size:11px;color:var(--gray-400)">International (USD) card settlements shown separately 🌍</span></div>' +
         '<div class="table-wrap"><table>' +
-          '<thead><tr><th>Ref</th><th>Period</th><th>Transactions</th><th>Amount Settled</th><th>Destination</th><th>Status</th></tr></thead>' +
+          '<thead><tr><th>Ref</th><th>Currency</th><th>Period</th><th>Transactions</th><th>Amount Settled</th><th>Destination</th><th>Status</th></tr></thead>' +
           '<tbody>' + rows + '</tbody>' +
         '</table></div>' +
       '</div>';
@@ -1102,32 +1190,46 @@ async function loadMerchantOverview() {
     ]);
 
     const s = stmt?.data;
+    const sNGN = (s?.summary_by_currency && s.summary_by_currency.NGN) || s?.summary || {};
+    const sUSD = (s?.summary_by_currency && s.summary_by_currency.USD) || { successful_transactions:0, total_collections:0, total_fees_paid:0, net_settled:0 };
 
     el.innerHTML = `
     <div class="page-header">
       <div class="page-title">Merchant Dashboard</div>
       <div class="page-desc">${s?.merchant?.businessName||user.firstName} — ${from} to ${to}</div>
     </div>
+
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span></div>
     <div class="stats-grid">
-      <div class="stat-card"><div class="stat-label">Collections This Month</div><div class="stat-value">${fmtNaira((s?.summary?.total_collections||0)*100)}</div></div>
-      <div class="stat-card"><div class="stat-label">Fees Paid</div><div class="stat-value">${fmtNaira((s?.summary?.total_fees_paid||0)*100)}</div></div>
-      <div class="stat-card"><div class="stat-label">Net Settled</div><div class="stat-value">${fmtNaira((s?.summary?.net_settled||0)*100)}</div></div>
-      <div class="stat-card"><div class="stat-label">Transactions</div><div class="stat-value">${fmtNum(s?.summary?.successful_transactions||0)}</div></div>
+      <div class="stat-card"><div class="stat-label">Collections This Month</div><div class="stat-value">${fmtMajor(sNGN.total_collections||0,'NGN')}</div></div>
+      <div class="stat-card"><div class="stat-label">Fees Paid</div><div class="stat-value">${fmtMajor(sNGN.total_fees_paid||0,'NGN')}</div></div>
+      <div class="stat-card"><div class="stat-label">Net Settled</div><div class="stat-value">${fmtMajor(sNGN.net_settled||0,'NGN')}</div></div>
+      <div class="stat-card"><div class="stat-label">Transactions</div><div class="stat-value">${fmtNum(sNGN.successful_transactions||0)}</div></div>
     </div>
-    <div class="card">
+
+    <div class="section-gap" style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-blue">🌍 International (USD)</span><span style="font-size:12px;color:var(--gray-400)">International card sales — settled in USD</span></div>
+    <div class="stats-grid">
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Collections (USD)</div><div class="stat-value">${fmtMajor(sUSD.total_collections||0,'USD')}</div></div>
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Fees Paid (USD)</div><div class="stat-value">${fmtMajor(sUSD.total_fees_paid||0,'USD')}</div></div>
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Net Settled (USD)</div><div class="stat-value">${fmtMajor(sUSD.net_settled||0,'USD')}</div></div>
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Intl Transactions</div><div class="stat-value">${fmtNum(sUSD.successful_transactions||0)}</div></div>
+    </div>
+
+    <div class="card section-gap">
       <div class="card-header"><div class="card-title">Recent Transactions</div><button class="btn btn-outline btn-sm" onclick="navigate('merch_transactions')">View All</button></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Reference</th><th>Amount</th><th>Fee</th><th>Channel</th><th>Status</th><th>Date</th></tr></thead>
+          <thead><tr><th>Reference</th><th>Amount</th><th>Fee</th><th>Channel</th><th>Currency</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${(txns?.data?.data||[]).map(t=>`<tr>
+            ${(txns?.data?.data||[]).map(t=>`<tr ${t.currency==='USD'?'style="background:#f8fbff"':''}>
               <td class="mono" style="font-size:11px">${t.reference}</td>
-              <td style="font-weight:600">${fmtNaira(t.amount)}</td>
-              <td>${fmtNaira(t.fees?.merchant_fee||0)}</td>
-              <td><span class="tag">${t.channel}</span></td>
+              <td style="font-weight:600;white-space:nowrap">${fmtMoney(t.amount, t.currency)}</td>
+              <td>${fmtMoney(t.fees?.merchant_fee||0, t.currency)}</td>
+              <td><span class="tag">${t.channel}${t.currency==='USD'?' · Int\\'l':''}</span></td>
+              <td>${ccyChip(t.currency)}</td>
               <td>${statusBadge(t.status)}</td>
               <td style="font-size:12px">${new Date(t.created_at).toLocaleDateString('en-NG')}</td>
-            </tr>`).join('')||'<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No transactions yet</td></tr>'}
+            </tr>`).join('')||'<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gray-400)">No transactions yet</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -2021,55 +2123,71 @@ async function loadRailSettlement() {
     var res = await apiFetch('/reports/rail-settlement?from=' + from + '&to=' + to);
     if (!res || !res.data) { el.innerHTML = errorBox('Could not load rail settlement report'); return; }
     var d = res.data;
-    var t = d.totals || {};
+    var totalsBy = d.totals_by_currency || { NGN:{}, USD:{} };
     var byRail = d.by_rail || [];
     var byRailProduct = d.by_rail_product || [];
 
-    function naira(n) { return fmtNaira((n||0)*100); }
-    var prodLabel = { CARD:'Cards', BANK_TRANSFER:'Virtual Account / Transfer', USSD:'USSD', DIRECT_DEBIT:'Direct Debit' };
-
-    // Group product rows under each rail
-    var railSections = byRail.map(function(rail) {
-      var products = byRailProduct.filter(function(p) { return p.rail_name === rail.rail_name; });
-      var prows = products.map(function(p) {
-        return '<tr>' +
-          '<td style="padding-left:24px"><span class="tag">' + (prodLabel[p.product] || p.product || '—') + '</span></td>' +
-          '<td style="text-align:center">' + fmtNum(p.txn_count) + '</td>' +
-          '<td class="mono">' + naira(p.volume_naira) + '</td>' +
-          '<td class="mono text-lime">' + naira(p.fee_revenue_naira) + '</td>' +
-          '<td class="mono text-red">' + naira(p.rail_cost_naira) + '</td>' +
-          '<td class="mono" style="font-weight:600">' + naira(p.margin_naira) + '</td>' +
-        '</tr>';
+    // Render one full table for a given currency
+    function currencyTable(ccy) {
+      var rails = byRail.filter(function(r){ return (r.currency||'NGN') === ccy; });
+      var prods = byRailProduct.filter(function(p){ return (p.currency||'NGN') === ccy; });
+      var sections = rails.map(function(rail) {
+        var products = prods.filter(function(p){ return p.rail_name === rail.rail_name; });
+        var prows = products.map(function(p) {
+          return '<tr>' +
+            '<td style="padding-left:24px"><span class="tag">' + (p.product||'—') + '</span></td>' +
+            '<td style="text-align:center">' + fmtNum(p.txn_count) + '</td>' +
+            '<td class="mono">' + fmtMajor(p.volume_major, ccy) + '</td>' +
+            '<td class="mono text-lime">' + fmtMajor(p.fee_revenue_major, ccy) + '</td>' +
+            '<td class="mono text-red">' + fmtMajor(p.rail_cost_major, ccy) + '</td>' +
+            '<td class="mono" style="font-weight:600">' + fmtMajor(p.margin_major, ccy) + '</td>' +
+          '</tr>';
+        }).join('');
+        return '<tr style="background:var(--gray-50)">' +
+            '<td style="font-weight:700">' + rail.rail_name + (rail.rail_status ? ' <span class="badge badge-gray" style="font-size:10px">' + rail.rail_status + '</span>' : '') + '</td>' +
+            '<td style="text-align:center;font-weight:700">' + fmtNum(rail.txn_count) + '</td>' +
+            '<td class="mono" style="font-weight:700">' + fmtMajor(rail.volume_major, ccy) + '</td>' +
+            '<td class="mono text-lime" style="font-weight:700">' + fmtMajor(rail.fee_revenue_major, ccy) + '</td>' +
+            '<td class="mono text-red" style="font-weight:700">' + fmtMajor(rail.rail_cost_major, ccy) + '</td>' +
+            '<td class="mono" style="font-weight:700">' + fmtMajor(rail.margin_major, ccy) + '</td>' +
+          '</tr>' + prows;
       }).join('');
-      return '<tr style="background:var(--gray-50)">' +
-          '<td style="font-weight:700">' + rail.rail_name + (rail.rail_status ? ' <span class="badge badge-gray" style="font-size:10px">' + rail.rail_status + '</span>' : '') + '</td>' +
-          '<td style="text-align:center;font-weight:700">' + fmtNum(rail.txn_count) + '</td>' +
-          '<td class="mono" style="font-weight:700">' + naira(rail.volume_naira) + '</td>' +
-          '<td class="mono text-lime" style="font-weight:700">' + naira(rail.fee_revenue_naira) + '</td>' +
-          '<td class="mono text-red" style="font-weight:700">' + naira(rail.rail_cost_naira) + '</td>' +
-          '<td class="mono" style="font-weight:700">' + naira(rail.margin_naira) + '</td>' +
-        '</tr>' + prows;
-    }).join('');
+      var empty = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No ' + (ccy==='USD'?'international (USD)':'local (NGN)') + ' rail activity this period.</td></tr>';
+      return '<div class="table-wrap"><table>' +
+        '<thead><tr><th>Rail / Product</th><th>Txns</th><th>Volume</th><th>Fee Revenue</th><th>Rail Cost</th><th>Margin</th></tr></thead>' +
+        '<tbody>' + (sections || empty) + '</tbody></table></div>';
+    }
+
+    function totalsRow(ccy) {
+      var t = totalsBy[ccy] || {};
+      return '<div class="stats-grid">' +
+        '<div class="stat-card"><div class="stat-label">Volume</div><div class="stat-value">' + fmtMajor(t.volume_major, ccy) + '</div><div class="stat-sub">' + fmtNum(t.txn_count||0) + ' txns</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Fee Revenue</div><div class="stat-value text-lime">' + fmtMajor(t.fee_revenue_major, ccy) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Rail Costs</div><div class="stat-value text-red">' + fmtMajor(t.rail_cost_major, ccy) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Margin</div><div class="stat-value">' + fmtMajor(t.margin_major, ccy) + '</div></div>' +
+      '</div>';
+    }
 
     el.innerHTML =
       '<div class="page-header flex-between"><div>' +
         '<div class="page-title">Rail Settlement Report</div>' +
-        '<div class="page-desc">Earnings broken down by payment rail and product — ' + from + ' to ' + to + '</div>' +
+        '<div class="page-desc">Earnings by rail and product — local and international reported separately — ' + from + ' to ' + to + '</div>' +
       '</div>' +
         '<button class="btn btn-outline btn-sm" onclick="exportRailSettlement()">&#8681; Export CSV</button>' +
       '</div>' +
-      '<div class="stats-grid">' +
-        '<div class="stat-card"><div class="stat-label">Total Volume</div><div class="stat-value">' + naira(t.volume_naira) + '</div><div class="stat-sub">' + fmtNum(t.txn_count||0) + ' transactions</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Fee Revenue</div><div class="stat-value text-lime">' + naira(t.fee_revenue_naira) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Rail Costs</div><div class="stat-value text-red">' + naira(t.rail_cost_naira) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Paylode Margin</div><div class="stat-value">' + naira(t.margin_naira) + '</div></div>' +
+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span></div>' +
+      totalsRow('NGN') +
+      '<div class="card" style="margin-bottom:20px"><div class="card-header"><div class="card-title">NGN — By Rail &amp; Product</div>' +
+        '<div style="font-size:11px;color:var(--gray-400)">Bold = rail total · indented = product</div></div>' +
+        currencyTable('NGN') +
       '</div>' +
-      '<div class="card"><div class="card-header"><div class="card-title">By Rail &amp; Product</div>' +
-        '<div style="font-size:11px;color:var(--gray-400)">Bold rows = rail totals · indented = product on that rail</div></div>' +
-        '<div class="table-wrap"><table>' +
-          '<thead><tr><th>Rail / Product</th><th>Txns</th><th>Volume</th><th>Fee Revenue</th><th>Rail Cost</th><th>Margin</th></tr></thead>' +
-          '<tbody>' + (railSections || '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">No settled transactions this period.<br><span style="font-size:12px">Rail breakdown appears once live transactions are processed through configured rails.</span></td></tr>') + '</tbody>' +
-        '</table></div>' +
+
+      '<div class="section-gap" style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-blue">🌍 International (USD)</span><span style="font-size:12px;color:var(--gray-400)">International card transactions — all values in US Dollars</span></div>' +
+      totalsRow('USD') +
+      '<div class="card" style="border:1px solid #bfdbfe"><div class="card-header"><div class="card-title">USD — By Rail &amp; Product</div>' +
+        '<div style="font-size:11px;color:var(--gray-400)">Settled in US Dollars</div></div>' +
+        currencyTable('USD') +
       '</div>';
 
     window._railSettlementData = d;
@@ -2081,9 +2199,9 @@ async function loadRailSettlement() {
 function exportRailSettlement() {
   var d = window._railSettlementData;
   if (!d) { alert('No data to export'); return; }
-  var headers = ['Rail','Product','Txns','Volume (NGN)','Fee Revenue (NGN)','Rail Cost (NGN)','Margin (NGN)'];
+  var headers = ['Currency','Rail','Product','Txns','Volume','Fee Revenue','Rail Cost','Margin'];
   var rows = (d.by_rail_product || []).map(function(p) {
-    return [p.rail_name, p.product||'', p.txn_count, p.volume_naira, p.fee_revenue_naira, p.rail_cost_naira, p.margin_naira];
+    return [p.currency||'NGN', p.rail_name, p.product||'', p.txn_count, p.volume_major, p.fee_revenue_major, p.rail_cost_major, p.margin_major];
   });
   var csv = [headers].concat(rows).map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
   var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
