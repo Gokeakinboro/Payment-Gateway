@@ -5,7 +5,7 @@ const { prisma } = require('../utils/db');
 const { requireAuth, requireSuperAdmin, requireAggregator } = require('../middleware/auth');
 const { ok, fail, notFound, koboToNaira } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
-const { sendEmail } = require('../services/emailService');
+const { sendEmail, getEmailContent } = require('../services/emailService');
 const { logger } = require('../utils/logger');
 
 aggRouter.get('/', requireAuth, requireSuperAdmin, async (req,res,next) => {
@@ -45,12 +45,14 @@ aggRouter.post('/', requireAuth, requireSuperAdmin, async (req,res,next) => {
       return { user, agg };
     });
 
-    sendEmail({
-      to: lower,
-      subject: 'Your Paylode aggregator account — first-time sign-in',
-      html: `<h2>Welcome to Paylode</h2><p>An aggregator account for <strong>${company_name}</strong> has been created.</p>` +
-        `<p>Sign in at <a href="${process.env.APP_URL || ''}/login.html">the portal</a> with <strong>${lower}</strong> and temporary password <strong>${tempPassword}</strong>. You must change it on first sign-in.</p>`,
-    }).catch(e => logger.error({ err: e }, 'aggregator welcome email failed'));
+    const loginUrl = (process.env.APP_URL || '') + '/login.html';
+    const content = await getEmailContent('aggregator_welcome',
+      { business: company_name, email: lower, temp_password: tempPassword, login_url: loginUrl },
+      'Your Paylode aggregator account — first-time sign-in',
+      `<h2>Welcome to Paylode</h2><p>An aggregator account for <strong>${company_name}</strong> has been created.</p>` +
+        `<p>Sign in at <a href="${loginUrl}">the portal</a> with <strong>${lower}</strong> and temporary password <strong>${tempPassword}</strong>. You must change it on first sign-in.</p>`);
+    sendEmail({ to: lower, subject: content.subject, html: content.html })
+      .catch(e => logger.error({ err: e }, 'aggregator welcome email failed'));
 
     await logAudit(req.user.id, 'AGGREGATOR_CREATED', 'aggregators', result.agg.id, null,
       { company_name, email: lower, split_pct: split }, null, req.ip);

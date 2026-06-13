@@ -6,7 +6,7 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const { prisma } = require('../utils/db');
 const { ok, fail, created, generateApiKey, hashApiKey } = require('../utils/helpers');
-const { sendEmail } = require('../services/emailService');
+const { sendEmail, getEmailContent } = require('../services/emailService');
 const { logger } = require('../utils/logger');
 const { requireAuth, requireCompliance } = require('../middleware/auth');
 
@@ -244,18 +244,12 @@ router.post('/submit', async (req, res, next) => {
 
     // Confirmation to applicant
     if (summary.contactEmail) {
-      await sendEmail({
-        to: summary.contactEmail,
-        subject: `Paylode application received — ${reference}`,
-        html: `
-          <h2>Application Received</h2>
-          <p>Thank you for applying to join Paylode. We have received your application and our compliance team will review it within 1–3 business days.</p>
-          <p><strong>Your reference number: ${reference}</strong></p>
-          <p>Please keep this reference for your records.</p>
-          <p>Questions? Contact <a href="mailto:support@paylodeservices.com">support@paylodeservices.com</a></p>
-          <p>Best regards,<br>Paylode Services Limited</p>
-        `,
-      }).catch(e => logger.error({ err: e }, 'Failed to send applicant confirmation'));
+      const content = await getEmailContent('application_received',
+        { name: summary.businessName, reference, business: summary.businessName },
+        `Paylode application received — ${reference}`,
+        `<h2>Application Received</h2><p>Thank you for applying to join Paylode. Your application has been received and our compliance team will review it within 1-3 business days.</p><p><strong>Your reference number: ${reference}</strong></p><p>Questions? Contact support@paylodeservices.com</p>`);
+      await sendEmail({ to: summary.contactEmail, subject: content.subject, html: content.html })
+        .catch(e => logger.error({ err: e }, 'Failed to send applicant confirmation'));
     }
 
     created(res, {
@@ -388,6 +382,17 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
         where: { reference },
         data: { ...(status ? { status } : {}), ...(review_notes !== undefined ? { reviewNotes: review_notes } : {}), reviewedBy: req.user?.id || null },
       });
+      // Notify the applicant on review-status changes (template-driven, best-effort).
+      if (row.contactEmail && (status === 'under_review' || status === 'rejected')) {
+        const slug = status === 'under_review' ? 'application_under_review' : 'application_rejected';
+        const content = await getEmailContent(slug,
+          { name: row.businessName, reference, business: row.businessName, notes: review_notes || '' },
+          status === 'under_review' ? `Your Paylode application is under review — ${reference}` : `Update on your Paylode application — ${reference}`,
+          status === 'under_review'
+            ? `<p>Your application (${reference}) for ${row.businessName} is now under review.</p>`
+            : `<p>After review, we are unable to approve your application (${reference}) at this time. ${review_notes || ''}</p>`);
+        sendEmail({ to: row.contactEmail, subject: content.subject, html: content.html }).catch(e => logger.error({ err: e }, 'review email failed'));
+      }
       return ok(res, row, 'Submission updated');
     }
 
@@ -414,15 +419,17 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
 
     if (outcome.notFound) return fail(res, 'Submission not found', 'NOT_FOUND', 404);
 
-    // Best-effort approval email (outside the transaction).
+    // Best-effort approval email (outside the transaction) — rendered from template.
     if (outcome.prov && outcome.prov.created) {
-      sendEmail({
-        to: outcome.prov.email,
-        subject: 'Your Paylode merchant account is approved',
-        html: `<h2>Approved</h2><p>Your application for <strong>${outcome.prov.businessName}</strong> has been approved and your merchant account is live.</p>` +
-              (outcome.prov.tempPassword ? `<p>Sign in at <a href="${process.env.APP_URL || ''}/login.html">the dashboard</a> with <strong>${outcome.prov.email}</strong> and temporary password <strong>${outcome.prov.tempPassword}</strong> — please change it on first login.</p>` : '') +
-              `<p>Any outstanding KYC documents are listed in your dashboard and must be provided (or placed under a deferral).</p>`,
-      }).catch(e => logger.error({ err: e }, 'approval email failed'));
+      const loginUrl = (process.env.APP_URL || '') + '/login.html';
+      const content = await getEmailContent('application_approved',
+        { business: outcome.prov.businessName, email: outcome.prov.email, temp_password: outcome.prov.tempPassword || '', login_url: loginUrl },
+        'Your Paylode merchant account is approved',
+        `<h2>Approved</h2><p>Your application for <strong>${outcome.prov.businessName}</strong> has been approved and your merchant account is live.</p>` +
+          (outcome.prov.tempPassword ? `<p>Sign in at <a href="${loginUrl}">the dashboard</a> with <strong>${outcome.prov.email}</strong> and temporary password <strong>${outcome.prov.tempPassword}</strong> — change it on first login.</p>` : '') +
+          `<p>Any outstanding KYC documents are listed in your dashboard.</p>`);
+      sendEmail({ to: outcome.prov.email, subject: content.subject, html: content.html })
+        .catch(e => logger.error({ err: e }, 'approval email failed'));
     }
 
     const fresh = await prisma.onboardingSubmission.findUnique({ where: { reference } });

@@ -416,6 +416,23 @@ model OnboardingSubmission {
   @@map("onboarding_submissions")
 }
 
+// ─── EMAIL TEMPLATES (SA-authored lifecycle emails) ───────────────────────────
+
+model EmailTemplate {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug      String   @unique
+  name      String
+  subject   String
+  htmlBody  String   @map("html_body")
+  variables String[] @default([])
+  isSystem  Boolean  @default(false) @map("is_system")
+  isActive  Boolean  @default(true)  @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("email_templates")
+}
+
 // ─── AUDIT LOG (IMMUTABLE) ────────────────────────────────────────────────────
 
 model AuditLog {

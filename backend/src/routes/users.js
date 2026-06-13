@@ -6,21 +6,23 @@ const { prisma } = require('../utils/db');
 const { ok, fail, created } = require('../utils/helpers');
 const { requireAuth, requireSuperAdmin } = require('../middleware/auth');
 const { logAudit } = require('../services/auditService');
-const { sendEmail } = require('../services/emailService');
+const { sendEmail, getEmailContent } = require('../services/emailService');
 const { logger } = require('../utils/logger');
 
 function genTempPassword() {
   return Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!';
 }
-function sendTempPasswordEmail(email, name, tempPassword) {
-  return sendEmail({
-    to: email,
-    subject: 'Your Paylode account — first-time sign-in',
-    html: `<h2>Welcome to Paylode</h2><p>Hi ${name || ''},</p>` +
-      `<p>An account has been created for you. Sign in at <a href="${process.env.APP_URL || ''}/login.html">the portal</a> with:</p>` +
+async function sendTempPasswordEmail(email, name, tempPassword) {
+  const loginUrl = (process.env.APP_URL || '') + '/login.html';
+  const content = await getEmailContent('temp_password',
+    { name: name || '', email, temp_password: tempPassword, login_url: loginUrl },
+    'Your Paylode account — first-time sign-in',
+    `<h2>Welcome to Paylode</h2><p>Hi ${name || ''},</p>` +
+      `<p>An account has been created for you. Sign in at <a href="${loginUrl}">the portal</a> with:</p>` +
       `<p><strong>Email:</strong> ${email}<br><strong>Temporary password:</strong> ${tempPassword}</p>` +
-      `<p>For your security you will be required to set a new password before you can do anything else.</p>`,
-  }).catch(e => logger.error({ err: e }, 'temp-password email failed'));
+      `<p>You must set a new password before you can do anything else.</p>`);
+  return sendEmail({ to: email, subject: content.subject, html: content.html })
+    .catch(e => logger.error({ err: e }, 'temp-password email failed'));
 }
 
 const validate = rules => async (req, res, next) => {
