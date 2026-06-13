@@ -633,11 +633,11 @@ router.get('/admin/report', requireAuth, requireSuperAdmin, async (req, res, nex
 
     // Status breakdown
     const statusBreakdown = await prisma.$queryRawUnsafe(`
-      SELECT status, COUNT(*)::int AS count
+      SELECT pi.status AS status, COUNT(*)::int AS count
       FROM payout_items pi
       JOIN payout_batches pb ON pi.batch_id = pb.id
       WHERE pb.created_at >= $1 AND pb.created_at <= $2
-      GROUP BY status
+      GROUP BY pi.status
       ORDER BY count DESC
     `, fromDate, toDate);
 
