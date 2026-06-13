@@ -128,16 +128,61 @@ aggRouter.get('/my/merchants', requireAuth, requireAggregator, async (req,res,ne
 aggRouter.get('/my/revenue', requireAuth, requireAggregator, async (req,res,next) => {
   try {
     const agg = req.user.aggregator;
+    if (!agg) return fail(res,'No aggregator account');
+
+    const now        = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Aggregator's own merchants
+    const merchants = await prisma.merchant.findMany({ where:{ aggregatorId: agg.id }, select:{ id:true } });
+    const merchantIds = merchants.map(m => m.id);
+
+    // Legacy monthly rollups (NGN)
     const months = await prisma.aggPayout.findMany({
-      where:{aggregatorId:agg.id},
-      orderBy:{periodMonth:'desc'},
-      take:12,
+      where:{ aggregatorId: agg.id }, orderBy:{ periodMonth:'desc' }, take:12,
     });
-    ok(res, months.map(m=>({ ...m,
-      total_merchant_fees_naira: koboToNaira(m.totalMerchantFees),
-      agg_share_naira:           koboToNaira(m.aggShareAmount),
-    })));
-  } catch(e){next(e);}
+
+    // Live per-currency share — computed straight from transactions (no FX conversion)
+    const blank = () => ({ agg_share:0, merchant_fees:0, txn_count:0 });
+    const mtdBy = { NGN: blank(), USD: blank() };
+    const allBy = { NGN: blank(), USD: blank() };
+
+    if (merchantIds.length) {
+      const [mtdGroups, allGroups] = await Promise.all([
+        prisma.transaction.groupBy({
+          by:['currency'],
+          where:{ merchantId:{ in: merchantIds }, status:'SUCCESS', isSandbox:false, createdAt:{ gte: monthStart } },
+          _sum:{ aggShare:true, merchantFee:true }, _count:true,
+        }),
+        prisma.transaction.groupBy({
+          by:['currency'],
+          where:{ merchantId:{ in: merchantIds }, status:'SUCCESS', isSandbox:false },
+          _sum:{ aggShare:true, merchantFee:true }, _count:true,
+        }),
+      ]);
+      const fill = (target, groups) => groups.forEach(g => {
+        const c = g.currency === 'USD' ? 'USD' : 'NGN';
+        target[c] = {
+          agg_share:     Number(g._sum.aggShare||0)/100,
+          merchant_fees: Number(g._sum.merchantFee||0)/100,
+          txn_count:     g._count,
+        };
+      });
+      fill(mtdBy, mtdGroups);
+      fill(allBy, allGroups);
+    }
+
+    ok(res, {
+      // legacy monthly list (NGN)
+      data: months.map(m=>({ ...m,
+        total_merchant_fees_naira: koboToNaira(m.totalMerchantFees),
+        agg_share_naira:           koboToNaira(m.aggShareAmount),
+      })),
+      // live currency-separated shares (no conversion — NGN and USD reported side by side)
+      share_mtd_by_currency: mtdBy,
+      share_all_by_currency: allBy,
+    });
+  } catch(e){ next(e); }
 });
 
 module.exports = aggRouter;

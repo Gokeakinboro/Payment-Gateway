@@ -1252,8 +1252,10 @@ async function loadAggOverview() {
     ]);
 
     const myMerchants = merchants?.data || [];
-    const myRevenue   = revenue?.data || [];
+    const rev = revenue?.data || {};
+    const myRevenue = Array.isArray(rev) ? rev : (rev.data || []);
     const latestMonth = myRevenue[0];
+    const mtdBy = (rev.share_mtd_by_currency) || { NGN:{agg_share:0,txn_count:0}, USD:{agg_share:0,txn_count:0} };
 
     el.innerHTML = `
     <div class="page-header">
@@ -1262,11 +1264,24 @@ async function loadAggOverview() {
     </div>
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-label">Active Merchants</div><div class="stat-value">${myMerchants.filter(m=>m.isActive).length}</div></div>
-      <div class="stat-card"><div class="stat-label">This Month Revenue Share</div><div class="stat-value">${fmtNaira((latestMonth?.agg_share_naira||0)*100)}</div></div>
       <div class="stat-card"><div class="stat-label">Pending KYC</div><div class="stat-value">${myMerchants.filter(m=>m.kycStatus==='KYC_IN_REVIEW').length}</div></div>
       <div class="stat-card"><div class="stat-label">Payout Status</div><div class="stat-value" style="font-size:16px">${latestMonth?.status||'—'}</div></div>
+      <div class="stat-card"><div class="stat-label">Total Merchants</div><div class="stat-value">${fmtNum(myMerchants.length)}</div></div>
     </div>
-    <div class="card">
+
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span><span style="font-size:12px;color:var(--gray-400)">Your revenue share this month — local transactions</span></div>
+    <div class="stats-grid" style="grid-template-columns:1fr 1fr">
+      <div class="stat-card"><div class="stat-label">Revenue Share (MTD)</div><div class="stat-value text-lime">${fmtMajor(mtdBy.NGN?.agg_share||0,'NGN')}</div><div class="stat-sub">${fmtNum(mtdBy.NGN?.txn_count||0)} transactions</div></div>
+      <div class="stat-card"><div class="stat-label">Merchant Fees Generated</div><div class="stat-value">${fmtMajor(mtdBy.NGN?.merchant_fees||0,'NGN')}</div></div>
+    </div>
+
+    <div class="section-gap" style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-blue">🌍 International (USD)</span><span style="font-size:12px;color:var(--gray-400)">Your share from international card transactions — settled in USD</span></div>
+    <div class="stats-grid" style="grid-template-columns:1fr 1fr">
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Revenue Share (USD, MTD)</div><div class="stat-value" style="color:#1e40af">${fmtMajor(mtdBy.USD?.agg_share||0,'USD')}</div><div class="stat-sub">${fmtNum(mtdBy.USD?.txn_count||0)} intl transactions</div></div>
+      <div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Merchant Fees Generated (USD)</div><div class="stat-value">${fmtMajor(mtdBy.USD?.merchant_fees||0,'USD')}</div></div>
+    </div>
+
+    <div class="card section-gap">
       <div class="card-header"><div class="card-title">My Merchants</div><button class="btn btn-outline btn-sm" onclick="navigate('agg_merchants')">View All</button></div>
       <div class="table-wrap">
         <table>
@@ -2858,14 +2873,10 @@ async function loadAggRevenue() {
   el.innerHTML = loading();
   try {
     var res = await apiFetch('/aggregators/my/revenue');
-    var rows = (res && res.data) ? res.data : [];
-
-    var total = rows.reduce(function(s, r) { return s + (Number(r.agg_share_naira)||0); }, 0);
-    var statsHtml = rows.slice(0,4).map(function(r) {
-      return '<div class="stat-card"><div class="stat-label">' + (r.month||'—') + '</div>' +
-        '<div class="stat-value text-lime">' + fmtNaira((r.agg_share_naira||0)*100) + '</div>' +
-        '<div class="stat-sub">' + (r.merchant_count||0) + ' merchants</div></div>';
-    }).join('');
+    var payload = (res && res.data) ? res.data : {};
+    var rows = Array.isArray(payload) ? payload : (payload.data || []);
+    var mtdBy = payload.share_mtd_by_currency || { NGN:{}, USD:{} };
+    var allBy = payload.share_all_by_currency || { NGN:{}, USD:{} };
 
     var tableHtml = rows.length ? rows.map(function(r) {
       return '<tr>' +
@@ -2877,17 +2888,30 @@ async function loadAggRevenue() {
         '<td class="mono text-lime" style="font-weight:700">' + fmtNaira((r.agg_share_naira||0)*100) + '</td>' +
         '<td>' + statusBadge(r.status||'pending') + '</td>' +
       '</tr>';
-    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gray-400)">No revenue data yet</td></tr>';
+    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gray-400)">No monthly rollups yet</td></tr>';
 
     el.innerHTML =
       '<div class="page-header flex-between">' +
         '<div><div class="page-title">Revenue Share Statement</div>' +
-          '<div class="page-desc">Your aggregator earnings from merchant transaction fees</div></div>' +
+          '<div class="page-desc">Your aggregator earnings — local (NGN) and international (USD) shown separately</div></div>' +
         '<button class="btn btn-outline btn-sm" onclick="downloadAggRevenueLive()">&#8681; Download CSV</button>' +
       '</div>' +
-      (statsHtml ? '<div class="stats-grid">' + statsHtml + '</div>' : '') +
-      '<div class="stat-card" style="margin-bottom:16px;text-align:center"><div class="stat-label">Total Earned (All Time)</div><div class="stat-value" style="color:var(--lime-dark)">' + fmtNaira(total*100) + '</div></div>' +
-      '<div class="card"><div class="card-header"><div class="card-title">Monthly Breakdown</div></div>' +
+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span></div>' +
+      '<div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr">' +
+        '<div class="stat-card"><div class="stat-label">Your Share (This Month)</div><div class="stat-value text-lime">' + fmtMajor(mtdBy.NGN&&mtdBy.NGN.agg_share||0,'NGN') + '</div><div class="stat-sub">' + fmtNum(mtdBy.NGN&&mtdBy.NGN.txn_count||0) + ' txns</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Your Share (All Time)</div><div class="stat-value" style="color:var(--lime-dark)">' + fmtMajor(allBy.NGN&&allBy.NGN.agg_share||0,'NGN') + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Merchant Fees (MTD)</div><div class="stat-value">' + fmtMajor(mtdBy.NGN&&mtdBy.NGN.merchant_fees||0,'NGN') + '</div></div>' +
+      '</div>' +
+
+      '<div class="section-gap" style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-blue">🌍 International (USD)</span><span style="font-size:12px;color:var(--gray-400)">Share from international card transactions — settled in US Dollars</span></div>' +
+      '<div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr">' +
+        '<div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Your Share (This Month)</div><div class="stat-value" style="color:#1e40af">' + fmtMajor(mtdBy.USD&&mtdBy.USD.agg_share||0,'USD') + '</div><div class="stat-sub">' + fmtNum(mtdBy.USD&&mtdBy.USD.txn_count||0) + ' intl txns</div></div>' +
+        '<div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Your Share (All Time)</div><div class="stat-value" style="color:#1e40af">' + fmtMajor(allBy.USD&&allBy.USD.agg_share||0,'USD') + '</div></div>' +
+        '<div class="stat-card" style="border:1px solid #bfdbfe;background:#f8fbff"><div class="stat-label">Merchant Fees (MTD)</div><div class="stat-value">' + fmtMajor(mtdBy.USD&&mtdBy.USD.merchant_fees||0,'USD') + '</div></div>' +
+      '</div>' +
+
+      '<div class="card section-gap"><div class="card-header"><div class="card-title">Monthly Breakdown (NGN rollups)</div></div>' +
         '<div class="table-wrap"><table>' +
           '<thead><tr><th>Month</th><th>Merchant Volume</th><th>Gross Fees</th><th>Rail Costs</th><th>Net Pool</th><th>Your Share</th><th>Status</th></tr></thead>' +
           '<tbody>' + tableHtml + '</tbody>' +
