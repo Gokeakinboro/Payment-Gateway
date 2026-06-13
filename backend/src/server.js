@@ -127,6 +127,7 @@ app.use('/api/v1/admin/email-templates', require('./routes/email-templates'));
 
 app.use('/api/v1/webhooks/youverify', require('./routes/youverify-webhook'));
 app.use('/api/v1/deferrals', require('./routes/deferrals'));
+app.use('/api/v1/documents', require('./routes/documents'));
 
 // ── 404 handler ───────────────────────────────────────────────────────────
 app.use((req, res) => {

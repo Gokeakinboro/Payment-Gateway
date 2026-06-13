@@ -4092,7 +4092,7 @@ async function loadDeferrals() {
 
   var reqHtml = '<div class="card" style="margin-bottom:16px">' +
     '<div style="font-weight:600;margin-bottom:6px">Required KYC / KYB Documents</div>' +
-    '<div class="page-desc" style="margin-bottom:10px">Documents collected at onboarding. A deferral lets a superadmin activate an account while these are outstanding (max 2 deferrals; 1–6 months each).</div>' +
+    '<div class="page-desc" style="margin-bottom:10px">Documents collected at onboarding. Open a merchant to track each document individually and defer specific outstanding items (1–6 months); overdue deferrals auto-suspend the account.</div>' +
     '<div style="font-weight:600;font-size:12px;margin:8px 0 4px">Individual</div><ul style="font-size:12px;color:var(--gray-600);margin-left:18px">' + KYB_REQUIRED_DOCS.natural.map(function(d){return '<li>' + _escA(d) + '</li>';}).join('') + '</ul>' +
     '<div style="font-weight:600;font-size:12px;margin:10px 0 4px">Registered business (all)</div><ul style="font-size:12px;color:var(--gray-600);margin-left:18px">' + KYB_REQUIRED_DOCS.entity_common.map(function(d){return '<li>' + _escA(d) + '</li>';}).join('') + '</ul>' +
     '<div style="font-weight:600;font-size:12px;margin:10px 0 4px">By entity type</div>' +
@@ -4106,13 +4106,13 @@ async function loadDeferrals() {
       '<td style="font-weight:500">' + _escA(m.businessName || '—') + '</td>' +
       '<td>' + statusBadge(m.kycStatus) + '</td>' +
       '<td>' + (m.isActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Inactive</span>') + '</td>' +
-      '<td><button class="btn btn-outline btn-sm" onclick="openDeferModal(\'merchant\',\'' + m.id + '\',\'' + _escA((m.businessName||'').replace(/'/g,'')) + '\')">Manage Deferral</button></td>' +
+      '<td><button class="btn btn-outline btn-sm" onclick="openDocsModal(\'merchant\',\'' + m.id + '\',\'' + _escA((m.businessName||'').replace(/'/g,'')) + '\')">Manage Documents</button></td>' +
     '</tr>';
   }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:20px">No merchants</td></tr>';
 
   el.innerHTML =
-    '<div class="page-header"><div class="page-title">Document Deferrals</div>' +
-      '<div class="page-desc">Activate accounts with outstanding documents — superadmin only</div></div>' +
+    '<div class="page-header"><div class="page-title">KYC Documents &amp; Deferrals</div>' +
+      '<div class="page-desc">Per-document tracking — mark submitted/verified/waived, or defer specific documents (superadmin)</div></div>' +
     reqHtml +
     '<div class="card"><div class="table-wrap"><table>' +
       '<thead><tr><th>Merchant</th><th>KYC Status</th><th>Account</th><th></th></tr></thead>' +
@@ -4120,48 +4120,63 @@ async function loadDeferrals() {
     '</table></div></div>';
 }
 
-async function openDeferModal(entityType, id, name) {
-  var res = await apiFetch('/deferrals/' + entityType + 's/' + id);
-  var d = (res && res.data) ? res.data : { deferrals_used: 0, deferrals_remaining: 2, can_defer: true, active_deferral: null };
+async function openDocsModal(entityType, id, name) {
+  var res = await apiFetch('/documents/' + entityType + '/' + id);
+  var data = (res && res.data) ? res.data : { docs: [], summary: {} };
+  window._docCtx = { entityType: entityType, id: id, name: name };
 
-  var active = d.active_deferral
-    ? '<div class="info-box" style="margin-bottom:12px;font-size:12px">Active deferral expires <strong>' + new Date(d.active_deferral.expires_at).toLocaleDateString('en-NG') + '</strong>' + (d.active_deferral.reason ? ' — ' + _escA(d.active_deferral.reason) : '') + '</div>'
-    : '';
-
-  var checklist = allDocChecklist().map(function(doc) {
-    return '<label class="check-item" style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;font-size:12px">' +
-      '<input type="checkbox" class="defer-doc" value="' + _escA(doc) + '"><span>' + _escA(doc) + '</span></label>';
+  var rows = data.docs.map(function(doc) {
+    var overdue = doc.status === 'overdue';
+    var deferInfo = (doc.status === 'deferred' && doc.deferred_until)
+      ? '<div class="upload-hint">until ' + new Date(doc.deferred_until).toLocaleDateString('en-NG') + '</div>' : '';
+    return '<tr' + (overdue ? ' style="background:#fef2f2"' : '') + '>' +
+      '<td><input type="checkbox" class="doc-cb" value="' + doc.id + '"></td>' +
+      '<td style="font-weight:500">' + _escA(doc.doc_label) + deferInfo + '</td>' +
+      '<td>' + docStatusBadge(doc.status) + '</td>' +
+      '<td style="white-space:nowrap">' +
+        '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'submitted\')">Submitted</button> ' +
+        '<button class="btn btn-outline btn-sm" style="color:var(--green)" onclick="setDocStatus(\'' + doc.id + '\',\'verified\')">Verify</button> ' +
+        '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'waived\')">Waive</button>' +
+      '</td>' +
+    '</tr>';
   }).join('');
 
-  var form = d.can_defer
-    ? '<div class="divider"></div>' +
-      '<div style="font-weight:600;font-size:13px;margin-bottom:6px">Outstanding documents being deferred</div>' +
-      '<div style="max-height:180px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;padding:10px;margin-bottom:12px">' + checklist + '</div>' +
-      '<div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">' +
-        '<div><label class="form-label">Deferral period</label><select class="form-input form-select" id="defer-duration"><option value="1">1 month</option><option value="2">2 months</option><option value="3" selected>3 months</option><option value="6">6 months</option></select></div>' +
-        '<div><label class="form-label">Reason</label><input class="form-input" id="defer-reason" placeholder="Why are docs deferred?"></div>' +
-      '</div>' +
-      '<button class="btn btn-lime" onclick="submitDeferral(\'' + entityType + '\',\'' + id + '\')">Defer &amp; Activate</button>'
-    : '<div class="warn-box" style="font-size:12px">Maximum deferrals reached for this ' + entityType + '. No further deferrals allowed.</div>';
-
   showModal(
-    '<div class="modal-header"><div class="modal-title">Deferral — ' + _escA(name) + '</div>' +
+    '<div class="modal-header"><div class="modal-title">Documents — ' + _escA(name) + '</div>' +
       '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
-    '<div class="rev-row"><span class="rev-label">Deferrals used</span><span class="rev-value">' + d.deferrals_used + ' / 2</span></div>' +
-    '<div class="rev-row"><span class="rev-label">Remaining</span><span class="rev-value">' + d.deferrals_remaining + '</span></div>' +
-    active + form
+    '<div class="page-desc" style="margin-bottom:10px">Each required document is tracked individually. Tick rows and set a period to defer specific documents and activate the account — an overdue deferral auto-suspends the account so nothing slips.</div>' +
+    '<div class="table-wrap"><table style="width:100%"><thead><tr><th></th><th>Document</th><th>Status</th><th>Actions</th></tr></thead>' +
+      '<tbody>' + (rows || '<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:16px">No documents</td></tr>') + '</tbody></table></div>' +
+    '<div class="divider"></div>' +
+    '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end">' +
+      '<div><label class="form-label">Defer ticked for</label><select class="form-input form-select" id="doc-duration"><option value="1">1 month</option><option value="2">2 months</option><option value="3" selected>3 months</option><option value="6">6 months</option></select></div>' +
+      '<div><label class="form-label">Reason</label><input class="form-input" id="doc-reason" placeholder="Reason"></div>' +
+      '<div><button class="btn btn-lime" onclick="deferSelectedDocs()">Defer ticked &amp; activate</button></div>' +
+    '</div>'
   );
 }
 
-async function submitDeferral(entityType, id) {
-  var duration = parseInt(document.getElementById('defer-duration').value, 10);
-  var reason = (document.getElementById('defer-reason') || {}).value || '';
-  var outstanding = Array.prototype.slice.call(document.querySelectorAll('.defer-doc:checked')).map(function(c){ return c.value; });
-  var fullReason = reason + (outstanding.length ? ' | Outstanding: ' + outstanding.join(', ') : '');
-  var res = await apiFetch('/deferrals/' + entityType + 's/' + id, {
-    method: 'POST', body: JSON.stringify({ duration_months: duration, reason: fullReason.trim() }),
+function docStatusBadge(s) {
+  var map = { outstanding:'badge-amber', submitted:'badge-blue', verified:'badge-green', deferred:'badge-purple', overdue:'badge-red', waived:'badge-gray' };
+  return '<span class="badge ' + (map[s] || 'badge-gray') + '">' + (s || '—') + '</span>';
+}
+
+async function setDocStatus(docId, status) {
+  var res = await apiFetch('/documents/item/' + docId, { method:'PATCH', body: JSON.stringify({ status: status }) });
+  if (res && res.status) { var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
+  else alert('Error: ' + ((res && res.message) || 'Update failed'));
+}
+
+async function deferSelectedDocs() {
+  var c = window._docCtx;
+  var ids = Array.prototype.slice.call(document.querySelectorAll('.doc-cb:checked')).map(function(x){ return x.value; });
+  if (!ids.length) { alert('Tick at least one document to defer.'); return; }
+  var duration = parseInt(document.getElementById('doc-duration').value, 10);
+  var reason = (document.getElementById('doc-reason') || {}).value || '';
+  var res = await apiFetch('/documents/' + c.entityType + '/' + c.id + '/defer', {
+    method:'POST', body: JSON.stringify({ doc_ids: ids, duration_months: duration, reason: reason })
   });
-  if (res && res.status) { document.getElementById('modal').style.display = 'none'; alert((res.message) || 'Deferred.'); loadDeferrals(); }
+  if (res && res.status) { alert(res.message || 'Deferred.'); openDocsModal(c.entityType, c.id, c.name); }
   else alert('Error: ' + ((res && res.message) || 'Deferral failed'));
 }
 
