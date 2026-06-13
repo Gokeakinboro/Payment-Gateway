@@ -101,6 +101,22 @@ function computeFeesWithConfig(amount, rateConfig, railRate, aggSplitPct) {
   return { merchantFee, railCost, netRevenue, aggShare, paylodeMargin };
 }
 
+// ── Card scheme detection (from BIN / first digits) ─────────────────────────
+// Returns VISA | MASTERCARD | AMEX | DINERS | null
+function detectCardScheme(binOrNumber) {
+  if (!binOrNumber) return null;
+  const n = String(binOrNumber).replace(/\D/g, '');
+  if (!n) return null;
+  if (/^4/.test(n)) return 'VISA';
+  if (/^3[47]/.test(n)) return 'AMEX';
+  if (/^3(?:0[0-5]|[68])/.test(n)) return 'DINERS';           // 300-305, 36, 38
+  if (/^5[1-5]/.test(n)) return 'MASTERCARD';
+  if (/^2(?:2[2-9]|[3-6]\d|7[01]|720)/.test(n)) return 'MASTERCARD'; // 2221-2720
+  return null;
+}
+
+const VALID_CARD_SCHEMES = ['VISA', 'MASTERCARD', 'AMEX', 'DINERS'];
+
 // ── Kobo ↔ Naira ──────────────────────────────────────────────────────────
 const koboToNaira = kobo => Number(kobo) / 100;
 const nairaToKobo = naira => BigInt(Math.round(naira * 100));
@@ -151,6 +167,7 @@ function verifyWebhookSig(rawBody, signature, secret) {
 module.exports = {
   ok, created, fail, notFound, unauthorized, forbidden,
   generateRef, computeFees, computeFeesWithConfig, computeProductFee,
+  detectCardScheme, VALID_CARD_SCHEMES,
   koboToNaira, nairaToKobo,
   encrypt, decrypt, hashApiKey, generateApiKey,
   signWebhook, verifyWebhookSig,

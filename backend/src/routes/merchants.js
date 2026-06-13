@@ -342,9 +342,9 @@ router.put('/platform-rates', requireAuth, requireSuperAdmin, async (req, res, n
     } = req.body;
 
     if (!channel) return fail(res, 'channel is required');
-    // Allow custom channels (CUSTOM_*) plus standard ones
-    if (!channel.startsWith('CUSTOM_') && !VALID_CHANNELS.includes(channel))
-      return fail(res, `channel must be one of: ${VALID_CHANNELS.join(', ')}, or start with CUSTOM_`);
+    // Allow custom channels (CUSTOM_*), international-card scheme channels (CARD_INTL_*), plus standard ones
+    if (!channel.startsWith('CUSTOM_') && !channel.startsWith('CARD_INTL_') && !VALID_CHANNELS.includes(channel))
+      return fail(res, `channel must be one of: ${VALID_CHANNELS.join(', ')}, or start with CUSTOM_ / CARD_INTL_`);
     if (!VALID_FEE_MODELS.includes(fee_model))
       return fail(res, `fee_model must be one of: ${VALID_FEE_MODELS.join(', ')}`);
 
@@ -391,7 +391,9 @@ router.delete('/platform-rates/:channel', requireAuth, requireSuperAdmin, async 
     const { channel } = req.params;
     const existing = await prisma.platformRateConfig.findUnique({ where: { channel } });
     if (!existing) return notFound(res, 'Rate config');
-    if (!existing.isCustom) return fail(res, 'Only custom charges can be deleted. Standard product rates can be disabled but not deleted.');
+    // Custom charges and international-card scheme overrides can be deleted; standard products cannot.
+    if (!existing.isCustom && !channel.startsWith('CARD_INTL_'))
+      return fail(res, 'Only custom charges and card-scheme overrides can be deleted. Standard product rates can be disabled but not deleted.');
     await prisma.platformRateConfig.delete({ where: { channel } });
     await logAudit(req.user.id, 'PLATFORM_RATE_DELETED', 'platform_rate_configs', existing.id, existing, null);
     ok(res, null, 'Custom charge deleted');

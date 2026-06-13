@@ -6,6 +6,7 @@ const { requireAuth, requireApiKey, requireCompliance } = require('../middleware
 const {
   ok, fail, notFound, created,
   generateRef, computeFees, computeFeesWithConfig, koboToNaira,
+  detectCardScheme, VALID_CARD_SCHEMES,
 } = require('../utils/helpers');
 const { dispatchWebhook } = require('../services/webhookService');
 const { checkAmlRules }   = require('../services/amlService');
@@ -30,19 +31,47 @@ router.post('/initialize', requireApiKey,
     try {
       const merchant    = req.merchant;
       const isSandbox   = req.isSandbox;
-      const { email, amount, currency='NGN', reference, channels, metadata, callback_url } = req.body;
+      const { email, amount, currency='NGN', reference, channels, metadata, callback_url, card_scheme, card_bin } = req.body;
 
       const channel  = (channels?.[0] || 'CARD').toUpperCase();
       const isUSD    = currency === 'USD';
       const sym      = isUSD ? '$' : '₦';
 
-      // ── Derive the fee PRODUCT from (channel, currency) ──────────────────────
-      // International card = card paid in USD → CARD_INTL. Otherwise map normally.
+      // ── Derive the fee PRODUCT from (channel, currency [, card scheme]) ───────
+      // International card = card paid in USD → CARD_INTL (optionally scheme-specific).
+      // Scheme comes from an explicit card_scheme, or is detected from card_bin.
+      let scheme = null;
       let product;
-      if (channel === 'CARD')              product = isUSD ? 'CARD_INTL' : 'CARD_LOCAL';
+      if (channel === 'CARD' && isUSD) {
+        const raw = (card_scheme || '').toUpperCase() || detectCardScheme(card_bin);
+        scheme = VALID_CARD_SCHEMES.includes(raw) ? raw : null;
+        product = scheme ? ('CARD_INTL_' + scheme) : 'CARD_INTL';
+      } else if (channel === 'CARD')        product = 'CARD_LOCAL';
       else if (channel === 'BANK_TRANSFER') product = 'VIRTUAL_ACCOUNT';
       else if (channel === 'USSD')          product = 'USSD';
       else                                  product = channel;
+
+      // Candidate lookup order: scheme-specific → flat CARD_INTL → (resolver adds 'ALL')
+      const productCandidates = [];
+      if (scheme) productCandidates.push('CARD_INTL_' + scheme);
+      if (channel === 'CARD' && isUSD) productCandidates.push('CARD_INTL');
+      if (!productCandidates.includes(product)) productCandidates.unshift(product);
+
+      // Resolve a config by trying candidates in order, else fall back to 'ALL'.
+      const resolvePlatformRate = async () => {
+        for (const ch of productCandidates) {
+          const r = await prisma.platformRateConfig.findUnique({ where: { channel: ch } });
+          if (r) return r;
+        }
+        return prisma.platformRateConfig.findFirst({ where: { channel: 'ALL' } });
+      };
+      const resolveMerchantRate = async () => {
+        for (const ch of productCandidates) {
+          const r = await prisma.merchantRateConfig.findFirst({ where: { merchantId: merchant.id, channel: ch } });
+          if (r) return r;
+        }
+        return prisma.merchantRateConfig.findFirst({ where: { merchantId: merchant.id, channel: 'ALL' } });
+      };
 
       // ── Limits — applied per currency (NGN tier limits; USD has its own caps) ─
       const today = new Date(); today.setHours(0,0,0,0);
@@ -72,9 +101,8 @@ router.post('/initialize', requireApiKey,
 
       // ── Rail routing: prefer the product's configured default rail, else cheapest LIVE rail for the channel ──
       let rail = null; let railRate = 0;
-      // Exact product rate wins; fall back to the platform 'ALL' default.
-      const platformRate = (await prisma.platformRateConfig.findUnique({ where: { channel: product } }))
-        || (await prisma.platformRateConfig.findFirst({ where: { channel: 'ALL' } }));
+      // Scheme-specific rate wins → flat CARD_INTL → platform 'ALL'.
+      const platformRate = await resolvePlatformRate();
       if (!isSandbox) {
         if (platformRate?.defaultRailId) {
           const dr = await prisma.paymentRail.findUnique({ where: { id: platformRate.defaultRailId } });
@@ -96,9 +124,8 @@ router.post('/initialize', requireApiKey,
       const aggSplitPct = merchant.aggregator ? Number(merchant.aggregator.revenueSplitPct) : 0;
 
       // ── Rate config: per-merchant override → platform product default → legacy ─
-      // Exact product override wins over the merchant's 'ALL' override.
-      const merchantRate = (await prisma.merchantRateConfig.findFirst({ where: { merchantId: merchant.id, channel: product } }))
-        || (await prisma.merchantRateConfig.findFirst({ where: { merchantId: merchant.id, channel: 'ALL' } }));
+      // Scheme-specific override wins → flat product → merchant 'ALL'.
+      const merchantRate = await resolveMerchantRate();
       const rateConfig = merchantRate
         ? { rate: Number(merchantRate.rate), flat_fee: Number(merchantRate.flatFee), cap: Number(merchantRate.cap), min_charge: Number(merchantRate.minCharge), fee_model: merchantRate.feeModel, vat_rate: Number(merchantRate.vatRate) }
         : platformRate
@@ -107,6 +134,9 @@ router.post('/initialize', requireApiKey,
 
       const fees = computeFeesWithConfig(amount, rateConfig, railRate, aggSplitPct);
       const ref  = reference || generateRef(isUSD ? 'TXNUSD' : 'TXN');
+
+      // Which rate config actually applied (scheme-specific, flat, or ALL fallback)
+      const effectiveProduct = merchantRate?.channel || platformRate?.channel || product;
 
       const txn = await prisma.transaction.create({ data: {
         reference:     ref,
@@ -127,7 +157,12 @@ router.post('/initialize', requireApiKey,
           : `https://checkout.paylodeservices.com/pay/${ref}`,
         accessCode:    ref,
         callbackUrl:   callback_url,
-        metadata:      Object.assign({}, metadata || {}, { product, is_international: isUSD }),
+        metadata:      Object.assign({}, metadata || {}, {
+          product:           effectiveProduct,
+          requested_product: product,
+          card_scheme:       scheme,
+          is_international:   isUSD,
+        }),
         isSandbox,
       }});
 
@@ -139,7 +174,8 @@ router.post('/initialize', requireApiKey,
         reference:         txn.reference,
         amount:            Number(txn.amount),
         currency,
-        product,
+        product:           effectiveProduct,
+        card_scheme:       scheme,
         is_international:  isUSD,
         sandbox:           isSandbox,
         fee_preview: {

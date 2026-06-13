@@ -2302,6 +2302,44 @@ async function loadFeeConfig() {
       '</div>';
     }
 
+    // International card SCHEME overrides (Visa / Mastercard / Amex / Diners).
+    // Each can carry its own rate; if unset, the flat International Card rate applies.
+    function schemePanel() {
+      var flat = rates.find(function(r){ return r.channel === 'CARD_INTL'; });
+      var flatPct = flat ? (Number(flat.rate)*100).toFixed(2) + '%' : '3.50%';
+      var schemes = [
+        ['VISA','Visa','#1a1f71'], ['MASTERCARD','Mastercard','#eb001b'],
+        ['AMEX','American Express','#2e77bc'], ['DINERS','Diners Club','#0079be'],
+      ];
+      var cards = schemes.map(function(sc) {
+        var ch = 'CARD_INTL_' + sc[0];
+        var cfg = rates.find(function(r){ return r.channel === ch; });
+        var feeModelTxt = cfg ? (Number(cfg.rate)*100).toFixed(2) + '%' +
+            (cfg.flat_fee>0 ? ' + $' + (cfg.flat_fee/100).toFixed(2) : '') +
+            (cfg.cap>0 ? ' (cap $' + (cfg.cap/100).toFixed(2) + ')' : '')
+          : null;
+        return '<div style="border:1px solid var(--gray-200);border-radius:10px;padding:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">' +
+          '<div style="display:flex;align-items:center;gap:10px">' +
+            '<span style="width:8px;height:8px;border-radius:50%;background:' + sc[2] + '"></span>' +
+            '<div><div style="font-weight:700;font-size:13px">' + sc[1] + '</div>' +
+            (cfg
+              ? '<div style="font-size:12px;color:#1e40af">Custom rate: <strong>' + feeModelTxt + '</strong> · USD</div>'
+              : '<div style="font-size:12px;color:var(--gray-400)">Uses flat International rate (' + flatPct + ')</div>') +
+            '</div></div>' +
+          '<div style="display:flex;gap:6px">' +
+            '<button class="btn btn-outline btn-sm" onclick="editCardScheme(\'' + sc[0] + '\',\'' + sc[1] + '\')">' + (cfg ? '✎ Edit' : '+ Set rate') + '</button>' +
+            (cfg ? '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="clearCardScheme(\'' + sc[0] + '\',\'' + sc[1] + '\')">Revert to flat</button>' : '') +
+          '</div>' +
+        '</div>';
+      }).join('');
+      return '<div class="section-gap"><div style="margin-bottom:12px">' +
+          '<div style="font-size:15px;font-weight:700;color:var(--gray-800)">🌍 International Card Schemes (USD)</div>' +
+          '<div style="font-size:12px;color:var(--gray-500);margin-top:2px">Optionally charge different rates per scheme. Visa, Mastercard, Amex and Diners often have different scheme fees. Unset schemes use the flat International Card rate (' + flatPct + ').</div>' +
+        '</div>' +
+        '<div class="card" style="border:1px solid #bfdbfe;display:flex;flex-direction:column;gap:10px">' + cards + '</div>' +
+      '</div>';
+    }
+
     el.innerHTML =
       '<div class="page-header flex-between"><div>' +
         '<div class="page-title">Fee Configuration</div>' +
@@ -2319,6 +2357,8 @@ async function loadFeeConfig() {
 
       section('Card Payments', '&#9879;', 'Fees applied when merchants accept card payments. Separate rates for local and international cards.',
         'CARDS', 'No card rates configured.') +
+
+      schemePanel() +
 
       section('Virtual Accounts / Bank Transfer', '&#8960;', 'Fees applied when merchants receive money via bank transfer to a virtual account.',
         'VIRTUAL_ACCOUNT', 'No virtual account rates configured.') +
@@ -2537,6 +2577,75 @@ async function deletePlatformRate(channel, label) {
   var res = await apiFetch('/merchants/platform-rates/' + encodeURIComponent(channel), { method: 'DELETE' });
   if (res && res.status) { loadFeeConfig(); }
   else alert('Error: ' + ((res && res.message) || 'Delete failed'));
+}
+
+// ── International card scheme rates (Visa / Mastercard / Amex / Diners) ────────
+function editCardScheme(scheme, label) {
+  var rates = window._feeConfigRates || [];
+  var ch = 'CARD_INTL_' + scheme;
+  var cfg = rates.find(function(x){ return x.channel === ch; });
+  var flat = rates.find(function(x){ return x.channel === 'CARD_INTL'; }) || {};
+  // Prefill from existing scheme config, else from the flat international rate as a starting point.
+  var src = cfg || flat;
+
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">' + label + ' rate (International, USD)</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:12px">Set a rate that applies only to <strong>' + label + '</strong> international cards. All amounts are in <strong>USD</strong>. Leave or revert to use the flat International Card rate.</div>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Fee Model</label>' +
+    '<select class="form-input form-select" id="cs-model">' +
+      ['PCT','FLAT','PCT_PLUS_FLAT','GREATER_OF'].map(function(m){
+        var labels={PCT:'% of Amount',FLAT:'Flat Fee Only',PCT_PLUS_FLAT:'% + Flat Fee',GREATER_OF:'Greater of % or Flat'};
+        return '<option value="'+m+'"'+((src.fee_model||'PCT')===m?' selected':'')+'>'+labels[m]+'</option>';
+      }).join('') + '</select></div>' +
+    '<div class="form-group"><label class="form-label">VAT Rate (e.g. 0.075)</label>' +
+    '<input class="form-input" type="number" id="cs-vat" step="0.001" min="0" max="1" value="' + (Number(src.vat_rate)||0.075) + '"></div>' +
+    '</div>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Rate (%) — e.g. 3.9</label>' +
+    '<input class="form-input" type="number" id="cs-rate" step="0.01" min="0" max="100" value="' + ((Number(src.rate)||0.035)*100).toFixed(2) + '"></div>' +
+    '<div class="form-group"><label class="form-label">Flat Fee ($)</label>' +
+    '<input class="form-input" type="number" id="cs-flat" step="0.01" min="0" value="' + (Number(src.flat_fee||0)/100).toFixed(2) + '"></div>' +
+    '</div>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Min Charge ($, 0=none)</label>' +
+    '<input class="form-input" type="number" id="cs-min" step="0.01" min="0" value="' + (Number(src.min_charge||0)/100).toFixed(2) + '"></div>' +
+    '<div class="form-group"><label class="form-label">Max Charge / Cap ($, 0=none)</label>' +
+    '<input class="form-input" type="number" id="cs-cap" step="0.01" min="0" value="' + (Number(src.cap||0)/100).toFixed(2) + '"></div>' +
+    '</div>' +
+    '<div class="flex-between">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" onclick="saveCardScheme(\'' + scheme + '\',\'' + label.replace(/\'/g,"") + '\')">Save ' + label + ' rate</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function saveCardScheme(scheme, label) {
+  var rate  = parseFloat(document.getElementById('cs-rate').value) / 100;
+  var flat  = Math.round(parseFloat(document.getElementById('cs-flat').value || 0) * 100);
+  var minC  = Math.round(parseFloat(document.getElementById('cs-min').value  || 0) * 100);
+  var cap   = Math.round(parseFloat(document.getElementById('cs-cap').value  || 0) * 100);
+  var vat   = parseFloat(document.getElementById('cs-vat').value || 0.075);
+  var model = document.getElementById('cs-model').value;
+  if (isNaN(rate)) { alert('Enter a valid rate'); return; }
+  var res = await apiFetch('/merchants/platform-rates', {
+    method: 'PUT',
+    body: JSON.stringify({
+      channel: 'CARD_INTL_' + scheme, product_group: 'CARDS', fee_model: model,
+      rate: rate, flat_fee: flat, min_charge: minC, cap: cap, vat_rate: vat,
+      label: label + ' (International)', description: label + ' international card rate (USD)',
+    }),
+  });
+  if (res && res.status) { document.getElementById('modal').style.display = 'none'; loadFeeConfig(); }
+  else alert('Error: ' + ((res && res.message) || 'Save failed'));
+}
+
+async function clearCardScheme(scheme, label) {
+  if (!confirm('Revert ' + label + ' to the flat International Card rate?\nThe ' + label + '-specific rate will be removed.')) return;
+  var res = await apiFetch('/merchants/platform-rates/CARD_INTL_' + scheme, { method: 'DELETE' });
+  if (res && res.status) { loadFeeConfig(); }
+  else alert('Error: ' + ((res && res.message) || 'Failed'));
 }
 
 // ── PAYOUT LOGS (merchant + super admin) ─────────────────────────────────────
