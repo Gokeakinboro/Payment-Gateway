@@ -431,22 +431,24 @@ model MerchantRateConfig {
 // Super admin sets these; used as fallback when no per-merchant rate config exists.
 model PlatformRateConfig {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  channel      String   @unique  // CARD_LOCAL | CARD_INTL | VIRTUAL_ACCOUNT | USSD | PAYOUT | CUSTOM_*
-  productGroup String   @default("OTHER") @map("product_group")  // CARDS | VIRTUAL_ACCOUNT | PAYOUT | CUSTOM
-  feeModel     String   @default("PCT") @map("fee_model")        // PCT | FLAT | PCT_PLUS_FLAT | GREATER_OF
-  rate         Decimal  @default(0) @db.Decimal(7, 5)            // e.g. 0.01500 = 1.5%
-  flatFee      BigInt   @default(0) @map("flat_fee")             // kobo
-  cap          BigInt   @default(0)                               // kobo max fee, 0 = no cap
-  minCharge    BigInt   @default(0) @map("min_charge")            // kobo min fee, 0 = no minimum
-  vatRate      Decimal  @default(0.075) @map("vat_rate") @db.Decimal(5, 4)  // 7.5% statutory VAT
-  label        String?                                            // display name
-  description  String?                                            // what this charge is for
-  isActive     Boolean  @default(true) @map("is_active")
-  isCustom     Boolean  @default(false) @map("is_custom")        // custom charges added by admin
-  notes        String?
-  setBy        String?  @map("set_by") @db.Uuid
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  channel       String   @unique  // CARD_LOCAL | CARD_INTL | VIRTUAL_ACCOUNT | USSD | PAYOUT | CUSTOM_*
+  productGroup  String   @default("OTHER") @map("product_group")  // CARDS | VIRTUAL_ACCOUNT | PAYOUT | CUSTOM
+  feeModel      String   @default("PCT") @map("fee_model")        // PCT | FLAT | PCT_PLUS_FLAT | GREATER_OF
+  rate          Decimal  @default(0) @db.Decimal(7, 5)            // e.g. 0.01500 = 1.5%
+  flatFee       BigInt   @default(0) @map("flat_fee")             // kobo
+  cap           BigInt   @default(0)                               // kobo max fee, 0 = no cap
+  minCharge     BigInt   @default(0) @map("min_charge")            // kobo min fee, 0 = no minimum
+  vatRate       Decimal  @default(0.075) @map("vat_rate") @db.Decimal(5, 4)  // 7.5% statutory VAT
+  defaultRailId String?  @map("default_rail_id") @db.Uuid         // which rail processes this product by default
+  txnChannel    String?  @map("txn_channel")                      // maps product to Channel enum (CARD|BANK_TRANSFER|USSD|DIRECT_DEBIT)
+  label         String?                                            // display name
+  description   String?                                            // what this charge is for
+  isActive      Boolean  @default(true) @map("is_active")
+  isCustom      Boolean  @default(false) @map("is_custom")        // custom charges added by admin
+  notes         String?
+  setBy         String?  @map("set_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   @@map("platform_rate_configs")
 }

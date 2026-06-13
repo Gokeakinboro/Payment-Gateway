@@ -545,4 +545,78 @@ router.post('/statement-email', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── GET /api/v1/reports/rail-settlement ───────────────────────────────────────
+// Settlement breakdown grouped by RAIL and PRODUCT (channel). Super admin / compliance.
+router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { from, to } = req.query;
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const toDate   = to   ? new Date(to + 'T23:59:59Z') : new Date();
+
+    // Per rail + channel breakdown (successful, non-sandbox)
+    const rows = await prisma.$queryRaw`
+      SELECT
+        COALESCE(pr.name, 'Unrouted / Pending') AS rail_name,
+        pr.status                               AS rail_status,
+        t.channel::text                         AS product,
+        COUNT(*)::int                           AS txn_count,
+        SUM(t.amount)::bigint                    AS volume,
+        SUM(t.merchant_fee)::bigint             AS fee_revenue,
+        SUM(t.rail_cost)::bigint                AS rail_cost,
+        SUM(t.paylode_margin)::bigint           AS paylode_margin
+      FROM transactions t
+      LEFT JOIN payment_rails pr ON t.rail_id = pr.id
+      WHERE t.status = 'SUCCESS'
+        AND t.is_sandbox = false
+        AND t.created_at >= ${fromDate}
+        AND t.created_at <= ${toDate}
+      GROUP BY pr.name, pr.status, t.channel
+      ORDER BY pr.name NULLS LAST, t.channel
+    `;
+
+    // Per-rail rollup
+    const railTotals = await prisma.$queryRaw`
+      SELECT
+        COALESCE(pr.name, 'Unrouted / Pending') AS rail_name,
+        COUNT(*)::int                           AS txn_count,
+        SUM(t.amount)::bigint                    AS volume,
+        SUM(t.merchant_fee)::bigint             AS fee_revenue,
+        SUM(t.rail_cost)::bigint                AS rail_cost,
+        SUM(t.paylode_margin)::bigint           AS paylode_margin
+      FROM transactions t
+      LEFT JOIN payment_rails pr ON t.rail_id = pr.id
+      WHERE t.status = 'SUCCESS'
+        AND t.is_sandbox = false
+        AND t.created_at >= ${fromDate}
+        AND t.created_at <= ${toDate}
+      GROUP BY pr.name
+      ORDER BY SUM(t.amount) DESC NULLS LAST
+    `;
+
+    const ser = r => ({
+      rail_name:         r.rail_name,
+      rail_status:       r.rail_status || null,
+      product:           r.product || null,
+      txn_count:         Number(r.txn_count || 0),
+      volume_naira:      koboToNaira(r.volume || 0),
+      fee_revenue_naira: koboToNaira(r.fee_revenue || 0),
+      rail_cost_naira:   koboToNaira(r.rail_cost || 0),
+      margin_naira:      koboToNaira(r.paylode_margin || 0),
+    });
+
+    ok(res, {
+      period:      { from: fromDate, to: toDate },
+      by_rail_product: rows.map(ser),
+      by_rail:     railTotals.map(ser),
+      totals: {
+        txn_count:         rows.reduce((s, r) => s + Number(r.txn_count || 0), 0),
+        volume_naira:      koboToNaira(rows.reduce((s, r) => s + BigInt(r.volume || 0), 0n)),
+        fee_revenue_naira: koboToNaira(rows.reduce((s, r) => s + BigInt(r.fee_revenue || 0), 0n)),
+        rail_cost_naira:   koboToNaira(rows.reduce((s, r) => s + BigInt(r.rail_cost || 0), 0n)),
+        margin_naira:      koboToNaira(rows.reduce((s, r) => s + BigInt(r.paylode_margin || 0), 0n)),
+      },
+    });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;

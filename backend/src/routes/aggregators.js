@@ -100,6 +100,18 @@ aggRouter.delete('/:id/rates/:merchantId', requireAuth, requireSuperAdmin, async
 
 // ── Aggregator self-service ───────────────────────────────────────────────────
 
+// ── GET /api/v1/aggregators/:id/merchants — super admin views an aggregator's merchants ──
+aggRouter.get('/:id/merchants', requireAuth, requireSuperAdmin, async (req,res,next) => {
+  try {
+    const merchants = await prisma.merchant.findMany({
+      where: { aggregatorId: req.params.id, isOutlet: false },
+      orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { outlets: true } } },
+    });
+    ok(res, merchants);
+  } catch(e){ next(e); }
+});
+
 aggRouter.get('/my/merchants', requireAuth, requireAggregator, async (req,res,next) => {
   try {
     const agg = req.user.aggregator;

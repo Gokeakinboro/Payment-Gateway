@@ -313,15 +313,21 @@ router.put('/me/settlement', requireAuth, async (req, res, next) => {
 
 // ── Platform-wide default rate configs ───────────────────────────────────────
 // GET /api/v1/merchants/platform-rates — any authenticated user can read defaults
+// Response includes the available rails so the UI can render a "default rail" selector.
 router.get('/platform-rates', requireAuth, async (req, res, next) => {
   try {
     const { group } = req.query;
     const where = group ? { productGroup: group } : {};
-    const rates = await prisma.platformRateConfig.findMany({
-      where,
-      orderBy: [{ productGroup: 'asc' }, { channel: 'asc' }],
+    const [rates, rails] = await Promise.all([
+      prisma.platformRateConfig.findMany({ where, orderBy: [{ productGroup: 'asc' }, { channel: 'asc' }] }),
+      prisma.paymentRail.findMany({ select: { id: true, name: true, status: true }, orderBy: { name: 'asc' } }),
+    ]);
+    const railMap = {};
+    rails.forEach(r => { railMap[r.id] = r.name; });
+    ok(res, {
+      rates: rates.map(r => _serializeRate(r, railMap)),
+      rails: rails.map(r => ({ id: r.id, name: r.name, status: r.status })),
     });
-    ok(res, rates.map(_serializeRate));
   } catch (e) { next(e); }
 });
 
@@ -332,7 +338,7 @@ router.put('/platform-rates', requireAuth, requireSuperAdmin, async (req, res, n
       channel, rate = 0, flat_fee = 0, cap = 0, min_charge = 0,
       fee_model = 'PCT', vat_rate = 0.075,
       product_group = 'OTHER', label, description, notes,
-      is_custom = false,
+      is_custom = false, default_rail_id, txn_channel,
     } = req.body;
 
     if (!channel) return fail(res, 'channel is required');
@@ -350,18 +356,20 @@ router.put('/platform-rates', requireAuth, requireSuperAdmin, async (req, res, n
       return fail(res, 'vat_rate must be between 0 and 1.0');
 
     const data = {
-      productGroup: product_group,
-      feeModel:     fee_model,
-      rate:         rateNum,
-      flatFee:      BigInt(Math.round(Number(flat_fee))),
-      cap:          BigInt(Math.round(Number(cap))),
-      minCharge:    BigInt(Math.round(Number(min_charge))),
-      vatRate:      vatRateNum,
+      productGroup:  product_group,
+      feeModel:      fee_model,
+      rate:          rateNum,
+      flatFee:       BigInt(Math.round(Number(flat_fee))),
+      cap:           BigInt(Math.round(Number(cap))),
+      minCharge:     BigInt(Math.round(Number(min_charge))),
+      vatRate:       vatRateNum,
+      defaultRailId: default_rail_id || null,
+      txnChannel:    txn_channel || null,
       label,
       description,
       notes,
-      isCustom:     Boolean(is_custom),
-      setBy:        req.user.id,
+      isCustom:      Boolean(is_custom),
+      setBy:         req.user.id,
     };
 
     const config = await prisma.platformRateConfig.upsert({
@@ -391,7 +399,7 @@ router.delete('/platform-rates/:channel', requireAuth, requireSuperAdmin, async 
 });
 
 // Helper to serialize a rate config for API responses
-function _serializeRate(r) {
+function _serializeRate(r, railMap = {}) {
   return {
     id:               r.id,
     channel:          r.channel,
@@ -412,6 +420,9 @@ function _serializeRate(r) {
     min_charge_naira: Number(r.minCharge) / 100,
     vat_rate:         Number(r.vatRate),
     vat_rate_pct:     (Number(r.vatRate) * 100).toFixed(1) + '%',
+    default_rail_id:  r.defaultRailId || null,
+    default_rail_name:r.defaultRailId ? (railMap[r.defaultRailId] || null) : null,
+    txn_channel:      r.txnChannel || null,
     set_by:           r.setBy,
     updated_at:       r.updatedAt,
   };
@@ -435,6 +446,44 @@ router.post('/:id/api-keys/rotate', requireAuth, async (req, res, next) => {
     const newKey = generateApiKey(prefix);
     await prisma.apiKey.create({ data:{ merchantId, keyHash:hashApiKey(newKey), keyPrefix:prefix, label:req.body.label||'Rotated Key', isSandbox:prefix.includes('test') } });
     ok(res, { key:newKey, prefix, message:'Key rotated. Save this — it will not be shown again.' });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/merchants/me — current merchant's own full profile ────────────
+// MUST be registered before GET /:id so "me" is not treated as a UUID.
+router.get('/me', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account on this user');
+    const m = await prisma.merchant.findUnique({
+      where: { id: merchantId },
+      include: {
+        aggregator: { select: { companyName: true } },
+        user:       { select: { email: true, firstName: true, lastName: true } },
+      },
+    });
+    if (!m) return notFound(res, 'Merchant');
+    ok(res, m);
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/merchants/:id — single merchant detail (admin / staff) ─────────
+router.get('/:id', requireAuth, async (req, res, next) => {
+  try {
+    // Merchants may only read their own record
+    if (req.user.role === 'MERCHANT' && req.user.merchant?.id !== req.params.id)
+      return fail(res, 'You can only view your own merchant profile', 'FORBIDDEN', 403);
+
+    const m = await prisma.merchant.findUnique({
+      where: { id: req.params.id },
+      include: {
+        aggregator: { select: { id: true, companyName: true } },
+        user:       { select: { email: true, firstName: true, lastName: true } },
+        _count:     { select: { outlets: true, transactions: true } },
+      },
+    });
+    if (!m) return notFound(res, 'Merchant');
+    ok(res, m);
   } catch (e) { next(e); }
 });
 

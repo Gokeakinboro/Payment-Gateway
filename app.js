@@ -54,8 +54,9 @@ var NAV = {
       {id:'overview',        icon:'◉', label:'Dashboard'       },
       {id:'transactions',    icon:'↕', label:'Transactions'    },
       {id:'settlement',      icon:'✓', label:'Settlements'     },
+      {id:'rail_settlement', icon:'⊞', label:'Rail Settlement' },
       {id:'payout_report',   icon:'⇄', label:'Payout Report'   },
-      {id:'revenue',         icon:'₦', label:'Revenue'         },
+      {id:'revenue',         icon:'₦', label:'Revenue Report'  },
       {id:'compliance',      icon:'⚖', label:'Compliance'      },
     ]},
     { section:'SYSTEM CONFIG', items:[

@@ -935,22 +935,35 @@ async function loadRevenueReport() {
     const rows = rev?.data?.data || [];
     const aggRows = agg?.data?.data || [];
 
+    const totalGross  = rows.reduce((s,r)=>s+(Number(r.gross_revenue)||0),0);
+    const totalMargin = rows.reduce((s,r)=>s+(Number(r.paylode_margin)||0),0);
+
     el.innerHTML = `
-    <div class="page-header">
-      <div class="page-title">Revenue Configuration & Reports</div>
-      <div class="page-desc">Current month — ${from} to ${to}</div>
+    <div class="page-header flex-between">
+      <div>
+        <div class="page-title">Revenue Report</div>
+        <div class="page-desc">Earnings this month — ${from} to ${to}</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="navigate('fee_config')">⚙ Configure Rates →</button>
+    </div>
+    <div class="info-box" style="margin-bottom:16px;font-size:12px">This page <strong>reports</strong> revenue already earned. To set or change merchant fees and rates, use <strong>Fee Configuration</strong> under System Config.</div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-label">Gross Revenue (MTD)</div><div class="stat-value">${fmtNaira(totalGross*100)}</div></div>
+      <div class="stat-card"><div class="stat-label">Paylode Margin (MTD)</div><div class="stat-value text-lime">${fmtNaira(totalMargin*100)}</div></div>
+      <div class="stat-card"><div class="stat-label">Aggregator Payouts Due</div><div class="stat-value">${fmtNaira(aggRows.reduce((s,a)=>s+(Number(a.agg_payout_due)||0),0)*100)}</div></div>
+      <div class="stat-card"><div class="stat-label">Reporting Days</div><div class="stat-value">${rows.length}</div></div>
     </div>
     <div class="grid-2">
       <div class="card">
-        <div class="card-header"><div class="card-title">Monthly Revenue Breakdown</div></div>
-        ${rows.length ? rows.slice(0,10).map(r => `
+        <div class="card-header"><div class="card-title">Daily Revenue Breakdown</div></div>
+        ${rows.length ? rows.slice(0,12).map(r => `
         <div class="rev-row">
           <span class="rev-label">${r.period?.slice(0,10)||'—'} · ${r.channel}</span>
           <div style="text-align:right">
             <div style="font-weight:600;font-size:13px">${fmtNaira(r.gross_revenue*100)}</div>
             <div style="font-size:11px;color:var(--gray-400)">Margin: ${fmtNaira(r.paylode_margin*100)}</div>
           </div>
-        </div>`).join('') : '<div style="color:var(--gray-400);padding:16px;text-align:center">No revenue data yet</div>'}
+        </div>`).join('') : '<div style="color:var(--gray-400);padding:24px;text-align:center">No transactions recorded this month yet.<br><span style="font-size:12px">Revenue appears here once merchants start transacting.</span></div>'}
       </div>
       <div class="card">
         <div class="card-header"><div class="card-title">Aggregator Revenue Share</div></div>
@@ -964,7 +977,7 @@ async function loadRevenueReport() {
             <div style="font-weight:600;font-size:13px">${fmtNaira(a.agg_payout_due*100)}</div>
             <div style="font-size:11px;color:var(--gray-400)">Due this month</div>
           </div>
-        </div>`).join('') : '<div style="color:var(--gray-400);padding:16px;text-align:center">No aggregator data yet</div>'}
+        </div>`).join('') : '<div style="color:var(--gray-400);padding:24px;text-align:center">No aggregator payouts due this month.<br><span style="font-size:12px">Shares appear once aggregator-linked merchants transact.</span></div>'}
       </div>
     </div>`;
   } catch(e) {
@@ -1995,6 +2008,91 @@ async function setUserStatus(id, action) {
   else alert('Error: ' + ((res && res.message) || 'Action failed'));
 }
 
+// ── RAIL SETTLEMENT REPORT (by rail + product) ───────────────────────────────
+async function loadRailSettlement() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var now = new Date();
+    var from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    var to   = now.toISOString().split('T')[0];
+
+    var res = await apiFetch('/reports/rail-settlement?from=' + from + '&to=' + to);
+    if (!res || !res.data) { el.innerHTML = errorBox('Could not load rail settlement report'); return; }
+    var d = res.data;
+    var t = d.totals || {};
+    var byRail = d.by_rail || [];
+    var byRailProduct = d.by_rail_product || [];
+
+    function naira(n) { return fmtNaira((n||0)*100); }
+    var prodLabel = { CARD:'Cards', BANK_TRANSFER:'Virtual Account / Transfer', USSD:'USSD', DIRECT_DEBIT:'Direct Debit' };
+
+    // Group product rows under each rail
+    var railSections = byRail.map(function(rail) {
+      var products = byRailProduct.filter(function(p) { return p.rail_name === rail.rail_name; });
+      var prows = products.map(function(p) {
+        return '<tr>' +
+          '<td style="padding-left:24px"><span class="tag">' + (prodLabel[p.product] || p.product || '—') + '</span></td>' +
+          '<td style="text-align:center">' + fmtNum(p.txn_count) + '</td>' +
+          '<td class="mono">' + naira(p.volume_naira) + '</td>' +
+          '<td class="mono text-lime">' + naira(p.fee_revenue_naira) + '</td>' +
+          '<td class="mono text-red">' + naira(p.rail_cost_naira) + '</td>' +
+          '<td class="mono" style="font-weight:600">' + naira(p.margin_naira) + '</td>' +
+        '</tr>';
+      }).join('');
+      return '<tr style="background:var(--gray-50)">' +
+          '<td style="font-weight:700">' + rail.rail_name + (rail.rail_status ? ' <span class="badge badge-gray" style="font-size:10px">' + rail.rail_status + '</span>' : '') + '</td>' +
+          '<td style="text-align:center;font-weight:700">' + fmtNum(rail.txn_count) + '</td>' +
+          '<td class="mono" style="font-weight:700">' + naira(rail.volume_naira) + '</td>' +
+          '<td class="mono text-lime" style="font-weight:700">' + naira(rail.fee_revenue_naira) + '</td>' +
+          '<td class="mono text-red" style="font-weight:700">' + naira(rail.rail_cost_naira) + '</td>' +
+          '<td class="mono" style="font-weight:700">' + naira(rail.margin_naira) + '</td>' +
+        '</tr>' + prows;
+    }).join('');
+
+    el.innerHTML =
+      '<div class="page-header flex-between"><div>' +
+        '<div class="page-title">Rail Settlement Report</div>' +
+        '<div class="page-desc">Earnings broken down by payment rail and product — ' + from + ' to ' + to + '</div>' +
+      '</div>' +
+        '<button class="btn btn-outline btn-sm" onclick="exportRailSettlement()">&#8681; Export CSV</button>' +
+      '</div>' +
+      '<div class="stats-grid">' +
+        '<div class="stat-card"><div class="stat-label">Total Volume</div><div class="stat-value">' + naira(t.volume_naira) + '</div><div class="stat-sub">' + fmtNum(t.txn_count||0) + ' transactions</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Fee Revenue</div><div class="stat-value text-lime">' + naira(t.fee_revenue_naira) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Rail Costs</div><div class="stat-value text-red">' + naira(t.rail_cost_naira) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Paylode Margin</div><div class="stat-value">' + naira(t.margin_naira) + '</div></div>' +
+      '</div>' +
+      '<div class="card"><div class="card-header"><div class="card-title">By Rail &amp; Product</div>' +
+        '<div style="font-size:11px;color:var(--gray-400)">Bold rows = rail totals · indented = product on that rail</div></div>' +
+        '<div class="table-wrap"><table>' +
+          '<thead><tr><th>Rail / Product</th><th>Txns</th><th>Volume</th><th>Fee Revenue</th><th>Rail Cost</th><th>Margin</th></tr></thead>' +
+          '<tbody>' + (railSections || '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">No settled transactions this period.<br><span style="font-size:12px">Rail breakdown appears once live transactions are processed through configured rails.</span></td></tr>') + '</tbody>' +
+        '</table></div>' +
+      '</div>';
+
+    window._railSettlementData = d;
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load rail settlement: ' + e.message);
+  }
+}
+
+function exportRailSettlement() {
+  var d = window._railSettlementData;
+  if (!d) { alert('No data to export'); return; }
+  var headers = ['Rail','Product','Txns','Volume (NGN)','Fee Revenue (NGN)','Rail Cost (NGN)','Margin (NGN)'];
+  var rows = (d.by_rail_product || []).map(function(p) {
+    return [p.rail_name, p.product||'', p.txn_count, p.volume_naira, p.fee_revenue_naira, p.rail_cost_naira, p.margin_naira];
+  });
+  var csv = [headers].concat(rows).map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
+  var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'rail-settlement-' + new Date().toISOString().split('T')[0] + '.csv';
+  a.click();
+}
+
 // ── FEE CONFIGURATION PAGE ───────────────────────────────────────────────────
 async function loadFeeConfig() {
   var el = document.getElementById('main-content');
@@ -2003,7 +2101,11 @@ async function loadFeeConfig() {
   try {
     var res = await apiFetch('/merchants/platform-rates');
     if (!res || !res.data) { el.innerHTML = errorBox('Could not load fee configuration'); return; }
-    var rates = res.data;
+    // New response shape: { rates:[], rails:[] }. Fall back to array for safety.
+    var payload = res.data;
+    var rates = Array.isArray(payload) ? payload : (payload.rates || []);
+    var rails = Array.isArray(payload) ? [] : (payload.rails || []);
+    window._feeConfigRails = rails;
 
     function byGroup(group) { return rates.filter(function(r) { return r.product_group === group; }); }
     function naira(kobo) { return kobo > 0 ? '&#8358;' + (kobo/100).toLocaleString(undefined,{minimumFractionDigits:2}) : '—'; }
@@ -2045,6 +2147,7 @@ async function loadFeeConfig() {
             (r.min_charge > 0 ? '<span class="badge badge-lime">Min: &#8358;' + (r.min_charge/100).toLocaleString() + '</span>' : '') +
             (r.cap > 0 ? '<span class="badge badge-amber">Cap: &#8358;' + (r.cap/100).toLocaleString() + '</span>' : '') +
             '<span class="badge badge-gray">VAT: ' + vatPct + '%</span>' +
+            (r.default_rail_name ? '<span class="badge badge-green">Rail: ' + r.default_rail_name + '</span>' : (r.product_group !== 'CUSTOM' ? '<span class="badge badge-red">No rail set</span>' : '')) +
           '</div>' +
           exampleCalc(r) +
         '</div>' +
@@ -2139,6 +2242,25 @@ function editPlatformRate(channel) {
     '<div class="form-group"><label class="form-label">Internal Notes</label>' +
     '<input class="form-input" id="pr-notes" value="' + (r.notes||'') + '"></div>' +
 
+    '<div class="divider"></div>' +
+    '<div style="font-weight:600;font-size:13px;margin-bottom:8px">Rail Routing</div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:12px">Choose which payment rail processes this product by default. This rail\'s cost is deducted from the fee, and the settlement report groups earnings by rail.</div>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label class="form-label">Default Rail for this product</label>' +
+    '<select class="form-input form-select" id="pr-rail">' +
+      '<option value="">— No rail assigned —</option>' +
+      (window._feeConfigRails || []).map(function(rl) {
+        return '<option value="' + rl.id + '"' + (r.default_rail_id === rl.id ? ' selected' : '') + '>' + rl.name + ' (' + rl.status + ')</option>';
+      }).join('') +
+    '</select></div>' +
+    '<div class="form-group"><label class="form-label">Settles as Channel</label>' +
+    '<select class="form-input form-select" id="pr-txnchannel">' +
+      ['', 'CARD', 'BANK_TRANSFER', 'USSD', 'DIRECT_DEBIT'].map(function(c) {
+        return '<option value="' + c + '"' + (r.txn_channel === c ? ' selected' : '') + '>' + (c || '— Auto —') + '</option>';
+      }).join('') +
+    '</select></div>' +
+    '</div>' +
+
     '<div style="background:var(--gray-100);border-radius:8px;padding:12px;margin-bottom:16px" id="pr-preview">' +
     '<div style="font-size:11px;color:var(--gray-500);margin-bottom:4px">Live preview (₦10,000 transaction)</div>' +
     '<div id="pr-preview-val" style="font-size:13px;font-weight:600">—</div></div>' +
@@ -2190,6 +2312,10 @@ async function savePlatformRate(channel, productGroup) {
   var label = document.getElementById('pr-label').value;
   var desc  = document.getElementById('pr-desc').value;
   var notes = document.getElementById('pr-notes').value;
+  var railEl = document.getElementById('pr-rail');
+  var chEl   = document.getElementById('pr-txnchannel');
+  var defaultRailId = railEl ? (railEl.value || null) : null;
+  var txnChannel    = chEl ? (chEl.value || null) : null;
 
   if (isNaN(rate)) { alert('Enter a valid rate'); return; }
 
@@ -2199,6 +2325,7 @@ async function savePlatformRate(channel, productGroup) {
       channel, product_group: productGroup, fee_model: model,
       rate, flat_fee: flat, min_charge: minC, cap,
       vat_rate: vat, label, description: desc, notes,
+      default_rail_id: defaultRailId, txn_channel: txnChannel,
     }),
   });
   if (res && res.status) {
@@ -3482,6 +3609,7 @@ loadPageData = function(page) {
     case 'payout_report':        loadPayoutReport(); break;
     case 'payout_logs':          loadPayoutLogs(); break;
     case 'fee_config':           loadFeeConfig(); break;
+    case 'rail_settlement':      loadRailSettlement(); break;
     case 'rails':                loadRails(); break;
     case 'wallets':              loadWallets(); break;
     case 'product_revenue':      loadProductRevenue(); break;
