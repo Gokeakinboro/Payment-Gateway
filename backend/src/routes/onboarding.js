@@ -9,6 +9,7 @@ const { ok, fail, created, generateApiKey, hashApiKey } = require('../utils/help
 const { sendEmail, getEmailContent } = require('../services/emailService');
 const { logger } = require('../utils/logger');
 const { requireAuth, requireCompliance } = require('../middleware/auth');
+const { CHECK_ITEMS } = require('./documents');
 
 // Required documents seeded into kyc_documents when a merchant is provisioned,
 // keyed by entity sub-type. Uploaded application docs are marked 'submitted'.
@@ -360,6 +361,13 @@ async function provisionMerchant(tx, sub) {
     await tx.$executeRaw`
       INSERT INTO kyc_documents (entity_type, entity_id, doc_key, doc_label, status)
       VALUES ('merchant', ${merchant.id}::uuid, ${key}, ${label}, ${st})
+      ON CONFLICT (entity_type, entity_id, doc_key) DO NOTHING`;
+  }
+  // Seed the automated verification checks (BVN/NIN/address/TIN/CAC/ID).
+  for (const c of (CHECK_ITEMS || [])) {
+    await tx.$executeRaw`
+      INSERT INTO kyc_documents (entity_type, entity_id, doc_key, doc_label, status)
+      VALUES ('merchant', ${merchant.id}::uuid, ${c.k}, ${c.l}, 'outstanding')
       ON CONFLICT (entity_type, entity_id, doc_key) DO NOTHING`;
   }
 

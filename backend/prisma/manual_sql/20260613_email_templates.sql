@@ -38,5 +38,9 @@ INSERT INTO email_templates (slug, name, subject, html_body, variables, is_syste
 ('aggregator_welcome', 'Aggregator — Welcome',
  'Your Paylode aggregator account — first-time sign-in',
  '<h2>Welcome to Paylode</h2><p>An aggregator account for <strong>{{business}}</strong> has been created.</p><p>Sign in at <a href="{{login_url}}">the portal</a> with <strong>{{email}}</strong> and temporary password <strong>{{temp_password}}</strong>. You must change it on first sign-in.</p>',
- ARRAY['business','email','temp_password','login_url'], true)
+ ARRAY['business','email','temp_password','login_url'], true),
+('kyc_reupload', 'KYC — Re-upload Requested',
+ 'Action needed: re-submit "{{document}}"',
+ '<p>Dear {{business}},</p><p>Our compliance team has asked you to re-submit the following KYC item: <strong>{{document}}</strong>.</p><p>{{reason}}</p><p>Please sign in to your dashboard to upload it.</p>',
+ ARRAY['business','document','reason'], true)
 ON CONFLICT (slug) DO NOTHING;

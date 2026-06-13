@@ -4278,16 +4278,22 @@ async function openDocsModal(entityType, id, name) {
   window._docCtx = { entityType: entityType, id: id, name: name };
 
   var rows = data.docs.map(function(doc) {
-    var overdue = doc.status === 'overdue';
+    var isCheck = (doc.doc_key || '').indexOf('check_') === 0;
+    var bad = doc.status === 'overdue' || doc.status === 'failed' || doc.status === 'rejected';
     var deferInfo = (doc.status === 'deferred' && doc.deferred_until)
       ? '<div class="upload-hint">until ' + new Date(doc.deferred_until).toLocaleDateString('en-NG') + '</div>' : '';
-    return '<tr' + (overdue ? ' style="background:#fef2f2"' : '') + '>' +
+    var noteInfo = doc.notes ? '<div class="upload-hint">' + _escA(doc.notes) + '</div>' : '';
+    return '<tr' + (bad ? ' style="background:#fef2f2"' : '') + '>' +
       '<td><input type="checkbox" class="doc-cb" value="' + doc.id + '"></td>' +
-      '<td style="font-weight:500">' + _escA(doc.doc_label) + deferInfo + '</td>' +
+      '<td style="font-weight:500">' + _escA(doc.doc_label) + (isCheck ? ' <span class="tag">CHECK</span>' : '') + deferInfo + noteInfo + '</td>' +
       '<td>' + docStatusBadge(doc.status) + '</td>' +
       '<td style="white-space:nowrap">' +
-        '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'submitted\')">Submitted</button> ' +
-        '<button class="btn btn-outline btn-sm" style="color:var(--green)" onclick="setDocStatus(\'' + doc.id + '\',\'verified\')">Verify</button> ' +
+        (isCheck
+          ? '<button class="btn btn-outline btn-sm" onclick="runCheck(\'' + doc.id + '\')">Run check</button> '
+          : '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'submitted\')">Submitted</button> ') +
+        '<button class="btn btn-outline btn-sm" style="color:var(--green)" onclick="setDocStatus(\'' + doc.id + '\',\'verified\')">Approve</button> ' +
+        '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="setDocStatus(\'' + doc.id + '\',\'rejected\')">Reject</button> ' +
+        '<button class="btn btn-outline btn-sm" onclick="requestReupload(\'' + doc.id + '\')">Re-upload</button> ' +
         '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'waived\')">Waive</button>' +
       '</td>' +
     '</tr>';
@@ -4309,8 +4315,23 @@ async function openDocsModal(entityType, id, name) {
 }
 
 function docStatusBadge(s) {
-  var map = { outstanding:'badge-amber', submitted:'badge-blue', verified:'badge-green', deferred:'badge-purple', overdue:'badge-red', waived:'badge-gray' };
-  return '<span class="badge ' + (map[s] || 'badge-gray') + '">' + (s || '—') + '</span>';
+  var map = { outstanding:'badge-amber', submitted:'badge-blue', verified:'badge-green', deferred:'badge-purple',
+              overdue:'badge-red', waived:'badge-gray', failed:'badge-red', rejected:'badge-red', reupload_requested:'badge-amber' };
+  return '<span class="badge ' + (map[s] || 'badge-gray') + '">' + ((s || '—').replace(/_/g,' ')) + '</span>';
+}
+
+async function runCheck(docId) {
+  var res = await apiFetch('/documents/item/' + docId + '/run-check', { method:'POST' });
+  if (res && res.status) { alert(res.message || 'Check queued.'); var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
+  else alert('Error: ' + ((res && res.message) || 'Run check failed'));
+}
+
+async function requestReupload(docId) {
+  var reason = prompt('Message to the merchant (reason for re-upload):', '');
+  if (reason === null) return;
+  var res = await apiFetch('/documents/item/' + docId + '/request-reupload', { method:'POST', body: JSON.stringify({ reason: reason }) });
+  if (res && res.status) { var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
+  else alert('Error: ' + ((res && res.message) || 'Request failed'));
 }
 
 async function setDocStatus(docId, status) {

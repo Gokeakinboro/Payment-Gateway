@@ -7,9 +7,11 @@ const { prisma } = require('../utils/db');
 const { ok, fail, notFound } = require('../utils/helpers');
 const { requireAuth, requireCompliance, requireSuperAdmin } = require('../middleware/auth');
 const { logAudit } = require('../services/auditService');
+const { sendEmail, getEmailContent } = require('../services/emailService');
+const { logger } = require('../utils/logger');
 
 const VALID_DURATIONS = [1, 2, 3, 6];
-const VALID_STATUSES  = ['outstanding', 'submitted', 'verified', 'deferred', 'overdue', 'waived'];
+const VALID_STATUSES  = ['outstanding', 'submitted', 'verified', 'deferred', 'overdue', 'waived', 'failed', 'rejected', 'reupload_requested'];
 
 // Default required-document set seeded for an entity (corporate baseline + KYC).
 // Superadmin can waive the ones that don't apply (e.g. MEMART for a sole trader).
@@ -24,6 +26,18 @@ const DEFAULT_DOCS = [
   { k: 'shareholders_id', l: 'Shareholders’ / UBO IDs + BVN' },
 ];
 
+// Automated verification CHECKS (run via 3rd parties — Interswitch marketplace,
+// pending). Tracked as rows so a FAILED check surfaces for manual review:
+// compliance can then request a re-upload or manually approve/reject the item.
+const CHECK_ITEMS = [
+  { k: 'check_bvn',     l: 'BVN verification (check)' },
+  { k: 'check_nin',     l: 'NIN verification (check)' },
+  { k: 'check_address', l: 'Address verification (check)' },
+  { k: 'check_tin',     l: 'TIN verification (check)' },
+  { k: 'check_cac',     l: 'CAC verification (check)' },
+  { k: 'check_id',      l: 'ID document check' },
+];
+
 function entityCol(entityType) {
   if (entityType === 'merchant' || entityType === 'aggregator') return entityType;
   return null;
@@ -34,7 +48,7 @@ async function seedIfEmpty(entityType, entityId) {
     SELECT COUNT(*)::int AS cnt FROM kyc_documents
     WHERE entity_type = ${entityType} AND entity_id = ${entityId}::uuid`;
   if (cnt > 0) return;
-  for (const d of DEFAULT_DOCS) {
+  for (const d of [...DEFAULT_DOCS, ...CHECK_ITEMS]) {
     await prisma.$executeRaw`
       INSERT INTO kyc_documents (entity_type, entity_id, doc_key, doc_label, status)
       VALUES (${entityType}, ${entityId}::uuid, ${d.k}, ${d.l}, 'outstanding')
@@ -128,4 +142,46 @@ router.post('/:entityType/:id/add', requireAuth, requireCompliance, async (req, 
   } catch (e) { next(e); }
 });
 
+// ── POST /api/v1/documents/item/:docId/request-reupload — ask merchant to resubmit
+router.post('/item/:docId/request-reupload', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { reason } = req.body;
+    const [doc] = await prisma.$queryRaw`SELECT entity_type, entity_id::text, doc_label FROM kyc_documents WHERE id = ${req.params.docId}::uuid`;
+    if (!doc) return notFound(res, 'Document');
+    await prisma.$executeRaw`
+      UPDATE kyc_documents SET status='reupload_requested', file_path=NULL,
+             notes=${reason || 'Please re-submit this item.'}, updated_at=now()
+      WHERE id = ${req.params.docId}::uuid`;
+    // Notify the merchant (best-effort), if this is a merchant entity.
+    if (doc.entity_type === 'merchant') {
+      const m = await prisma.merchant.findUnique({ where: { id: doc.entity_id }, select: { businessEmail: true, businessName: true } });
+      if (m?.businessEmail) {
+        const content = await getEmailContent('kyc_reupload',
+          { business: m.businessName, document: doc.doc_label, reason: reason || '' },
+          `Action needed: re-submit "${doc.doc_label}"`,
+          `<p>Dear ${m.businessName},</p><p>Please re-submit the following KYC item: <strong>${doc.doc_label}</strong>.</p>${reason ? `<p>Reason: ${reason}</p>` : ''}<p>Sign in to your dashboard to upload it.</p>`);
+        sendEmail({ to: m.businessEmail, subject: content.subject, html: content.html }).catch(e => logger.error({ err: e }, 'reupload email failed'));
+      }
+    }
+    await logAudit(req.user.id, 'KYC_REUPLOAD_REQUESTED', 'kyc_documents', req.params.docId, {}, { reason });
+    ok(res, await listDocs(doc.entity_type, doc.entity_id), 'Re-upload requested');
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/documents/item/:docId/run-check — automated 3rd-party verify ──
+// STUB until the Interswitch marketplace APIs are wired. Marks the check as needing
+// manual review; real integration will set verified/failed from the provider result.
+router.post('/item/:docId/run-check', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const [doc] = await prisma.$queryRaw`SELECT entity_type, entity_id::text FROM kyc_documents WHERE id = ${req.params.docId}::uuid`;
+    if (!doc) return notFound(res, 'Document');
+    await prisma.$executeRaw`
+      UPDATE kyc_documents SET status='submitted',
+             notes='Automated verification pending Interswitch integration — manual review required', updated_at=now()
+      WHERE id = ${req.params.docId}::uuid`;
+    ok(res, await listDocs(doc.entity_type, doc.entity_id), 'Check queued (3rd-party integration pending — manual review for now).');
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
+module.exports.CHECK_ITEMS = CHECK_ITEMS;
