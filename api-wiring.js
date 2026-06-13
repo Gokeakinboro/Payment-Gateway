@@ -171,7 +171,7 @@ async function loadSuperOverview() {
               ${rows.length ? rows.map(t => `<tr ${t.currency==='USD'?'style="background:#f8fbff"':''}>
                 <td class="mono" style="font-size:11px">${t.reference}</td>
                 <td style="white-space:nowrap">${txnAmt(t)} ${t.currency==='USD'?ccyChip('USD'):''}</td>
-                <td><span class="tag">${t.channel}${t.currency==='USD'?' · Int\\'l':''}</span></td>
+                <td><span class="tag">${t.channel}${t.currency==='USD'?' · Intl':''}</span></td>
                 <td>${statusBadge(t.status)}</td>
               </tr>`).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:20px">No transactions yet</td></tr>'}
             </tbody>
@@ -243,7 +243,7 @@ async function loadTransactions(page=1, filters={}) {
               <td>${t.merchant?.businessName||'—'}</td>
               <td style="font-weight:600;white-space:nowrap">${fmtMoney(t.amount, t.currency)}</td>
               <td class="mono" style="font-size:12px">${fmtMoney(t.fees?.merchant_fee||0, t.currency)}</td>
-              <td><span class="tag">${t.channel}${t.currency==='USD'?' · Int\\'l':''}</span></td>
+              <td><span class="tag">${t.channel}${t.currency==='USD'?' · Intl':''}</span></td>
               <td>${ccyChip(t.currency)}</td>
               <td>${statusBadge(t.status)}</td>
               <td style="font-size:12px;color:var(--gray-400)">${new Date(t.created_at).toLocaleDateString('en-NG')}</td>
@@ -1102,7 +1102,7 @@ async function loadSettlements() {
         (settlements.length ? settlements.map(function(s) {
           var ccy = s.currency || 'NGN';
           var markPaid = (s.status !== 'COMPLETED' && s.status !== 'SETTLED')
-            ? '<button class="btn btn-lime btn-sm" onclick="markSettlementPaid(\'' + s.id + '\',\'' + (s.merchant && s.merchant.businessName ? s.merchant.businessName.replace(/\'/g,\'\') : \'\') + '\',' + (s.net_major||0) + ')">Mark Paid</button>'
+            ? '<button class="btn btn-lime btn-sm" onclick="markSettlementPaid(\'' + s.id + '\',\'' + (s.merchant && s.merchant.businessName ? s.merchant.businessName.replace(/'/g,'') : '') + '\',' + (s.net_major||0) + ')">Mark Paid</button>'
             : '<span style="color:var(--green);font-size:12px">&#10003; Paid</span>';
           return '<tr' + (ccy==='USD'?' style="background:#f8fbff"':'') + '>' +
             '<td class="mono" style="font-size:10px">' + (s.settlementRef||'—') + '</td>' +
@@ -1225,7 +1225,7 @@ async function loadMerchantOverview() {
               <td class="mono" style="font-size:11px">${t.reference}</td>
               <td style="font-weight:600;white-space:nowrap">${fmtMoney(t.amount, t.currency)}</td>
               <td>${fmtMoney(t.fees?.merchant_fee||0, t.currency)}</td>
-              <td><span class="tag">${t.channel}${t.currency==='USD'?' · Int\\'l':''}</span></td>
+              <td><span class="tag">${t.channel}${t.currency==='USD'?' · Intl':''}</span></td>
               <td>${ccyChip(t.currency)}</td>
               <td>${statusBadge(t.status)}</td>
               <td style="font-size:12px">${new Date(t.created_at).toLocaleDateString('en-NG')}</td>
@@ -3891,6 +3891,8 @@ loadPageData = function(page) {
     case 'users':                loadUserManagement(); break;
     case 'settle_verification':  loadSettlementQueue(); break;
     case 'email_tpl':            loadEmailTemplates(); break;
+    case 'onboarding_apps':      loadOnboardingApps(); break;
+    case 'deferrals':            loadDeferrals(); break;
     // Static pages — _origRenderPage already rendered them, do not overwrite
     case 'settings':
     case 'sdk_start':
@@ -3906,6 +3908,262 @@ loadPageData = function(page) {
     default: _origLoadPageData(page);
   }
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ONBOARDING APPLICATIONS (compliance review) + DOCUMENT DEFERRALS (superadmin)
+// ════════════════════════════════════════════════════════════════════════════
+
+function _escA(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function riskBadge(level) {
+  var map = { high:'badge-red', medium:'badge-amber', low:'badge-green' };
+  return '<span class="badge ' + (map[(level||'').toLowerCase()] || 'badge-gray') + '">' + (level || '—').toUpperCase() + '</span>';
+}
+function yesNoBadge(v) { return v ? '<span class="badge badge-red">YES</span>' : '<span class="badge badge-gray">No</span>'; }
+
+// Expanded KYC/KYB document requirements (mirrors the onboarding form, 2026-06-13)
+var KYB_REQUIRED_DOCS = {
+  natural: [
+    'Government-issued ID (passport / driver’s licence / voter’s card)',
+    'Proof of address (≤3 months)',
+    'BVN', 'NIN',
+  ],
+  entity_common: [
+    'TIN certificate', 'Proof of business address (≤3 months)',
+    'Per-director / shareholder / trustee: ID + BVN (NIN where available)',
+  ],
+  entity_by_type: {
+    'Limited Liability Company': ['Certificate of Incorporation', 'MEMART', 'CAC Status Report (or Form CO2 + CO7)', 'Board Resolution'],
+    'Unlimited Liability Company': ['Certificate of Incorporation', 'MEMART', 'CAC Status Report (or Form CO2 + CO7)', 'Board Resolution'],
+    'Sole Proprietorship / Business Name': ['Certificate of Registration of Business Name', 'CAC Application / Status Report'],
+    'Partnership': ['Certificate of Registration', 'Partnership Deed / Agreement'],
+    'Registered Trust': ['Certificate of Registration (Incorporated Trustees)', 'Constitution / Trust Deed', 'List of Trustees'],
+    'Registered Charity': ['Certificate of Registration (Incorporated Trustees)', 'Constitution / Governing Instrument', 'List of Trustees'],
+    'Professional Body (established by Act)': ['Copy of enabling Act / extract', 'List of Governing Council members'],
+  },
+};
+
+function allDocChecklist() {
+  var items = [];
+  KYB_REQUIRED_DOCS.natural.forEach(function(d){ items.push(d); });
+  KYB_REQUIRED_DOCS.entity_common.forEach(function(d){ items.push(d); });
+  Object.keys(KYB_REQUIRED_DOCS.entity_by_type).forEach(function(t){
+    KYB_REQUIRED_DOCS.entity_by_type[t].forEach(function(d){ if (items.indexOf(d) === -1) items.push(d); });
+  });
+  return items;
+}
+
+// ── Compliance: Applications list ─────────────────────────────────────────────
+async function loadOnboardingApps() {
+  var el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  var res = await apiFetch('/onboarding/submissions');
+  var rows = (res && res.data) ? res.data : [];
+  window._onbApps = rows;
+
+  var body = rows.length ? rows.map(function(a) {
+    var typ = (a.formType || '') + (a.applicantType ? ' / ' + a.applicantType : '');
+    return '<tr>' +
+      '<td class="mono" style="font-size:12px">' + _escA(a.reference) + '</td>' +
+      '<td>' + _escA(typ) + '</td>' +
+      '<td style="font-weight:500">' + _escA(a.businessName || '—') + '</td>' +
+      '<td>' + riskBadge(a.riskLevel) + '</td>' +
+      '<td>' + yesNoBadge(a.pepFlag) + '</td>' +
+      '<td>' + (a.sanctionsHit ? '<span class="badge badge-red">REVIEW</span>' : '<span class="badge badge-green">Clear</span>') + '</td>' +
+      '<td style="font-size:12px">' + (a.submittedAt ? new Date(a.submittedAt).toLocaleDateString('en-NG') : '—') + '</td>' +
+      '<td>' + statusBadge(a.status) + '</td>' +
+      '<td><button class="btn btn-outline btn-sm" onclick="viewOnboardingApp(\'' + _escA(a.reference) + '\')">Review</button></td>' +
+    '</tr>';
+  }).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--gray-400);padding:20px">No applications yet</td></tr>';
+
+  el.innerHTML =
+    '<div class="page-header flex-between"><div>' +
+      '<div class="page-title">Onboarding Applications</div>' +
+      '<div class="page-desc">' + rows.length + ' application' + (rows.length !== 1 ? 's' : '') + ' · KYC/KYB review</div>' +
+    '</div></div>' +
+    '<div class="card"><div class="table-wrap"><table>' +
+      '<thead><tr><th>Reference</th><th>Type</th><th>Business</th><th>Risk</th><th>PEP</th><th>Sanctions</th><th>Submitted</th><th>Status</th><th></th></tr></thead>' +
+      '<tbody>' + body + '</tbody>' +
+    '</table></div></div>';
+}
+
+// ── Compliance: Application detail ────────────────────────────────────────────
+async function viewOnboardingApp(ref) {
+  var res = await apiFetch('/onboarding/submissions/' + encodeURIComponent(ref));
+  if (!res || !res.data) { alert('Could not load application'); return; }
+  var a = res.data;
+  var data = a.data || {};
+
+  function section(title, obj) {
+    if (!obj || !Object.keys(obj).length) return '';
+    var rows = Object.keys(obj).map(function(k) {
+      var v = obj[k];
+      if (v == null || v === '' || typeof v === 'object') return '';
+      return '<div class="rev-row"><span class="rev-label">' + _escA(k.replace(/_/g,' ')) + '</span><span class="rev-value" style="font-size:12px">' + _escA(v) + '</span></div>';
+    }).join('');
+    return rows ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">' + title + '</div>' + rows : '';
+  }
+
+  var principals = (a.principals || []).map(function(p) {
+    return '<tr>' +
+      '<td>' + _escA(p.role || '') + '</td>' +
+      '<td>' + _escA([p.first_name, p.other_names, p.surname].filter(Boolean).join(' ')) + '</td>' +
+      '<td class="mono" style="font-size:12px">' + _escA(p.bvn || '') + '</td>' +
+      '<td>' + (p.is_ubo ? 'UBO ' : '') + (p.pct_shareholding ? _escA(p.pct_shareholding) + '%' : '') + '</td>' +
+      '<td>' + (p.is_pep ? '<span class="badge badge-red">PEP</span>' : '') + '</td>' +
+      '<td>' + _escA(p.id_type || '') + '</td>' +
+    '</tr>';
+  }).join('');
+  var principalsHtml = (a.principals && a.principals.length)
+    ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Directors / Owners / Trustees</div>' +
+      '<div class="table-wrap"><table style="width:100%"><thead><tr><th>Role</th><th>Name</th><th>BVN</th><th>Holding</th><th>PEP</th><th>ID</th></tr></thead><tbody>' + principals + '</tbody></table></div>'
+    : '';
+
+  var docs = (a.documents || []).filter(function(d){ return d.path; }).map(function(d) {
+    return '<button class="btn btn-outline btn-sm" style="margin:0 6px 6px 0" onclick="downloadAppDoc(\'' + _escA(a.reference) + '\',\'' + _escA(d.key) + '\')">↓ ' + _escA(d.name || d.key) + '</button>';
+  }).join('');
+  var docsHtml = docs ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Documents</div><div>' + docs + '</div>' : '<div class="info-box" style="margin-top:12px;font-size:12px">No document files stored on server.</div>';
+
+  var notes = (a.screeningNotes || []);
+  var screeningHtml =
+    '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Screening</div>' +
+    '<div class="rev-row"><span class="rev-label">Risk level</span><span class="rev-value">' + riskBadge(a.riskLevel) + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">PEP</span><span class="rev-value">' + yesNoBadge(a.pepFlag) + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Sanctions match</span><span class="rev-value">' + (a.sanctionsHit ? '<span class="badge badge-red">REVIEW</span>' : '<span class="badge badge-green">Clear</span>') + '</span></div>' +
+    (notes.length ? '<ul style="font-size:12px;color:var(--gray-500);margin:8px 0 0 18px">' + notes.map(function(n){return '<li>' + _escA(n) + '</li>';}).join('') + '</ul>' : '');
+
+  var sig = a.signature ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Signature</div><img src="' + a.signature + '" style="max-width:260px;border:1px solid var(--gray-200);border-radius:6px">' : '';
+
+  var actions =
+    '<div class="divider"></div>' +
+    '<label class="form-label">Review note</label>' +
+    '<textarea class="form-input" id="onb-note" style="min-height:60px;margin-bottom:10px" placeholder="Optional note recorded with the decision">' + _escA(a.reviewNotes || '') + '</textarea>' +
+    '<div class="flex" style="gap:8px;flex-wrap:wrap">' +
+      '<button class="btn btn-outline" onclick="reviewOnboardingApp(\'' + _escA(a.reference) + '\',\'under_review\')">Mark Under Review</button>' +
+      '<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="reviewOnboardingApp(\'' + _escA(a.reference) + '\',\'approved\')">Approve</button>' +
+      '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="reviewOnboardingApp(\'' + _escA(a.reference) + '\',\'rejected\')">Reject</button>' +
+    '</div>';
+
+  showModal(
+    '<div class="modal-header"><div class="modal-title">' + _escA(a.businessName || a.reference) + '</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="rev-row"><span class="rev-label">Reference</span><span class="rev-value mono" style="font-size:12px">' + _escA(a.reference) + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Type</span><span class="rev-value">' + _escA((a.formType||'') + (a.applicantType ? ' / ' + a.applicantType : '')) + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Status</span><span class="rev-value">' + statusBadge(a.status) + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Reg. No / TIN</span><span class="rev-value mono" style="font-size:12px">' + _escA(a.regNumber||'—') + ' / ' + _escA(a.tin||'—') + '</span></div>' +
+    section('Individual', data.np_identity) +
+    section('Business', data.np_business) +
+    section('Entity', data.entity_details) +
+    principalsHtml +
+    docsHtml +
+    screeningHtml +
+    sig +
+    actions
+  );
+}
+
+async function reviewOnboardingApp(ref, status) {
+  var note = (document.getElementById('onb-note') || {}).value || '';
+  var verb = status === 'approved' ? 'approve' : status === 'rejected' ? 'reject' : 'mark under review';
+  if (!confirm('Are you sure you want to ' + verb + ' this application?')) return;
+  var res = await apiFetch('/onboarding/submissions/' + encodeURIComponent(ref), {
+    method: 'PATCH', body: JSON.stringify({ status: status, review_notes: note }),
+  });
+  if (res && res.status) { document.getElementById('modal').style.display = 'none'; loadOnboardingApps(); }
+  else alert('Error: ' + ((res && res.message) || 'Update failed'));
+}
+
+async function downloadAppDoc(ref, key) {
+  var token = localStorage.getItem('paylode_token');
+  try {
+    var r = await fetch(API_BASE + '/onboarding/submissions/' + encodeURIComponent(ref) + '/document/' + encodeURIComponent(key), { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) { alert('Could not load document'); return; }
+    var b = await r.blob();
+    window.open(URL.createObjectURL(b), '_blank');
+  } catch (e) { alert('Error opening document'); }
+}
+
+// ── Superadmin: Document Deferrals ────────────────────────────────────────────
+async function loadDeferrals() {
+  var el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  var res = await apiFetch('/merchants');
+  var ms = (res && res.data) ? res.data : [];
+
+  var reqHtml = '<div class="card" style="margin-bottom:16px">' +
+    '<div style="font-weight:600;margin-bottom:6px">Required KYC / KYB Documents</div>' +
+    '<div class="page-desc" style="margin-bottom:10px">Documents collected at onboarding. A deferral lets a superadmin activate an account while these are outstanding (max 2 deferrals; 1–6 months each).</div>' +
+    '<div style="font-weight:600;font-size:12px;margin:8px 0 4px">Individual</div><ul style="font-size:12px;color:var(--gray-600);margin-left:18px">' + KYB_REQUIRED_DOCS.natural.map(function(d){return '<li>' + _escA(d) + '</li>';}).join('') + '</ul>' +
+    '<div style="font-weight:600;font-size:12px;margin:10px 0 4px">Registered business (all)</div><ul style="font-size:12px;color:var(--gray-600);margin-left:18px">' + KYB_REQUIRED_DOCS.entity_common.map(function(d){return '<li>' + _escA(d) + '</li>';}).join('') + '</ul>' +
+    '<div style="font-weight:600;font-size:12px;margin:10px 0 4px">By entity type</div>' +
+    Object.keys(KYB_REQUIRED_DOCS.entity_by_type).map(function(t){
+      return '<div style="font-size:12px;color:var(--gray-600);margin-left:8px"><strong>' + _escA(t) + ':</strong> ' + KYB_REQUIRED_DOCS.entity_by_type[t].map(_escA).join(', ') + '</div>';
+    }).join('') +
+    '</div>';
+
+  var body = ms.length ? ms.map(function(m) {
+    return '<tr>' +
+      '<td style="font-weight:500">' + _escA(m.businessName || '—') + '</td>' +
+      '<td>' + statusBadge(m.kycStatus) + '</td>' +
+      '<td>' + (m.isActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Inactive</span>') + '</td>' +
+      '<td><button class="btn btn-outline btn-sm" onclick="openDeferModal(\'merchant\',\'' + m.id + '\',\'' + _escA((m.businessName||'').replace(/'/g,'')) + '\')">Manage Deferral</button></td>' +
+    '</tr>';
+  }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:20px">No merchants</td></tr>';
+
+  el.innerHTML =
+    '<div class="page-header"><div class="page-title">Document Deferrals</div>' +
+      '<div class="page-desc">Activate accounts with outstanding documents — superadmin only</div></div>' +
+    reqHtml +
+    '<div class="card"><div class="table-wrap"><table>' +
+      '<thead><tr><th>Merchant</th><th>KYC Status</th><th>Account</th><th></th></tr></thead>' +
+      '<tbody>' + body + '</tbody>' +
+    '</table></div></div>';
+}
+
+async function openDeferModal(entityType, id, name) {
+  var res = await apiFetch('/deferrals/' + entityType + 's/' + id);
+  var d = (res && res.data) ? res.data : { deferrals_used: 0, deferrals_remaining: 2, can_defer: true, active_deferral: null };
+
+  var active = d.active_deferral
+    ? '<div class="info-box" style="margin-bottom:12px;font-size:12px">Active deferral expires <strong>' + new Date(d.active_deferral.expires_at).toLocaleDateString('en-NG') + '</strong>' + (d.active_deferral.reason ? ' — ' + _escA(d.active_deferral.reason) : '') + '</div>'
+    : '';
+
+  var checklist = allDocChecklist().map(function(doc) {
+    return '<label class="check-item" style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;font-size:12px">' +
+      '<input type="checkbox" class="defer-doc" value="' + _escA(doc) + '"><span>' + _escA(doc) + '</span></label>';
+  }).join('');
+
+  var form = d.can_defer
+    ? '<div class="divider"></div>' +
+      '<div style="font-weight:600;font-size:13px;margin-bottom:6px">Outstanding documents being deferred</div>' +
+      '<div style="max-height:180px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;padding:10px;margin-bottom:12px">' + checklist + '</div>' +
+      '<div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">' +
+        '<div><label class="form-label">Deferral period</label><select class="form-input form-select" id="defer-duration"><option value="1">1 month</option><option value="2">2 months</option><option value="3" selected>3 months</option><option value="6">6 months</option></select></div>' +
+        '<div><label class="form-label">Reason</label><input class="form-input" id="defer-reason" placeholder="Why are docs deferred?"></div>' +
+      '</div>' +
+      '<button class="btn btn-lime" onclick="submitDeferral(\'' + entityType + '\',\'' + id + '\')">Defer &amp; Activate</button>'
+    : '<div class="warn-box" style="font-size:12px">Maximum deferrals reached for this ' + entityType + '. No further deferrals allowed.</div>';
+
+  showModal(
+    '<div class="modal-header"><div class="modal-title">Deferral — ' + _escA(name) + '</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="rev-row"><span class="rev-label">Deferrals used</span><span class="rev-value">' + d.deferrals_used + ' / 2</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Remaining</span><span class="rev-value">' + d.deferrals_remaining + '</span></div>' +
+    active + form
+  );
+}
+
+async function submitDeferral(entityType, id) {
+  var duration = parseInt(document.getElementById('defer-duration').value, 10);
+  var reason = (document.getElementById('defer-reason') || {}).value || '';
+  var outstanding = Array.prototype.slice.call(document.querySelectorAll('.defer-doc:checked')).map(function(c){ return c.value; });
+  var fullReason = reason + (outstanding.length ? ' | Outstanding: ' + outstanding.join(', ') : '');
+  var res = await apiFetch('/deferrals/' + entityType + 's/' + id, {
+    method: 'POST', body: JSON.stringify({ duration_months: duration, reason: fullReason.trim() }),
+  });
+  if (res && res.status) { document.getElementById('modal').style.display = 'none'; alert((res.message) || 'Deferred.'); loadDeferrals(); }
+  else alert('Error: ' + ((res && res.message) || 'Deferral failed'));
+}
 
 (function initRole() {
   var token = localStorage.getItem('paylode_token');

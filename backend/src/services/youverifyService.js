@@ -44,7 +44,7 @@ function request(method, path, body) {
  * Returns { success, requestId, status, data }
  */
 async function verifyBvn(bvn, firstName, lastName, dob) {
-  const res = await request('POST', '/id/bvn/verify', {
+  const res = await request('POST', '/api/identity/ng/bvn', {
     id:               bvn,
     isSubjectConsent: true,
     ...(firstName && { firstname: firstName }),
@@ -58,7 +58,7 @@ async function verifyBvn(bvn, firstName, lastName, dob) {
  * Verify NIN against YouVerify.
  */
 async function verifyNin(nin, firstName, lastName) {
-  const res = await request('POST', '/id/nin/verify', {
+  const res = await request('POST', '/api/identity/ng/nin', {
     id:               nin,
     isSubjectConsent: true,
     ...(firstName && { firstname: firstName }),
@@ -72,7 +72,7 @@ async function verifyNin(nin, firstName, lastName) {
  * businessType: 'limited_liability' | 'business_name' | 'incorporated_trustee'
  */
 async function verifyCac(rcNumber, businessName, businessType = 'limited_liability') {
-  const res = await request('POST', '/business/cac/verify', {
+  const res = await request('POST', '/api/identity/ng/cac', {
     id:           rcNumber,
     isSubjectConsent: true,
     ...(businessName && { businessName }),

@@ -382,6 +382,38 @@ model AmlFlag {
   @@map("aml_flags")
 }
 
+// ─── ONBOARDING SUBMISSIONS (public KYC/KYB applications) ─────────────────────
+
+model OnboardingSubmission {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reference      String   @unique
+  formType       String   @map("form_type")          // merchant | aggregator | dd
+  applicantType  String?  @map("applicant_type")      // natural | entity
+  status         String   @default("pending")         // pending | under_review | approved | rejected
+  businessName   String?  @map("business_name")
+  contactEmail   String?  @map("contact_email")
+  contactPhone   String?  @map("contact_phone")
+  regNumber      String?  @map("reg_number")
+  tin            String?
+  data           Json     @default("{}")
+  principals     Json     @default("[]")
+  documents      Json     @default("[]")              // [{key, docType, name, path}]
+  pepFlag        Boolean  @default(false) @map("pep_flag")
+  sanctionsHit   Boolean  @default(false) @map("sanctions_hit")
+  riskLevel      String   @default("medium") @map("risk_level")
+  screeningNotes Json?    @map("screening_notes")
+  signature      String?
+  referredBy     String?  @map("referred_by")
+  reviewedBy     String?  @map("reviewed_by") @db.Uuid
+  reviewNotes    String?  @map("review_notes")
+  submittedAt    DateTime @default(now()) @map("submitted_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([formType])
+  @@map("onboarding_submissions")
+}
+
 // ─── AUDIT LOG (IMMUTABLE) ────────────────────────────────────────────────────
 
 model AuditLog {

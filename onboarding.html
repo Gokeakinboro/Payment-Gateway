@@ -138,10 +138,49 @@ canvas#sigCanvas{width:100%;height:150px;cursor:crosshair;display:block;border-r
 .progress-wrap{background:var(--g200);border-radius:4px;height:4px;margin-bottom:24px}
 .progress-fill{height:100%;border-radius:4px;background:var(--lime);transition:width .3s}
 
+/* Applicant type (2-up) */
+.type-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:8px}
+
+/* Repeatable principal cards */
+.principal-card{background:var(--g50);border:1px solid var(--g200);border-radius:10px;padding:18px 18px 6px;margin-bottom:16px;position:relative}
+.principal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.principal-tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--navy);background:#eef2ff;border:1px solid #dbe2ff;padding:4px 10px;border-radius:20px}
+.principal-tag.trustee{background:#fef3e6;border-color:#fcdcb4;color:#9a5b12}
+.principal-tag.shareholder{background:#eafaf0;border-color:#bdedcf;color:#15803d}
+.btn-remove{background:none;border:none;color:var(--red);font-size:12px;font-weight:600;cursor:pointer;padding:4px 8px;border-radius:6px}
+.btn-remove:hover{background:#fee2e2}
+.add-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px}
+.btn-add{background:var(--white);color:var(--navy);border:1.5px dashed var(--navy);border-radius:8px;padding:10px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);transition:all .15s}
+.btn-add:hover{background:rgba(26,39,68,.04)}
+.empty-note{font-size:13px;color:var(--g500);background:var(--g50);border:1px dashed var(--g300);border-radius:8px;padding:18px;text-align:center;margin-bottom:14px}
+
+/* Upload widget */
+.upload{border:1.5px dashed var(--g300);border-radius:8px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--g50);transition:border-color .15s}
+.upload.done{border-color:var(--green);border-style:solid;background:#f0fdf4}
+.upload-label{font-size:13px;color:var(--g700);font-weight:500}
+.upload-label .req{color:var(--red)}
+.upload-hint{font-size:11px;color:var(--g400);margin-top:2px}
+.upload-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.upload-file{display:none}
+.upload-status{font-size:12px;color:var(--green);font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Conditional doc list */
+.doc-list .field{margin-bottom:14px}
+
+/* Save button + draft banner */
+.btn-save{background:var(--white);color:var(--navy);border:1.5px solid var(--g300)}
+.btn-save:hover{background:var(--g50)}
+.save-flash{font-size:12px;color:var(--green);font-weight:600;margin-left:10px;opacity:0;transition:opacity .2s}
+.save-flash.show{opacity:1}
+.draft-banner{display:none;align-items:center;justify-content:space-between;gap:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#92400e}
+.draft-banner.show{display:flex}
+.draft-banner .btn{padding:7px 14px;font-size:12px}
+
 @media(max-width:600px){
-  .form-grid,.form-grid-3,.type-grid{grid-template-columns:1fr}
+  .form-grid,.form-grid-3,.type-grid,.type-grid-2{grid-template-columns:1fr}
   .stepper{gap:4px}
   .step-label{display:none}
+  .nav-btns{flex-wrap:wrap;gap:10px}
 }
 </style>
 </head>
@@ -156,6 +195,15 @@ canvas#sigCanvas{width:100%;height:150px;cursor:crosshair;display:block;border-r
 </div>
 
 <div class="container">
+
+  <!-- RESUME DRAFT BANNER -->
+  <div class="draft-banner" id="draft-banner">
+    <span>You have a saved application in progress on this device.</span>
+    <span style="display:flex;gap:8px">
+      <button class="btn btn-outline" onclick="discardDraft()">Discard</button>
+      <button class="btn btn-primary" onclick="resumeDraft()">Resume →</button>
+    </span>
+  </div>
 
   <!-- TYPE SELECTOR -->
   <div id="type-selector">
@@ -208,7 +256,11 @@ canvas#sigCanvas{width:100%;height:150px;cursor:crosshair;display:block;border-r
 
     <div class="nav-btns" id="nav-btns">
       <button class="btn btn-outline" id="btn-back" onclick="prevStep()">← Back</button>
-      <button class="btn btn-primary" id="btn-next" onclick="nextStep()">Continue →</button>
+      <div style="display:flex;align-items:center">
+        <span class="save-flash" id="save-flash">✓ Saved</span>
+        <button class="btn btn-save" id="btn-save" onclick="saveProgress()" style="margin-right:10px">Save</button>
+        <button class="btn btn-primary" id="btn-next" onclick="nextStep()">Continue →</button>
+      </div>
     </div>
   </div>
 
@@ -219,22 +271,72 @@ const API = window.location.origin + '/api/v1';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let formType = 'merchant'; // merchant | aggregator | dd
+let applicantType = null;  // natural | entity  (merchant only)
+let merchantFlow = null;   // resolved step array once applicantType is chosen
 let currentStep = 0;
 let formData = {};
+let principals = [];       // directors / shareholders / trustees (entity only)
+let uploads = {};          // { fieldKey: {name,type,dataUrl,docType} }
 let sigData = null;
 let tncScrolled = false;
 let ynAnswers = {};
+const DRAFT_KEY = 'paylode_onboarding_draft_v1';
 
 // ── Form definitions ──────────────────────────────────────────────────────────
-const MERCHANT_STEPS = [
-  { id:'institution',  label:'Institution'  },
-  { id:'contact',      label:'Contact'      },
-  { id:'website',      label:'Website'      },
+// Merchant flow branches by applicant type (resolved after step 0)
+const MERCHANT_TYPE_STEP = { id:'applicant_type', label:'Type' };
+
+const MERCHANT_STEPS_NATURAL = [
+  MERCHANT_TYPE_STEP,
+  { id:'np_identity',  label:'Identity'     },
+  { id:'np_business',  label:'Business'     },
   { id:'payments',     label:'Payments'     },
-  { id:'documents',    label:'Documents'    },
   { id:'tnc',          label:'Terms'        },
   { id:'signature',    label:'Sign & Submit'},
 ];
+
+const MERCHANT_STEPS_ENTITY = [
+  MERCHANT_TYPE_STEP,
+  { id:'entity_details', label:'Entity'      },
+  { id:'entity_docs',    label:'Documents'   },
+  { id:'principals',     label:'Owners'      },
+  { id:'np_business',    label:'Business'    },
+  { id:'payments',       label:'Payments'    },
+  { id:'tnc',            label:'Terms'       },
+  { id:'signature',      label:'Sign & Submit'},
+];
+
+// KYC reference data
+const ID_TYPES = ['International Passport','Driver’s Licence','Voter’s Card','National ID (NIN slip)'];
+
+const ENTITY_TYPES = [
+  { v:'sole_prop',   label:'Sole Proprietorship / Business Name' },
+  { v:'partnership', label:'Partnership' },
+  { v:'llc',         label:'Limited Liability Company' },
+  { v:'ulc',         label:'Unlimited Liability Company' },
+  { v:'trust',       label:'Registered Trust' },
+  { v:'charity',     label:'Registered Charity' },
+  { v:'prof_body',   label:'Professional Body (established by Act)' },
+  { v:'other',       label:'Other (describe)' },
+];
+
+const PRINCIPAL_ROLES = ['Director','Shareholder','Trustee','Authorised Signatory','Proprietor','Partner'];
+
+// Registration documents required per entity sub-type (progressive disclosure)
+const ENTITY_DOCS = {
+  llc:        [{k:'cert_incorp',label:'Certificate of Incorporation',req:true},{k:'memart',label:'Memorandum & Articles of Association (MEMART)',req:true},{k:'status_report',label:'CAC Status Report',req:false,hint:'In lieu, upload Form CO2 + Form CO7 below'},{k:'form_co2',label:'Form CO2 (Particulars of Shareholders)',req:false},{k:'form_co7',label:'Form CO7 (Particulars of Directors)',req:false},{k:'board_resolution',label:'Board Resolution authorising this application',req:true},{k:'tin_cert',label:'Tax Identification Number (TIN) certificate',req:true}],
+  ulc:        [{k:'cert_incorp',label:'Certificate of Incorporation',req:true},{k:'memart',label:'Memorandum & Articles of Association (MEMART)',req:true},{k:'status_report',label:'CAC Status Report',req:false,hint:'In lieu, upload Form CO2 + Form CO7 below'},{k:'form_co2',label:'Form CO2 (Particulars of Shareholders)',req:false},{k:'form_co7',label:'Form CO7 (Particulars of Directors)',req:false},{k:'board_resolution',label:'Board Resolution authorising this application',req:true},{k:'tin_cert',label:'Tax Identification Number (TIN) certificate',req:true}],
+  sole_prop:  [{k:'bn_cert',label:'Certificate of Registration of Business Name',req:true},{k:'cac_application',label:'CAC Application / Status Report',req:false},{k:'tin_cert',label:'TIN certificate (if available)',req:false}],
+  partnership:[{k:'partnership_cert',label:'Certificate of Registration',req:true},{k:'partnership_deed',label:'Partnership Deed / Agreement',req:true},{k:'tin_cert',label:'TIN certificate',req:false}],
+  trust:      [{k:'trustees_cert',label:'Certificate of Registration (Incorporated Trustees)',req:true},{k:'constitution',label:'Constitution / Trust Deed',req:true},{k:'trustees_list',label:'CAC list of Trustees',req:false}],
+  charity:    [{k:'trustees_cert',label:'Certificate of Registration (Incorporated Trustees)',req:true},{k:'constitution',label:'Constitution / Governing Instrument',req:true},{k:'trustees_list',label:'CAC list of Trustees',req:false}],
+  prof_body:  [{k:'enabling_doc',label:'Copy of enabling Act / extract',req:true},{k:'council_list',label:'List of Governing Council members',req:false}],
+  other:      [{k:'reg_doc',label:'Registration / incorporation document',req:true}],
+};
+
+const SOURCE_OF_FUNDS = ['Business / trading revenue','Salary / employment income','Investment income','Savings','Loan / financing','Sale of assets','Inheritance / gift','Grants / donations','Other'];
+
+const COUNTRIES = ['Nigeria','Ghana','Kenya','South Africa','United Kingdom','United States','Canada','China','India','United Arab Emirates','France','Germany','Other'];
 
 const AGGREGATOR_STEPS = [
   { id:'institution',  label:'Institution'  },
@@ -307,8 +409,9 @@ function selectType(type) {
   document.getElementById('main-form').style.display = 'block';
   if (type === 'merchant') {
     document.getElementById('form-title').textContent = 'Merchant Enrolment Form';
-    document.getElementById('form-sub').innerHTML = 'Complete all sections to apply for a Paylode merchant account. Fields marked <span style="color:var(--red)">*</span> are required.';
-    buildStepper(MERCHANT_STEPS);
+    document.getElementById('form-sub').innerHTML = 'A few short steps to apply for a Paylode merchant account. Fields marked <span style="color:var(--red)">*</span> are required.';
+    merchantFlow = null; // resolved once applicant type is chosen
+    document.getElementById('stepper').style.display = 'none';
   } else if (type === 'aggregator') {
     document.getElementById('form-title').textContent = 'Aggregator Enrolment Form';
     buildStepper(AGGREGATOR_STEPS);
@@ -340,7 +443,7 @@ function updateStepper() {
     if (!el) return;
     el.className = 'step ' + (i < currentStep ? 'done' : i === currentStep ? 'active' : '');
   });
-  const pct = Math.round((currentStep / (steps.length-1)) * 100);
+  const pct = steps.length > 1 ? Math.round((currentStep / (steps.length-1)) * 100) : 0;
   document.getElementById('progress-fill').style.width = Math.max(pct,5) + '%';
   document.getElementById('btn-back').style.visibility = currentStep === 0 ? 'hidden' : 'visible';
   const isLast = currentStep === steps.length - 1;
@@ -349,7 +452,8 @@ function updateStepper() {
 }
 
 function getSteps() {
-  return formType === 'merchant' ? MERCHANT_STEPS : formType === 'aggregator' ? AGGREGATOR_STEPS : DD_STEPS;
+  if (formType === 'merchant') return merchantFlow || [MERCHANT_TYPE_STEP];
+  return formType === 'aggregator' ? AGGREGATOR_STEPS : DD_STEPS;
 }
 
 // ── Step rendering ─────────────────────────────────────────────────────────────
@@ -362,7 +466,13 @@ function renderStep() {
   document.getElementById('success-screen').classList.remove('show');
   document.getElementById('nav-btns').style.display = 'flex';
 
-  if      (stepId === 'institution')    { el.innerHTML = renderInstitution(); }
+  if      (stepId === 'applicant_type') { el.innerHTML = renderApplicantType(); }
+  else if (stepId === 'np_identity')    { el.innerHTML = renderNPIdentity(); }
+  else if (stepId === 'np_business')    { el.innerHTML = renderNPBusiness(); }
+  else if (stepId === 'entity_details') { el.innerHTML = renderEntityDetails(); }
+  else if (stepId === 'entity_docs')    { el.innerHTML = renderEntityDocs(); }
+  else if (stepId === 'principals')     { el.innerHTML = renderPrincipals(); renderPrincipalCards(); }
+  else if (stepId === 'institution')    { el.innerHTML = renderInstitution(); }
   else if (stepId === 'contact')        { el.innerHTML = renderContact(); }
   else if (stepId === 'website')        { el.innerHTML = renderWebsite(); }
   else if (stepId === 'payments')       { el.innerHTML = renderPayments(); }
@@ -374,18 +484,444 @@ function renderStep() {
   else if (stepId === 'dd_questions')   { el.innerHTML = renderDDQuestions(); }
   else if (stepId === 'dd_sign')        { el.innerHTML = renderSignature(); setupCanvas(); }
 
+  // The applicant-type chooser is a card selector — hide the standard nav + progress bar.
+  const isChooser = (stepId === 'applicant_type');
+  document.getElementById('nav-btns').style.display = isChooser ? 'none' : 'flex';
+  const pw = document.querySelector('.progress-wrap'); if (pw) pw.style.display = isChooser ? 'none' : 'block';
+
   restoreValues(stepId);
+  restoreUploads();
 }
 
 // ── Restore saved values ───────────────────────────────────────────────────────
 function restoreValues(stepId) {
   const saved = formData[stepId] || {};
   Object.entries(saved).forEach(([k,v]) => {
-    const el = document.querySelector(`[name="${k}"]`);
-    if (!el) return;
-    if (el.type === 'checkbox') el.checked = !!v;
-    else el.value = v;
+    const els = document.querySelectorAll(`[name="${k}"]`);
+    if (!els.length) return;
+    if (els[0].type === 'radio') {
+      els.forEach(r => { r.checked = (r.value === v); });
+    } else if (els[0].type === 'checkbox') {
+      els[0].checked = !!v;
+    } else {
+      els[0].value = v;
+    }
   });
+  // Entity type drives the conditional "describe" field
+  if (stepId === 'entity_details') onEntityTypeChange(saved.entity_type || '');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  NEW KYC / KYB MERCHANT FLOW
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Step 0: Applicant type ──────────────────────────────────────────────────
+function renderApplicantType() {
+  return `<div class="card">
+    <div class="card-title">Who is applying?</div>
+    <div class="card-sub">This determines what we need to verify. You can change it before you submit.</div>
+    <div class="type-grid-2">
+      <div class="type-card ${applicantType==='natural'?'selected':''}" onclick="chooseApplicantType('natural')">
+        <div class="type-icon">👤</div>
+        <div class="type-name">An individual</div>
+        <div class="type-desc">A natural person trading in their own name (sole trader, freelancer, individual)</div>
+      </div>
+      <div class="type-card ${applicantType==='entity'?'selected':''}" onclick="chooseApplicantType('entity')">
+        <div class="type-icon">🏢</div>
+        <div class="type-name">A registered business</div>
+        <div class="type-desc">Company, partnership, registered trust, charity or professional body</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function chooseApplicantType(t) {
+  applicantType = t;
+  merchantFlow = (t === 'natural') ? MERCHANT_STEPS_NATURAL : MERCHANT_STEPS_ENTITY;
+  buildStepper(merchantFlow);
+  document.getElementById('stepper').style.display = 'flex';
+  currentStep = 1;
+  renderStep();
+  saveDraft();
+  window.scrollTo(0, 0);
+}
+
+// ── Shared: identity ID block (name-based, for the generic collector) ─────────
+function idBlockHtml() {
+  return `<div class="section-divider"></div>
+  <div class="card-title" style="margin-bottom:4px">Means of Identification</div>
+  <div class="card-sub">Details must match the uploaded ID exactly.</div>
+  <div class="form-grid">
+    <div class="field">
+      <label>ID Type <span class="req">*</span></label>
+      <select name="id_type"><option value="">Select ID</option>${ID_TYPES.map(t=>`<option>${t}</option>`).join('')}</select>
+    </div>
+    <div class="field">
+      <label>ID Number <span class="req">*</span></label>
+      <input type="text" name="id_number" placeholder="As printed on the ID">
+    </div>
+    <div class="field">
+      <label>Issuing Country <span class="req">*</span></label>
+      <select name="id_country"><option value="">Select country</option>${COUNTRIES.map(c=>`<option>${c}</option>`).join('')}</select>
+    </div>
+    <div class="field">
+      <label>Expiry Date <span class="req">*</span></label>
+      <input type="date" name="id_expiry">
+    </div>
+  </div>`;
+}
+
+// ── Natural person: identity ──────────────────────────────────────────────────
+function renderNPIdentity() {
+  return `<div class="card">
+    <div class="card-title">Your details</div>
+    <div class="card-sub">We verify your identity against BVN/NIN records. Information is encrypted and used for KYC only.</div>
+    <div class="form-grid">
+      <div class="field"><label>First Name <span class="req">*</span></label><input type="text" name="first_name" placeholder="First name"></div>
+      <div class="field"><label>Other Names</label><input type="text" name="other_names" placeholder="Middle name(s)"></div>
+      <div class="field"><label>Surname <span class="req">*</span></label><input type="text" name="surname" placeholder="Last name"></div>
+      <div class="field"><label>Date of Birth <span class="req">*</span></label><input type="date" name="dob"></div>
+      <div class="field"><label>Nationality <span class="req">*</span></label><select name="nationality"><option value="">Select</option>${COUNTRIES.map(c=>`<option>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Country of Residence</label><select name="residence"><option value="">Select</option>${COUNTRIES.map(c=>`<option>${c}</option>`).join('')}</select></div>
+      <div class="field full"><label>Residential Address <span class="req">*</span></label><input type="text" name="address" placeholder="Full street address"></div>
+      <div class="field"><label>City</label><input type="text" name="city" placeholder="City"></div>
+      <div class="field"><label>State</label><select name="state"><option value="">Select state</option>${NIGERIAN_STATES.map(s=>`<option>${s}</option>`).join('')}</select></div>
+      <div class="field"><label>Phone <span class="req">*</span></label><input type="tel" name="phone" placeholder="+234 800 000 0000"></div>
+      <div class="field"><label>Email <span class="req">*</span></label><input type="email" name="email" placeholder="you@example.com"></div>
+      <div class="field"><label>BVN <span class="req">*</span></label><input type="tel" name="bvn" placeholder="11-digit BVN" maxlength="11"></div>
+      <div class="field"><label>NIN <span class="req">*</span></label><input type="tel" name="nin" placeholder="11-digit NIN" maxlength="11"></div>
+    </div>
+    <div class="field">
+      <label>Are you a Politically Exposed Person (PEP)? <span class="req">*</span></label>
+      <div class="radio-group">
+        <label class="radio-item"><input type="radio" name="is_pep" value="no"> <span>No</span></label>
+        <label class="radio-item"><input type="radio" name="is_pep" value="yes"> <span>Yes</span></label>
+      </div>
+      <div class="hint">A PEP holds, or is closely associated with someone who holds, a prominent public function.</div>
+    </div>
+    ${idBlockHtml()}
+    <div class="section-divider"></div>
+    <div class="card-title" style="margin-bottom:12px">Uploads</div>
+    <div class="doc-list">
+      ${uploadWidget('np_id_doc','Government-issued ID','id_card',true,'Passport, driver’s licence or voter’s card — must not be expired')}
+      ${uploadWidget('np_proof_address','Proof of address','proof_of_address',true,'Utility bill, tenancy or bank statement dated within the last 3 months')}
+      ${uploadWidget('np_passport','Passport photograph','passport_photo',false,'Recent passport-size photo (optional)')}
+    </div>
+  </div>`;
+}
+
+// ── Business / activity + settlement (shared by both flows) ───────────────────
+function renderNPBusiness() {
+  const who = applicantType === 'entity' ? 'the business' : 'you';
+  return `<div class="card">
+    <div class="card-title">Business activity</div>
+    <div class="card-sub">Tell us what ${who} do so we can profile risk correctly.</div>
+    <div class="form-grid">
+      <div class="field"><label>Trading Name</label><input type="text" name="trading_name" placeholder="Name customers will see"></div>
+      <div class="field"><label>Business Category <span class="req">*</span></label><select name="category"><option value="">Select category</option>${BUSINESS_SEGMENTS.map(s=>`<option>${s}</option>`).join('')}</select></div>
+      <div class="field full"><label>Description of products / services <span class="req">*</span></label><textarea name="product_description" placeholder="What do you sell or provide?"></textarea></div>
+      <div class="field"><label>Website / Social URL</label><input type="text" name="website_url" placeholder="https://"></div>
+      <div class="field"><label>Source of Funds <span class="req">*</span></label><select name="source_of_funds"><option value="">Select</option>${SOURCE_OF_FUNDS.map(s=>`<option>${s}</option>`).join('')}</select></div>
+    </div>
+    <div class="section-divider"></div>
+    <div class="card-title" style="margin-bottom:12px">Expected activity</div>
+    <div class="form-grid">
+      <div class="field"><label>Target Market <span class="req">*</span></label>
+        <div class="check-group">
+          <label class="check-item"><input type="checkbox" name="mkt_domestic" value="1"><span>Domestic (Nigeria)</span></label>
+          <label class="check-item"><input type="checkbox" name="mkt_intl" value="1"><span>International</span></label>
+        </div>
+      </div>
+      <div class="field"><label>Expected Monthly Transaction Value <span class="req">*</span></label>
+        <select name="expected_monthly_value"><option value="">Select range</option>
+          <option value="below1m">Below ₦1 million</option>
+          <option value="1to10m">₦1m – ₦10m</option>
+          <option value="10to50m">₦10m – ₦50m</option>
+          <option value="50to200m">₦50m – ₦200m</option>
+          <option value="above200m">Above ₦200 million</option>
+        </select>
+      </div>
+      <div class="field"><label>Expected Monthly Transaction Count</label><input type="number" name="expected_monthly_count" min="0" placeholder="e.g. 500"></div>
+    </div>
+    <div class="section-divider"></div>
+    <div class="card-title" style="margin-bottom:4px">Settlement Account</div>
+    <div class="card-sub">Where your settlements are paid. The account name must match the applicant.</div>
+    <div class="form-grid">
+      <div class="field"><label>Account Number <span class="req">*</span></label><input type="tel" name="account_number" placeholder="10-digit NUBAN" maxlength="10"></div>
+      <div class="field"><label>Account Name <span class="req">*</span></label><input type="text" name="account_name" placeholder="As it appears at the bank"></div>
+      <div class="field"><label>Bank <span class="req">*</span></label><input type="text" name="bank_name" placeholder="e.g. GTBank, Zenith"></div>
+      <div class="field"><label>Settlement Cycle</label><select name="settlement_cycle"><option value="t1">T+1 (next business day)</option><option value="t3">T+3</option><option value="weekly">Weekly</option></select></div>
+    </div>
+  </div>`;
+}
+
+// ── Registered entity: details ────────────────────────────────────────────────
+function renderEntityDetails() {
+  return `<div class="card">
+    <div class="card-title">Business details</div>
+    <div class="card-sub">Enter the details exactly as registered with the CAC.</div>
+    <div class="form-grid">
+      <div class="field"><label>Type of Entity <span class="req">*</span></label>
+        <select name="entity_type" onchange="onEntityTypeChange(this.value)"><option value="">Select type</option>${ENTITY_TYPES.map(t=>`<option value="${t.v}">${t.label}</option>`).join('')}</select>
+      </div>
+      <div class="field" id="entity-other-wrap" style="display:none"><label>Describe Entity <span class="req">*</span></label><input type="text" name="entity_other" placeholder="Describe the entity type"></div>
+      <div class="field full"><label>Registered Name <span class="req">*</span></label><input type="text" name="registered_name" placeholder="Exact registered name"></div>
+      <div class="field"><label>Registration / RC Number <span class="req">*</span></label><input type="text" name="reg_number" placeholder="RC / BN / IT number"></div>
+      <div class="field"><label>Tax Identification Number (TIN) <span class="req">*</span></label><input type="text" name="tin" placeholder="TIN"></div>
+      <div class="field"><label>Date of Registration / Incorporation <span class="req">*</span></label><input type="date" name="incorporation_date"></div>
+      <div class="field"><label>Business Email <span class="req">*</span></label><input type="email" name="business_email" placeholder="business@example.com"></div>
+      <div class="field full"><label>Registered Address <span class="req">*</span></label><input type="text" name="registered_address" placeholder="Registered office address"></div>
+      <div class="field full"><label>Operating Address</label><input type="text" name="operating_address" placeholder="Leave blank if same as registered address"></div>
+      <div class="field"><label>City</label><input type="text" name="city" placeholder="City"></div>
+      <div class="field"><label>State</label><select name="state"><option value="">Select state</option>${NIGERIAN_STATES.map(s=>`<option>${s}</option>`).join('')}</select></div>
+      <div class="field"><label>Business Phone <span class="req">*</span></label><input type="tel" name="business_phone" placeholder="+234 800 000 0000"></div>
+    </div>
+  </div>`;
+}
+
+function onEntityTypeChange(v) {
+  const w = document.getElementById('entity-other-wrap');
+  if (w) w.style.display = (v === 'other') ? 'block' : 'none';
+}
+
+// ── Registered entity: documents (conditional on entity type) ─────────────────
+function renderEntityDocs() {
+  const type = (formData.entity_details && formData.entity_details.entity_type) || '';
+  const docs = ENTITY_DOCS[type] || [];
+  const typeLabel = (ENTITY_TYPES.find(t=>t.v===type)||{}).label || 'your business';
+  if (!type) {
+    return `<div class="card"><div class="empty-note">Please choose your entity type on the previous page first.</div></div>`;
+  }
+  return `<div class="card">
+    <div class="card-title">Registration documents</div>
+    <div class="card-sub">Required documents for <strong>${typeLabel}</strong>. Clear photos or PDFs are accepted (max 5MB each).</div>
+    <div class="doc-list">
+      ${docs.map(d => uploadWidget('doc_'+d.k, d.label, d.k, !!d.req, d.hint||'')).join('')}
+      ${uploadWidget('entity_proof_address','Proof of business address','proof_of_address',true,'Utility bill or bank statement dated within the last 3 months')}
+    </div>
+    <div class="section-divider"></div>
+    <div class="field"><label>Notes (optional)</label><textarea name="doc_notes" placeholder="Anything we should know about your documents"></textarea></div>
+  </div>`;
+}
+
+// ── Registered entity: directors / shareholders / trustees ────────────────────
+function renderPrincipals() {
+  return `<div class="card">
+    <div class="card-title">Directors, owners &amp; controllers</div>
+    <div class="card-sub">Add every director, every shareholder owning 5% or more (a Beneficial Owner), and trustees where applicable. We verify each person's BVN/NIN and ID.</div>
+    <div id="principal-container"></div>
+    <div class="add-row">
+      <button type="button" class="btn-add" onclick="addPrincipal('Director')">+ Add Director</button>
+      <button type="button" class="btn-add" onclick="addPrincipal('Shareholder')">+ Add Shareholder</button>
+      <button type="button" class="btn-add" onclick="addPrincipal('Trustee')">+ Add Trustee</button>
+      <button type="button" class="btn-add" onclick="addPrincipal('Authorised Signatory')">+ Add Signatory</button>
+    </div>
+  </div>`;
+}
+
+function addPrincipal(role) {
+  principals.push({ role: role||'Director', first_name:'', other_names:'', surname:'', dob:'', nationality:'', address:'', phone:'', email:'', bvn:'', nin:'', pct_shareholding:'', is_ubo:false, is_pep:false, id_type:'', id_number:'', id_country:'', id_expiry:'', id_file:null });
+  renderPrincipalCards();
+  saveDraft();
+}
+
+function removePrincipal(i) {
+  principals.splice(i, 1);
+  renderPrincipalCards();
+  saveDraft();
+}
+
+function updatePrincipal(i, field, value) {
+  if (!principals[i]) return;
+  principals[i][field] = value;
+  if (field === 'role') renderPrincipalCards(); // toggles shareholding fields
+}
+
+function renderPrincipalCards() {
+  const c = document.getElementById('principal-container');
+  if (!c) return;
+  if (principals.length === 0) {
+    c.innerHTML = `<div class="empty-note">No one added yet. Use the buttons below to add at least one director or owner.</div>`;
+    return;
+  }
+  c.innerHTML = principals.map((p, i) => {
+    const isShareholder = p.role === 'Shareholder';
+    const tagClass = p.role === 'Trustee' ? 'trustee' : (p.role === 'Shareholder' ? 'shareholder' : '');
+    return `<div class="principal-card">
+      <div class="principal-head">
+        <span class="principal-tag ${tagClass}">${p.role}</span>
+        <button type="button" class="btn-remove" onclick="removePrincipal(${i})">Remove</button>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Role</label><select onchange="updatePrincipal(${i},'role',this.value)">${PRINCIPAL_ROLES.map(r=>`<option ${r===p.role?'selected':''}>${r}</option>`).join('')}</select></div>
+        <div class="field"><label>First Name <span class="req">*</span></label><input type="text" value="${esc(p.first_name)}" oninput="updatePrincipal(${i},'first_name',this.value)"></div>
+        <div class="field"><label>Other Names</label><input type="text" value="${esc(p.other_names)}" oninput="updatePrincipal(${i},'other_names',this.value)"></div>
+        <div class="field"><label>Surname <span class="req">*</span></label><input type="text" value="${esc(p.surname)}" oninput="updatePrincipal(${i},'surname',this.value)"></div>
+        <div class="field"><label>Date of Birth <span class="req">*</span></label><input type="date" value="${esc(p.dob)}" oninput="updatePrincipal(${i},'dob',this.value)"></div>
+        <div class="field"><label>Nationality <span class="req">*</span></label><select onchange="updatePrincipal(${i},'nationality',this.value)"><option value="">Select</option>${COUNTRIES.map(co=>`<option ${co===p.nationality?'selected':''}>${co}</option>`).join('')}</select></div>
+        <div class="field full"><label>Residential Address <span class="req">*</span></label><input type="text" value="${esc(p.address)}" oninput="updatePrincipal(${i},'address',this.value)"></div>
+        <div class="field"><label>Phone</label><input type="tel" value="${esc(p.phone)}" oninput="updatePrincipal(${i},'phone',this.value)"></div>
+        <div class="field"><label>Email</label><input type="email" value="${esc(p.email)}" oninput="updatePrincipal(${i},'email',this.value)"></div>
+        <div class="field"><label>BVN <span class="req">*</span></label><input type="tel" maxlength="11" value="${esc(p.bvn)}" oninput="updatePrincipal(${i},'bvn',this.value)"></div>
+        <div class="field"><label>NIN</label><input type="tel" maxlength="11" value="${esc(p.nin)}" oninput="updatePrincipal(${i},'nin',this.value)"></div>
+        ${isShareholder ? `<div class="field"><label>Shareholding %</label><input type="number" min="0" max="100" value="${esc(p.pct_shareholding)}" oninput="updatePrincipal(${i},'pct_shareholding',this.value)"></div>
+        <div class="field"><label>Beneficial Owner (≥5%)</label><div class="radio-group" style="margin-top:6px"><label class="check-item"><input type="checkbox" ${p.is_ubo?'checked':''} onchange="updatePrincipal(${i},'is_ubo',this.checked)"><span>Yes, a UBO</span></label></div></div>` : ''}
+        <div class="field full"><label>Politically Exposed Person?</label><div class="radio-group" style="margin-top:6px"><label class="check-item"><input type="checkbox" ${p.is_pep?'checked':''} onchange="updatePrincipal(${i},'is_pep',this.checked)"><span>This person is a PEP</span></label></div></div>
+      </div>
+      <div class="section-divider"></div>
+      <div class="form-grid">
+        <div class="field"><label>ID Type <span class="req">*</span></label><select onchange="updatePrincipal(${i},'id_type',this.value)"><option value="">Select ID</option>${ID_TYPES.map(t=>`<option ${t===p.id_type?'selected':''}>${t}</option>`).join('')}</select></div>
+        <div class="field"><label>ID Number <span class="req">*</span></label><input type="text" value="${esc(p.id_number)}" oninput="updatePrincipal(${i},'id_number',this.value)"></div>
+        <div class="field"><label>Issuing Country <span class="req">*</span></label><select onchange="updatePrincipal(${i},'id_country',this.value)"><option value="">Select</option>${COUNTRIES.map(co=>`<option ${co===p.id_country?'selected':''}>${co}</option>`).join('')}</select></div>
+        <div class="field"><label>Expiry Date</label><input type="date" value="${esc(p.id_expiry)}" oninput="updatePrincipal(${i},'id_expiry',this.value)"></div>
+      </div>
+      <div class="upload ${p.id_file?'done':''}">
+        <div><div class="upload-label">ID upload <span class="req">*</span></div><div class="upload-hint">Photo or scan of the ID above</div></div>
+        <div class="upload-right">
+          <span class="upload-status">${p.id_file?('✓ '+esc(p.id_file.name)):''}</span>
+          <input type="file" id="pfile-${i}" class="upload-file" accept="image/*,application/pdf" onchange="handlePrincipalUpload(${i},this)">
+          <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('pfile-${i}').click()">${p.id_file?'Replace':'Upload'}</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Upload widget + handlers ──────────────────────────────────────────────────
+function uploadWidget(key, label, docType, req, hint) {
+  return `<div class="upload" id="up-${key}" data-upkey="${key}" data-doctype="${docType}">
+    <div>
+      <div class="upload-label">${label} ${req?'<span class="req">*</span>':''}</div>
+      ${hint?`<div class="upload-hint">${hint}</div>`:''}
+    </div>
+    <div class="upload-right">
+      <span class="upload-status" id="upstatus-${key}"></span>
+      <input type="file" id="upfile-${key}" class="upload-file" accept="image/*,application/pdf" onchange="handleUpload('${key}','${docType}',this)">
+      <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('upfile-${key}').click()">Upload</button>
+    </div>
+  </div>`;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+async function handleUpload(key, docType, input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { showAlert('File too large — please keep uploads under 5MB.'); input.value=''; return; }
+  const dataUrl = await readFileAsDataUrl(file);
+  uploads[key] = { name: file.name, type: file.type, dataUrl, docType };
+  markUpload(key);
+  saveDraft();
+}
+
+async function handlePrincipalUpload(i, input) {
+  const file = input.files[0];
+  if (!file || !principals[i]) return;
+  if (file.size > 5 * 1024 * 1024) { showAlert('File too large — please keep uploads under 5MB.'); input.value=''; return; }
+  const dataUrl = await readFileAsDataUrl(file);
+  principals[i].id_file = { name: file.name, type: file.type, dataUrl };
+  renderPrincipalCards();
+  saveDraft();
+}
+
+function markUpload(key) {
+  const box = document.getElementById('up-'+key);
+  const status = document.getElementById('upstatus-'+key);
+  if (box && uploads[key]) box.classList.add('done');
+  if (status && uploads[key]) status.textContent = '✓ ' + uploads[key].name;
+  const btn = box && box.querySelector('button');
+  if (btn && uploads[key]) btn.textContent = 'Replace';
+}
+
+function restoreUploads() {
+  document.querySelectorAll('[data-upkey]').forEach(el => {
+    const key = el.getAttribute('data-upkey');
+    if (uploads[key]) markUpload(key);
+  });
+}
+
+function esc(s) { return String(s==null?'':s).replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
+// ── localStorage draft engine ─────────────────────────────────────────────────
+function saveDraft(silent) {
+  const snapshot = { v:1, formType, applicantType, currentStep, formData, principals, uploads, ynAnswers, ts: Date.now() };
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(snapshot));
+  } catch (e) {
+    // Quota exceeded — retry without the heavy data-URLs (keep text + file names).
+    try {
+      const lite = JSON.parse(JSON.stringify(snapshot));
+      Object.keys(lite.uploads||{}).forEach(k => { if (lite.uploads[k]) lite.uploads[k].dataUrl = null; });
+      (lite.principals||[]).forEach(p => { if (p.id_file) p.id_file.dataUrl = null; });
+      lite.filesDropped = true;
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(lite));
+    } catch (e2) { /* give up silently */ }
+  }
+  if (!silent) showSaveFlash();
+}
+
+function saveProgress() {
+  const steps = getSteps();
+  collectStep(steps[currentStep].id);
+  saveDraft();
+}
+
+function showSaveFlash() {
+  const f = document.getElementById('save-flash');
+  if (!f) return;
+  f.classList.add('show');
+  setTimeout(() => f.classList.remove('show'), 1800);
+}
+
+function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+
+function hasDraft() {
+  try { return !!localStorage.getItem(DRAFT_KEY); } catch (e) { return false; }
+}
+
+function resumeDraft() {
+  let snap;
+  try { snap = JSON.parse(localStorage.getItem(DRAFT_KEY)); } catch (e) { return; }
+  if (!snap) return;
+  formType      = snap.formType || 'merchant';
+  applicantType = snap.applicantType || null;
+  formData      = snap.formData || {};
+  principals    = snap.principals || [];
+  uploads       = snap.uploads || {};
+  ynAnswers     = snap.ynAnswers || {};
+
+  document.getElementById('type-selector').style.display = 'none';
+  document.getElementById('main-form').style.display = 'block';
+  document.getElementById('draft-banner').classList.remove('show');
+
+  if (formType === 'merchant' && applicantType) {
+    merchantFlow = (applicantType === 'natural') ? MERCHANT_STEPS_NATURAL : MERCHANT_STEPS_ENTITY;
+    buildStepper(merchantFlow);
+    document.getElementById('stepper').style.display = 'flex';
+    currentStep = Math.min(snap.currentStep || 1, merchantFlow.length - 1);
+  } else if (formType === 'aggregator') {
+    buildStepper(AGGREGATOR_STEPS); currentStep = snap.currentStep || 0;
+  } else if (formType === 'dd') {
+    buildStepper(DD_STEPS); currentStep = snap.currentStep || 0;
+  } else {
+    document.getElementById('stepper').style.display = 'none';
+    currentStep = 0;
+  }
+  renderStep();
+  if (snap.filesDropped) showAlert('Your text was restored, but uploaded files were too large to save locally — please re-attach them.');
+  window.scrollTo(0, 0);
+}
+
+function discardDraft() {
+  clearDraft();
+  document.getElementById('draft-banner').classList.remove('show');
 }
 
 // ── Step: Institution ──────────────────────────────────────────────────────────
@@ -1033,7 +1569,66 @@ function validateStep(stepId) {
     if (!any) { showAlert('Please select at least one payment option.'); return false; }
   }
 
+  // ── New KYC/KYB steps ──
+  if (stepId === 'np_identity') {
+    if (!requireFields(['first_name','surname','dob','nationality','address','phone','email','bvn','nin','id_type','id_number','id_country','id_expiry'])) return false;
+    if (!/^\d{11}$/.test(val('bvn'))) { showAlert('BVN must be 11 digits.'); return false; }
+    if (!/^\d{11}$/.test(val('nin'))) { showAlert('NIN must be 11 digits.'); return false; }
+    if (!document.querySelector('[name="is_pep"]:checked')) { showAlert('Please indicate whether you are a Politically Exposed Person.'); return false; }
+    if (!uploads['np_id_doc']) { showAlert('Please upload your government-issued ID.'); return false; }
+    if (!uploads['np_proof_address']) { showAlert('Please upload your proof of address.'); return false; }
+  }
+
+  if (stepId === 'np_business') {
+    if (!requireFields(['category','product_description','source_of_funds','expected_monthly_value','account_number','account_name','bank_name'])) return false;
+    if (!/^\d{10}$/.test(val('account_number'))) { showAlert('Account number must be a 10-digit NUBAN.'); return false; }
+    if (!document.querySelector('[name="mkt_domestic"]')?.checked && !document.querySelector('[name="mkt_intl"]')?.checked) { showAlert('Please select at least one target market.'); return false; }
+  }
+
+  if (stepId === 'entity_details') {
+    if (!requireFields(['entity_type','registered_name','reg_number','tin','incorporation_date','business_email','registered_address','business_phone'])) return false;
+    if (val('entity_type') === 'other' && !val('entity_other')) { showAlert('Please describe the entity type.'); return false; }
+  }
+
+  if (stepId === 'entity_docs') {
+    const type = (formData.entity_details && formData.entity_details.entity_type) || '';
+    const docs = ENTITY_DOCS[type] || [];
+    for (const d of docs) {
+      if (d.req && !uploads['doc_'+d.k]) { showAlert('Please upload: ' + d.label); return false; }
+    }
+    // LLC/ULC: Status Report OR (CO2 + CO7)
+    if ((type === 'llc' || type === 'ulc') && !uploads['doc_status_report'] && !(uploads['doc_form_co2'] && uploads['doc_form_co7'])) {
+      showAlert('Upload the CAC Status Report, or both Form CO2 and Form CO7 in its place.'); return false;
+    }
+    if (!uploads['entity_proof_address']) { showAlert('Please upload proof of business address.'); return false; }
+  }
+
+  if (stepId === 'principals') {
+    if (principals.length === 0) { showAlert('Add at least one director, owner or trustee.'); return false; }
+    for (let i = 0; i < principals.length; i++) {
+      const p = principals[i];
+      if (!p.first_name || !p.surname || !p.dob || !p.nationality || !p.address) { showAlert(`Complete the name, date of birth, nationality and address for ${p.role} #${i+1}.`); return false; }
+      if (!/^\d{11}$/.test(p.bvn||'')) { showAlert(`Enter a valid 11-digit BVN for ${p.role} #${i+1}.`); return false; }
+      if (!p.id_type || !p.id_number || !p.id_country) { showAlert(`Complete the ID details for ${p.role} #${i+1}.`); return false; }
+      if (!p.id_file) { showAlert(`Upload an ID for ${p.role} #${i+1}.`); return false; }
+    }
+  }
+
   hideAlert(); return true;
+}
+
+// Validation helpers
+function val(name) { const el = document.querySelector(`#step-content [name="${name}"]`); return el ? el.value.trim() : ''; }
+function requireFields(list) {
+  for (const f of list) {
+    const el = document.querySelector(`#step-content [name="${f}"]`);
+    if (!el || !el.value || !el.value.trim()) {
+      showAlert('Please complete: ' + f.replace(/_/g,' '));
+      el?.classList.add('err'); el?.focus();
+      return false;
+    }
+  }
+  return true;
 }
 
 // ── Navigation ─────────────────────────────────────────────────────────────────
@@ -1042,6 +1637,7 @@ function nextStep() {
   const stepId = steps[currentStep].id;
   collectStep(stepId);
   if (!validateStep(stepId)) return;
+  saveDraft(true); // auto-save on Next
   if (currentStep === steps.length - 1) { submitForm(); return; }
   currentStep++;
   renderStep();
@@ -1051,6 +1647,7 @@ function nextStep() {
 function prevStep() {
   if (currentStep > 0) {
     collectStep(getSteps()[currentStep].id);
+    saveDraft(true);
     currentStep--;
     renderStep();
     window.scrollTo(0,0);
@@ -1064,12 +1661,15 @@ async function submitForm() {
 
   try {
     const payload = {
-      form_type:  formType,
-      referred_by: sessionStorage.getItem('paylode_ref') || null,
-      data:       formData,
-      yn_answers: ynAnswers,
-      signature:  sigData,
-      submitted_at: new Date().toISOString(),
+      form_type:      formType,
+      applicant_type: applicantType,
+      referred_by:    sessionStorage.getItem('paylode_ref') || null,
+      data:           formData,
+      principals:     principals,
+      uploads:        uploads,
+      yn_answers:     ynAnswers,
+      signature:      sigData,
+      submitted_at:   new Date().toISOString(),
     };
 
     const res = await fetch(`${API}/onboarding/submit`, {
@@ -1081,6 +1681,7 @@ async function submitForm() {
     const result = await res.json();
 
     if (result.status) {
+      clearDraft();
       document.getElementById('step-content').innerHTML = '';
       document.getElementById('nav-btns').style.display = 'none';
       const refEl = document.getElementById('success-ref');
@@ -1116,7 +1717,10 @@ function hideAlert() {
   var t   = p.get('type');
   var ref = p.get('ref');
   if (ref) try { sessionStorage.setItem('paylode_ref', ref); } catch(e) {}
-  if (t === 'merchant' || t === 'aggregator' || t === 'dd') {
+  if (hasDraft()) {
+    document.getElementById('draft-banner').classList.add('show');
+  }
+  if ((t === 'merchant' || t === 'aggregator' || t === 'dd') && !hasDraft()) {
     setTimeout(function() { selectType(t); }, 0);
   }
 })();

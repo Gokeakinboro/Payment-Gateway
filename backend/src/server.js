@@ -13,6 +13,7 @@ const morgan     = require('morgan');
 const rateLimit  = require('express-rate-limit');
 
 const { logger }   = require('./utils/logger');
+require('./services/deferralExpiryService');
 const { prisma }   = require('./utils/db');
 const errorHandler = require('./middleware/errorHandler');
 
@@ -115,9 +116,17 @@ app.use('/api/v1/settlements',  settlementRoutes);
 app.use('/api/v1/reports',      reportRoutes);
 app.use('/api/v1/rails',        railRoutes);
 app.use('/api/v1/checkout',     checkoutRoutes);
-app.use('/api/v1/onboarding',   require('./routes/onboarding'));
-app.use('/api/v1/payouts',      require('./routes/payouts'));
-app.use('/api/v1/users',        require('./routes/users'));
+app.use('/api/v1/onboarding',          require('./routes/onboarding'));
+app.use('/api/v1/payouts',             require('./routes/payouts'));
+app.use('/api/v1/users',               require('./routes/users'));
+app.use('/api/v1/chargebacks',         require('./routes/chargebacks'));
+app.use('/api/v1/compliance',          require('./routes/compliance'));
+app.use('/api/v1/uploads',             require('./routes/uploads'));
+app.use('/api/v1/statements',          require('./routes/statements'));
+app.use('/api/v1/admin/email-templates', require('./routes/email-templates'));
+
+app.use('/api/v1/webhooks/youverify', require('./routes/youverify-webhook'));
+app.use('/api/v1/deferrals', require('./routes/deferrals'));
 
 // ── 404 handler ───────────────────────────────────────────────────────────
 app.use((req, res) => {

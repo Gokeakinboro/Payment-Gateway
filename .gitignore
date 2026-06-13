@@ -68,6 +68,14 @@ app_patched.js
 agg_onboard_patch.js
 agg_payout.js
 
+# Secrets & local working dirs (never commit)
+env_live.txt
+_server_snapshot/
+kyc_live.js
+kyc_updated.js
+onboarding_live.js
+youverify_webhook.js
+
 # Route file copies at root (deployed directly to server)
 admin.js
 aggregators.js

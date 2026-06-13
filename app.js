@@ -48,6 +48,7 @@ var NAV = {
       {id:'merchants',       icon:'▦', label:'Merchants'       },
       {id:'aggregators',     icon:'⬡', label:'Aggregators'     },
       {id:'admin_onboard',   icon:'+', label:'Onboard Merchant'},
+      {id:'deferrals',       icon:'⧗', label:'Doc Deferrals'   },
       {id:'users',           icon:'⊕', label:'Staff Accounts'  },
     ]},
     { section:'REPORTS', items:[
@@ -58,6 +59,7 @@ var NAV = {
       {id:'payout_report',   icon:'⇄', label:'Payout Report'   },
       {id:'revenue',         icon:'₦', label:'Revenue Report'  },
       {id:'compliance',      icon:'⚖', label:'Compliance'      },
+      {id:'onboarding_apps', icon:'▤', label:'Applications'    },
     ]},
     { section:'SYSTEM CONFIG', items:[
       {id:'fee_config',          icon:'₦', label:'Fee Configuration'},
@@ -80,7 +82,7 @@ var NAV = {
   admin: [
     { section:'Overview',    items:[{id:'overview',icon:'◉',label:'Dashboard'},{id:'transactions',icon:'↕',label:'All Transactions'}]},
     { section:'Management',  items:[{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'}]},
-    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
+    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
     { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'}]},
   ],
   aggregator: [
