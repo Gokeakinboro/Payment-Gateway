@@ -3,11 +3,50 @@ const router = require('express').Router();
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const bcrypt = require('bcryptjs');
 const { prisma } = require('../utils/db');
-const { ok, fail, created } = require('../utils/helpers');
+const { ok, fail, created, generateApiKey, hashApiKey } = require('../utils/helpers');
 const { sendEmail } = require('../services/emailService');
 const { logger } = require('../utils/logger');
 const { requireAuth, requireCompliance } = require('../middleware/auth');
+
+// Required documents seeded into kyc_documents when a merchant is provisioned,
+// keyed by entity sub-type. Uploaded application docs are marked 'submitted'.
+const ENTITY_DOC_SET = {
+  llc:        [['cert_incorp','Certificate of Incorporation'],['memart','MEMART'],['status_report','CAC Status Report (or CO2 + CO7)'],['board_resolution','Board Resolution'],['tin_cert','TIN certificate'],['proof_address','Proof of business address']],
+  ulc:        [['cert_incorp','Certificate of Incorporation'],['memart','MEMART'],['status_report','CAC Status Report (or CO2 + CO7)'],['board_resolution','Board Resolution'],['tin_cert','TIN certificate'],['proof_address','Proof of business address']],
+  sole_prop:  [['cert_incorp','Certificate of Registration of Business Name'],['tin_cert','TIN certificate'],['proof_address','Proof of business address']],
+  partnership:[['cert_incorp','Certificate of Registration'],['partnership_deed','Partnership Deed / Agreement'],['tin_cert','TIN certificate'],['proof_address','Proof of business address']],
+  trust:      [['cert_incorp','Certificate of Registration (Incorporated Trustees)'],['constitution','Constitution / Trust Deed'],['proof_address','Proof of business address']],
+  charity:    [['cert_incorp','Certificate of Registration (Incorporated Trustees)'],['constitution','Constitution / Governing Instrument'],['proof_address','Proof of business address']],
+  prof_body:  [['enabling_doc','Enabling Act / extract'],['proof_address','Proof of business address']],
+  other:      [['cert_incorp','Registration / incorporation document'],['proof_address','Proof of business address']],
+};
+const NATURAL_DOC_SET = [['id_document','Government-issued ID'],['proof_address','Proof of address'],['bvn','BVN'],['nin','NIN']];
+
+// Map an uploaded application doc key (or signal) to a kyc_documents doc_key.
+function submittedDocKeys(sub) {
+  const set = new Set();
+  const docs = sub.documents || [];
+  const alias = {
+    bn_cert:'cert_incorp', partnership_cert:'cert_incorp', trustees_cert:'cert_incorp',
+    reg_doc:'cert_incorp', enabling_doc:'enabling_doc', cac_application:'cert_incorp',
+    cert_incorp:'cert_incorp', memart:'memart', board_resolution:'board_resolution',
+    tin_cert:'tin_cert', partnership_deed:'partnership_deed', constitution:'constitution',
+    status_report:'status_report',
+  };
+  for (const d of docs) {
+    const k = (d.key || '').replace(/^doc_/, '');
+    if (alias[k]) set.add(alias[k]);
+    if (k === 'entity_proof_address' || k === 'np_proof_address') set.add('proof_address');
+    if (k === 'np_id_doc') set.add('id_document');
+  }
+  if (docs.some(d => (d.key || '').startsWith('doc_form_co2')) && docs.some(d => (d.key || '').startsWith('doc_form_co7'))) set.add('status_report');
+  const np = (sub.data && sub.data.np_identity) || {};
+  if (np.bvn) set.add('bvn');
+  if (np.nin) set.add('nin');
+  return set;
+}
 
 const UPLOAD_DIR = process.env.ONBOARDING_UPLOAD_DIR || path.join(__dirname, '../../uploads/onboarding');
 
@@ -261,21 +300,135 @@ router.get('/submissions/:reference', requireAuth, requireCompliance, async (req
   } catch (e) { next(e); }
 });
 
+// Create the merchant + API keys + seed per-document tracking from a submission.
+// Runs inside the approval transaction (tx) so it is atomic with the status claim.
+async function provisionMerchant(tx, sub) {
+  const data = sub.data || {};
+  const np  = data.np_identity || {};
+  const ent = data.entity_details || {};
+  const biz = data.np_business || {};
+  const isNatural = sub.applicantType === 'natural';
+
+  const email = (isNatural ? np.email : ent.business_email) || sub.contactEmail;
+  if (!email) throw new Error('No contact email on submission — cannot provision merchant');
+
+  const businessName = sub.businessName || 'Merchant';
+  const businessType = isNatural ? 'Individual'
+    : ({ llc:'Limited Liability Company', ulc:'Unlimited Liability Company', sole_prop:'Sole Proprietorship',
+         partnership:'Partnership', trust:'Registered Trust', charity:'Registered Charity',
+         prof_body:'Professional Body', other:(ent.entity_other || 'Other') }[ent.entity_type] || 'Registered Business');
+
+  // One user ⇒ one merchant (Merchant.userId is unique). Reuse an existing user
+  // with this email; if they already have a merchant, link to it (idempotent).
+  let user = await tx.user.findUnique({ where: { email }, include: { merchant: true } });
+  if (user && user.merchant) return { merchantId: user.merchant.id, reused: true };
+
+  let tempPassword = null;
+  if (!user) {
+    tempPassword = crypto.randomBytes(6).toString('base64url');
+    user = await tx.user.create({ data: {
+      email, passwordHash: await bcrypt.hash(tempPassword, 10),
+      firstName: np.first_name || businessName, lastName: np.surname || '', role: 'MERCHANT',
+    }});
+  }
+
+  const merchant = await tx.merchant.create({ data: {
+    userId:            user.id,
+    merchantCode:      'MCH-' + crypto.randomBytes(4).toString('hex').toUpperCase(),
+    businessName, businessType,
+    category:          biz.category || 'Other',
+    rcNumber:          isNatural ? null : (ent.reg_number || null),
+    state:             (isNatural ? np.state : ent.state) || 'Lagos',
+    address:           (isNatural ? np.address : ent.registered_address) || null,
+    businessEmail:     email,
+    businessPhone:     (isNatural ? np.phone : ent.business_phone) || '',
+    website:           biz.website_url || null,
+    expectedMonthlyVol: biz.expected_monthly_value || null,
+    kycStatus: 'ACTIVE', kycTier: 1, isActive: true,
+    settlementBank:        biz.bank_name || null,
+    settlementAccount:     biz.account_number || null,
+    settlementAccountName: biz.account_name || null,
+    settlementCycle:       biz.settlement_cycle || 't1',
+  }});
+
+  const keys = [['sk_live', false], ['pk_live', false], ['sk_test', true], ['pk_test', true]].map(([prefix, sandbox]) => {
+    const full = generateApiKey(prefix);
+    return { merchantId: merchant.id, keyHash: hashApiKey(full), keyPrefix: prefix, label: 'Issued on approval', isSandbox: sandbox };
+  });
+  await tx.apiKey.createMany({ data: keys });
+
+  // Seed per-document tracking; mark uploaded application docs as 'submitted'.
+  const reqDocs   = isNatural ? NATURAL_DOC_SET : (ENTITY_DOC_SET[ent.entity_type] || ENTITY_DOC_SET.other);
+  const submitted = submittedDocKeys(sub);
+  for (const [key, label] of reqDocs) {
+    const st = submitted.has(key) ? 'submitted' : 'outstanding';
+    await tx.$executeRaw`
+      INSERT INTO kyc_documents (entity_type, entity_id, doc_key, doc_label, status)
+      VALUES ('merchant', ${merchant.id}::uuid, ${key}, ${label}, ${st})
+      ON CONFLICT (entity_type, entity_id, doc_key) DO NOTHING`;
+  }
+
+  return { merchantId: merchant.id, created: true, tempPassword, email, businessName };
+}
+
 // ── PATCH /api/v1/onboarding/submissions/:reference — review decision ─────────
 router.patch('/submissions/:reference', requireAuth, requireCompliance, async (req, res, next) => {
   try {
     const { status, review_notes } = req.body;
+    const reference = req.params.reference;
     const allowed = ['pending', 'under_review', 'approved', 'rejected'];
     if (status && !allowed.includes(status)) return fail(res, 'Invalid status');
-    const row = await prisma.onboardingSubmission.update({
-      where: { reference: req.params.reference },
-      data: {
-        ...(status ? { status } : {}),
-        ...(review_notes !== undefined ? { reviewNotes: review_notes } : {}),
-        reviewedBy: req.user?.id || null,
-      },
-    });
-    ok(res, row, 'Submission updated');
+
+    // Non-approval transitions are a plain update.
+    if (status !== 'approved') {
+      const existing = await prisma.onboardingSubmission.findUnique({ where: { reference } });
+      if (!existing) return fail(res, 'Submission not found', 'NOT_FOUND', 404);
+      const row = await prisma.onboardingSubmission.update({
+        where: { reference },
+        data: { ...(status ? { status } : {}), ...(review_notes !== undefined ? { reviewNotes: review_notes } : {}), reviewedBy: req.user?.id || null },
+      });
+      return ok(res, row, 'Submission updated');
+    }
+
+    // Approval: claim + provision atomically so it happens EXACTLY once even under
+    // concurrent approve clicks/retries.
+    let outcome = {};
+    await prisma.$transaction(async (tx) => {
+      // Atomic claim — only the first concurrent approver flips the row; the rest
+      // get count 0 (the UPDATE takes a row lock, serialising the racers).
+      const claim = await tx.onboardingSubmission.updateMany({
+        where: { reference, status: { not: 'approved' } },
+        data: { status: 'approved', reviewedBy: req.user?.id || null, ...(review_notes !== undefined ? { reviewNotes: review_notes } : {}) },
+      });
+      const sub = await tx.onboardingSubmission.findUnique({ where: { reference } });
+      if (!sub) { outcome = { notFound: true }; return; }
+      // Already provisioned (re-approval or lost the claim race) → idempotent no-op.
+      if (sub.merchantId || claim.count === 0) { outcome = { already: true }; return; }
+      if (sub.formType !== 'merchant') { outcome = { skipped: true }; return; }
+
+      const prov = await provisionMerchant(tx, sub);
+      await tx.onboardingSubmission.update({ where: { reference }, data: { merchantId: prov.merchantId } });
+      outcome = { prov };
+    }, { timeout: 20000 });
+
+    if (outcome.notFound) return fail(res, 'Submission not found', 'NOT_FOUND', 404);
+
+    // Best-effort approval email (outside the transaction).
+    if (outcome.prov && outcome.prov.created) {
+      sendEmail({
+        to: outcome.prov.email,
+        subject: 'Your Paylode merchant account is approved',
+        html: `<h2>Approved</h2><p>Your application for <strong>${outcome.prov.businessName}</strong> has been approved and your merchant account is live.</p>` +
+              (outcome.prov.tempPassword ? `<p>Sign in at <a href="${process.env.APP_URL || ''}/login.html">the dashboard</a> with <strong>${outcome.prov.email}</strong> and temporary password <strong>${outcome.prov.tempPassword}</strong> — please change it on first login.</p>` : '') +
+              `<p>Any outstanding KYC documents are listed in your dashboard and must be provided (or placed under a deferral).</p>`,
+      }).catch(e => logger.error({ err: e }, 'approval email failed'));
+    }
+
+    const fresh = await prisma.onboardingSubmission.findUnique({ where: { reference } });
+    const msg = outcome.already ? 'Already approved (no change)'
+      : outcome.skipped ? 'Approved (no merchant provisioned for this form type)'
+      : 'Approved — merchant provisioned';
+    ok(res, fresh, msg);
   } catch (e) { next(e); }
 });
 

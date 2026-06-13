@@ -404,6 +404,7 @@ model OnboardingSubmission {
   screeningNotes Json?    @map("screening_notes")
   signature      String?
   referredBy     String?  @map("referred_by")
+  merchantId     String?  @map("merchant_id") @db.Uuid   // set once approved → provisioned
   reviewedBy     String?  @map("reviewed_by") @db.Uuid
   reviewNotes    String?  @map("review_notes")
   submittedAt    DateTime @default(now()) @map("submitted_at")
