@@ -186,6 +186,65 @@ async function loadSuperOverview() {
 }
 
 // ── TRANSACTIONS ──────────────────────────────────────────────────────────────
+// Payouts are a transaction type too — surfaced alongside payments via a toggle.
+async function loadPayoutsLedger(page=1, filters={}) {
+  const el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    let url = `/payouts/logs?page=${page}&perPage=20`;
+    if (filters.status) url += `&status=${filters.status}`;
+    const res = await apiFetch(url);
+    if (!res?.data) { el.innerHTML = errorBox('Could not load payouts'); return; }
+    const items = res.data.data || [];
+    const meta  = res.data.meta || { page:1, pages:1, total:0 };
+    const backPage = currentRole === 'merchant' ? 'merch_overview' : currentRole === 'aggregator' ? 'agg_overview' : 'overview';
+    el.innerHTML = `
+    <div class="page-header flex-between">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-outline btn-sm" onclick="navigate('${backPage}')" style="font-size:12px">&#8592; Back</button>
+        <div>
+          <div class="page-title">All Transactions</div>
+          <div class="page-desc">${fmtNum(meta.total)} payout item(s)</div>
+          <div style="margin-top:6px">
+            <button class="btn btn-outline btn-sm" onclick="loadTransactions(1)">Payments</button>
+            <button class="btn btn-primary btn-sm">Payouts</button>
+          </div>
+        </div>
+      </div>
+      <select class="form-input form-select" style="width:140px" onchange="loadPayoutsLedger(1,{status:this.value})">
+        <option value="">All Status</option>
+        <option value="success"${filters.status==='success'?' selected':''}>Success</option>
+        <option value="failed"${filters.status==='failed'?' selected':''}>Failed</option>
+        <option value="processing"${filters.status==='processing'?' selected':''}>Processing</option>
+        <option value="scheduled"${filters.status==='scheduled'?' selected':''}>Scheduled</option>
+      </select>
+    </div>
+    <div class="card"><div class="table-wrap"><table>
+      <thead><tr><th>Batch Ref</th><th>Merchant</th><th>Recipient</th><th>Amount</th><th>Fee</th><th>Status</th><th>Reason / Note</th><th>Date</th></tr></thead>
+      <tbody>
+        ${items.length ? items.map(i => `<tr>
+          <td class="mono" style="font-size:11px">${i.batch_ref||'—'}</td>
+          <td>${i.business_name||'—'}</td>
+          <td style="font-size:12px">${i.account_number||''} ${i.bank_code?('· '+i.bank_code):''}</td>
+          <td style="font-weight:600;white-space:nowrap">&#8358;${Number(i.amount_naira||0).toLocaleString()}</td>
+          <td class="mono" style="font-size:12px">&#8358;${Number(i.fee_naira||0).toLocaleString()}</td>
+          <td><span class="tag">PAYOUT</span> ${statusBadge(i.status)}</td>
+          <td style="font-size:12px;color:var(--gray-500)">${i.failure_reason||i.narration||'—'}</td>
+          <td style="font-size:12px;color:var(--gray-400)">${i.created_at?new Date(i.created_at).toLocaleDateString('en-NG'):'—'}</td>
+        </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:20px">No payouts found</td></tr>'}
+      </tbody>
+    </table></div>
+    <div class="flex-between" style="margin-top:16px">
+      <div style="font-size:12px;color:var(--gray-500)">Page ${meta.page} of ${meta.pages}</div>
+      <div class="flex">
+        ${meta.page>1?`<button class="btn btn-outline btn-sm" onclick="loadPayoutsLedger(${meta.page-1})">← Previous</button>`:''}
+        ${meta.page<meta.pages?`<button class="btn btn-outline btn-sm" onclick="loadPayoutsLedger(${meta.page+1})">Next →</button>`:''}
+      </div>
+    </div></div>`;
+  } catch(e) { el.innerHTML = errorBox('Failed to load payouts: ' + e.message); }
+}
+
 async function loadTransactions(page=1, filters={}) {
   const el = document.getElementById('main-content');
   if (!el) return;
@@ -209,7 +268,14 @@ async function loadTransactions(page=1, filters={}) {
     <div class="page-header flex-between">
       <div style="display:flex;align-items:center;gap:12px">
         <button class="btn btn-outline btn-sm" onclick="navigate('${backPage}')" style="font-size:12px">&#8592; Back</button>
-        <div><div class="page-title">All Transactions</div><div class="page-desc">${fmtNum(meta.total)} total transactions</div></div>
+        <div>
+          <div class="page-title">All Transactions</div>
+          <div class="page-desc">${fmtNum(meta.total)} total transactions</div>
+          <div style="margin-top:6px">
+            <button class="btn btn-primary btn-sm">Payments</button>
+            <button class="btn btn-outline btn-sm" onclick="loadPayoutsLedger(1)">Payouts</button>
+          </div>
+        </div>
       </div>
       <div class="flex">
         <select class="form-input form-select" style="width:130px;margin-right:8px" onchange="loadTransactions(1,{status:this.value})">
