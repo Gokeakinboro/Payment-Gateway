@@ -2183,6 +2183,26 @@ async function loadRailSettlement() {
       '</div>';
     }
 
+    // International card breakdown by scheme (Visa / Mastercard / Amex / Diners)
+    function schemeBreakdown(schemes) {
+      var dot = { VISA:'#1a1f71', MASTERCARD:'#eb001b', AMEX:'#2e77bc', DINERS:'#0079be', UNSPECIFIED:'#94a3b8' };
+      var rows = schemes.length ? schemes.map(function(s) {
+        return '<tr>' +
+          '<td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + (dot[s.scheme]||'#94a3b8') + ';margin-right:8px"></span>' + (s.scheme_label||s.scheme) + '</td>' +
+          '<td style="text-align:center">' + fmtNum(s.txn_count) + '</td>' +
+          '<td class="mono">' + fmtMajor(s.volume_major,'USD') + '</td>' +
+          '<td class="mono text-lime">' + fmtMajor(s.fee_revenue_major,'USD') + '</td>' +
+          '<td class="mono" style="font-weight:600">' + fmtMajor(s.margin_major,'USD') + '</td>' +
+        '</tr>';
+      }).join('') : '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--gray-400)">No international card transactions this period.</td></tr>';
+      return '<div class="card" style="border:1px solid #bfdbfe"><div class="card-header"><div class="card-title">USD — By Card Scheme</div>' +
+        '<div style="font-size:11px;color:var(--gray-400)">International cards split by scheme · "Unspecified" = flat rate (scheme not detected)</div></div>' +
+        '<div class="table-wrap"><table>' +
+          '<thead><tr><th>Card Scheme</th><th>Txns</th><th>Volume</th><th>Fee Revenue</th><th>Margin</th></tr></thead>' +
+          '<tbody>' + rows + '</tbody></table></div>' +
+      '</div>';
+    }
+
     el.innerHTML =
       '<div class="page-header flex-between"><div>' +
         '<div class="page-title">Rail Settlement Report</div>' +
@@ -2200,10 +2220,11 @@ async function loadRailSettlement() {
 
       '<div class="section-gap" style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-blue">🌍 International (USD)</span><span style="font-size:12px;color:var(--gray-400)">International card transactions — all values in US Dollars</span></div>' +
       totalsRow('USD') +
-      '<div class="card" style="border:1px solid #bfdbfe"><div class="card-header"><div class="card-title">USD — By Rail &amp; Product</div>' +
+      '<div class="card" style="border:1px solid #bfdbfe;margin-bottom:16px"><div class="card-header"><div class="card-title">USD — By Rail &amp; Product</div>' +
         '<div style="font-size:11px;color:var(--gray-400)">Settled in US Dollars</div></div>' +
         currencyTable('USD') +
-      '</div>';
+      '</div>' +
+      schemeBreakdown(d.by_scheme || []);
 
     window._railSettlementData = d;
   } catch(e) {
@@ -2214,9 +2235,12 @@ async function loadRailSettlement() {
 function exportRailSettlement() {
   var d = window._railSettlementData;
   if (!d) { alert('No data to export'); return; }
-  var headers = ['Currency','Rail','Product','Txns','Volume','Fee Revenue','Rail Cost','Margin'];
+  var headers = ['Section','Currency','Rail/Scheme','Product','Txns','Volume','Fee Revenue','Rail Cost','Margin'];
   var rows = (d.by_rail_product || []).map(function(p) {
-    return [p.currency||'NGN', p.rail_name, p.product||'', p.txn_count, p.volume_major, p.fee_revenue_major, p.rail_cost_major, p.margin_major];
+    return ['Rail x Product', p.currency||'NGN', p.rail_name, p.product||'', p.txn_count, p.volume_major, p.fee_revenue_major, p.rail_cost_major, p.margin_major];
+  });
+  (d.by_scheme || []).forEach(function(s) {
+    rows.push(['Card Scheme (USD)', 'USD', s.scheme_label||s.scheme, 'International Card', s.txn_count, s.volume_major, s.fee_revenue_major, '', s.margin_major]);
   });
   var csv = [headers].concat(rows).map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
   var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });

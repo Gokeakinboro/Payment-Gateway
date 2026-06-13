@@ -653,10 +653,41 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
       };
     };
 
+    // ── International card breakdown by SCHEME (Visa/Mastercard/Amex/Diners) ──────
+    // Scheme is stored on the transaction's metadata (set at init / charge).
+    const schemeRows = await prisma.$queryRaw`
+      SELECT
+        COALESCE(NULLIF(t.metadata->>'card_scheme', ''), 'UNSPECIFIED') AS scheme,
+        COUNT(*)::int                  AS txn_count,
+        SUM(t.amount)::bigint          AS volume,
+        SUM(t.merchant_fee)::bigint    AS fee_revenue,
+        SUM(t.paylode_margin)::bigint  AS paylode_margin
+      FROM transactions t
+      WHERE t.status = 'SUCCESS'
+        AND t.is_sandbox = false
+        AND t.currency = 'USD'
+        AND t.channel = 'CARD'
+        AND t.created_at >= ${fromDate}
+        AND t.created_at <= ${toDate}
+      GROUP BY 1
+      ORDER BY SUM(t.amount) DESC NULLS LAST
+    `;
+    const schemeLabel = { VISA:'Visa', MASTERCARD:'Mastercard', AMEX:'American Express', DINERS:'Diners Club', UNSPECIFIED:'Unspecified / Flat' };
+    const byScheme = schemeRows.map(r => ({
+      scheme:            r.scheme,
+      scheme_label:      schemeLabel[r.scheme] || r.scheme,
+      currency:          'USD',
+      txn_count:         Number(r.txn_count || 0),
+      volume_major:      Number(r.volume || 0) / 100,
+      fee_revenue_major: Number(r.fee_revenue || 0) / 100,
+      margin_major:      Number(r.paylode_margin || 0) / 100,
+    }));
+
     ok(res, {
       period: { from: fromDate, to: toDate },
       by_rail_product: rows.map(ser),
       by_rail:         railTotals.map(ser),
+      by_scheme:       byScheme,  // international (USD) cards split by card scheme
       totals_by_currency: { NGN: totalsFor('NGN'), USD: totalsFor('USD') },
     });
   } catch (e) { next(e); }
