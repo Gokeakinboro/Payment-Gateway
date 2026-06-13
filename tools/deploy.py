@@ -59,6 +59,16 @@ def main():
     if rc != 0:
         sys.exit('Syntax gate failed — nothing deployed.')
 
+    # 1b) GIT-CLEAN GATE — never ship code that isn't committed, so the repo is
+    # always a faithful record of what's on the server. Override with --allow-dirty.
+    if '--allow-dirty' not in sys.argv:
+        locals_ = [l for l, _ in files]
+        dirty = subprocess.run(['git', 'status', '--porcelain', '--', *locals_],
+                               capture_output=True, text=True).stdout.strip()
+        if dirty:
+            print(dirty)
+            sys.exit('Uncommitted changes in files being deployed. Commit first (or pass --allow-dirty).')
+
     ssh = paramiko.SSHClient(); ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(HOST, username=USER, password=PASS, timeout=40)
     def run(cmd, t=240):

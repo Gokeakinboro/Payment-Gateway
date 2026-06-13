@@ -70,6 +70,7 @@ agg_payout.js
 
 # Committed tooling exceptions (despite the broad *.py ignore above)
 !tools/deploy.py
+!tools/verify-sync.py
 
 # Secrets & local working dirs (never commit)
 env_live.txt
