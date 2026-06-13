@@ -14,12 +14,21 @@ async function requireAuth(req, res, next) {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id:true, email:true, role:true, permissions:true, isActive:true,
+      select: { id:true, email:true, role:true, permissions:true, isActive:true, mustChangePassword:true,
                 merchant:{ select:{ id:true, merchantCode:true, kycStatus:true, isActive:true, kycTier:true, processingRate:true, aggregatorId:true }},
                 aggregator:{ select:{ id:true, revenueSplitPct:true }} },
     });
     if (!user || !user.isActive) return unauthorized(res, 'Account inactive');
     req.user = user;
+
+    // First-time password: until the temp password is changed, the only thing the
+    // user may do is read their profile or change their password.
+    if (user.mustChangePassword) {
+      const url = req.originalUrl || '';
+      const allowed = url.includes('/auth/change-password') || url.includes('/auth/me') || url.includes('/auth/logout');
+      if (!allowed)
+        return res.status(403).json({ status: false, message: 'You must change your temporary password before continuing.', error_code: 'PASSWORD_CHANGE_REQUIRED' });
+    }
     next();
   } catch {
     return unauthorized(res, 'Invalid or expired token');

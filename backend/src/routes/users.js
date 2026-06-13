@@ -6,6 +6,22 @@ const { prisma } = require('../utils/db');
 const { ok, fail, created } = require('../utils/helpers');
 const { requireAuth, requireSuperAdmin } = require('../middleware/auth');
 const { logAudit } = require('../services/auditService');
+const { sendEmail } = require('../services/emailService');
+const { logger } = require('../utils/logger');
+
+function genTempPassword() {
+  return Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!';
+}
+function sendTempPasswordEmail(email, name, tempPassword) {
+  return sendEmail({
+    to: email,
+    subject: 'Your Paylode account — first-time sign-in',
+    html: `<h2>Welcome to Paylode</h2><p>Hi ${name || ''},</p>` +
+      `<p>An account has been created for you. Sign in at <a href="${process.env.APP_URL || ''}/login.html">the portal</a> with:</p>` +
+      `<p><strong>Email:</strong> ${email}<br><strong>Temporary password:</strong> ${tempPassword}</p>` +
+      `<p>For your security you will be required to set a new password before you can do anything else.</p>`,
+  }).catch(e => logger.error({ err: e }, 'temp-password email failed'));
+}
 
 const validate = rules => async (req, res, next) => {
   await Promise.all(rules.map(r => r.run(req)));
@@ -51,19 +67,21 @@ router.post('/invite', requireAuth, requireSuperAdmin,
       const firstName = nameParts[0];
       const lastName  = nameParts.slice(1).join(' ') || '-';
 
-      const tempPassword = Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6).toUpperCase();
+      const tempPassword = genTempPassword();
       const passwordHash = await bcrypt.hash(tempPassword, 12);
 
       const user = await prisma.user.create({
         data: {
           email: email.toLowerCase(), passwordHash, firstName, lastName, role, permissions: [],
+          mustChangePassword: true,
         },
         select: { id: true, email: true, firstName: true, lastName: true, role: true, createdAt: true },
       });
 
+      sendTempPasswordEmail(user.email, firstName, tempPassword);
       await logAudit(req.user.id, 'USER_INVITED', 'users', user.id, null, { email: user.email, role }, null, req.ip);
       ok(res, { ...user, temp_password: tempPassword,
-        message: 'User created. Share the temp password securely.' });
+        message: 'User created and emailed a temporary password (they must change it on first sign-in).' });
     } catch (e) { next(e); }
   }
 );
@@ -91,15 +109,34 @@ router.post('/', requireAuth, requireSuperAdmin,
           email: email.toLowerCase(), passwordHash,
           firstName: firstName.trim(), lastName: lastName.trim(),
           role, permissions: Array.isArray(permissions) ? permissions : [],
+          mustChangePassword: true,
         },
         select: { id: true, email: true, firstName: true, lastName: true, role: true, isActive: true, createdAt: true },
       });
 
+      sendTempPasswordEmail(user.email, user.firstName, tempPassword);
       await logAudit(req.user.id, 'USER_CREATED', 'users', user.id, null, { email: user.email, role }, null, req.ip);
       created(res, { ...user, temp_password: tempPassword }, 'User created successfully');
     } catch (e) { next(e); }
   }
 );
+
+// POST /api/v1/users/:id/reset-temp-password — SA re-issues a first-time password
+router.post('/:id/reset-temp-password', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (!target) return fail(res, 'User not found', 'NOT_FOUND', 404);
+    if (target.role === 'SUPER_ADMIN') return fail(res, 'Cannot reset a Super Admin this way');
+    const tempPassword = genTempPassword();
+    await prisma.user.update({
+      where: { id: req.params.id },
+      data: { passwordHash: await bcrypt.hash(tempPassword, 12), mustChangePassword: true },
+    });
+    sendTempPasswordEmail(target.email, target.firstName, tempPassword);
+    await logAudit(req.user.id, 'USER_TEMP_PASSWORD_RESET', 'users', req.params.id, null, { email: target.email }, null, req.ip);
+    ok(res, { temp_password: tempPassword }, 'Temporary password re-issued and emailed. The user must change it on next sign-in.');
+  } catch (e) { next(e); }
+});
 
 // PUT /api/v1/users/:id/activate
 router.put('/:id/activate', requireAuth, requireSuperAdmin, async (req, res, next) => {

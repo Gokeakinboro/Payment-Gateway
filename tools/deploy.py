@@ -33,7 +33,13 @@ MANIFEST = [
     ('backend/src/routes/onboarding.js',           '/opt/paylode-api/backend/src/routes/onboarding.js'),
     ('backend/src/routes/deferrals.js',            '/opt/paylode-api/backend/src/routes/deferrals.js'),
     ('backend/src/routes/documents.js',            '/opt/paylode-api/backend/src/routes/documents.js'),
+    ('backend/src/routes/users.js',                '/opt/paylode-api/backend/src/routes/users.js'),
+    ('backend/src/routes/aggregators.js',          '/opt/paylode-api/backend/src/routes/aggregators.js'),
+    ('backend/src/routes/auth.js',                 '/opt/paylode-api/backend/src/routes/auth.js'),
+    ('backend/src/routes/transactions.js',         '/opt/paylode-api/backend/src/routes/transactions.js'),
+    ('backend/src/middleware/auth.js',             '/opt/paylode-api/backend/src/middleware/auth.js'),
     ('backend/src/services/deferralExpiryService.js', '/opt/paylode-api/backend/src/services/deferralExpiryService.js'),
+    ('backend/src/services/emailService.js',       '/opt/paylode-api/backend/src/services/emailService.js'),
     ('backend/src/server.js',                      '/opt/paylode-api/backend/src/server.js'),
     ('backend/prisma/schema.prisma',               '/opt/paylode-api/backend/prisma/schema.prisma'),
 ]

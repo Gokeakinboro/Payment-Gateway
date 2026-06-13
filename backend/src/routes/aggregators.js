@@ -1,9 +1,12 @@
 'use strict';
 const aggRouter = require('express').Router();
+const bcrypt = require('bcryptjs');
 const { prisma } = require('../utils/db');
 const { requireAuth, requireSuperAdmin, requireAggregator } = require('../middleware/auth');
 const { ok, fail, notFound, koboToNaira } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
+const { sendEmail } = require('../services/emailService');
+const { logger } = require('../utils/logger');
 
 aggRouter.get('/', requireAuth, requireSuperAdmin, async (req,res,next) => {
   try {
@@ -13,6 +16,47 @@ aggRouter.get('/', requireAuth, requireSuperAdmin, async (req,res,next) => {
     });
     ok(res, aggs.map(a => ({ ...a, merchant_count: a._count.merchants })));
   } catch(e){next(e);}
+});
+
+// ── POST /api/v1/aggregators — SA creates an aggregator (user + aggregator) ───
+aggRouter.post('/', requireAuth, requireSuperAdmin, async (req,res,next) => {
+  try {
+    const { company_name, contact_name, email, rc_number, split_pct, settlement_bank, settlement_account } = req.body;
+    if (!company_name || !email) return fail(res, 'company_name and email are required');
+    const lower = email.toLowerCase();
+    if (await prisma.user.findUnique({ where:{ email: lower } })) return fail(res, 'Email already in use');
+
+    const pct = Number(split_pct);
+    const split = (isFinite(pct) && pct > 0) ? (pct > 1 ? pct/100 : pct) : 0;  // accept 30 or 0.30
+    const tempPassword = Math.random().toString(36).slice(2,12) + Math.random().toString(36).slice(2,6).toUpperCase() + '!';
+    const nameParts = (contact_name || company_name).trim().split(' ');
+
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({ data: {
+        email: lower, passwordHash: await bcrypt.hash(tempPassword, 12),
+        firstName: nameParts[0], lastName: nameParts.slice(1).join(' ') || '(Aggregator)',
+        role: 'AGGREGATOR', mustChangePassword: true,
+      }});
+      const agg = await tx.aggregator.create({ data: {
+        userId: user.id, companyName: company_name, rcNumber: rc_number || null,
+        revenueSplitPct: split, settlementBank: settlement_bank || null,
+        settlementAccount: settlement_account || null, status: 'active',
+      }});
+      return { user, agg };
+    });
+
+    sendEmail({
+      to: lower,
+      subject: 'Your Paylode aggregator account — first-time sign-in',
+      html: `<h2>Welcome to Paylode</h2><p>An aggregator account for <strong>${company_name}</strong> has been created.</p>` +
+        `<p>Sign in at <a href="${process.env.APP_URL || ''}/login.html">the portal</a> with <strong>${lower}</strong> and temporary password <strong>${tempPassword}</strong>. You must change it on first sign-in.</p>`,
+    }).catch(e => logger.error({ err: e }, 'aggregator welcome email failed'));
+
+    await logAudit(req.user.id, 'AGGREGATOR_CREATED', 'aggregators', result.agg.id, null,
+      { company_name, email: lower, split_pct: split }, null, req.ip);
+    ok(res, { aggregator_id: result.agg.id, company_name, email: lower, revenue_split_pct: split, temp_password: tempPassword },
+      'Aggregator created and emailed a temporary password.');
+  } catch(e){ next(e); }
 });
 
 // ── Default split (flat rate for entire aggregator) ───────────────────────────

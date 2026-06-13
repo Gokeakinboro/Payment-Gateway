@@ -329,6 +329,7 @@ async function provisionMerchant(tx, sub) {
     user = await tx.user.create({ data: {
       email, passwordHash: await bcrypt.hash(tempPassword, 10),
       firstName: np.first_name || businessName, lastName: np.surname || '', role: 'MERCHANT',
+      mustChangePassword: true,
     }});
   }
 

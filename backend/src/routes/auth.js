@@ -199,7 +199,7 @@ router.post('/change-password', requireAuth,
         return fail(res, 'Current password is incorrect', 'WRONG_PASSWORD');
 
       const newHash = await bcrypt.hash(req.body.newPassword, 12);
-      await prisma.user.update({ where: { id: user.id }, data: { passwordHash: newHash } });
+      await prisma.user.update({ where: { id: user.id }, data: { passwordHash: newHash, mustChangePassword: false } });
       ok(res, null, 'Password updated successfully');
     } catch (e) { next(e); }
   }

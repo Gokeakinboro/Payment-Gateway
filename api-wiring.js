@@ -818,9 +818,12 @@ async function loadAggregators() {
     const aggs = res.data;
 
     el.innerHTML = `
-    <div class="page-header">
-      <div class="page-title">Aggregators</div>
-      <div class="page-desc">${aggs.length} active aggregator partners</div>
+    <div class="page-header flex-between">
+      <div>
+        <div class="page-title">Aggregators</div>
+        <div class="page-desc">${aggs.length} active aggregator partners</div>
+      </div>
+      <button class="btn btn-lime" onclick="openCreateAggregator()">+ Create Aggregator</button>
     </div>
     <div class="grid-2">
       ${aggs.map(a => `
@@ -846,6 +849,55 @@ async function loadAggregators() {
   } catch(e) {
     el.innerHTML = errorBox('Failed to load aggregators: ' + e.message);
   }
+}
+
+// ── SA: create aggregator ─────────────────────────────────────────────────────
+function openCreateAggregator() {
+  showModal(
+    '<div class="modal-header"><div class="modal-title">Create Aggregator</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="form-group"><label class="form-label">Company Name <span style="color:var(--red)">*</span></label><input class="form-input" id="agg-company" placeholder="Registered company name"></div>' +
+    '<div class="form-group"><label class="form-label">Contact Email <span style="color:var(--red)">*</span></label><input class="form-input" type="email" id="agg-email" placeholder="ops@company.com"></div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">Contact Name</label><input class="form-input" id="agg-contact" placeholder="Full name"></div>' +
+      '<div class="form-group"><label class="form-label">RC Number</label><input class="form-input" id="agg-rc" placeholder="RC 000000"></div>' +
+    '</div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">Revenue Split %</label><input class="form-input" type="number" id="agg-split" min="0" max="100" placeholder="e.g. 30"></div>' +
+      '<div class="form-group"><label class="form-label">Settlement Bank</label><input class="form-input" id="agg-bank" placeholder="e.g. GTBank"></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">Settlement Account</label><input class="form-input" id="agg-acct" placeholder="10-digit NUBAN"></div>' +
+    '<div class="warn-box" style="font-size:12px;margin-bottom:14px">A user account is created and emailed a temporary password. The aggregator must change it on first sign-in.</div>' +
+    '<div class="flex-between"><button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+      '<button class="btn btn-lime" id="agg-create-btn" onclick="submitCreateAggregator()">Create Aggregator</button></div>'
+  );
+}
+async function submitCreateAggregator() {
+  var body = {
+    company_name: (document.getElementById('agg-company').value||'').trim(),
+    email: (document.getElementById('agg-email').value||'').trim(),
+    contact_name: (document.getElementById('agg-contact').value||'').trim(),
+    rc_number: (document.getElementById('agg-rc').value||'').trim(),
+    split_pct: document.getElementById('agg-split').value,
+    settlement_bank: (document.getElementById('agg-bank').value||'').trim(),
+    settlement_account: (document.getElementById('agg-acct').value||'').trim(),
+  };
+  if (!body.company_name || !body.email) { alert('Company name and email are required'); return; }
+  var btn = document.getElementById('agg-create-btn'); btn.textContent='Creating...'; btn.disabled=true;
+  var res = await apiFetch('/aggregators', { method:'POST', body: JSON.stringify(body) });
+  if (res && res.status) {
+    document.getElementById('modal').style.display='none';
+    alert('Aggregator created. A temporary password was emailed to ' + body.email + '.');
+    loadAggregators();
+  } else { alert('Error: ' + ((res && res.message) || 'Create failed')); btn.textContent='Create Aggregator'; btn.disabled=false; }
+}
+
+// ── SA: re-issue first-time password ──────────────────────────────────────────
+async function resetTempPassword(userId, email) {
+  if (!confirm('Re-issue a temporary password for ' + email + '? It will be emailed and they must change it on next sign-in.')) return;
+  var res = await apiFetch('/users/' + userId + '/reset-temp-password', { method:'POST' });
+  if (res && res.status) alert('Temporary password re-issued and emailed to ' + email + '.');
+  else alert('Error: ' + ((res && res.message) || 'Reset failed'));
 }
 
 // ── AGGREGATOR RATE CONFIG ────────────────────────────────────────────────────
@@ -2042,6 +2094,7 @@ async function loadUserManagement() {
               (st === 'active'
                 ? '<button class="btn btn-outline btn-sm" onclick="setUserStatus(\'' + u.id + '\',\'deactivate\')">Deactivate</button>'
                 : '<button class="btn btn-outline btn-sm" onclick="setUserStatus(\'' + u.id + '\',\'activate\')">Activate</button>') +
+              ' <button class="btn btn-outline btn-sm" onclick="resetTempPassword(\'' + u.id + '\',\'' + (u.email||'').replace(/'/g,'') + '\')">Resend Temp Pwd</button>' +
             '</td>' +
           '</tr>';
         }).join('') : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No users found</td></tr>') +
@@ -3149,9 +3202,42 @@ function loadPageData(page) {
   }
 }
 
+// ── FIRST-TIME PASSWORD (forced change before any access) ─────────────────────
+function forceFirstTimePasswordChange() {
+  var ip = 'width:100%;padding:11px;border:1.5px solid #cbd5e1;border-radius:8px;margin-bottom:10px;font-size:14px;box-sizing:border-box';
+  document.body.innerHTML =
+    '<div style="position:fixed;inset:0;background:#0f172a;display:flex;align-items:center;justify-content:center;padding:20px;font-family:DM Sans,sans-serif">' +
+      '<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;padding:28px">' +
+        '<div style="font-size:18px;font-weight:700;color:#1a2744;margin-bottom:6px">Set your password</div>' +
+        '<div style="font-size:13px;color:#64748b;margin-bottom:18px">For your security you must replace your temporary password before continuing.</div>' +
+        '<div id="fp-alert" style="display:none;background:#fee2e2;color:#991b1b;border-radius:8px;padding:10px;font-size:13px;margin-bottom:12px"></div>' +
+        '<input id="fp-cur" type="password" placeholder="Temporary password" style="' + ip + '">' +
+        '<input id="fp-new" type="password" placeholder="New password (min 8 characters)" style="' + ip + '">' +
+        '<input id="fp-confirm" type="password" placeholder="Confirm new password" style="' + ip + '">' +
+        '<button id="fp-btn" style="width:100%;padding:12px;background:#1a2744;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer" onclick="submitFirstTimePassword()">Update password &amp; continue</button>' +
+        '<div style="text-align:center;margin-top:12px"><a href="#" onclick="localStorage.clear();location.href=\'/login.html\';return false" style="font-size:12px;color:#64748b">Sign out</a></div>' +
+      '</div></div>';
+}
+async function submitFirstTimePassword() {
+  var cur = document.getElementById('fp-cur').value, nw = document.getElementById('fp-new').value, cf = document.getElementById('fp-confirm').value;
+  var al = document.getElementById('fp-alert');
+  function err(m){ al.textContent = m; al.style.display = 'block'; }
+  if (!cur || !nw) return err('Enter your temporary and new password.');
+  if (nw.length < 8) return err('New password must be at least 8 characters.');
+  if (nw !== cf) return err('New passwords do not match.');
+  var btn = document.getElementById('fp-btn'); btn.textContent = 'Updating...'; btn.disabled = true;
+  var res = await apiFetch('/auth/change-password', { method:'POST', body: JSON.stringify({ currentPassword: cur, newPassword: nw }) });
+  if (res && res.status) {
+    try { var u = getUser(); u.mustChangePassword = false; localStorage.setItem('paylode_user', JSON.stringify(u)); } catch(e) {}
+    location.reload();
+  } else { btn.textContent = 'Update password & continue'; btn.disabled = false; err((res && res.message) || 'Could not update password.'); }
+}
+
 // ── LOAD USER INFO IN TOPBAR ──────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
   var user = getUser();
+  // First-time password: block the whole dashboard until the temp password is changed.
+  if (user && user.mustChangePassword) { forceFirstTimePasswordChange(); return; }
   if (user.firstName) {
     var initials = (user.firstName[0] + (user.lastName ? user.lastName[0] : '')).toUpperCase();
     var av = document.getElementById('user-avatar');
