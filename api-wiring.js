@@ -3257,6 +3257,55 @@ async function submitIssueReport() {
   else if (btn) { btn.textContent = 'Send Report'; btn.disabled = false; }
 }
 
+// ── DEAD-LETTER BANNER (onboarding applications that failed to persist) ───────
+// Shown to SA/admin/compliance so a real application emailed-but-not-saved is
+// never missed. Recoverable via Retry.
+async function checkDeadLetters() {
+  if (['superadmin', 'admin', 'compliance'].indexOf(currentRole) === -1) return;
+  var main = document.querySelector('.main'); if (!main) return;
+  var bar = document.getElementById('global-banner');
+  try {
+    var res = await apiFetch('/onboarding/dead-letter');
+    var n = (res && res.data && res.data.count) || 0;
+    if (!n) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div'); bar.id = 'global-banner';
+      var content = document.getElementById('main-content');
+      content.parentNode.insertBefore(bar, content);
+    }
+    bar.innerHTML =
+      '<div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:10px 16px;margin:10px;border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px">' +
+      '<span>&#9888; <strong>' + n + '</strong> onboarding application' + (n > 1 ? 's' : '') + ' failed to save and ' + (n > 1 ? 'are' : 'is') + ' not in the review queue (emailed only).</span>' +
+      '<button class="btn btn-sm" style="background:#991b1b;color:#fff" onclick="showDeadLetterModal()">Review &amp; Recover</button>' +
+      '</div>';
+  } catch (e) { /* endpoint unavailable — silent */ }
+}
+async function showDeadLetterModal() {
+  var res = await apiFetch('/onboarding/dead-letter');
+  var items = (res && res.data && res.data.items) || [];
+  var rows = items.length ? items.map(function (it) {
+    return '<tr style="border-bottom:1px solid var(--gray-100)">' +
+      '<td style="padding:8px;font-size:12px">' + (it.businessName || '—') + '<div style="color:var(--gray-400);font-size:11px">' + (it.contactEmail || '') + '</div></td>' +
+      '<td style="padding:8px;font-size:11px">' + (it.formType || '—') + '</td>' +
+      '<td style="padding:8px;font-size:11px;color:var(--gray-500)">' + (it.failedAt ? new Date(it.failedAt).toLocaleString('en-NG') : '—') + '<div style="color:var(--red);font-size:10px">' + (it.error || '') + '</div></td>' +
+      '<td style="padding:8px"><button class="btn btn-lime btn-sm" onclick="retryDeadLetter(\'' + it.reference + '\')">Recover</button></td>' +
+      '</tr>';
+  }).join('') : '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--gray-400)">No failed applications</td></tr>';
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Failed Onboarding Applications</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="font-size:12px;color:var(--gray-500);margin-bottom:12px">These applications were received (and compliance was emailed) but could not be saved. Recover to push them into the review queue.</div>' +
+    '<div class="table-wrap"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)">' +
+    '<th style="text-align:left;padding:8px;font-size:11px">Business</th><th style="text-align:left;padding:8px;font-size:11px">Type</th><th style="text-align:left;padding:8px;font-size:11px">Failed</th><th></th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+async function retryDeadLetter(reference) {
+  var res = await apiFetch('/onboarding/dead-letter/' + encodeURIComponent(reference) + '/retry', { method: 'POST' });
+  if (res && res.status) { alert('Recovered into the review queue.'); document.getElementById('modal').style.display = 'none'; checkDeadLetters(); if (currentPage === 'onboarding_apps') loadOnboardingApps(); }
+  else alert('Error: ' + ((res && res.message) || 'Recovery failed'));
+}
+
 // ── CENTRAL PAGE LOADER ────────────────────────────────────────────────────────
 function loadPageData(page) {
   const role = currentRole;
@@ -3390,6 +3439,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   renderNav();
   loadPageData(currentPage);
+  checkDeadLetters();
 });
 
 // ── PAYOUTS DASHBOARD ─────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const { prisma } = require('../utils/db');
 const { ok, fail, created, generateApiKey, hashApiKey } = require('../utils/helpers');
+const { logAudit } = require('../services/auditService');
 const { sendEmail, getEmailContent } = require('../services/emailService');
 const { logger } = require('../utils/logger');
 const { requireAuth, requireCompliance } = require('../middleware/auth');
@@ -50,6 +51,20 @@ function submittedDocKeys(sub) {
 }
 
 const UPLOAD_DIR = process.env.ONBOARDING_UPLOAD_DIR || path.join(__dirname, '../../uploads/onboarding');
+// Dead-letter store: if persisting an onboarding submission ever fails, the full
+// payload is written here so a real application is never silently lost (only
+// emailed). Surfaced via GET /onboarding/dead-letter + a dashboard banner.
+const DEAD_LETTER_DIR = process.env.ONBOARDING_DEAD_LETTER_DIR || path.join(UPLOAD_DIR, '_dead_letter');
+function writeDeadLetter(reference, payload, errMsg) {
+  try {
+    fs.mkdirSync(DEAD_LETTER_DIR, { recursive: true });
+    fs.writeFileSync(
+      path.join(DEAD_LETTER_DIR, reference + '.json'),
+      JSON.stringify({ reference, failedAt: new Date().toISOString(), error: errMsg, payload }, null, 2),
+    );
+    return true;
+  } catch (e) { logger.error({ err: e, reference }, 'dead-letter write failed'); return false; }
+}
 
 // Placeholder consolidated sanctions list. Replace with a live feed (NFIU / UN /
 // OFAC / EU) or route names through the YouVerify screening API before go-live.
@@ -212,8 +227,13 @@ router.post('/submit', async (req, res, next) => {
       });
     } catch (dbErr) {
       // If the table/migration isn't applied yet, don't lose the application —
-      // log it and still notify compliance so onboarding never hard-fails.
-      logger.error({ err: dbErr, reference }, 'Could not persist onboarding submission — falling back to email only');
+      // write it to the dead-letter store, log, and still notify compliance so
+      // onboarding never hard-fails. The dashboard banner surfaces dead letters.
+      logger.error({ err: dbErr, reference }, 'Could not persist onboarding submission — writing to dead-letter store');
+      writeDeadLetter(reference, {
+        form_type, applicant_type, data, principals: cleanPrincipals, documents,
+        summary, screening, signature: signature || null, referred_by: referred_by || null,
+      }, dbErr.message);
     }
 
     // Application-time account (Stripe-style): create the merchant + API keys now so
@@ -289,6 +309,61 @@ router.post('/submit', async (req, res, next) => {
       next_steps: 'Our compliance team will review your application within 1-3 business days. You will receive an email notification.',
     }, 'Application submitted');
 
+  } catch (e) { next(e); }
+});
+
+// ── Dead-letter store (failed-to-persist onboarding applications) ─────────────
+// GET — list dead letters so compliance/SA can see applications that were
+// emailed but not saved (powers the dashboard banner).
+router.get('/dead-letter', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    let files = [];
+    try { files = fs.readdirSync(DEAD_LETTER_DIR).filter((f) => f.endsWith('.json')); }
+    catch (e) { /* dir not created yet = none */ }
+    const items = files.map((f) => {
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(DEAD_LETTER_DIR, f), 'utf8'));
+        return {
+          reference: j.reference, failedAt: j.failedAt, error: j.error,
+          businessName: j.payload && j.payload.summary && j.payload.summary.businessName,
+          contactEmail: j.payload && j.payload.summary && j.payload.summary.contactEmail,
+          formType: j.payload && j.payload.form_type,
+        };
+      } catch (e) { return { reference: f.replace('.json', ''), error: 'unreadable' }; }
+    }).sort((a, b) => (b.failedAt || '').localeCompare(a.failedAt || ''));
+    ok(res, { count: items.length, items });
+  } catch (e) { next(e); }
+});
+
+// POST /:reference/retry — re-attempt persistence of a dead-lettered application.
+router.post('/dead-letter/:reference/retry', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const reference = req.params.reference;
+    const file = path.join(DEAD_LETTER_DIR, reference + '.json');
+    if (!fs.existsSync(file)) return fail(res, 'Dead-letter entry not found', 'NOT_FOUND', 404);
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const pl = j.payload || {};
+    await prisma.onboardingSubmission.create({
+      data: {
+        reference,
+        formType: pl.form_type,
+        applicantType: pl.applicant_type || null,
+        businessName: pl.summary && pl.summary.businessName,
+        contactEmail: pl.summary && pl.summary.contactEmail,
+        contactPhone: pl.summary && pl.summary.contactPhone,
+        regNumber: pl.summary && pl.summary.regNumber,
+        tin: pl.summary && pl.summary.tin,
+        data: pl.data || {}, principals: pl.principals || [], documents: pl.documents || [],
+        pepFlag: pl.screening && pl.screening.pepFlag,
+        sanctionsHit: pl.screening && pl.screening.sanctionsHit,
+        riskLevel: pl.screening && pl.screening.riskLevel,
+        screeningNotes: pl.screening && pl.screening.screeningNotes,
+        signature: pl.signature || null, referredBy: pl.referred_by || null,
+      },
+    });
+    fs.unlinkSync(file); // recovered — remove from dead-letter store
+    await logAudit(req.user.id, 'ONBOARDING_DEAD_LETTER_RECOVERED', 'onboarding', reference, null, { reference }, null, req.ip);
+    ok(res, { reference }, 'Application recovered into the review queue');
   } catch (e) { next(e); }
 });
 
