@@ -118,79 +118,76 @@ var ROLE_META = {
 };
 
 // ── Permission definitions (mirrors backend src/config/permissions.js) ────────
-var PERM_GROUPS = [
-  { label:'Dashboard Panels', items:[
-    { id:'panel_dashboard',    label:'Dashboard Overview' },
-    { id:'panel_transactions', label:'All Transactions' },
-    { id:'panel_merchants',    label:'Merchants' },
-    { id:'panel_settlements',  label:'Settlements' },
-    { id:'panel_chargebacks',  label:'Chargebacks' },
-    { id:'panel_compliance',   label:'Compliance Centre' },
-    { id:'panel_audit_log',    label:'Audit Log' },
-    { id:'panel_bulk_ops',     label:'Bulk Operations' },
-    { id:'panel_kyc',          label:'KYC Management' },
-    { id:'panel_aggregators',  label:'Aggregators' },
-    { id:'panel_webhooks',     label:'Webhooks' },
-    { id:'panel_payouts',      label:'Payouts' },
-    { id:'panel_reports',      label:'Reports' },
-    { id:'panel_rails',        label:'Payment Rails' },
-  ]},
-  { label:'Actions', items:[
-    { id:'action_approve_kyc',        label:'Approve / Reject KYC' },
-    { id:'action_bulk_approve_kyc',   label:'Bulk Approve KYC' },
-    { id:'action_process_refund',     label:'Process Refunds' },
-    { id:'action_manage_webhooks',    label:'Manage Webhooks' },
-    { id:'action_mark_payout_paid',   label:'Mark Payout Paid' },
-    { id:'action_resolve_chargeback', label:'Resolve Chargebacks' },
-    { id:'action_manage_compliance',  label:'Manage Compliance (STR/DSR)' },
-    { id:'action_download_reports',   label:'Download Reports' },
-    { id:'action_csv_import',         label:'CSV Import' },
-    { id:'action_edit_merchant',      label:'Edit Merchant Details' },
-    { id:'action_edit_aggregator',    label:'Edit Aggregator Details' },
-    { id:'action_manage_rails',       label:'Manage Payment Rails' },
-  ]},
-  { label:'User Creation', items:[
-    { id:'create_admin',       label:'Create Admin Users' },
-    { id:'create_compliance',  label:'Create Compliance Officers' },
-    { id:'create_audit',       label:'Create Audit Users' },
-    { id:'create_merchant',    label:'Create Merchant Users' },
-    { id:'create_aggregator',  label:'Create Aggregator Users' },
-  ]},
+// Functionality-based: each functionality has a View perm and (where edit:true)
+// an Edit perm. Granting both View+Edit == "All" for that functionality.
+var FUNCTIONALITIES = [
+  { id:'dashboard',        label:'Dashboard Overview',                     edit:false },
+  { id:'transactions',     label:'Transactions',                           edit:true,  editLabel:'Export / refund' },
+  { id:'merchants',        label:'Merchants',                              edit:true },
+  { id:'merchant_contact', label:'Merchant / Aggregator Contact Details',  edit:false, sensitive:true },
+  { id:'aggregators',      label:'Aggregators',                            edit:true },
+  { id:'onboarding',       label:'Onboarding / Applications',              edit:true,  editLabel:'Onboard / submit' },
+  { id:'compliance',       label:'Compliance / KYC Review',                edit:true,  editLabel:'Approve / reject' },
+  { id:'doc_referrals',    label:'Document Referrals',                     edit:true,  editLabel:'Request / resolve' },
+  { id:'settlements',      label:'Settlements',                            edit:true,  editLabel:'Approve / process' },
+  { id:'payouts',          label:'Payouts',                                edit:true,  editLabel:'Process / mark paid' },
+  { id:'wallets',          label:'Merchant Wallets / Credit',              edit:true,  editLabel:'Fund / adjust' },
+  { id:'chargebacks',      label:'Chargebacks',                            edit:true,  editLabel:'Resolve' },
+  { id:'reports',          label:'Reports',                                edit:true,  editLabel:'Download' },
+  { id:'revenue',          label:'Revenue',                                edit:false },
+  { id:'rails',            label:'Payment Rails',                          edit:true },
+  { id:'fees',             label:'Fee Configuration',                      edit:true },
+  { id:'email_tpl',        label:'Email Templates',                        edit:true },
+  { id:'webhooks',         label:'Webhooks',                               edit:true },
+  { id:'staff',            label:'Staff Accounts',                         edit:true,  editLabel:'Create / manage' },
+  { id:'settings',         label:'Platform Settings',                      edit:true },
 ];
-
+function viewPerm(id){ return 'view_' + id; }
+function editPerm(id){ return 'edit_' + id; }
+function _grant(ids, withEdit){
+  var out = [];
+  ids.forEach(function(id){
+    out.push(viewPerm(id));
+    if (withEdit){ var f = FUNCTIONALITIES.filter(function(x){return x.id===id;})[0]; if (f && f.edit) out.push(editPerm(id)); }
+  });
+  return out;
+}
 var PERM_ROLE_DEFAULTS = {
-  ADMIN: [
-    'panel_dashboard','panel_transactions','panel_merchants','panel_settlements',
-    'panel_chargebacks','panel_bulk_ops','panel_kyc','panel_aggregators',
-    'panel_webhooks','panel_payouts','panel_reports','panel_rails',
-    'action_approve_kyc','action_bulk_approve_kyc','action_process_refund',
-    'action_manage_webhooks','action_mark_payout_paid','action_resolve_chargeback',
-    'action_download_reports','action_csv_import','action_edit_merchant',
-    'action_edit_aggregator','action_manage_rails',
-    'create_compliance','create_audit','create_merchant','create_aggregator',
-  ],
-  COMPLIANCE_OFFICER: [
-    'panel_dashboard','panel_transactions','panel_compliance','panel_reports',
-    'panel_audit_log','panel_merchants',
-    'action_manage_compliance','action_download_reports',
-  ],
-  AUDIT: [
-    'panel_dashboard','panel_transactions','panel_audit_log','panel_reports',
-    'panel_merchants','panel_settlements','panel_chargebacks','panel_kyc',
-    'panel_aggregators',
-    'action_download_reports',
-  ],
-  MERCHANT: [
-    'panel_dashboard','panel_transactions','panel_settlements','panel_reports',
-    'panel_webhooks',
-    'action_manage_webhooks','action_download_reports',
-  ],
-  AGGREGATOR: [
-    'panel_dashboard','panel_transactions','panel_settlements','panel_aggregators',
-    'panel_merchants','panel_payouts','panel_reports',
-    'action_download_reports','action_manage_webhooks',
-  ],
+  ADMIN: _grant(['dashboard','revenue'],false)
+    .concat(_grant(['transactions','merchants','aggregators','onboarding','compliance','doc_referrals','settlements','payouts','wallets','chargebacks','reports','rails','webhooks'],true))
+    .concat(_grant(['staff'],false)),
+  COMPLIANCE_OFFICER: _grant(['dashboard','merchants','aggregators','transactions','revenue'],false)
+    .concat(_grant(['compliance','doc_referrals','reports'],true)),
+  AUDIT: _grant(['dashboard','transactions','merchants','aggregators','settlements','payouts','chargebacks','compliance','revenue'],false)
+    .concat(_grant(['reports'],true)),
+  MERCHANT: _grant(['dashboard','transactions','settlements','reports'],false).concat(_grant(['webhooks'],true)),
+  AGGREGATOR: _grant(['dashboard','transactions','settlements','merchants','reports'],false).concat(_grant(['onboarding'],true)),
 };
+
+// nav item id → view perm required to see it (staff/SA nav only; SA bypasses).
+var NAV_PERM = {
+  merchants:'view_merchants', aggregators:'view_aggregators', admin_onboard:'edit_onboarding',
+  deferrals:'view_doc_referrals', users:'view_staff', overview:'view_dashboard',
+  transactions:'view_transactions', settlement:'view_settlements', rail_settlement:'view_settlements',
+  payout_report:'view_payouts', revenue:'view_revenue', compliance:'view_compliance',
+  onboarding_apps:'view_onboarding', fee_config:'view_fees', rails:'view_rails',
+  settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
+};
+// Does the logged-in user hold this permission? (SUPER_ADMIN bypasses everything.)
+// Self-healing: a user whose stored permissions predate the view_/edit_ vocab
+// (legacy panel_/action_ or empty) falls back to their role defaults so we never
+// lock out existing staff before the data is re-seeded.
+function userHasPerm(perm){
+  if (!perm) return true;
+  if (currentRole === 'superadmin') return true;
+  try {
+    var u = JSON.parse(localStorage.getItem('paylode_user') || '{}');
+    var perms = Array.isArray(u.permissions) ? u.permissions : [];
+    var hasNewVocab = perms.some(function(p){ return p.indexOf('view_') === 0 || p.indexOf('edit_') === 0; });
+    if (!hasNewVocab) perms = PERM_ROLE_DEFAULTS[(u.role||'').toUpperCase()] || [];
+    return perms.indexOf(perm) !== -1;
+  } catch(e){ return false; }
+}
 
 function renderNav() {
   var meta = ROLE_META[currentRole];
@@ -203,7 +200,12 @@ function renderNav() {
               (_u.firstName ? (_u.firstName + ' ' + (_u.lastName||'')).trim() : null) || meta.name;
   document.getElementById('role-name').textContent = _name;
   var container = document.getElementById('nav-items');
-  var nav = NAV[currentRole] || [];
+  // Filter nav items by the user's view permissions (SUPER_ADMIN bypasses).
+  var nav = (NAV[currentRole] || []).map(function(sec) {
+    return { section: sec.section, items: sec.items.filter(function(item) {
+      return userHasPerm(NAV_PERM[item.id]);
+    }) };
+  }).filter(function(sec) { return sec.items.length > 0; });
   // Auto-expand the section that contains the current page
   nav.forEach(function(sec) {
     if (sec.items.some(function(i) { return i.id === currentPage; })) {
@@ -1620,18 +1622,36 @@ async function loadUsers() {
     '<tbody>' + rows + '</tbody></table></div></div>';
 }
 
+// Functionality matrix: each row offers View and Edit (View+Edit = full access).
+// Checkboxes keep class .perm-cb + data-perm so getCheckedPerms()/onRoleChange() work.
 function renderPermCheckboxes(activePerms) {
-  return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 24px">' +
-    PERM_GROUPS.map(function(group) {
-      var checks = group.items.map(function(item) {
-        var checked = Array.isArray(activePerms) && activePerms.includes(item.id) ? 'checked' : '';
-        return '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;margin-bottom:5px;white-space:nowrap">' +
-          '<input type="checkbox" class="perm-cb" data-perm="' + item.id + '" ' + checked + '> ' + item.label + '</label>';
-      }).join('');
-      return '<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;' +
-        'color:var(--gray-500);margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--gray-100)">' +
-        group.label + '</div>' + checks + '</div>';
-    }).join('') + '</div>';
+  var active = Array.isArray(activePerms) ? activePerms : [];
+  // Legacy/empty perms → show role defaults for the role being edited (best effort).
+  var rows = FUNCTIONALITIES.map(function(f) {
+    var vId = viewPerm(f.id), eId = editPerm(f.id);
+    var vChecked = active.includes(vId) ? 'checked' : '';
+    var label = f.label + (f.sensitive ? ' <span class="badge badge-amber" style="font-size:9px">sensitive</span>' : '');
+    var viewCell =
+      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;justify-content:center">' +
+        '<input type="checkbox" class="perm-cb" data-perm="' + vId + '" ' + vChecked + '></label>';
+    var editCell = f.edit
+      ? '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;justify-content:center" title="' + (f.editLabel || 'Edit') + '">' +
+          '<input type="checkbox" class="perm-cb" data-perm="' + eId + '" ' + (active.includes(eId) ? 'checked' : '') +
+          ' onchange="if(this.checked){var v=document.querySelector(&quot;.perm-cb[data-perm=\'' + vId + '\']&quot;); if(v) v.checked=true;}"></label>'
+      : '<span style="color:var(--gray-300);font-size:11px">—</span>';
+    return '<tr style="border-bottom:1px solid var(--gray-100)">' +
+      '<td style="padding:6px 8px;font-size:12px">' + label + '</td>' +
+      '<td style="padding:6px 8px;text-align:center">' + viewCell + '</td>' +
+      '<td style="padding:6px 8px;text-align:center">' + editCell + '</td>' +
+    '</tr>';
+  }).join('');
+  return '<div style="font-size:11px;color:var(--gray-400);margin-bottom:8px">Tick <strong>View</strong> for read-only, add <strong>Edit</strong> for full access. Ticking Edit auto-grants View.</div>' +
+    '<table style="width:100%;border-collapse:collapse">' +
+    '<thead><tr style="border-bottom:2px solid var(--gray-200)">' +
+      '<th style="text-align:left;padding:6px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-500)">Functionality</th>' +
+      '<th style="padding:6px 8px;font-size:11px;text-transform:uppercase;color:var(--gray-500)">View</th>' +
+      '<th style="padding:6px 8px;font-size:11px;text-transform:uppercase;color:var(--gray-500)">Edit</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
 function getCheckedPerms() {
@@ -1660,11 +1680,11 @@ function showCreateUserModal() {
     '<div class="form-group"><label class="form-label">Last Name *</label><input class="form-input" id="cu-lname" placeholder="Last name"></div>' +
     '</div>' +
     '<div class="form-group"><label class="form-label">Email *</label><input class="form-input" id="cu-email" type="email" placeholder="user@paylodeservices.com"></div>' +
-    '<div class="form-group"><label class="form-label">Password *</label><input class="form-input" id="cu-pw" type="password" placeholder="Minimum 8 characters"></div>' +
     '<div class="form-group"><label class="form-label">Role *</label>' +
     '<select class="form-input form-select" id="cu-role" onchange="onRoleChange()">' +
     '<option value="">— Select role —</option>' + opts + '</select>' +
     '<div style="font-size:11px;color:var(--gray-400);margin-top:4px">Selecting a role auto-fills the permissions below. You can adjust them.</div></div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:12px">A system-generated first-time password will be emailed to the user. They must change it on first sign-in.</div>' +
     '<div style="border-top:1px solid var(--gray-100);margin:4px 0 12px;padding-top:12px">' +
     '<div style="font-size:13px;font-weight:600;margin-bottom:10px">Permissions</div>' +
     '<div id="perm-boxes" style="max-height:300px;overflow-y:auto;padding-right:4px">' + renderPermCheckboxes([]) + '</div></div>' +
@@ -1679,19 +1699,19 @@ async function createUser() {
   var fname = document.getElementById('cu-fname').value.trim();
   var lname = document.getElementById('cu-lname').value.trim();
   var email = document.getElementById('cu-email').value.trim();
-  var pw    = document.getElementById('cu-pw').value;
   var role  = document.getElementById('cu-role').value;
   var msg   = document.getElementById('cu-msg');
-  if (!fname || !lname || !email || !pw || !role) {
-    if (msg) msg.innerHTML = '<div class="warn-box">All fields are required.</div>';
+  if (!fname || !lname || !email || !role) {
+    if (msg) msg.innerHTML = '<div class="warn-box">First name, last name, email and role are required.</div>';
     return;
   }
   var perms = getCheckedPerms();
-  var res = await apiFetch('/users', { method:'POST', body:JSON.stringify({
-    firstName:fname, lastName:lname, email, password:pw, role, permissions:perms,
+  // First-time-password flow: /users/invite generates + emails a temp password.
+  var res = await apiFetch('/users/invite', { method:'POST', body:JSON.stringify({
+    name: fname + ' ' + lname, email, role, permissions:perms,
   })});
   if (msg) msg.innerHTML = res && res.status
-    ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; User created successfully.</div>'
+    ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; User created. A first-time password has been emailed to ' + email + '.</div>'
     : '<div class="warn-box">&#9888; ' + (res && res.message || 'Error') + '</div>';
   if (res && res.status) setTimeout(function() {
     document.getElementById('modal').style.display = 'none';
@@ -1702,13 +1722,18 @@ async function createUser() {
 function showEditPermissionsModal(userId) {
   var u = __usersData.find(function(x) { return x.id === userId; });
   if (!u) return;
+  // Effective perms: legacy/empty users show their role defaults (matches the
+  // self-healing fallback in userHasPerm) so the matrix reflects real access.
+  var stored = Array.isArray(u.permissions) ? u.permissions : [];
+  var hasNewVocab = stored.some(function(p){ return p.indexOf('view_') === 0 || p.indexOf('edit_') === 0; });
+  var effective = hasNewVocab ? stored : (PERM_ROLE_DEFAULTS[(u.role||'').toUpperCase()] || []);
   showModal(
     '<div class="modal-header"><div class="modal-title">Permissions — ' + u.firstName + ' ' + u.lastName + '</div>' +
     '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
     '<div style="font-size:12px;color:var(--gray-500);margin-bottom:12px">' +
     'Role: <strong>' + u.role.replace(/_/g,' ') + '</strong> &nbsp;|&nbsp; ' +
-    '<span style="color:var(--gray-400)">' + (u.permissions||[]).length + ' permissions active</span></div>' +
-    '<div style="max-height:380px;overflow-y:auto;padding-right:4px">' + renderPermCheckboxes(u.permissions || []) + '</div>' +
+    '<span style="color:var(--gray-400)">' + effective.length + ' permissions active</span></div>' +
+    '<div style="max-height:380px;overflow-y:auto;padding-right:4px">' + renderPermCheckboxes(effective) + '</div>' +
     '<div class="flex-between" style="margin-top:16px">' +
     '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
     '<button class="btn btn-lime" onclick="saveUserPermissions(\'' + userId + '\')">Save Permissions</button></div>' +

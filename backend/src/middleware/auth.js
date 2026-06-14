@@ -86,6 +86,20 @@ const requireAdminOrCompliance = requireRole('SUPER_ADMIN', 'ADMIN', 'COMPLIANCE
 const requireAggregator        = requireRole('SUPER_ADMIN', 'AGGREGATOR');
 const requireMerchant          = requireRole('SUPER_ADMIN', 'MERCHANT');
 
+// ── Granular permission guard (functionality view/edit perms) ────────────────
+// Additive on top of role guards. SUPER_ADMIN always passes. Use for staff
+// (ADMIN/COMPLIANCE/AUDIT) granularity, e.g. requirePermission('edit_compliance').
+const { hasPermission } = require('../config/permissions');
+const requirePermission = (...perms) => (req, res, next) => {
+  if (!req.user) return unauthorized(res);
+  if (req.user.role === 'SUPER_ADMIN') return next();
+  const okPerm = perms.some((p) => hasPermission(req.user, p));
+  if (!okPerm)
+    return res.status(403).json({ status: false, message: 'You do not have permission to perform this action', error_code: 'FORBIDDEN' });
+  next();
+};
+
 module.exports = { requireAuth, requireApiKey, requireRole,
                    requireSuperAdmin, requireAdmin, requireCompliance,
-                   requireAdminOrCompliance, requireAggregator, requireMerchant };
+                   requireAdminOrCompliance, requireAggregator, requireMerchant,
+                   requirePermission };

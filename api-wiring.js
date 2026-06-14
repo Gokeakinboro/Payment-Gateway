@@ -4040,7 +4040,10 @@ loadPageData = function(page) {
     case 'rails':                loadRails(); break;
     case 'wallets':              loadWallets(); break;
     case 'product_revenue':      loadProductRevenue(); break;
-    case 'users':                loadUserManagement(); break;
+    // Staff Accounts: app.js renderUserManagement() (full permission matrix +
+    // per-user Permissions modal) already rendered & scheduled loadUsers(); do
+    // not overwrite with the simpler role-only table. (#7)
+    case 'users':                break;
     case 'settle_verification':  loadSettlementQueue(); break;
     case 'email_tpl':            loadEmailTemplates(); break;
     case 'onboarding_apps':      loadOnboardingApps(); break;

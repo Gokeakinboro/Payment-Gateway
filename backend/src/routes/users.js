@@ -5,6 +5,7 @@ const { body, validationResult } = require('express-validator');
 const { prisma } = require('../utils/db');
 const { ok, fail, created } = require('../utils/helpers');
 const { requireAuth, requireSuperAdmin } = require('../middleware/auth');
+const { defaultsForRole } = require('../config/permissions');
 const { logAudit } = require('../services/auditService');
 const { sendEmail, getEmailContent } = require('../services/emailService');
 const { logger } = require('../utils/logger');
@@ -61,7 +62,7 @@ router.post('/invite', requireAuth, requireSuperAdmin,
   ]),
   async (req, res, next) => {
     try {
-      const { email, name, role } = req.body;
+      const { email, name, role, permissions } = req.body;
       const exists = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
       if (exists) return fail(res, 'Email already in use');
 
@@ -72,9 +73,12 @@ router.post('/invite', requireAuth, requireSuperAdmin,
       const tempPassword = genTempPassword();
       const passwordHash = await bcrypt.hash(tempPassword, 12);
 
+      // Explicit perms from the matrix if supplied, else this role's defaults.
+      const perms = Array.isArray(permissions) && permissions.length ? permissions : defaultsForRole(role);
+
       const user = await prisma.user.create({
         data: {
-          email: email.toLowerCase(), passwordHash, firstName, lastName, role, permissions: [],
+          email: email.toLowerCase(), passwordHash, firstName, lastName, role, permissions: perms,
           mustChangePassword: true,
         },
         select: { id: true, email: true, firstName: true, lastName: true, role: true, createdAt: true },
@@ -110,7 +114,7 @@ router.post('/', requireAuth, requireSuperAdmin,
         data: {
           email: email.toLowerCase(), passwordHash,
           firstName: firstName.trim(), lastName: lastName.trim(),
-          role, permissions: Array.isArray(permissions) ? permissions : [],
+          role, permissions: Array.isArray(permissions) && permissions.length ? permissions : defaultsForRole(role),
           mustChangePassword: true,
         },
         select: { id: true, email: true, firstName: true, lastName: true, role: true, isActive: true, createdAt: true },
