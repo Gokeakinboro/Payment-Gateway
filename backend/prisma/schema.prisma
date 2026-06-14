@@ -153,6 +153,11 @@ model Merchant {
   settleEnquiryName     String?   @map("settle_enquiry_name")
   settleVerifyNotes     String?   @map("settle_verify_notes")
   settleVerifiedAt      DateTime? @map("settle_verified_at")
+  // Pending settlement-account change — held here until admin/SA approval (#5).
+  pendingSettlementBank        String?   @map("pending_settlement_bank")
+  pendingSettlementAccount     String?   @map("pending_settlement_account")
+  pendingSettlementAccountName String?   @map("pending_settlement_account_name")
+  pendingSettlementAt          DateTime? @map("pending_settlement_at")
   settlementCycle       String    @default("t1") @map("settlement_cycle")
   isActive          Boolean   @default(false) @map("is_active") // false until KYC done
   webhookUrl        String?   @map("webhook_url")

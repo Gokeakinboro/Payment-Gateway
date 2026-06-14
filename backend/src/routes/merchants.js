@@ -1,7 +1,7 @@
 'use strict';
 const router = require('express').Router();
 const { prisma } = require('../utils/db');
-const { requireAuth, requireSuperAdmin, requireCompliance } = require('../middleware/auth');
+const { requireAuth, requireSuperAdmin, requireCompliance, requirePermission } = require('../middleware/auth');
 const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
 const { hasPermission } = require('../config/permissions');
@@ -308,7 +308,9 @@ router.put('/me/profile', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// ── Settlement bank update (merchant self-service) ────────────────────────────
+// ── Settlement bank CHANGE REQUEST (merchant self-service) ────────────────────
+// #5: the change is held as PENDING and does NOT touch the live settlement fields
+// until an admin/SA approves it. Payouts keep using the current verified account.
 router.put('/me/settlement', requireAuth, async (req, res, next) => {
   try {
     const merchantId = req.user.merchant?.id;
@@ -318,10 +320,86 @@ router.put('/me/settlement', requireAuth, async (req, res, next) => {
       return fail(res, 'Bank, account number and account name are required');
     const m = await prisma.merchant.update({
       where: { id: merchantId },
-      data:  { settlementBank, settlementAccount, settlementAccountName, settleVerifyStatus: 'pending_manual' },
+      data:  {
+        pendingSettlementBank: settlementBank,
+        pendingSettlementAccount: settlementAccount,
+        pendingSettlementAccountName: settlementAccountName,
+        pendingSettlementAt: new Date(),
+        settleVerifyStatus: 'pending_manual',
+      },
     });
-    await logAudit(req.user.id, 'SETTLEMENT_BANK_UPDATE', 'merchants', merchantId, {}, { settlementBank, settlementAccount });
-    ok(res, m, 'Settlement details submitted for verification');
+    await logAudit(req.user.id, 'SETTLEMENT_CHANGE_REQUESTED', 'merchants', merchantId, {}, { settlementBank, settlementAccount });
+    ok(res, { settleVerifyStatus: m.settleVerifyStatus },
+      'Settlement change submitted for approval. Your current account stays active until it is approved.');
+  } catch (e) { next(e); }
+});
+
+// ── Settlement change queue (admin/SA) ────────────────────────────────────────
+router.get('/settlement/pending', requireAuth, requirePermission('view_settlements'), async (req, res, next) => {
+  try {
+    const status = req.query.status || 'pending_manual';
+    const where = (status === 'all') ? {}
+      : (status === 'verified') ? { settleVerifyStatus: { in: ['verified', 'auto_verified', 'manual_approved'] } }
+      : { settleVerifyStatus: status };
+    const rows = await prisma.merchant.findMany({
+      where: { ...where, isOutlet: false },
+      orderBy: { pendingSettlementAt: 'desc' },
+      select: {
+        id: true, businessName: true, merchantCode: true,
+        settlementBank: true, settlementAccount: true, settlementAccountName: true,
+        pendingSettlementBank: true, pendingSettlementAccount: true, pendingSettlementAccountName: true,
+        pendingSettlementAt: true,
+        settleVerifyStatus: true, settleEnquiryName: true, settleVerifyNotes: true, settleVerifiedAt: true,
+      },
+    });
+    ok(res, rows);
+  } catch (e) { next(e); }
+});
+
+// Approve a pending settlement change → apply pending values to the live account.
+router.put('/:id/settlement/approve', requireAuth, requirePermission('edit_settlements'), async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const m = await prisma.merchant.findUnique({ where: { id } });
+    if (!m) return notFound(res, 'Merchant');
+    if (!m.pendingSettlementAccount)
+      return fail(res, 'No pending settlement change to approve for this merchant');
+    const updated = await prisma.merchant.update({
+      where: { id },
+      data: {
+        settlementBank: m.pendingSettlementBank,
+        settlementAccount: m.pendingSettlementAccount,
+        settlementAccountName: m.pendingSettlementAccountName,
+        settleVerifyStatus: 'verified',
+        settleVerifyNotes: req.body.notes || 'Manually verified by administrator',
+        settleVerifiedAt: new Date(),
+        pendingSettlementBank: null, pendingSettlementAccount: null,
+        pendingSettlementAccountName: null, pendingSettlementAt: null,
+      },
+    });
+    await logAudit(req.user.id, 'SETTLEMENT_CHANGE_APPROVED', 'merchants', id, {}, { settlementAccount: updated.settlementAccount });
+    ok(res, { id, settleVerifyStatus: updated.settleVerifyStatus }, 'Settlement account approved and applied');
+  } catch (e) { next(e); }
+});
+
+// Reject a pending settlement change → discard pending; live account unchanged.
+router.put('/:id/settlement/reject', requireAuth, requirePermission('edit_settlements'), async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!req.body.notes) return fail(res, 'A rejection reason is required');
+    const m = await prisma.merchant.findUnique({ where: { id } });
+    if (!m) return notFound(res, 'Merchant');
+    await prisma.merchant.update({
+      where: { id },
+      data: {
+        settleVerifyStatus: 'rejected',
+        settleVerifyNotes: req.body.notes,
+        pendingSettlementBank: null, pendingSettlementAccount: null,
+        pendingSettlementAccountName: null, pendingSettlementAt: null,
+      },
+    });
+    await logAudit(req.user.id, 'SETTLEMENT_CHANGE_REJECTED', 'merchants', id, {}, { reason: req.body.notes });
+    ok(res, { id }, 'Settlement change rejected; merchant must resubmit');
   } catch (e) { next(e); }
 });
 

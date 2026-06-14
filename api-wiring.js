@@ -1689,6 +1689,7 @@ async function loadSettlementQueue() {
       pending_manual:  'badge-amber',
       auto_verified:   'badge-green',
       manual_approved: 'badge-green',
+      verified:        'badge-green',
       rejected:        'badge-red',
     };
     var statusLabels = {
@@ -1696,6 +1697,7 @@ async function loadSettlementQueue() {
       pending_manual:  'Awaiting Review',
       auto_verified:   'Auto Verified',
       manual_approved: 'Approved',
+      verified:        'Verified',
       rejected:        'Rejected',
     };
 
@@ -1731,12 +1733,21 @@ async function loadSettlementQueue() {
             ? '<button class="btn btn-lime btn-sm" onclick="approveSettlement(\'' + m.id + '\',\'' + m.businessName.replace(/'/g,'') + '\')">Approve</button>&nbsp;' +
               '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="rejectSettlement(\'' + m.id + '\',\'' + m.businessName.replace(/'/g,'') + '\')">Reject</button>'
             : '<span style="font-size:12px;color:var(--gray-400)">' + (m.settleVerifiedAt ? new Date(m.settleVerifiedAt).toLocaleDateString('en-NG') : '—') + '</span>';
+          // Show the REQUESTED (pending) account when present, with the current live
+          // account underneath so the reviewer sees exactly what is changing (#5).
+          var pend = (st === 'pending_manual' && m.pendingSettlementAccount);
+          var shownName = pend ? m.pendingSettlementAccountName : m.settlementAccountName;
+          var shownBank = pend ? m.pendingSettlementBank : m.settlementBank;
+          var shownAcct = pend ? m.pendingSettlementAccount : m.settlementAccount;
+          var curHint = pend
+            ? '<div style="font-size:10px;color:var(--gray-400)">current: ' + (m.settlementAccount||'none') + ' · ' + (m.settlementBank||'—') + '</div>'
+            : '';
           return '<tr>' +
             '<td><div style="font-weight:500;font-size:13px">' + m.businessName + '</div>' +
               '<div class="mono" style="font-size:10px;color:var(--gray-400)">' + (m.merchantCode||'') + '</div></td>' +
-            '<td style="font-size:13px">' + (m.settlementAccountName||'<span style="color:var(--gray-400)">—</span>') + '</td>' +
-            '<td style="font-size:12px">' + (m.settlementBank||'—') + '</td>' +
-            '<td class="mono" style="font-size:12px">' + (m.settlementAccount||'—') + '</td>' +
+            '<td style="font-size:13px">' + (shownName||'<span style="color:var(--gray-400)">—</span>') + '</td>' +
+            '<td style="font-size:12px">' + (shownBank||'—') + '</td>' +
+            '<td class="mono" style="font-size:12px">' + (shownAcct||'—') + curHint + '</td>' +
             '<td>' + enquiryName + '</td>' +
             '<td>' + badge + '</td>' +
             '<td style="font-size:11px;color:var(--gray-500);max-width:180px">' + (m.settleVerifyNotes||'—') + '</td>' +
