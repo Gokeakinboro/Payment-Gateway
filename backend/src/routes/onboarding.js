@@ -402,6 +402,39 @@ async function provisionMerchant(tx, sub, opts = {}) {
   return { merchantId: merchant.id, created: true, active, tempPassword, email, businessName };
 }
 
+// Provision an AGGREGATOR from a self-onboarding submission (#3). Mirrors the SA
+// create in routes/aggregators.js. Idempotent: reuses an existing user / returns
+// the existing aggregator. Revenue split is left at 0 for SA to configure.
+async function provisionAggregator(tx, sub) {
+  const email = sub.contactEmail;
+  if (!email) throw new Error('No contact email on submission — cannot provision aggregator');
+  const companyName = sub.businessName || 'Aggregator';
+
+  let user = await tx.user.findUnique({ where: { email }, include: { aggregator: true } });
+  if (user && user.aggregator) return { aggregatorId: user.aggregator.id, reused: true };
+
+  const principal = (sub.principals && sub.principals[0]) || {};
+  const contactName = [principal.first_name, principal.surname].filter(Boolean).join(' ') || companyName;
+  const nameParts = contactName.trim().split(' ');
+
+  let tempPassword = null;
+  if (!user) {
+    tempPassword = crypto.randomBytes(6).toString('base64url');
+    user = await tx.user.create({ data: {
+      email, passwordHash: await bcrypt.hash(tempPassword, 10),
+      firstName: nameParts[0] || companyName, lastName: nameParts.slice(1).join(' ') || '(Aggregator)',
+      role: 'AGGREGATOR', mustChangePassword: true,
+    }});
+  }
+
+  const agg = await tx.aggregator.create({ data: {
+    userId: user.id, companyName, rcNumber: sub.regNumber || null,
+    revenueSplitPct: 0, status: 'active',
+  }});
+
+  return { aggregatorId: agg.id, created: true, tempPassword, email, businessName: companyName };
+}
+
 // ── PATCH /api/v1/onboarding/submissions/:reference — review decision ─────────
 router.patch('/submissions/:reference', requireAuth, requireCompliance, async (req, res, next) => {
   try {
@@ -447,6 +480,11 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
       // Idempotency keyed on the STATUS transition: only the approver that actually
       // flipped status→'approved' proceeds (concurrent clicks / re-approval = no-op).
       if (claim.count === 0) { outcome = { already: true }; return; }
+      // Aggregator self-onboarding (#3): provision an aggregator account on approval.
+      if (sub.formType === 'aggregator') {
+        outcome = { provAgg: await provisionAggregator(tx, sub) };
+        return;
+      }
       if (sub.formType !== 'merchant') { outcome = { skipped: true }; return; }
 
       if (sub.merchantId) {
@@ -486,9 +524,26 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
         .catch(e => logger.error({ err: e }, 'approval email failed'));
     }
 
+    // Aggregator approval email (#3) — temp password for newly created accounts.
+    if (outcome.provAgg && outcome.provAgg.email) {
+      const loginUrl = (process.env.APP_URL || '') + '/login.html';
+      const pa = outcome.provAgg;
+      const content = await getEmailContent('aggregator_welcome',
+        { business: pa.businessName, email: pa.email, temp_password: pa.tempPassword || '', login_url: loginUrl },
+        'Your Paylode aggregator account is approved',
+        `<h2>Approved</h2><p>Your aggregator application for <strong>${pa.businessName}</strong> has been approved.</p>` +
+          (pa.tempPassword
+            ? `<p>Sign in at <a href="${loginUrl}">the portal</a> with <strong>${pa.email}</strong> and temporary password <strong>${pa.tempPassword}</strong> — change it on first sign-in.</p>`
+            : `<p>Sign in to your <a href="${loginUrl}">dashboard</a> to manage your merchants.</p>`) +
+          `<p>Your revenue split will be configured by the Paylode team.</p>`);
+      sendEmail({ to: pa.email, subject: content.subject, html: content.html })
+        .catch(e => logger.error({ err: e }, 'aggregator approval email failed'));
+    }
+
     const fresh = await prisma.onboardingSubmission.findUnique({ where: { reference } });
     const msg = outcome.already ? 'Already approved (no change)'
-      : outcome.skipped ? 'Approved (no merchant provisioned for this form type)'
+      : outcome.provAgg ? 'Approved — aggregator provisioned'
+      : outcome.skipped ? 'Approved (no account provisioned for this form type)'
       : 'Approved — merchant provisioned';
     ok(res, fresh, msg);
   } catch (e) { next(e); }
