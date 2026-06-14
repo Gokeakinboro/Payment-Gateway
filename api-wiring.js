@@ -678,6 +678,7 @@ async function activateMerchant(id, name) {
 
 // ── MERCHANT EDIT (role-aware) ────────────────────────────────────────────────
 async function editMerchant(id) {
+  if (!userHasPerm('edit_merchants')) { alert('You have view-only access to merchants.'); return; }
   var isSuperAdmin = (currentRole === 'superadmin');
   var results = await Promise.all([
     apiFetch('/merchants/' + id),
@@ -1659,6 +1660,7 @@ async function runSandboxSettlement() {
 
 // ── AGGREGATOR SPLIT EDIT ─────────────────────────────────────────────────────
 async function editSplit(id, currentSplit) {
+  if (!userHasPerm('edit_aggregators')) { alert('You have view-only access to aggregators.'); return; }
   const newSplit = prompt(`Current split: ${(Number(currentSplit)*100).toFixed(0)}%\nEnter new split percentage (e.g. 30 for 30%):`);
   if (!newSplit) return;
   const rate = parseFloat(newSplit) / 100;
@@ -3210,6 +3212,40 @@ document.addEventListener('click', function() {
   if (m) m.style.display = 'none';
 });
 
+// ── STAFF ISSUE REPORTER (technical chatbot / glitch report) ──────────────────
+function showReportIssueModal() {
+  var cats = ['Dashboard glitch','Data not loading','Permission / access','Document / KYC','Payment / settlement','Other'];
+  var opts = cats.map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('');
+  var inner =
+    '<div class="modal-header"><div class="modal-title">&#9888; Report a Technical Issue</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="font-size:12px;color:var(--gray-500);margin-bottom:14px">Describe any glitch or problem you hit on your dashboard. It goes straight to the Paylode technical team.</div>' +
+    '<div class="form-group"><label class="form-label">Category</label>' +
+      '<select class="form-input form-select" id="ri-cat">' + opts + '</select></div>' +
+    '<div class="form-group"><label class="form-label">What went wrong?</label>' +
+      '<textarea class="form-input" id="ri-msg" rows="5" placeholder="e.g. The compliance queue shows a spinner and never loads when I click Review."></textarea></div>' +
+    '<div class="flex-between" style="margin-top:8px">' +
+      '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+      '<button class="btn btn-lime" id="ri-btn" onclick="submitIssueReport()">Send Report</button></div>' +
+    '<div id="ri-msg-out" style="margin-top:8px"></div>';
+  document.getElementById('modal-inner').innerHTML = inner;
+  document.getElementById('modal').style.display = 'flex';
+}
+async function submitIssueReport() {
+  var cat = document.getElementById('ri-cat').value;
+  var msg = (document.getElementById('ri-msg').value || '').trim();
+  var out = document.getElementById('ri-msg-out');
+  if (!msg) { if (out) out.innerHTML = '<div class="warn-box" style="font-size:12px">Please describe the issue.</div>'; return; }
+  var btn = document.getElementById('ri-btn'); if (btn) { btn.textContent = 'Sending...'; btn.disabled = true; }
+  var res = await apiFetch('/support/report', { method:'POST',
+    body: JSON.stringify({ category: cat, message: msg, page: (typeof currentPage !== 'undefined' ? currentPage : '') }) });
+  if (out) out.innerHTML = (res && res.status)
+    ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534;font-size:12px">&#10003; ' + (res.message || 'Report sent.') + '</div>'
+    : '<div class="warn-box" style="font-size:12px">&#9888; ' + ((res && res.message) || 'Failed to send. Try again.') + '</div>';
+  if (res && res.status) setTimeout(function(){ document.getElementById('modal').style.display = 'none'; }, 1400);
+  else if (btn) { btn.textContent = 'Send Report'; btn.disabled = false; }
+}
+
 // ── CENTRAL PAGE LOADER ────────────────────────────────────────────────────────
 function loadPageData(page) {
   const role = currentRole;
@@ -3315,10 +3351,12 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   // Set correct role from JWT — case-insensitive
   var role = (user.role || '').toUpperCase();
-  if      (role === 'SUPER_ADMIN' || role === 'COMPLIANCE_OFFICER') currentRole = 'superadmin';
-  else if (role === 'ADMIN')       currentRole = 'admin';
-  else if (role === 'AGGREGATOR')  currentRole = 'aggregator';
-  else if (role === 'MERCHANT')    currentRole = 'merchant';
+  if      (role === 'SUPER_ADMIN')        currentRole = 'superadmin';
+  else if (role === 'ADMIN')              currentRole = 'admin';
+  else if (role === 'COMPLIANCE_OFFICER') currentRole = 'compliance';
+  else if (role === 'AUDIT')              currentRole = 'audit';
+  else if (role === 'AGGREGATOR')         currentRole = 'aggregator';
+  else if (role === 'MERCHANT')           currentRole = 'merchant';
 
   // Update role name badge with actual user/company name from JWT
   var roleNameEl = document.getElementById('role-name');
@@ -3337,8 +3375,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // Navigate to this role's default landing page
-  currentPage = currentRole === 'merchant'   ? 'merch_overview' :
-                currentRole === 'aggregator'  ? 'agg_overview'   : 'overview';
+  currentPage = (ROLE_META[currentRole] && ROLE_META[currentRole].defaultPage) || 'overview';
 
   renderNav();
   loadPageData(currentPage);
@@ -4362,16 +4399,20 @@ async function deferSelectedDocs() {
   try {
     var user = JSON.parse(localStorage.getItem('paylode_user') || '{}');
     var _r = (user.role || '').toUpperCase();
-    if      (_r === 'SUPER_ADMIN' || _r === 'COMPLIANCE_OFFICER') currentRole = 'superadmin';
-    else if (_r === 'ADMIN')      currentRole = 'admin';
-    else if (_r === 'AGGREGATOR') currentRole = 'aggregator';
-    else if (_r === 'MERCHANT')   currentRole = 'merchant';
+    if      (_r === 'SUPER_ADMIN')        currentRole = 'superadmin';
+    else if (_r === 'ADMIN')              currentRole = 'admin';
+    else if (_r === 'COMPLIANCE_OFFICER') currentRole = 'compliance';
+    else if (_r === 'AUDIT')              currentRole = 'audit';
+    else if (_r === 'AGGREGATOR')         currentRole = 'aggregator';
+    else if (_r === 'MERCHANT')           currentRole = 'merchant';
     // Super admins may use ?role= to preview other role views for testing
     if (currentRole === 'superadmin') {
       var urlRole = new URLSearchParams(window.location.search).get('role');
       if (urlRole === 'aggregator') currentRole = 'aggregator';
       if (urlRole === 'admin')      currentRole = 'admin';
       if (urlRole === 'merchant')   currentRole = 'merchant';
+      if (urlRole === 'compliance') currentRole = 'compliance';
+      if (urlRole === 'audit')      currentRole = 'audit';
     }
   } catch(e) {}
 })();

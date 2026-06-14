@@ -2,19 +2,31 @@
 const aggRouter = require('express').Router();
 const bcrypt = require('bcryptjs');
 const { prisma } = require('../utils/db');
-const { requireAuth, requireSuperAdmin, requireAggregator } = require('../middleware/auth');
+const { requireAuth, requireSuperAdmin, requireAggregator, requirePermission } = require('../middleware/auth');
 const { ok, fail, notFound, koboToNaira } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
 const { sendEmail, getEmailContent } = require('../services/emailService');
 const { logger } = require('../utils/logger');
+const { hasPermission } = require('../config/permissions');
 
-aggRouter.get('/', requireAuth, requireSuperAdmin, async (req,res,next) => {
+// #8: only viewers with view_merchant_contact (SUPER_ADMIN default) see contact PII.
+function redactAggContact(a, viewer) {
+  if (!a || hasPermission(viewer, 'view_merchant_contact')) return a;
+  const copy = { ...a };
+  ['email', 'phone', 'contactName', 'contactEmail', 'contactPhone'].forEach((f) => { if (f in copy) copy[f] = null; });
+  if (copy.user) copy.user = { redacted: true };
+  copy._contactRedacted = true;
+  return copy;
+}
+
+// Read access for staff with view_aggregators (SA bypasses); contact redacted per #8.
+aggRouter.get('/', requireAuth, requirePermission('view_aggregators'), async (req,res,next) => {
   try {
     const aggs = await prisma.aggregator.findMany({
       include: { _count:{select:{merchants:true}}, user:{select:{email:true,firstName:true,lastName:true}} },
       orderBy: { createdAt:'desc' },
     });
-    ok(res, aggs.map(a => ({ ...a, merchant_count: a._count.merchants })));
+    ok(res, aggs.map(a => redactAggContact({ ...a, merchant_count: a._count.merchants }, req.user)));
   } catch(e){next(e);}
 });
 

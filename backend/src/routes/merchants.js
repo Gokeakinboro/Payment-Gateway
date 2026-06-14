@@ -4,6 +4,19 @@ const { prisma } = require('../utils/db');
 const { requireAuth, requireSuperAdmin, requireCompliance } = require('../middleware/auth');
 const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
+const { hasPermission } = require('../config/permissions');
+
+// Field-level gate (#8): only viewers with view_merchant_contact (SUPER_ADMIN by
+// default) may see merchant contact details. Strips PII from list/detail payloads.
+const CONTACT_FIELDS = ['email', 'businessEmail', 'businessPhone', 'phone', 'address', 'website'];
+function redactContact(m, viewer) {
+  if (!m || hasPermission(viewer, 'view_merchant_contact')) return m;
+  const copy = { ...m };
+  CONTACT_FIELDS.forEach((f) => { if (f in copy) copy[f] = null; });
+  if (copy.user) copy.user = { redacted: true };
+  copy._contactRedacted = true;
+  return copy;
+}
 
 const VALID_CHANNELS = [
   'CARD_LOCAL',       // Local Naira-issued cards (Verve, local Visa/MC)
@@ -34,7 +47,8 @@ router.get('/', requireAuth, async (req, res, next) => {
       prisma.merchant.findMany({ where, skip:(parseInt(page)-1)*parseInt(perPage), take:parseInt(perPage), orderBy:{createdAt:'desc'}, include:{aggregator:{select:{companyName:true}}, _count:{select:{outlets:true}}} }),
       prisma.merchant.count({ where }),
     ]);
-    ok(res, { data, meta:{ total, page:parseInt(page), pages:Math.ceil(total/parseInt(perPage)) } });
+    const safe = data.map((m) => redactContact(m, req.user));
+    ok(res, { data: safe, meta:{ total, page:parseInt(page), pages:Math.ceil(total/parseInt(perPage)) } });
   } catch (e) { next(e); }
 });
 
@@ -485,7 +499,8 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       },
     });
     if (!m) return notFound(res, 'Merchant');
-    ok(res, m);
+    // Own record (MERCHANT viewing self) is never redacted; staff are gated by #8.
+    ok(res, req.user.role === 'MERCHANT' ? m : redactContact(m, req.user));
   } catch (e) { next(e); }
 });
 

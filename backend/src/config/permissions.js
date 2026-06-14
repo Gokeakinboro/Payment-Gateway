@@ -70,14 +70,18 @@ const ROLE_DEFAULTS = {
     grant(['staff'], false), // admin can view staff but not create staff by default
   ),
 
+  // Compliance: VIEW-ONLY on merchants/aggregators/transactions; can ACT on
+  // compliance + document referrals + reports. No dashboard (SA-only endpoint),
+  // no settlements / payouts / staff / onboarding (#6).
   COMPLIANCE_OFFICER: [].concat(
-    grant(['dashboard', 'merchants', 'aggregators', 'transactions', 'revenue'], false), // VIEW ONLY
-    grant(['compliance', 'doc_referrals', 'reports'], true),                             // can act
+    grant(['merchants', 'aggregators', 'transactions'], false), // VIEW ONLY
+    grant(['compliance', 'doc_referrals', 'reports'], true),    // can act
   ),
 
+  // Audit: read-only oversight across the platform; can download reports.
   AUDIT: [].concat(
     grant([
-      'dashboard', 'transactions', 'merchants', 'aggregators', 'settlements',
+      'transactions', 'merchants', 'aggregators', 'settlements',
       'payouts', 'chargebacks', 'compliance', 'revenue',
     ], false), // view-only across the board
     grant(['reports'], true), // download reports
@@ -101,7 +105,13 @@ function defaultsForRole(role) {
 function hasPermission(user, perm) {
   if (!user) return false;
   if (user.role === 'SUPER_ADMIN') return true;
-  return Array.isArray(user.permissions) && user.permissions.includes(perm);
+  let perms = Array.isArray(user.permissions) ? user.permissions : [];
+  // Self-healing: users whose stored perms predate the view_/edit_ vocab
+  // (legacy panel_/action_ or empty) fall back to their role defaults so we
+  // never lock out existing staff before the permissions are re-seeded.
+  const hasNewVocab = perms.some((p) => p.indexOf('view_') === 0 || p.indexOf('edit_') === 0);
+  if (!hasNewVocab) perms = ROLE_DEFAULTS[user.role] || [];
+  return perms.includes(perm);
 }
 
 module.exports = {

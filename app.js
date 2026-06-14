@@ -112,10 +112,16 @@ var NAV = {
 var ROLE_META = {
   superadmin: { label:'Super Admin', name:'Paylode HQ',         title:'Super Admin Dashboard', defaultPage:'overview'       },
   admin:       { label:'Admin',       name:'Paylode Admin',      title:'Admin Dashboard',       defaultPage:'overview'       },
+  compliance:  { label:'Compliance',  name:'Compliance',         title:'Compliance Dashboard',  defaultPage:'compliance'     },
+  audit:       { label:'Audit',       name:'Audit',              title:'Audit Dashboard',       defaultPage:'transactions'   },
   aggregator:  { label:'Aggregator',  name:'FinConnect Nigeria', title:'Aggregator Dashboard',  defaultPage:'agg_overview'   },
   merchant:    { label:'Merchant',    name:'Bolt Nigeria',       title:'Merchant Dashboard',    defaultPage:'merch_overview' },
   developer:   { label:'Developer',   name:'API / SDK Docs',     title:'Developer SDK',         defaultPage:'sdk_start'      },
 };
+// Compliance & Audit use the SA nav superset, reduced by their view permissions
+// (see renderNav + NAV_PERM). SUPER_ADMIN still bypasses all filtering.
+NAV.compliance = NAV.superadmin;
+NAV.audit      = NAV.superadmin;
 
 // ── Permission definitions (mirrors backend src/config/permissions.js) ────────
 // Functionality-based: each functionality has a View perm and (where edit:true)
@@ -156,9 +162,9 @@ var PERM_ROLE_DEFAULTS = {
   ADMIN: _grant(['dashboard','revenue'],false)
     .concat(_grant(['transactions','merchants','aggregators','onboarding','compliance','doc_referrals','settlements','payouts','wallets','chargebacks','reports','rails','webhooks'],true))
     .concat(_grant(['staff'],false)),
-  COMPLIANCE_OFFICER: _grant(['dashboard','merchants','aggregators','transactions','revenue'],false)
+  COMPLIANCE_OFFICER: _grant(['merchants','aggregators','transactions'],false)
     .concat(_grant(['compliance','doc_referrals','reports'],true)),
-  AUDIT: _grant(['dashboard','transactions','merchants','aggregators','settlements','payouts','chargebacks','compliance','revenue'],false)
+  AUDIT: _grant(['transactions','merchants','aggregators','settlements','payouts','chargebacks','compliance','revenue'],false)
     .concat(_grant(['reports'],true)),
   MERCHANT: _grant(['dashboard','transactions','settlements','reports'],false).concat(_grant(['webhooks'],true)),
   AGGREGATOR: _grant(['dashboard','transactions','settlements','merchants','reports'],false).concat(_grant(['onboarding'],true)),
