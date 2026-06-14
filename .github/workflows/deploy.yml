@@ -20,13 +20,14 @@ jobs:
           port: 22
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
-            git pull origin main
-            cd backend
-            npm install --production --quiet
-            pm2 reload paylode-api
-            cp /opt/paylode-api/app.js /var/www/paylode/app.js
-            cp /opt/paylode-api/login.html /var/www/paylode/login.html
-            cp /opt/paylode-api/index.html /var/www/paylode/index.html
-            cp /opt/paylode-api/checkout.html /var/www/paylode/checkout.html
+            # Refresh ONLY the frontend files from main, then copy them to the web
+            # root. A full 'git pull' here fails on local backend changes and used
+            # to copy a STALE app.js over good deploys — that revert loop is fixed
+            # by scoping this to the frontend. Backend is deployed separately via
+            # the gated tools/deploy.py.
+            git fetch origin main --quiet
+            git checkout origin/main -- app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html
+            cp app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html /var/www/paylode/
+            pm2 reload paylode-api || true
             nginx -s reload
-            echo "Deployed at $(date)"
+            echo "Frontend deployed from main at $(date)"
