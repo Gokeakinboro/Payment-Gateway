@@ -177,4 +177,62 @@ function channelToServiceType(channel, cardBin = null) {
   return 'BANK_TRANSFER';
 }
 
-module.exports = { computeFees, routeTransaction, channelToServiceType, getMerchantRateConfig, getAggregatorSplit, VAT_RATE };
+// Default rail cost rate used when a live rail rate isn't resolved synchronously.
+// Paylode margin (netPool) is provisional on this until reconciled at settlement.
+const DEFAULT_RAIL_RATE = Number(process.env.DEFAULT_RAIL_RATE || 0.005);
+
+/**
+ * Synchronous per-transaction fee computation — PAYER-FUNDED model (#11, cards/VA).
+ * The customer pays (principal + our charge + VAT); the merchant is settled the
+ * FULL principal; the rail takes its cut; Paylode keeps (our fee − rail cost);
+ * VAT on our fee is collected from the customer and remitted (not revenue).
+ *
+ * All amounts in kobo (BigInt). checkout.js stores txn.amount = chargeAmount and
+ * merchantFee = feePlusVat, so settlement net (gross − fee) == principal.
+ *
+ * @param amount    principal (kobo)
+ * @param merchant  merchant row (uses processingRate as fallback rate)
+ * @param rateConfig optional { merchantRate, merchantCap, flatFee, railRate, railCap, aggSplitPct }
+ */
+function computeFeesForTxn(amount, merchant, rateConfig = null, channel = 'CARD') {
+  const BASE = 1_000_000n;
+  const principal = BigInt(amount);
+  const vat = BigInt(Math.round(VAT_RATE * 1_000_000));
+  const cfg = rateConfig || {};
+  const merchantRate = cfg.merchantRate != null ? cfg.merchantRate : Number((merchant && merchant.processingRate) || 0.015);
+  const railRate     = cfg.railRate     != null ? cfg.railRate     : DEFAULT_RAIL_RATE;
+  const flatFee      = BigInt(cfg.flatFee || 0);
+  const mCap         = BigInt(cfg.merchantCap || 0);
+  const rCap         = BigInt(cfg.railCap || 0);
+  const aggSplitPct  = Number(cfg.aggSplitPct || 0);
+
+  // Our charge to the customer (+ VAT)
+  let feeRaw = principal * BigInt(Math.round(merchantRate * 1_000_000)) / BASE + flatFee;
+  if (mCap > 0n && feeRaw > mCap) feeRaw = mCap;
+  const vatOnFee   = feeRaw * vat / BASE;
+  const feePlusVat = feeRaw + vatOnFee;
+
+  // Rail cost (+ VAT) — Paylode's cost to move the money
+  let railRaw = principal * BigInt(Math.round(railRate * 1_000_000)) / BASE;
+  if (rCap > 0n && railRaw > rCap) railRaw = rCap;
+  const railPlusVat = railRaw + (railRaw * vat / BASE);
+
+  // Payer-funded amounts
+  const chargeAmount       = principal + feePlusVat; // what the customer pays
+  const merchantSettlement = principal;              // merchant gets the full principal
+
+  // Paylode revenue = our fee − rail cost (ex-VAT; VAT on our fee is remitted)
+  const netPool       = feeRaw - railRaw;
+  const aggShare      = netPool > 0n ? netPool * BigInt(Math.round(aggSplitPct * 1_000_000)) / BASE : 0n;
+  const paylodeMargin = netPool - aggShare;
+
+  return {
+    principal, chargeAmount, merchantSettlement,
+    feeRaw, feePlusVat, vatOnFee,
+    railRaw, railPlusVat,
+    netPool, aggShare, paylodeMargin,
+    feePaidBy: 'customer',
+  };
+}
+
+module.exports = { computeFees, computeFeesForTxn, routeTransaction, channelToServiceType, getMerchantRateConfig, getAggregatorSplit, VAT_RATE, DEFAULT_RAIL_RATE };

@@ -71,6 +71,7 @@ var NAV = {
       {id:'settlement',      icon:'✓', label:'Settlements'     },
       {id:'rail_settlement', icon:'⊞', label:'Rail Settlement' },
       {id:'payout_report',   icon:'⇄', label:'Payout Report'   },
+      {id:'wallets',         icon:'◈', label:'Merchant Wallets'},
       {id:'revenue',         icon:'₦', label:'Revenue Report'  },
       {id:'compliance',      icon:'⚖', label:'Compliance'      },
       {id:'onboarding_apps', icon:'▤', label:'Applications'    },
@@ -96,7 +97,7 @@ var NAV = {
   admin: [
     { section:'Overview',    items:[{id:'overview',icon:'◉',label:'Dashboard'},{id:'transactions',icon:'↕',label:'All Transactions'}]},
     { section:'Management',  items:[{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'}]},
-    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
+    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'wallets',icon:'◈',label:'Merchant Wallets'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
     { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'}]},
   ],
   aggregator: [
@@ -191,7 +192,7 @@ var NAV_PERM = {
   merchants:'view_merchants', aggregators:'view_aggregators', admin_onboard:'edit_onboarding',
   deferrals:'view_doc_referrals', users:'view_staff', overview:'view_dashboard',
   transactions:'view_transactions', settlement:'view_settlements', rail_settlement:'view_settlements',
-  payout_report:'view_payouts', revenue:'view_revenue', compliance:'view_compliance',
+  payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', compliance:'view_compliance',
   onboarding_apps:'view_onboarding', fee_config:'view_fees', rails:'view_rails',
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
 };
