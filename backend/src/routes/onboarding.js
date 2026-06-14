@@ -216,6 +216,21 @@ router.post('/submit', async (req, res, next) => {
       logger.error({ err: dbErr, reference }, 'Could not persist onboarding submission — falling back to email only');
     }
 
+    // Application-time account (Stripe-style): create the merchant + API keys now so
+    // the developer can integrate/test in sandbox before KYC. The account is INACTIVE
+    // — test keys work immediately, live keys activate on approval. Best-effort; an
+    // error here never fails the application.
+    let signupProv = null;
+    if (record && form_type === 'merchant') {
+      try {
+        await prisma.$transaction(async (tx) => {
+          const prov = await provisionMerchant(tx, record, { active: false });
+          await tx.onboardingSubmission.update({ where: { reference }, data: { merchantId: prov.merchantId } });
+          signupProv = prov;
+        }, { timeout: 20000 });
+      } catch (e) { logger.error({ err: e, reference }, 'application-time provisioning failed (non-fatal)'); }
+    }
+
     logger.info({
       reference, form_type, applicant_type,
       business: summary.businessName, risk: screening.riskLevel,
@@ -251,6 +266,18 @@ router.post('/submit', async (req, res, next) => {
         `<h2>Application Received</h2><p>Thank you for applying to join Paylode. Your application has been received and our compliance team will review it within 1-3 business days.</p><p><strong>Your reference number: ${reference}</strong></p><p>Questions? Contact support@paylodeservices.com</p>`);
       await sendEmail({ to: summary.contactEmail, subject: content.subject, html: content.html })
         .catch(e => logger.error({ err: e }, 'Failed to send applicant confirmation'));
+    }
+
+    // New account created at signup → email login + sandbox access details.
+    if (signupProv && signupProv.created && signupProv.tempPassword) {
+      const loginUrl = (process.env.APP_URL || '') + '/login.html';
+      const content = await getEmailContent('sandbox_welcome',
+        { business: summary.businessName, email: signupProv.email, temp_password: signupProv.tempPassword, login_url: loginUrl },
+        'Your Paylode sandbox access is ready',
+        `<h2>Start building now</h2><p>While we review your application, your <strong>test / sandbox</strong> access is ready. Sign in at <a href="${loginUrl}">the dashboard</a> with <strong>${signupProv.email}</strong> and temporary password <strong>${signupProv.tempPassword}</strong> (you'll set a new one on first login).</p>` +
+        `<p>Go to <strong>Dashboard → API Keys</strong> to copy your <code>sk_test</code> / <code>pk_test</code> keys and test every product in our sandbox. Your <strong>live</strong> keys activate automatically once your KYC is approved.</p>`);
+      sendEmail({ to: signupProv.email, subject: content.subject, html: content.html })
+        .catch(e => logger.error({ err: e }, 'sandbox welcome email failed'));
     }
 
     created(res, {
@@ -297,7 +324,8 @@ router.get('/submissions/:reference', requireAuth, requireCompliance, async (req
 
 // Create the merchant + API keys + seed per-document tracking from a submission.
 // Runs inside the approval transaction (tx) so it is atomic with the status claim.
-async function provisionMerchant(tx, sub) {
+async function provisionMerchant(tx, sub, opts = {}) {
+  const active = opts.active !== false; // default active (approval); pass {active:false} at signup
   const data = sub.data || {};
   const np  = data.np_identity || {};
   const ent = data.entity_details || {};
@@ -340,7 +368,7 @@ async function provisionMerchant(tx, sub) {
     businessPhone:     (isNatural ? np.phone : ent.business_phone) || '',
     website:           biz.website_url || null,
     expectedMonthlyVol: biz.expected_monthly_value || null,
-    kycStatus: 'ACTIVE', kycTier: 1, isActive: true,
+    kycStatus: active ? 'ACTIVE' : 'PENDING_KYC', kycTier: active ? 1 : null, isActive: active,
     settlementBank:        biz.bank_name || null,
     settlementAccount:     biz.account_number || null,
     settlementAccountName: biz.account_name || null,
@@ -349,7 +377,7 @@ async function provisionMerchant(tx, sub) {
 
   const keys = [['sk_live', false], ['pk_live', false], ['sk_test', true], ['pk_test', true]].map(([prefix, sandbox]) => {
     const full = generateApiKey(prefix);
-    return { merchantId: merchant.id, keyHash: hashApiKey(full), keyPrefix: prefix, label: 'Issued on approval', isSandbox: sandbox };
+    return { merchantId: merchant.id, keyHash: hashApiKey(full), keyPrefix: prefix, label: 'Issued at signup', isSandbox: sandbox };
   });
   await tx.apiKey.createMany({ data: keys });
 
@@ -371,7 +399,7 @@ async function provisionMerchant(tx, sub) {
       ON CONFLICT (entity_type, entity_id, doc_key) DO NOTHING`;
   }
 
-  return { merchantId: merchant.id, created: true, tempPassword, email, businessName };
+  return { merchantId: merchant.id, created: true, active, tempPassword, email, businessName };
 }
 
 // ── PATCH /api/v1/onboarding/submissions/:reference — review decision ─────────
@@ -416,25 +444,43 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
       });
       const sub = await tx.onboardingSubmission.findUnique({ where: { reference } });
       if (!sub) { outcome = { notFound: true }; return; }
-      // Already provisioned (re-approval or lost the claim race) → idempotent no-op.
-      if (sub.merchantId || claim.count === 0) { outcome = { already: true }; return; }
+      // Idempotency keyed on the STATUS transition: only the approver that actually
+      // flipped status→'approved' proceeds (concurrent clicks / re-approval = no-op).
+      if (claim.count === 0) { outcome = { already: true }; return; }
       if (sub.formType !== 'merchant') { outcome = { skipped: true }; return; }
 
-      const prov = await provisionMerchant(tx, sub);
-      await tx.onboardingSubmission.update({ where: { reference }, data: { merchantId: prov.merchantId } });
-      outcome = { prov };
+      if (sub.merchantId) {
+        // Account was created at application time (inactive). Activate it so the
+        // merchant's existing LIVE keys start working — no re-provisioning.
+        const m = await tx.merchant.update({
+          where: { id: sub.merchantId },
+          data: { isActive: true, kycStatus: 'ACTIVE', kycTier: 1 },
+          select: { businessEmail: true, businessName: true },
+        });
+        outcome = { prov: { merchantId: sub.merchantId, activated: true, email: m.businessEmail, businessName: m.businessName } };
+      } else {
+        // No account yet (e.g. legacy submission) → provision it active now.
+        const prov = await provisionMerchant(tx, sub, { active: true });
+        await tx.onboardingSubmission.update({ where: { reference }, data: { merchantId: prov.merchantId } });
+        outcome = { prov };
+      }
     }, { timeout: 20000 });
 
     if (outcome.notFound) return fail(res, 'Submission not found', 'NOT_FOUND', 404);
 
     // Best-effort approval email (outside the transaction) — rendered from template.
-    if (outcome.prov && outcome.prov.created) {
+    if (outcome.prov && outcome.prov.email) {
       const loginUrl = (process.env.APP_URL || '') + '/login.html';
-      const content = await getEmailContent('application_approved',
+      // Account created at signup → no temp password to send (they already have it);
+      // tell them their live keys are now active. Legacy fresh-provision → temp password.
+      const slug = outcome.prov.tempPassword ? 'application_approved' : 'application_approved_live';
+      const content = await getEmailContent(slug,
         { business: outcome.prov.businessName, email: outcome.prov.email, temp_password: outcome.prov.tempPassword || '', login_url: loginUrl },
         'Your Paylode merchant account is approved',
-        `<h2>Approved</h2><p>Your application for <strong>${outcome.prov.businessName}</strong> has been approved and your merchant account is live.</p>` +
-          (outcome.prov.tempPassword ? `<p>Sign in at <a href="${loginUrl}">the dashboard</a> with <strong>${outcome.prov.email}</strong> and temporary password <strong>${outcome.prov.tempPassword}</strong> — change it on first login.</p>` : '') +
+        `<h2>Approved</h2><p>Your application for <strong>${outcome.prov.businessName}</strong> has been approved — your <strong>live</strong> API keys are now active.</p>` +
+          (outcome.prov.tempPassword
+            ? `<p>Sign in at <a href="${loginUrl}">the dashboard</a> with <strong>${outcome.prov.email}</strong> and temporary password <strong>${outcome.prov.tempPassword}</strong> — change it on first login.</p>`
+            : `<p>Sign in to your <a href="${loginUrl}">dashboard</a> and switch from your test keys to your live keys (Dashboard → API Keys).</p>`) +
           `<p>Any outstanding KYC documents are listed in your dashboard.</p>`);
       sendEmail({ to: outcome.prov.email, subject: content.subject, html: content.html })
         .catch(e => logger.error({ err: e }, 'approval email failed'));
