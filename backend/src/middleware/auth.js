@@ -58,8 +58,10 @@ async function requireApiKey(req, res, next) {
   if (!apiKey || !apiKey.isActive)
     return unauthorized(res, 'Invalid API key');
 
-  if (!apiKey.merchant.isActive)
-    return unauthorized(res, 'Merchant account is not active. Complete KYC to enable payments.');
+  // Sandbox/test keys work immediately (so developers can integrate before KYC);
+  // only LIVE keys require the merchant to be KYC-active.
+  if (!apiKey.isSandbox && !apiKey.merchant.isActive)
+    return unauthorized(res, 'Merchant account is not active. Complete KYC to enable live payments.');
 
   // Update last used (non-blocking)
   prisma.apiKey.update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } }).catch(() => {});

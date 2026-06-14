@@ -30,6 +30,7 @@ MANIFEST = [
     ('app.js',                                     '/var/www/paylode/app.js'),
     ('api-wiring.js',                              '/var/www/paylode/api-wiring.js'),
     ('dashboard.html',                             '/var/www/paylode/dashboard.html'),
+    ('sandbox.html',                               '/var/www/paylode/sandbox.html'),
     ('backend/src/routes/onboarding.js',           '/opt/paylode-api/backend/src/routes/onboarding.js'),
     ('backend/src/routes/deferrals.js',            '/opt/paylode-api/backend/src/routes/deferrals.js'),
     ('backend/src/routes/documents.js',            '/opt/paylode-api/backend/src/routes/documents.js'),

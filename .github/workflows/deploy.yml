@@ -26,8 +26,8 @@ jobs:
             # by scoping this to the frontend. Backend is deployed separately via
             # the gated tools/deploy.py.
             git fetch origin main --quiet
-            git checkout origin/main -- app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html
-            cp app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html /var/www/paylode/
+            git checkout origin/main -- app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html sandbox.html
+            cp app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html sandbox.html /var/www/paylode/
             pm2 reload paylode-api || true
             nginx -s reload
             echo "Frontend deployed from main at $(date)"
