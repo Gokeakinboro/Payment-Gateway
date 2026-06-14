@@ -42,6 +42,20 @@ var TRANSACTIONS = [
   { ref:'TXN-20250526-006', merchant:'Shoprite Nigeria', amount:6100,  channel:'Card',     rail:'Paystack',      status:'pending', fee:0,   time:'14:27:31' },
 ];
 
+// Shared Developer/SDK nav block — shown to SA, merchants and aggregators (#4).
+// All sdk_* pages are static (renderSdk*); loadPageData no-ops them.
+var DEV_SDK_ITEMS = [
+  {id:'sdk_start',    icon:'▶', label:'Quick Start'    },
+  {id:'sdk_payments', icon:'₦', label:'Card Payments'  },
+  {id:'sdk_va',       icon:'⇆', label:'Virtual Accounts'},
+  {id:'sdk_payouts',  icon:'⇄', label:'Payouts (Send)' },
+  {id:'sdk_verify',   icon:'✓', label:'Verify Payment' },
+  {id:'sdk_webhook',  icon:'⇀', label:'Webhooks'       },
+  {id:'sdk_mobile',   icon:'□', label:'Published SDKs' },
+  {id:'sdk_errors',   icon:'!', label:'Error Codes'    },
+  {id:'sdk_test',     icon:'⚡', label:'Test Cards'     },
+];
+
 var NAV = {
   superadmin: [
     { section:'USERS', items:[
@@ -88,11 +102,13 @@ var NAV = {
   aggregator: [
     { section:'Overview', items:[{id:'agg_overview',icon:'◉',label:'Dashboard'},{id:'agg_merchants',icon:'▦',label:'My Merchants'},{id:'agg_onboard',icon:'+',label:'Onboard Merchant'}]},
     { section:'Finance',  items:[{id:'agg_revenue',icon:'₦',label:'Revenue Share'},{id:'agg_transactions',icon:'↕',label:'Transactions'}]},
+    { section:'Developer', items:DEV_SDK_ITEMS },
   ],
   merchant: [
     { section:'Overview',    items:[{id:'merch_overview',icon:'◉',label:'Dashboard'},{id:'merch_transactions',icon:'↕',label:'Transactions'},{id:'merch_settlements',icon:'✓',label:'Settlements'}]},
     { section:'Payouts',     items:[{id:'payouts',icon:'⇄',label:'Send Payouts'},{id:'payout_logs',icon:'≡',label:'Payout Logs'}]},
     { section:'Integration', items:[{id:'merch_apikeys',icon:'⚿',label:'API Keys'},{id:'merch_webhooks',icon:'⇀',label:'Webhooks'}]},
+    { section:'Developer',   items:DEV_SDK_ITEMS },
     { section:'Account',     items:[{id:'merch_profile',icon:'⊙',label:'Business Profile'}]},
   ],
   developer: [
