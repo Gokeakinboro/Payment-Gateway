@@ -23,7 +23,9 @@ mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 MANIFEST = mod.MANIFEST
 
 def md5_bytes(b):
-    h = hashlib.md5(); h.update(b); return h.hexdigest()
+    # Normalize CRLF->LF so Windows working-tree (CRLF) vs server/repo (LF) never
+    # false-alarms; only real content differences count as drift.
+    h = hashlib.md5(); h.update(b.replace(b'\r\n', b'\n')); return h.hexdigest()
 
 def main():
     if not PASS:
