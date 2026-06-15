@@ -87,6 +87,15 @@ const authLimiter = rateLimit({
 });
 app.use('/api/v1/auth/login', authLimiter);
 
+// Public onboarding submit creates an (inactive) account per call — limit abuse.
+const onboardingLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: parseInt(process.env.ONBOARDING_RATE_MAX) || 10,
+  standardHeaders: true, legacyHeaders: false,
+  message: { status: false, message: 'Too many onboarding submissions. Please try again later.', error_code: 'ONBOARDING_RATE_LIMIT' },
+});
+app.use('/api/v1/onboarding/submit', onboardingLimiter);
+
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/health', async (req, res) => {
   try {

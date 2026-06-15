@@ -1966,6 +1966,13 @@ async function loadMerchApiKeys() {
     var res = await apiFetch('/merchants/me/api-keys');
     var keys = (res && res.data) ? res.data : [];
 
+    // "Live keys activate after KYC" guidance (Stripe-style application-time keys).
+    var _u = getUser(); var _m = (_u && _u.merchant) || {};
+    var kycActive = _m.isActive === true || (_m.kycStatus && String(_m.kycStatus).toUpperCase() === 'ACTIVE');
+    var kycNote = kycActive
+      ? '<div class="info-box" style="margin-bottom:16px;font-size:12px;background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; Your account is KYC-verified — your <strong>live</strong> keys (sk_live / pk_live) are active.</div>'
+      : '<div class="info-box" style="margin-bottom:16px;font-size:12px">&#9888; Your <strong>test</strong> keys (sk_test / pk_test) work now for sandbox integration. Your <strong>live</strong> keys activate <strong>automatically once your KYC is approved</strong> — then just switch sk_test → sk_live in your code. No need to contact support.</div>';
+
     var html = keys.length ? keys.map(function(k) {
       var isSandbox = k.isSandbox || (k.keyPrefix && k.keyPrefix.includes('test'));
       var envBadge = isSandbox ? 'badge-blue' : 'badge-green';
@@ -1984,19 +1991,28 @@ async function loadMerchApiKeys() {
         '<button class="btn btn-outline btn-sm" onclick="copyApiKeyPrefix(\'' + k.id + '\',\'' + prefix + '\')">&#128203; Copy</button>' +
         '<button class="btn btn-outline btn-sm" style="color:var(--amber)" onclick="rotateApiKey(\'' + k.id + '\',\'' + prefix + '\',\'' + (k.label||'API Key').replace(/'/g,"\\'") + '\')">&#8635; Rotate</button>' +
       '</div></div>';
-    }).join('') : '<div class="info-box" style="font-size:12px">No API keys yet. Contact support@paylodeservices.com to get your keys activated after KYC approval.</div>';
+    }).join('') : '<div class="info-box" style="font-size:12px">No API keys yet. Test keys are issued automatically when your account is created — refresh, or contact support@paylodeservices.com if they are missing.</div>';
 
     el.innerHTML =
       '<div class="page-header flex-between"><div><div class="page-title">API Keys</div>' +
         '<div class="page-desc">Manage your integration credentials</div></div>' +
         '<button class="btn btn-lime" onclick="showGenerateKeyModal()">+ Generate New Key</button>' +
       '</div>' +
+      kycNote +
       '<div class="warn-box" style="margin-bottom:20px">&#9888; Secret keys (sk_) are shown only once. Copy them immediately after generation or rotation.</div>' +
       '<div class="card">' + html + '</div>' +
       '<div id="key-result-area" style="margin-top:16px"></div>';
   } catch(e) {
     el.innerHTML = errorBox('Failed to load API keys: ' + e.message);
   }
+}
+
+function copyAdminSignupLink() {
+  var url = location.origin + '/onboarding.html?type=merchant';
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(function(){ alert('Merchant sign-up link copied:\n' + url); })
+      .catch(function(){ prompt('Copy this sign-up link:', url); });
+  } else { prompt('Copy this sign-up link:', url); }
 }
 
 function copyApiKeyPrefix(id, prefix) {

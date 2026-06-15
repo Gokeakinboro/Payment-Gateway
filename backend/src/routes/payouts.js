@@ -6,7 +6,6 @@ const { body, validationResult } = require('express-validator');
 const { prisma }  = require('../utils/db');
 const { requireAuth, requireApiKey, requireSuperAdmin, requireCompliance } = require('../middleware/auth');
 const { ok, fail, notFound, created, koboToNaira, generateRef } = require('../utils/helpers');
-const { routeTransaction } = require('../services/feeEngine');
 const { logAudit } = require('../services/auditService');
 const { notifyRailIncident } = require('../services/railHealth');
 
