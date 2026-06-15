@@ -389,4 +389,46 @@ router.post('/:reference/confirm', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── POST /api/v1/checkout/:reference/charge/palmpay ──────────────────────────
+// Creates a Pay-with-PalmPay hosted-checkout order and returns its URL. The payer
+// is redirected to PalmPay, then returned to this checkout (?palmpay=return) where
+// the page polls /confirm. Final settlement is driven by the PalmPay payin webhook.
+const palmpay = require('../services/palmpayService');
+router.post('/:reference/charge/palmpay', async (req, res, next) => {
+  try {
+    if (!palmpay.isConfigured())
+      return res.status(503).json({ status: false, message: 'PalmPay is not available yet.', error_code: 'PALMPAY_UNAVAILABLE' });
+
+    const txn = await prisma.transaction.findUnique({ where: { reference: req.params.reference } });
+    if (!txn) return notFound(res, 'Transaction');
+    if (txn.status !== 'PENDING')
+      return ok(res, { status: txn.status, already_processed: txn.status === 'SUCCESS' });
+
+    const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+    const callbackUrl = `${base}/checkout.html?ref=${encodeURIComponent(txn.reference)}&palmpay=return`;
+
+    const order = await palmpay.createPayWithPalmPayOrder({
+      orderId:       txn.reference,
+      amountKobo:    Number(txn.amount),
+      callbackUrl,
+      title:         'Payment',
+      description:   txn.description || 'Pay with PalmPay',
+      customerEmail: req.body?.email || txn.customerEmail || undefined,
+    });
+
+    if (!order.ok || !order.checkoutUrl)
+      return fail(res, order.reason || 'Could not start PalmPay checkout');
+
+    // NB: `channel` is the Channel enum (CARD/BANK_TRANSFER/USSD/DIRECT_DEBIT) and has
+    // no PALMPAY member — record the PalmPay marker in metadata instead. Whether
+    // PalmPay pay-in is priced as BANK_TRANSFER is a keys-time decision.
+    await prisma.transaction.update({
+      where: { id: txn.id },
+      data: { metadata: { ...txn.metadata, payin_method: 'PALMPAY', palmpay_order_no: order.orderNo } },
+    });
+
+    return ok(res, { checkout_url: order.checkoutUrl, order_no: order.orderNo, reference: txn.reference }, 'PalmPay checkout created');
+  } catch (e) { next(e); }
+});
+
 module.exports = router;

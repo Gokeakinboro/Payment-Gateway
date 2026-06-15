@@ -507,6 +507,10 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
             <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
             USSD
           </button>
+          <button class="ch-tab" id="tab-palmpay" onclick="switchChannel('palmpay')">
+            <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-6.219-8.56"/><polyline points="9 11 12 14 22 4"/></svg>
+            PalmPay
+          </button>
         </div>
 
         <!-- ── CARD PANEL ── -->
@@ -712,6 +716,30 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
           </button>
         </div>
 
+        <!-- ── PALMPAY PANEL ── -->
+        <div class="panel" id="panel-palmpay">
+          <div style="text-align:center;margin-bottom:18px">
+            <div style="width:56px;height:56px;border-radius:14px;background:#7B2FF7;display:flex;align-items:center;justify-content:center;margin:0 auto 12px">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M6 2v20M6 4h8a4 4 0 010 8H6"/></svg>
+            </div>
+            <div style="font-size:15px;font-weight:600;color:var(--navy);margin-bottom:6px">Pay with PalmPay</div>
+            <div style="font-size:13px;color:var(--g500);line-height:1.6">
+              You'll be taken to PalmPay to approve <strong id="palmpay-amount">—</strong> securely. After approval you'll return here automatically.
+            </div>
+          </div>
+          <button class="pay-btn" id="pay-btn-palmpay" style="background:#7B2FF7" onclick="payWithPalmPay()">
+            <div class="spinner"></div>
+            <span class="btn-label" id="palmpay-btn-label">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              Continue to PalmPay
+            </span>
+          </button>
+          <div class="pay-btn-sub">
+            <svg class="footer-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            Secured by Paylode · CBN Licensed PSSP
+          </div>
+        </div>
+
         <!-- ── SUCCESS SCREEN ── -->
         <div class="result-screen" id="screen-success">
           <div class="result-icon success">
@@ -791,6 +819,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('order-ref').textContent    = 'Ref: ' + state.reference;
   document.getElementById('card-pay-amount').textContent = state.amountFormatted;
   document.getElementById('transfer-amount-display').textContent = state.amountFormatted;
+  document.getElementById('palmpay-amount').textContent = state.amountFormatted;
 
   // USSD amount (short form)
   const naira = rawAmount / 100;
@@ -799,6 +828,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (state.isSandbox) {
     document.getElementById('sandbox-banner').classList.add('show');
+  }
+
+  // Returning from PalmPay's hosted checkout — resume polling for the result.
+  if (params.get('palmpay') === 'return' || params.get('channel') === 'palmpay') {
+    resumePalmPayPolling();
   }
 
   // Fetch real transaction data from API (overrides URL params if ref is valid)
@@ -844,6 +878,7 @@ async function loadTransaction() {
     document.getElementById('order-email').querySelector('span').textContent = state.customerEmail;
     document.getElementById('card-pay-amount').textContent = state.amountFormatted;
     document.getElementById('transfer-amount-display').textContent = state.amountFormatted;
+    document.getElementById('palmpay-amount').textContent = state.amountFormatted;
     document.getElementById('ussd-amt').textContent = (txn.amount / 100).toFixed(2);
     state.ussdAmt = (txn.amount / 100).toFixed(2);
 
@@ -869,7 +904,7 @@ async function fetchVirtualAccount() {
 // ─── CHANNEL SWITCHING ────────────────────────────────────────────────────────
 function switchChannel(ch) {
   state.channel = ch;
-  ['card','transfer','ussd'].forEach(c => {
+  ['card','transfer','ussd','palmpay'].forEach(c => {
     document.getElementById('tab-' + c).classList.toggle('active', c === ch);
     document.getElementById('panel-' + c).classList.toggle('active', c === ch);
   });
@@ -1038,6 +1073,56 @@ async function checkUssdStatus() {
   }
 }
 
+// ─── PAY WITH PALMPAY ──────────────────────────────────────────────────────────
+// Creates a PalmPay checkout order on our backend and redirects the payer to
+// PalmPay's hosted page. PalmPay returns the payer to this checkout URL (with the
+// same ?ref), where we poll /confirm for the final status. If the payer returns
+// with ?palmpay=return we resume polling automatically.
+async function payWithPalmPay() {
+  const btn = document.getElementById('pay-btn-palmpay');
+  setLoading(btn, true);
+  try {
+    const res  = await fetch(`${API_URL}/checkout/${state.reference}/charge/palmpay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: state.customerEmail }),
+    });
+    const data = await res.json();
+    if (res.ok && data.status && data.data?.checkout_url) {
+      // Hand off to PalmPay's hosted checkout.
+      window.location.href = data.data.checkout_url;
+      return;
+    }
+    setLoading(btn, false);
+    showFailed(data.message || 'PalmPay is not available right now. Please try another method.');
+  } catch {
+    setLoading(btn, false);
+    showFailed('Could not reach PalmPay. Please try another method.');
+  }
+}
+
+// Poll the backend for the PalmPay result after the payer returns from PalmPay.
+async function resumePalmPayPolling() {
+  switchChannel('palmpay');
+  let tries = 0;
+  const tick = async () => {
+    tries++;
+    try {
+      const res  = await fetch(`${API_URL}/checkout/${state.reference}/confirm`, { method: 'POST' });
+      const data = await res.json();
+      if (data.status && (data.data?.status === 'SUCCESS' || data.data?.already_processed)) {
+        return showSuccess('palmpay');
+      }
+      if (data.data?.status === 'FAILED' || data.data?.status === 'REVERSED') {
+        return showFailed('Your PalmPay payment was not completed.');
+      }
+    } catch { /* keep polling */ }
+    if (tries < 20) setTimeout(tick, 3000);
+    else showFailed('We could not confirm your PalmPay payment in time. If you were debited it will be reconciled automatically.');
+  };
+  tick();
+}
+
 // ─── SUCCESS / FAILED ─────────────────────────────────────────────────────────
 function showSuccess(channel) {
   stopPolling();
@@ -1045,7 +1130,7 @@ function showSuccess(channel) {
   const screen = document.getElementById('screen-success');
   screen.classList.add('active');
 
-  const channelLabel = { card:'Card payment', transfer:'Bank transfer', ussd:'USSD payment' }[channel];
+  const channelLabel = { card:'Card payment', transfer:'Bank transfer', ussd:'USSD payment', palmpay:'PalmPay' }[channel];
   document.getElementById('success-sub').textContent =
     `Your ${channelLabel} of ${state.amountFormatted} to ${state.merchantName} was successful.`;
 
