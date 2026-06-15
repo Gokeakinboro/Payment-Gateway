@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS compliance_exceptions (
   status         text NOT NULL DEFAULT 'open',        -- open | deferred | cleared | blocked
   description    text,
   rule_ref       text,
-  deferrable     boolean NOT NULL DEFAULT true,
+  is_deferrable  boolean NOT NULL DEFAULT true,    -- 'deferrable' is a reserved SQL keyword
   deferred_until timestamptz,
   deferred_by    uuid,
   reason         text,                                -- SA disposition note

@@ -413,7 +413,7 @@ model ComplianceException {
   status        String    @default("open")       // open | deferred | cleared | blocked
   description   String?
   ruleRef       String?   @map("rule_ref")
-  deferrable    Boolean   @default(true)
+  deferrable    Boolean   @default(true) @map("is_deferrable")  // 'deferrable' is reserved SQL
   deferredUntil DateTime? @map("deferred_until")
   deferredBy    String?   @map("deferred_by") @db.Uuid
   reason        String?

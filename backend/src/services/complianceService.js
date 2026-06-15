@@ -81,9 +81,10 @@ function assertNoPan(obj, context = 'object') {
 
 // ── Field extraction from an onboarding submission's flexible `data` shape ─────
 function extractScope(data = {}) {
-  if (data.card_acceptance_scope === SCOPES.INTERNATIONAL) return SCOPES.INTERNATIONAL;
-  if (data.card_acceptance_scope === SCOPES.LOCAL) return SCOPES.LOCAL;
   const biz = data.np_business || {};
+  const explicit = data.card_acceptance_scope || biz.card_acceptance_scope;
+  if (explicit === SCOPES.INTERNATIONAL) return SCOPES.INTERNATIONAL;
+  if (explicit === SCOPES.LOCAL) return SCOPES.LOCAL;
   return biz.mkt_intl === '1' ? SCOPES.INTERNATIONAL : SCOPES.LOCAL;
 }
 function extractMcc(data = {}) {
@@ -246,12 +247,12 @@ async function persistExceptions(entityType, entityId, findings = []) {
   for (const f of findings) {
     await prisma.$executeRaw`
       INSERT INTO compliance_exceptions
-        (entity_type, entity_id, rule_code, severity, status, description, rule_ref, deferrable)
+        (entity_type, entity_id, rule_code, severity, status, description, rule_ref, is_deferrable)
       VALUES (${entityType}, ${entityId}::uuid, ${f.code}, ${f.severity}, 'open',
               ${f.description || null}, ${f.ruleRef || null}, ${f.deferrable !== false})
       ON CONFLICT (entity_type, entity_id, rule_code) DO UPDATE
         SET severity = EXCLUDED.severity, description = EXCLUDED.description,
-            rule_ref = EXCLUDED.rule_ref, deferrable = EXCLUDED.deferrable, updated_at = now()`;
+            rule_ref = EXCLUDED.rule_ref, is_deferrable = EXCLUDED.is_deferrable, updated_at = now()`;
   }
   if (entityType === 'merchant') await rollupComplianceStatus(entityId);
   return listExceptions(entityType, entityId);
@@ -260,7 +261,7 @@ async function persistExceptions(entityType, entityId, findings = []) {
 async function listExceptions(entityType, entityId) {
   return prisma.$queryRaw`
     SELECT id::text, rule_code, severity, status, description, rule_ref,
-           deferrable, deferred_until, deferred_by::text, reason, created_at, updated_at
+           is_deferrable AS deferrable, deferred_until, deferred_by::text, reason, created_at, updated_at
     FROM compliance_exceptions
     WHERE entity_type = ${entityType} AND entity_id = ${entityId}::uuid
     ORDER BY (severity='BLOCKING') DESC, created_at DESC`;

@@ -449,7 +449,7 @@ async function provisionMerchant(tx, sub, opts = {}) {
     expectedMonthlyVol: biz.expected_monthly_value || null,
     // Compliance: structured MCC + card-acceptance scope (selects local vs intl matrix).
     mcc:                 data.mcc || biz.mcc || ent.mcc || null,
-    cardAcceptanceScope: data.card_acceptance_scope === 'international' ? 'international' : 'local',
+    cardAcceptanceScope: (data.card_acceptance_scope || biz.card_acceptance_scope) === 'international' ? 'international' : 'local',
     kycStatus: active ? 'ACTIVE' : 'PENDING_KYC', kycTier: active ? 1 : null, isActive: active,
     settlementBank:        biz.bank_name || null,
     settlementAccount:     biz.account_number || null,

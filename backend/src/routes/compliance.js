@@ -222,7 +222,7 @@ const VALID_ENTITY = new Set(['merchant', 'aggregator', 'transaction']);
 async function getException(id) {
   const [row] = await prisma.$queryRaw`
     SELECT id::text, entity_type, entity_id::text, rule_code, severity, status,
-           description, rule_ref, deferrable, deferred_until, reason
+           description, rule_ref, is_deferrable AS deferrable, deferred_until, reason
     FROM compliance_exceptions WHERE id = ${id}::uuid`;
   return row || null;
 }
@@ -242,7 +242,7 @@ router.get('/exceptions', requireAuth, requireCompliance, async (req, res, next)
     const { entity_type, entity_id, status } = req.query;
     const rows = await prisma.$queryRaw`
       SELECT ce.id::text, ce.entity_type, ce.entity_id::text, ce.rule_code, ce.severity,
-             ce.status, ce.description, ce.rule_ref, ce.deferrable, ce.deferred_until,
+             ce.status, ce.description, ce.rule_ref, ce.is_deferrable AS deferrable, ce.deferred_until,
              ce.deferred_by::text, ce.reason, ce.created_at, ce.updated_at,
              m.business_name AS merchant_name
       FROM compliance_exceptions ce
