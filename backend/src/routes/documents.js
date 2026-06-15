@@ -194,7 +194,7 @@ router.post('/item/:docId/run-check', requireAuth, requireCompliance, async (req
 // The submission that provisioned this entity (merchantId is set on approval for
 // both merchants and aggregators).
 async function submissionForEntity(id) {
-  return prisma.onboardingSubmission.findFirst({ where: { merchantId: id }, orderBy: { createdAt: 'desc' } });
+  return prisma.onboardingSubmission.findFirst({ where: { merchantId: id }, orderBy: { submittedAt: 'desc' } });
 }
 
 // GET /api/v1/documents/uploaded/:entityType/:id — list the uploaded files.
