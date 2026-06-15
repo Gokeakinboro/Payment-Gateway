@@ -181,7 +181,7 @@ model Merchant {
   apiKeys        ApiKey[]
   rateConfigs    MerchantRateConfig[]
   aggRateConfigs AggregatorRateConfig[]
-  wallet         MerchantWallet?
+  wallets        MerchantWallet[]
   payoutBatches  PayoutBatch[]
   payoutItems    PayoutItem[]
 
