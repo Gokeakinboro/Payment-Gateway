@@ -37,6 +37,7 @@ MANIFEST = [
     ('backend/src/routes/users.js',                '/opt/paylode-api/backend/src/routes/users.js'),
     ('backend/src/routes/aggregators.js',          '/opt/paylode-api/backend/src/routes/aggregators.js'),
     ('backend/src/routes/merchants.js',            '/opt/paylode-api/backend/src/routes/merchants.js'),
+    ('backend/src/routes/payouts.js',              '/opt/paylode-api/backend/src/routes/payouts.js'),
     ('backend/src/routes/support.js',              '/opt/paylode-api/backend/src/routes/support.js'),
     ('backend/src/routes/auth.js',                 '/opt/paylode-api/backend/src/routes/auth.js'),
     ('backend/src/routes/transactions.js',         '/opt/paylode-api/backend/src/routes/transactions.js'),
