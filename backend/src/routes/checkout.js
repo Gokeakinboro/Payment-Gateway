@@ -117,6 +117,9 @@ router.post('/:reference/charge/card', async (req, res, next) => {
           amount:         fees.chargeAmount,
           netRevenue:     fees.netPool,
           merchantFee:    fees.feePlusVat,
+          railCost:       fees.railPlusVat,
+          vatOutput:      fees.vatOnFee,
+          vatInput:       fees.railPlusVat - fees.railRaw,
           aggShare:       fees.aggShare,
           paylodeMargin:  fees.paylodeMargin,
           metadata: { ...txn.metadata, fee_paid_by: fees.feePaidBy,
@@ -193,6 +196,9 @@ router.post('/:reference/charge/card', async (req, res, next) => {
           paidAt:         new Date(),
           netRevenue:     fees.netPool,
           merchantFee:    fees.feePlusVat,
+          railCost:       fees.railPlusVat,
+          vatOutput:      fees.vatOnFee,
+          vatInput:       fees.railPlusVat - fees.railRaw,
           aggShare:       fees.aggShare,
           paylodeMargin:  fees.paylodeMargin,
           metadata: {
@@ -266,6 +272,7 @@ router.post('/:reference/charge/card/otp', async (req, res, next) => {
         data: {
           status: 'SUCCESS', paidAt: new Date(),
           netRevenue: fees.netPool, merchantFee: fees.feePlusVat,
+          railCost: fees.railPlusVat, vatOutput: fees.vatOnFee, vatInput: fees.railPlusVat - fees.railRaw,
           aggShare: fees.aggShare, paylodeMargin: fees.paylodeMargin,
         },
       });
@@ -289,6 +296,7 @@ router.post('/:reference/charge/card/otp', async (req, res, next) => {
         data: {
           status: 'SUCCESS', paidAt: new Date(),
           netRevenue: fees.netPool, merchantFee: fees.feePlusVat,
+          railCost: fees.railPlusVat, vatOutput: fees.vatOnFee, vatInput: fees.railPlusVat - fees.railRaw,
           aggShare: fees.aggShare, paylodeMargin: fees.paylodeMargin,
           metadata: {
             ...txn.metadata, isw_response_code: code,
@@ -342,6 +350,7 @@ router.post('/:reference/confirm', async (req, res, next) => {
         data: {
           status: 'SUCCESS', paidAt: new Date(),
           netRevenue: fees.netPool, merchantFee: fees.feePlusVat,
+          railCost: fees.railPlusVat, vatOutput: fees.vatOnFee, vatInput: fees.railPlusVat - fees.railRaw,
           aggShare: fees.aggShare, paylodeMargin: fees.paylodeMargin,
           metadata: { ...txn.metadata, fee_paid_by: fees.feePaidBy,
                       merchant_settlement: Number(fees.merchantSettlement) },

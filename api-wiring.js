@@ -3978,6 +3978,147 @@ async function viewLedger(merchantId) {
   </table></div></div>`;
 }
 
+// ── REPORTS HUB (card grid — scales as we add more reports) ───────────────────
+function loadReportsHub() {
+  var el = document.getElementById('main-content'); if (!el) return;
+  var reports = [
+    ['CBN Report (PSSP Returns)', 'Monthly CBN PSSP_RETURNS by channel. Excel download.', 'cbn_report', '🏛'],
+    ['VAT Report', 'Monthly VAT — output − input per product. Excel download.', 'vat_report', '⊟'],
+    ['Revenue Report', 'Fees, rail costs, net pool and margins.', 'revenue', '₦'],
+    ['Payout Report', 'Payout volumes, fees and VAT.', 'payout_report', '⇄'],
+    ['Rail Settlement', 'Settlement by rail and product.', 'rail_settlement', '⊞'],
+  ];
+  var cards = reports.map(function (r) {
+    return '<div class="card" style="cursor:pointer" onclick="navigate(\'' + r[2] + '\')" onmouseover="this.style.boxShadow=\'0 4px 16px rgba(0,0,0,.10)\'" onmouseout="this.style.boxShadow=\'\'">' +
+      '<div style="font-size:26px;margin-bottom:8px">' + r[3] + '</div>' +
+      '<div style="font-weight:700;font-size:15px;margin-bottom:4px">' + r[0] + '</div>' +
+      '<div style="font-size:12px;color:var(--gray-500)">' + r[1] + '</div>' +
+      '<div style="margin-top:12px"><span class="btn btn-outline btn-sm">Open →</span></div></div>';
+  }).join('');
+  el.innerHTML =
+    '<div class="page-header"><div class="page-title">Reports</div>' +
+    '<div class="page-desc">All Paylode reports. More will be added here over time.</div></div>' +
+    '<div class="grid-3">' + cards + '</div>';
+}
+
+// ── CBN REPORT (monthly PSSP_RETURNS; Excel in the exact CBN layout) ──────────
+async function loadCbnReport() {
+  var el = document.getElementById('main-content'); if (!el) return;
+  var month = window._cbnMonth || _lastMonthStr(); window._cbnMonth = month;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/reports/cbn?month=' + month);
+    var d = (res && res.data) || { channels: [] };
+    window._cbnData = d;
+    var rows = (d.channels || []).map(function (c) {
+      return '<tr><td class="mono">' + c.code + '</td><td>' + c.channel + '</td>' +
+        '<td>' + (c.volume || 0).toLocaleString() + '</td>' +
+        '<td class="mono">₦' + (c.value || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }) + '</td>' +
+        '<td style="font-size:12px">' + c.period + '</td></tr>';
+    }).join('');
+    el.innerHTML =
+      '<div class="page-header flex-between"><div><div class="page-title">CBN Report — PSSP Returns</div>' +
+        '<div class="page-desc">' + (d.institution || '') + ' · ' + (d.frequency || 'Monthly') + ' · ' + (d.currency || 'NGN') + '. All transactions are WEB.</div></div>' +
+        '<div class="flex" style="gap:6px"><a href="#" onclick="navigate(\'reports_hub\');return false" class="btn btn-outline btn-sm">← Reports</a>' +
+          '<input type="month" id="cbn-month" value="' + month + '" class="form-input" style="width:auto" onchange="window._cbnMonth=this.value;loadCbnReport()">' +
+          '<button class="btn btn-lime btn-sm" onclick="downloadCbnExcel()">&#8681; Download Excel</button></div></div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Channel Code</th><th>Channel</th><th>Volume</th><th>Value</th><th>Period</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+        '<tfoot><tr style="font-weight:700"><td colspan="2">TOTAL</td><td>' + (d.total_volume || 0).toLocaleString() + '</td>' +
+        '<td class="mono">₦' + (d.total_value || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }) + '</td><td></td></tr></tfoot>' +
+      '</table></div></div>';
+  } catch (e) { el.innerHTML = errorBox('Failed to load CBN report: ' + e.message); }
+}
+function downloadCbnExcel() {
+  var d = window._cbnData; var month = window._cbnMonth;
+  if (!d) { alert('No data loaded.'); return; }
+  if (typeof XLSX === 'undefined') { alert('Excel library still loading — try again in a moment.'); return; }
+  var aoa = [
+    [],
+    ['Frequency', 'Monthly', d.frequency_date],
+    ['Participants'],
+    [],
+    ['', '', '', 'CUR', 'NGN'],
+    ['PSSP Institution Name:', d.institution],
+    ['PSSP_Code', 'Channel Code', 'Channel', 'Volume1', 'Value1', 'Period'],
+  ];
+  (d.channels || []).forEach(function (c) { aoa.push(['', c.code, c.channel, c.volume, c.value, c.period]); });
+  aoa.push(['', '', '', '', d.total_value]);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'PSSP_RETURNS');
+  XLSX.writeFile(wb, 'CBN Reporting PSSP-' + month + '.xlsx');
+}
+
+// ── VAT REPORT (monthly, per product; Excel download for tax authorities) ─────
+function _lastMonthStr() {
+  var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+async function loadVatReport() {
+  var el = document.getElementById('main-content'); if (!el) return;
+  var month = window._vatMonth || _lastMonthStr();
+  window._vatMonth = month;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/reports/vat?month=' + month);
+    var d = (res && res.data) || { products: [], totals: {} };
+    window._vatData = d;
+    var t = d.totals || {};
+    var rows = (d.products || []).length ? d.products.map(function (p) {
+      return '<tr><td style="font-weight:500">' + p.product + '</td>' +
+        '<td>' + p.txn_count + '</td>' +
+        '<td class="mono">' + fmtNaira((p.volume_naira||0)*100) + '</td>' +
+        '<td class="mono">' + fmtNaira((p.fee_incl_vat_naira||0)*100) + '</td>' +
+        '<td class="mono">' + fmtNaira((p.output_vat_naira||0)*100) + '</td>' +
+        '<td class="mono">' + fmtNaira((p.input_vat_naira||0)*100) + '</td>' +
+        '<td class="mono" style="font-weight:600">' + fmtNaira((p.net_vat_naira||0)*100) + '</td></tr>';
+    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gray-400)">No VAT recorded for this month</td></tr>';
+    el.innerHTML =
+      '<div class="page-header flex-between"><div><div class="page-title">VAT Reports</div>' +
+        '<div class="page-desc">Monthly VAT for the tax authority. Net payable = output VAT (on Paylode fees) − input VAT (charged by rails).</div></div>' +
+        '<div class="flex" style="gap:6px">' +
+          '<input type="month" id="vat-month" value="' + month + '" class="form-input" style="width:auto" onchange="window._vatMonth=this.value;loadVatReport()">' +
+          '<button class="btn btn-lime btn-sm" onclick="downloadVatExcel()">&#8681; Download Excel</button>' +
+        '</div></div>' +
+      '<div class="stats-grid" style="margin-bottom:16px">' +
+        '<div class="stat-card"><div class="stat-label">Output VAT</div><div class="stat-value">' + fmtNaira((t.output_vat_naira||0)*100) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Input VAT (rails)</div><div class="stat-value">' + fmtNaira((t.input_vat_naira||0)*100) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Net VAT Payable</div><div class="stat-value" style="color:var(--green)">' + fmtNaira((t.net_vat_naira||0)*100) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Transactions</div><div class="stat-value">' + (t.txn_count||0) + '</div></div>' +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Product</th><th>Txns</th><th>Volume</th><th>Fee (incl VAT)</th><th>Output VAT</th><th>Input VAT</th><th>Net VAT</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table></div></div>' +
+      '<div class="info-box" style="margin-top:12px;font-size:12px">' + (d.note || '') + '</div>';
+  } catch (e) { el.innerHTML = errorBox('Failed to load VAT report: ' + e.message); }
+}
+function downloadVatExcel() {
+  var d = window._vatData; var month = window._vatMonth;
+  if (!d) { alert('No data loaded.'); return; }
+  if (typeof XLSX === 'undefined') { alert('Excel library still loading — try again in a moment.'); return; }
+  var t = d.totals || {};
+  var summary = [
+    ['Paylode Services Limited — VAT Report'],
+    ['Month', month], ['VAT rate', d.vat_rate || '7.5%'], ['Generated', new Date().toISOString()],
+    [],
+    ['Total Output VAT (₦)', t.output_vat_naira || 0],
+    ['Total Input VAT (₦)', t.input_vat_naira || 0],
+    ['Net VAT Payable (₦)', t.net_vat_naira || 0],
+    ['Transactions', t.txn_count || 0],
+    [], [d.note || ''],
+  ];
+  var perProduct = [['Product', 'Txns', 'Volume (₦)', 'Fee incl VAT (₦)', 'Output VAT (₦)', 'Input VAT (₦)', 'Net VAT (₦)']];
+  (d.products || []).forEach(function (p) {
+    perProduct.push([p.product, p.txn_count, p.volume_naira, p.fee_incl_vat_naira, p.output_vat_naira, p.input_vat_naira, p.net_vat_naira]);
+  });
+  perProduct.push(['TOTAL', t.txn_count || 0, '', '', t.output_vat_naira || 0, t.input_vat_naira || 0, t.net_vat_naira || 0]);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(perProduct), 'Per Product');
+  XLSX.writeFile(wb, 'Paylode VAT Report ' + month + '.xlsx');
+}
+
 // ── PRODUCT REVENUE REPORT ────────────────────────────────────────────────────
 async function loadProductRevenue(period='month') {
   const el = document.getElementById('main-content');
@@ -4234,6 +4375,9 @@ loadPageData = function(page) {
     case 'payouts':              loadPayouts(); break;
     case 'payout_report':        loadPayoutReport(); break;
     case 'payout_logs':          loadPayoutLogs(); break;
+    case 'vat_report':           loadVatReport(); break;
+    case 'cbn_report':           loadCbnReport(); break;
+    case 'reports_hub':          loadReportsHub(); break;
     case 'fee_config':           loadFeeConfig(); break;
     case 'rail_settlement':      loadRailSettlement(); break;
     case 'rails':                loadRails(); break;

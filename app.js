@@ -69,12 +69,10 @@ var NAV = {
       {id:'overview',        icon:'◉', label:'Dashboard'       },
       {id:'transactions',    icon:'↕', label:'Transactions'    },
       {id:'settlement',      icon:'✓', label:'Settlements'     },
-      {id:'rail_settlement', icon:'⊞', label:'Rail Settlement' },
-      {id:'payout_report',   icon:'⇄', label:'Payout Report'   },
       {id:'wallets',         icon:'◈', label:'Merchant Wallets'},
-      {id:'revenue',         icon:'₦', label:'Revenue Report'  },
       {id:'compliance',      icon:'⚖', label:'Compliance'      },
       {id:'onboarding_apps', icon:'▤', label:'Applications'    },
+      {id:'reports_hub',     icon:'▦', label:'Reports'         },
     ]},
     { section:'SYSTEM CONFIG', items:[
       {id:'fee_config',          icon:'₦', label:'Fee Configuration'},
@@ -192,7 +190,7 @@ var NAV_PERM = {
   merchants:'view_merchants', aggregators:'view_aggregators', admin_onboard:'edit_onboarding',
   deferrals:'view_doc_referrals', users:'view_staff', overview:'view_dashboard',
   transactions:'view_transactions', settlement:'view_settlements', rail_settlement:'view_settlements',
-  payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', compliance:'view_compliance',
+  payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', vat_report:'view_reports', reports_hub:'view_reports', cbn_report:'view_reports', compliance:'view_compliance',
   onboarding_apps:'view_onboarding', fee_config:'view_fees', rails:'view_rails',
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
 };

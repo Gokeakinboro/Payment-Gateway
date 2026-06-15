@@ -260,9 +260,12 @@ model Transaction {
   status        TxnStatus @default(PENDING)
   channel       Channel
   railId        String?   @map("rail_id") @db.Uuid
-  merchantFee   BigInt    @default(0) @map("merchant_fee")     // kobo
+  merchantFee   BigInt    @default(0) @map("merchant_fee")     // kobo (VAT-inclusive)
   railCost      BigInt    @default(0) @map("rail_cost")         // kobo
   netRevenue    BigInt    @default(0) @map("net_revenue")       // kobo
+  // VAT components for the monthly VAT report (net payable = output - input).
+  vatOutput     BigInt    @default(0) @map("vat_output")        // kobo — VAT we charged on our fee
+  vatInput      BigInt    @default(0) @map("vat_input")         // kobo — VAT the rail charged us
   aggShare      BigInt    @default(0) @map("agg_share")         // kobo
   paylodeMargin BigInt    @default(0) @map("paylode_margin")    // kobo
   authUrl       String?   @map("auth_url")

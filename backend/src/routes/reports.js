@@ -14,6 +14,114 @@ function getMailer() {
   });
 }
 
+// ── GET /api/v1/reports/vat?month=YYYY-MM — monthly VAT report (per product) ──
+// Net VAT payable = output VAT (charged on Paylode fees) − input VAT (charged by
+// rails). Per-product breakdown + payout-fee VAT. Returns JSON; the dashboard
+// builds the downloadable Excel client-side.
+router.get('/vat', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const now = new Date();
+    const month = /^\d{4}-\d{2}$/.test(req.query.month || '')
+      ? req.query.month
+      : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const start = new Date(month + '-01T00:00:00.000Z');
+    const end = new Date(start); end.setUTCMonth(end.getUTCMonth() + 1);
+
+    // Transactions (cards / VA / USSD …): output + input VAT per product.
+    const txnRows = await prisma.$queryRaw`
+      SELECT COALESCE(metadata->>'product', channel::text) AS product,
+             COUNT(*)::int AS txn_count,
+             COALESCE(SUM(amount),0)       AS volume,
+             COALESCE(SUM(merchant_fee),0) AS fee_incl_vat,
+             COALESCE(SUM(vat_output),0)   AS output_vat,
+             COALESCE(SUM(vat_input),0)    AS input_vat
+      FROM transactions
+      WHERE status = 'SUCCESS' AND is_sandbox = false
+        AND paid_at >= ${start} AND paid_at < ${end}
+      GROUP BY 1 ORDER BY 1
+    `;
+
+    // Payouts: output VAT collected on payout fees (wallet_ledger VAT entries).
+    const payoutVat = await prisma.$queryRaw`
+      SELECT COUNT(*)::int AS cnt, COALESCE(SUM(amount),0) AS output_vat
+      FROM wallet_ledger
+      WHERE entry_type = 'VAT' AND created_at >= ${start} AND created_at < ${end}
+    `;
+
+    const products = txnRows.map(r => {
+      const out = Number(r.output_vat), inp = Number(r.input_vat);
+      return {
+        product:            r.product || 'UNKNOWN',
+        txn_count:          r.txn_count,
+        volume_naira:       koboToNaira(r.volume),
+        fee_incl_vat_naira: koboToNaira(r.fee_incl_vat),
+        output_vat_naira:   koboToNaira(out),
+        input_vat_naira:    koboToNaira(inp),
+        net_vat_naira:      koboToNaira(out - inp),
+      };
+    });
+    const pv = payoutVat[0] || { cnt: 0, output_vat: 0n };
+    if (Number(pv.output_vat) > 0) {
+      products.push({
+        product: 'PAYOUTS', txn_count: pv.cnt, volume_naira: 0, fee_incl_vat_naira: 0,
+        output_vat_naira: koboToNaira(pv.output_vat), input_vat_naira: 0,
+        net_vat_naira: koboToNaira(pv.output_vat),
+      });
+    }
+    const totals = products.reduce((t, p) => ({
+      output_vat_naira: t.output_vat_naira + p.output_vat_naira,
+      input_vat_naira:  t.input_vat_naira  + p.input_vat_naira,
+      net_vat_naira:    t.net_vat_naira    + p.net_vat_naira,
+      txn_count:        t.txn_count        + p.txn_count,
+    }), { output_vat_naira: 0, input_vat_naira: 0, net_vat_naira: 0, txn_count: 0 });
+
+    ok(res, {
+      month, vat_rate: '7.5%', products, totals,
+      note: 'Net VAT payable = output VAT (on Paylode fees) − input VAT (charged by rails). VAT components are recorded from 2026-06-15.',
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/cbn?month=YYYY-MM — CBN PSSP_RETURNS monthly report ───
+// All transactions are WEB (CHNL004) for now. Volume = successful txn count,
+// Value = sum of amount (NGN). The dashboard renders the exact PSSP layout to xlsx.
+router.get('/cbn', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const now = new Date();
+    const month = /^\d{4}-\d{2}$/.test(req.query.month || '')
+      ? req.query.month
+      : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const start = new Date(month + '-01T00:00:00.000Z');
+    const end = new Date(start); end.setUTCMonth(end.getUTCMonth() + 1);
+    const [yyyy, mm] = month.split('-');
+    const lastDay = new Date(end.getTime() - 1).getUTCDate();
+    const period = `01-${String(lastDay).padStart(2, '0')}/${mm}/${yyyy}`;
+
+    const agg = await prisma.$queryRaw`
+      SELECT COUNT(*)::int AS volume, COALESCE(SUM(amount),0) AS value_kobo
+      FROM transactions
+      WHERE status = 'SUCCESS' AND is_sandbox = false
+        AND paid_at >= ${start} AND paid_at < ${end}
+    `;
+    const webVolume = agg[0] ? agg[0].volume : 0;
+    const webValue  = agg[0] ? Number(agg[0].value_kobo) / 100 : 0;
+
+    const channels = [
+      { code: 'CHNL001', channel: 'ATM',         volume: 0,         value: 0,        period },
+      { code: 'CHNL002', channel: 'POS',         volume: 0,         value: 0,        period },
+      { code: 'CHNL004', channel: 'WEB',         volume: webVolume, value: webValue, period },
+      { code: 'CHNL004', channel: 'USSD',        volume: 0,         value: 0,        period },
+      { code: 'CHNL005', channel: 'Mobile App',  volume: 0,         value: 0,        period },
+      { code: 'CHNL006', channel: 'Bank Branch', volume: 0,         value: 0,        period },
+    ];
+    ok(res, {
+      month, institution: 'Paylode Services Limited', frequency: 'Monthly',
+      frequency_date: `01/${mm}/${yyyy}`, currency: 'NGN', period,
+      channels, total_volume: webVolume, total_value: webValue,
+    });
+  } catch (e) { next(e); }
+});
+
 // ── GET /api/v1/reports/daily-summary ────────────────────────────────────
 router.get('/daily-summary', requireAuth, requireCompliance, async (req, res, next) => {
   try {
