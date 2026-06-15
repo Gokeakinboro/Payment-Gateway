@@ -48,6 +48,8 @@ MANIFEST = [
     ('backend/src/services/emailService.js',       '/opt/paylode-api/backend/src/services/emailService.js'),
     ('backend/src/services/feeEngine.js',          '/opt/paylode-api/backend/src/services/feeEngine.js'),
     ('backend/src/services/railHealth.js',         '/opt/paylode-api/backend/src/services/railHealth.js'),
+    ('backend/src/services/palmpayService.js',     '/opt/paylode-api/backend/src/services/palmpayService.js'),
+    ('backend/src/routes/palmpay-webhook.js',      '/opt/paylode-api/backend/src/routes/palmpay-webhook.js'),
     ('backend/src/routes/checkout.js',             '/opt/paylode-api/backend/src/routes/checkout.js'),
     ('backend/src/routes/compliance.js',           '/opt/paylode-api/backend/src/routes/compliance.js'),
     ('backend/src/config/complianceRules.js',      '/opt/paylode-api/backend/src/config/complianceRules.js'),

@@ -138,6 +138,7 @@ app.use('/api/v1/statements',          require('./routes/statements'));
 app.use('/api/v1/admin/email-templates', require('./routes/email-templates'));
 
 app.use('/api/v1/webhooks/youverify', require('./routes/youverify-webhook'));
+app.use('/api/v1/webhooks/palmpay', require('./routes/palmpay-webhook'));
 app.use('/api/v1/deferrals', require('./routes/deferrals'));
 app.use('/api/v1/documents', require('./routes/documents'));
 app.use('/api/v1/support', require('./routes/support'));
