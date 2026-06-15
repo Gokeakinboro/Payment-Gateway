@@ -216,15 +216,19 @@ model ApiKey {
 // ─── PAYMENT RAILS ────────────────────────────────────────────────────────────
 
 model PaymentRail {
-  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name      String     @unique
-  status    RailStatus @default(CONFIG_ONLY)
-  notes     String?
-  createdAt DateTime   @default(now()) @map("created_at")
-  updatedAt DateTime   @updatedAt @map("updated_at")
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String     @unique
+  status        RailStatus @default(CONFIG_ONLY)
+  notes         String?
+  // #payout twist: a rail Paylode can send payouts through (internal only —
+  // never shown to merchants). SA toggles this + status (LIVE) to route traffic.
+  payoutEnabled Boolean    @default(false) @map("payout_enabled")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
 
   costs        RailCost[]
   transactions Transaction[]
+  wallets      MerchantWallet[]
 
   @@map("payment_rails")
 }
@@ -534,23 +538,30 @@ model AggregatorRateConfig {
 
 model MerchantWallet {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  merchantId   String    @unique @map("merchant_id") @db.Uuid
+  merchantId   String    @map("merchant_id") @db.Uuid
+  // #payout twist: balance is PER RAIL. A merchant holds one row per payout rail.
+  // railId nullable only for legacy/unallocated; new funding always sets it.
+  railId       String?   @map("rail_id") @db.Uuid
   balance      BigInt    @default(0)
   lastFundedAt DateTime? @map("last_funded_at")
+  lastUsedAt   DateTime? @map("last_used_at")
   fundedBy     String?   @map("funded_by") @db.Uuid
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
   merchant  Merchant       @relation(fields: [merchantId], references: [id])
+  rail      PaymentRail?   @relation(fields: [railId], references: [id])
   ledger    WalletLedger[]
 
+  @@unique([merchantId, railId])
   @@map("merchant_wallets")
 }
 
 model WalletLedger {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   merchantId    String   @map("merchant_id") @db.Uuid
-  entryType     String   @map("entry_type")   // CREDIT | DEBIT | FEE | VAT | REFUND
+  railId        String?  @map("rail_id") @db.Uuid
+  entryType     String   @map("entry_type")   // CREDIT | DEBIT | FEE | VAT | REFUND | PAYOUT
   amount        BigInt
   balanceBefore BigInt   @map("balance_before")
   balanceAfter  BigInt   @map("balance_after")
@@ -558,8 +569,6 @@ model WalletLedger {
   description   String?
   createdBy     String?  @map("created_by") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at")
-
-  wallet MerchantWallet @relation(fields: [merchantId], references: [merchantId])
 
   @@index([merchantId])
   @@index([reference])

@@ -3810,46 +3810,147 @@ async function testRouting() {
 }
 
 // ── WALLET MANAGEMENT (Super Admin) ───────────────────────────────────────────
+var __payoutRails = [];   // cached for the fund droplist
 async function loadWallets() {
   const el = document.getElementById('main-content');
   el.innerHTML = loading();
   try {
-    const res = await apiFetch('/payouts/admin/wallets');
-    const wallets = res?.data || [];
+    const [wRes, rRes, qRes] = await Promise.all([
+      apiFetch('/payouts/admin/wallets'),
+      apiFetch('/payouts/admin/payout-rails'),
+      apiFetch('/payouts/admin/routing-queue'),
+    ]);
+    const wallets = wRes?.data || [];
+    __payoutRails = rRes?.data || [];
+    const queue = qRes?.data || [];
+    const enabledCount = __payoutRails.filter(r => r.payoutEnabled && r.status === 'LIVE').length;
+
+    const rows = wallets.length ? wallets.map(w => {
+      const rails = (w.rails || []).map(r =>
+        `<span class="tag" style="margin:2px">${r.rail_name}: <strong>${r.balance_naira != null ? fmtNaira(r.balance) : '—'}</strong></span>`).join(' ');
+      return `<tr>
+        <td style="font-weight:500">${w.business_name}<div class="mono" style="font-size:11px;color:var(--gray-400)">${w.merchant_code||''}</div></td>
+        <td style="font-weight:600;color:${w.total>0?'var(--green)':'var(--gray-400)'}">${fmtNaira(w.total)}</td>
+        <td>${rails || '<span style="color:var(--gray-400)">no rail balances</span>'}</td>
+        <td><button class="btn btn-lime btn-sm" onclick="fundWallet('${w.merchant_id}','${(w.business_name||'').replace(/'/g,'')}')">Credit / Debit</button>
+        <button class="btn btn-outline btn-sm" onclick="viewLedger('${w.merchant_id}')">Ledger</button></td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--gray-400)">No merchant wallets yet</td></tr>';
+
     el.innerHTML = `
     <div class="page-header flex-between">
-      <div><div class="page-title">Merchant Wallets</div><div class="page-desc">Fund merchant payout wallets</div></div>
+      <div><div class="page-title">Merchant Wallets</div><div class="page-desc">Per-rail payout balances. Every credit is matched to a payout rail (internal — never shown to merchants).</div></div>
+      <div class="flex" style="gap:6px">
+        <button class="btn btn-outline btn-sm" onclick="managePayoutRails()">Payout Rails</button>
+        <button class="btn btn-outline btn-sm" onclick="loadRoutingQueue()">Routing Queue${queue.length?` <span class="badge badge-amber">${queue.length}</span>`:''}</button>
+      </div>
     </div>
-    <div class="card">
-      <div class="table-wrap"><table>
-        <thead><tr><th>Merchant</th><th>Code</th><th>Balance</th><th>Last Funded</th><th>Actions</th></tr></thead>
-        <tbody>
-          ${wallets.length ? wallets.map(w=>`<tr>
-            <td style="font-weight:500">${w.business_name}</td>
-            <td class="mono" style="font-size:11px">${w.merchant_code}</td>
-            <td style="font-weight:600;color:${Number(w.balance)>0?'var(--green)':'var(--red)'}">${fmtNaira(w.balance)}</td>
-            <td style="font-size:12px">${w.last_funded_at?new Date(w.last_funded_at).toLocaleDateString('en-NG'):'Never'}</td>
-            <td><button class="btn btn-lime btn-sm" onclick="fundWallet('${w.merchant_id}','${w.business_name}')">Fund Wallet</button>
-            <button class="btn btn-outline btn-sm" onclick="viewLedger('${w.merchant_id}')">Ledger</button></td>
-          </tr>`).join('') : '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--gray-400)">No merchant wallets found</td></tr>'}
-        </tbody>
-      </table></div>
-    </div>`;
+    ${enabledCount === 0 ? '<div class="warn-box" style="margin-bottom:14px;font-size:12px">&#9888; No rail is enabled for payouts yet. Open <strong>Payout Rails</strong> to enable + set a rail LIVE before you can credit merchants.</div>' : ''}
+    ${queue.length ? `<div class="info-box" style="margin-bottom:14px;font-size:12px">${queue.length} payout(s) need a routing decision (no single rail covers them). Open <strong>Routing Queue</strong>.</div>` : ''}
+    <div class="card"><div class="table-wrap"><table>
+      <thead><tr><th>Merchant</th><th>Total Balance</th><th>Per-Rail Balances</th><th>Actions</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div></div>`;
   } catch(e){ el.innerHTML = errorBox('Failed: '+e.message); }
 }
 
-async function fundWallet(merchantId, name) {
-  const amount    = prompt(`Fund wallet for ${name}\nAmount to credit (₦):`);
-  if (!amount) return;
-  const reference = prompt('Payment reference (bank transfer ref):');
-  if (!reference) return;
-  const desc      = prompt('Description (optional):') || '';
-  const res = await apiFetch('/payouts/wallet/fund', {
-    method: 'POST',
-    body: JSON.stringify({ merchant_id: merchantId, amount: Math.round(parseFloat(amount)*100), reference, description: desc }),
-  });
-  if (res?.status) { alert(`✓ ${res.data.amount_credited} credited to ${name}\nNew balance: ${res.data.new_balance}`); loadWallets(); }
-  else alert('Error: ' + (res?.message||'Failed'));
+function fundWallet(merchantId, name) {
+  const enabled = (__payoutRails || []).filter(r => r.payoutEnabled && r.status === 'LIVE');
+  if (!enabled.length) { alert('No LIVE payout-enabled rail. Open "Payout Rails" and enable one first.'); return; }
+  const opts = enabled.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+  showModal(
+    `<div class="modal-header"><div class="modal-title">Credit / Debit — ${name}</div>
+     <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+     <div class="info-box" style="font-size:12px;margin-bottom:12px">Choose the payout rail this balance belongs to. Balance = spend cap for that rail (deplete to 0; top up to allocate more). Rails are never shown to the merchant.</div>
+     <div class="form-grid">
+       <div class="form-group"><label class="form-label">Direction</label>
+         <select class="form-input form-select" id="fw-dir"><option value="credit">Credit (add)</option><option value="debit">Debit (remove)</option></select></div>
+       <div class="form-group"><label class="form-label">Payout Rail *</label>
+         <select class="form-input form-select" id="fw-rail">${opts}</select></div>
+     </div>
+     <div class="form-group"><label class="form-label">Amount (₦) *</label><input class="form-input" id="fw-amt" type="number" min="1" placeholder="e.g. 500000"></div>
+     <div class="form-group"><label class="form-label">Reference *</label><input class="form-input" id="fw-ref" placeholder="Bank transfer ref / memo"></div>
+     <div class="form-group"><label class="form-label">Description</label><input class="form-input" id="fw-desc" placeholder="Optional note"></div>
+     <div class="flex-between" style="margin-top:8px">
+       <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Cancel</button>
+       <button class="btn btn-lime" id="fw-btn" onclick="submitFundWallet('${merchantId}','${name}')">Apply</button></div>
+     <div id="fw-msg" style="margin-top:8px"></div>`);
+}
+async function submitFundWallet(merchantId, name) {
+  const dir = document.getElementById('fw-dir').value;
+  const rail_id = document.getElementById('fw-rail').value;
+  const amt = parseFloat(document.getElementById('fw-amt').value);
+  const reference = (document.getElementById('fw-ref').value||'').trim();
+  const description = (document.getElementById('fw-desc').value||'').trim();
+  const msg = document.getElementById('fw-msg');
+  if (!amt || amt <= 0 || !reference) { msg.innerHTML = '<div class="warn-box" style="font-size:12px">Amount and reference are required.</div>'; return; }
+  const btn = document.getElementById('fw-btn'); btn.disabled = true; btn.textContent = 'Applying...';
+  const res = await apiFetch('/payouts/wallet/fund', { method:'POST', body: JSON.stringify({
+    merchant_id: merchantId, rail_id, direction: dir, amount: Math.round(amt*100), reference, description,
+  })});
+  if (res?.status) { document.getElementById('modal').style.display='none'; loadWallets(); }
+  else { msg.innerHTML = '<div class="warn-box" style="font-size:12px">'+((res&&res.message)||'Failed')+'</div>'; btn.disabled=false; btn.textContent='Apply'; }
+}
+
+// SA: enable/disable payout rails + set LIVE status
+async function managePayoutRails() {
+  const res = await apiFetch('/payouts/admin/payout-rails');
+  const rails = res?.data || [];
+  const rows = rails.map(r => `<tr style="border-bottom:1px solid var(--gray-100)">
+    <td style="padding:8px">${r.name}</td>
+    <td style="padding:8px"><span class="badge ${r.status==='LIVE'?'badge-green':'badge-gray'}">${r.status}</span></td>
+    <td style="padding:8px">${r.payoutEnabled?'<span class="badge badge-green">enabled</span>':'<span class="badge badge-gray">off</span>'}</td>
+    <td style="padding:8px">
+      <button class="btn btn-outline btn-sm" onclick="togglePayoutRail('${r.id}','enable',${!r.payoutEnabled})">${r.payoutEnabled?'Disable':'Enable'}</button>
+      <button class="btn btn-outline btn-sm" onclick="togglePayoutRail('${r.id}','status','${r.status==='LIVE'?'CONFIG_ONLY':'LIVE'}')">${r.status==='LIVE'?'Set Config-Only':'Set LIVE'}</button>
+    </td></tr>`).join('');
+  showModal(
+    `<div class="modal-header"><div class="modal-title">Payout Rails</div>
+     <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+     <div class="info-box" style="font-size:12px;margin-bottom:12px">A rail must be <strong>payout-enabled</strong> AND <strong>LIVE</strong> to credit merchants / route payouts through it. Internal only.</div>
+     <div class="table-wrap"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)">
+       <th style="text-align:left;padding:8px">Rail</th><th style="text-align:left;padding:8px">Status</th><th style="text-align:left;padding:8px">Payout</th><th></th></tr></thead>
+       <tbody>${rows||'<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--gray-400)">No rails configured</td></tr>'}</tbody></table></div>`);
+}
+async function togglePayoutRail(id, kind, val) {
+  const body = kind === 'enable' ? { payout_enabled: val } : { status: val };
+  const res = await apiFetch('/payouts/admin/payout-rails/'+id, { method:'PUT', body: JSON.stringify(body) });
+  if (res?.status) managePayoutRails(); else alert('Error: '+((res&&res.message)||'Failed'));
+}
+
+// SA: routing queue for payouts no single rail could cover
+async function loadRoutingQueue() {
+  const res = await apiFetch('/payouts/admin/routing-queue');
+  const q = res?.data || [];
+  const rows = q.length ? q.map(b => `<tr style="border-bottom:1px solid var(--gray-100)">
+    <td style="padding:8px">${b.business_name}<div class="mono" style="font-size:11px;color:var(--gray-400)">${b.batch_ref}</div></td>
+    <td style="padding:8px;font-weight:600">${fmtNaira(b.total_deduction)}</td>
+    <td style="padding:8px;font-size:11px">${(b.rail_balances||[]).map(r=>r.rail_name+': '+fmtNaira(r.balance)).join('<br>')||'—'}</td>
+    <td style="padding:8px"><button class="btn btn-lime btn-sm" onclick="routeBatchPrompt('${b.batch_id}',${b.total_deduction},${JSON.stringify(b.rail_balances).replace(/"/g,'&quot;')})">Route</button></td>
+  </tr>`).join('') : '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--gray-400)">Nothing awaiting routing</td></tr>';
+  showModal(
+    `<div class="modal-header"><div class="modal-title">Payout Routing Queue</div>
+     <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+     <div class="info-box" style="font-size:12px;margin-bottom:12px">These payouts exceed any single rail's balance. Allocate across rails (must sum to the total) — SA judgment.</div>
+     <div class="table-wrap"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)">
+       <th style="text-align:left;padding:8px">Merchant / Batch</th><th style="text-align:left;padding:8px">Total</th><th style="text-align:left;padding:8px">Rail Balances</th><th></th></tr></thead>
+       <tbody>${rows}</tbody></table></div>`);
+}
+async function routeBatchPrompt(batchId, totalKobo, railBalances) {
+  // Simple SA allocation: enter amount per rail (₦). Sum must equal total.
+  const lines = [];
+  for (const r of (railBalances||[])) {
+    const v = prompt(`Allocate from ${r.rail_name} (available ${fmtNaira(r.balance)}). Amount in ₦ (0 to skip). Remaining to allocate: ${fmtNaira(totalKobo - lines.reduce((s,l)=>s+l.amount,0))}`);
+    if (v === null) return;
+    const amt = Math.round(parseFloat(v||0)*100);
+    if (amt > 0) lines.push({ rail_id: r.rail_id, amount: amt });
+    if (lines.reduce((s,l)=>s+l.amount,0) >= totalKobo) break;
+  }
+  const sum = lines.reduce((s,l)=>s+l.amount,0);
+  if (sum !== totalKobo) { alert(`Allocations (${fmtNaira(sum)}) must sum to the total (${fmtNaira(totalKobo)}).`); return; }
+  const res = await apiFetch('/payouts/admin/batches/'+batchId+'/route', { method:'POST', body: JSON.stringify({ allocations: lines }) });
+  if (res?.status) { alert('Routed and processing.'); document.getElementById('modal').style.display='none'; loadWallets(); }
+  else alert('Error: '+((res&&res.message)||'Failed'));
 }
 
 async function viewLedger(merchantId) {
