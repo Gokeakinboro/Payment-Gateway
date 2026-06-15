@@ -145,6 +145,12 @@ model Merchant {
   aggregatorId      String?   @map("aggregator_id") @db.Uuid
   kycStatus         KycStatus @default(PENDING_KYC) @map("kyc_status")
   kycTier           Int?      @map("kyc_tier")
+  // Mastercard Rules compliance: structured MCC + card-acceptance scope (selects the
+  // local-vs-international compliance matrix) + rolled-up status + MATCH listing flag.
+  mcc                  String?  @map("mcc")
+  cardAcceptanceScope  String   @default("local") @map("card_acceptance_scope") // local | international
+  complianceStatus     String   @default("clear") @map("compliance_status")     // clear | review | blocked
+  matchListed          Boolean  @default(false) @map("match_listed")
   processingRate    Decimal?  @map("processing_rate") @db.Decimal(5, 4)
   settlementBank        String?   @map("settlement_bank")
   settlementAccount     String?   @map("settlement_account")      // encrypted at app layer
@@ -393,6 +399,31 @@ model AmlFlag {
   @@index([merchantId])
   @@index([status])
   @@map("aml_flags")
+}
+
+// ─── COMPLIANCE EXCEPTIONS (Mastercard Rules screening dispositions) ──────────
+// One row per screening finding requiring disposition (onboarding OR transaction).
+// SA defers / clears / blocks; an hourly sweep re-opens expired deferrals.
+model ComplianceException {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entityType    String    @map("entity_type")   // merchant | aggregator | transaction
+  entityId      String    @map("entity_id") @db.Uuid
+  ruleCode      String    @map("rule_code")     // MC_PROHIBITED_MCC | MC_BRAM | MC_SANCTIONS | ...
+  severity      String                           // BLOCKING | REVIEW | MONITOR
+  status        String    @default("open")       // open | deferred | cleared | blocked
+  description   String?
+  ruleRef       String?   @map("rule_ref")
+  deferrable    Boolean   @default(true)
+  deferredUntil DateTime? @map("deferred_until")
+  deferredBy    String?   @map("deferred_by") @db.Uuid
+  reason        String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@unique([entityType, entityId, ruleCode])
+  @@index([entityType, entityId])
+  @@index([status])
+  @@map("compliance_exceptions")
 }
 
 // ─── ONBOARDING SUBMISSIONS (public KYC/KYB applications) ─────────────────────

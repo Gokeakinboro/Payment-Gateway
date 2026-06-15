@@ -11,6 +11,7 @@ const { ok, fail, notFound } = require('../utils/helpers');
 const { dispatchWebhook }    = require('../services/webhookService');
 const { computeFeesForTxn, channelToServiceType } = require('../services/feeEngine');
 const isw = require('../services/interswitchService');
+const compliance = require('../services/complianceService');
 
 const CHECKOUT_URL = process.env.APP_URL
   ? process.env.APP_URL.replace(/\/$/, '') + '/checkout.html'
@@ -147,6 +148,26 @@ router.post('/:reference/charge/card', async (req, res, next) => {
         channel:             'CARD',
         sandbox:             true,
       }, 'Payment successful');
+    }
+
+    // ── COMPLIANCE GATE (Mastercard Rules) ──────────────────────────────────────
+    // Synchronous, in-memory hard-prohibition screen BEFORE any money moves. Blocks
+    // a compliance-blocked / MATCH-listed merchant, a prohibited MCC, or a sanctioned
+    // customer. Risk heuristics are monitored elsewhere (amlService), not blocked here.
+    {
+      const gate = compliance.screenTransaction(txn.merchant, {
+        customerName: card_name, customerEmail: txn.customerEmail, cardCountry: null,
+      });
+      if (gate.decision === 'REJECT') {
+        await prisma.transaction.update({
+          where: { id: txn.id }, data: { status: 'FAILED', failureReason: 'Compliance: ' + gate.message },
+        });
+        compliance.persistExceptions('transaction', txn.id, [{
+          code: gate.reasonCode, severity: 'BLOCKING', deferrable: false,
+          description: gate.message, ruleRef: 'Mastercard Rules — pre-authorization compliance gate',
+        }]).catch(() => {});
+        return fail(res, gate.message, gate.reasonCode, 403);
+      }
     }
 
     // ── LIVE MODE — Interswitch ─────────────────────────────────────────────────

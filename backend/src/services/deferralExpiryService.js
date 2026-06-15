@@ -45,6 +45,34 @@ async function expireOverdueDocuments(db, now) {
   return overdue.length;
 }
 
+// Compliance-exception deferral expiry — a deferred compliance exception whose date
+// has passed reverts to 'open'. The merchant's rolled-up compliance_status is
+// recomputed; if it has any open BLOCKING exception it is suspended so a deferred
+// prohibition can't quietly outlive its grace period.
+async function expireComplianceDeferrals(db, now) {
+  const expired = await db.$queryRaw`
+    SELECT DISTINCT entity_type, entity_id::text FROM compliance_exceptions
+    WHERE status='deferred' AND deferred_until IS NOT NULL AND deferred_until <= ${now}`;
+  await db.$executeRaw`
+    UPDATE compliance_exceptions SET status='open', updated_at=now()
+    WHERE status='deferred' AND deferred_until IS NOT NULL AND deferred_until <= ${now}`;
+  for (const d of expired) {
+    if (d.entity_type !== 'merchant') continue;
+    const [row] = await db.$queryRaw`
+      SELECT
+        COUNT(*) FILTER (WHERE severity='BLOCKING' AND status IN ('open','blocked'))::int AS blocking,
+        COUNT(*) FILTER (WHERE severity='REVIEW'   AND status='open')::int                AS review
+      FROM compliance_exceptions WHERE entity_type='merchant' AND entity_id=${d.entity_id}::uuid`;
+    const status = row.blocking > 0 ? 'blocked' : row.review > 0 ? 'review' : 'clear';
+    await db.$executeRaw`UPDATE merchants SET compliance_status=${status} WHERE id=${d.entity_id}::uuid`;
+    if (row.blocking > 0) {
+      await db.merchant.update({ where:{ id:d.entity_id }, data:{ isActive:false, kycStatus:'SUSPENDED' } });
+      logger.warn({ entity_id:d.entity_id }, 'Compliance deferral expired with open BLOCKING — merchant suspended');
+    }
+  }
+  return expired.length;
+}
+
 // Single cluster-wide sweep, protected by the advisory lock.
 async function runSweeps() {
   try {
@@ -54,7 +82,8 @@ async function runSweeps() {
       const now = new Date();
       const a = await expireOverdueDeferrals(tx, now);
       const b = await expireOverdueDocuments(tx, now);
-      if (a || b) logger.info({ deferrals:a, documents:b }, 'KYC expiry sweep completed');
+      const c = await expireComplianceDeferrals(tx, now);
+      if (a || b || c) logger.info({ deferrals:a, documents:b, compliance:c }, 'KYC expiry sweep completed');
     }, { timeout: 60000 });
   } catch (err) {
     logger.error({ err }, 'KYC expiry sweep failed');
@@ -65,4 +94,4 @@ async function runSweeps() {
 setTimeout(runSweeps, Math.floor(Math.random() * 5000) + 1000);
 setInterval(runSweeps, 60 * 60 * 1000);
 
-module.exports = { runSweeps, expireOverdueDeferrals, expireOverdueDocuments };
+module.exports = { runSweeps, expireOverdueDeferrals, expireOverdueDocuments, expireComplianceDeferrals };
