@@ -4547,6 +4547,8 @@ loadPageData = function(page) {
     case 'settle_verification':  loadSettlementQueue(); break;
     case 'email_tpl':            loadEmailTemplates(); break;
     case 'onboarding_apps':      loadOnboardingApps(); break;
+    case 'compliance_exceptions':
+      if ((window.__cmplExcTab || 'exceptions') === 'matrix') loadComplianceMatrix(); else loadComplianceExceptions(); break;
     case 'deferrals':            loadDeferrals(); break;
     // Static pages — _origRenderPage already rendered them, do not overwrite
     case 'settings':
@@ -4569,6 +4571,105 @@ loadPageData = function(page) {
 // ════════════════════════════════════════════════════════════════════════════
 
 function _escA(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── Compliance Exceptions (Mastercard Rules dispositions) ────────────────────
+function _sevBadge(sev) {
+  var m = { BLOCKING:'badge-red', REVIEW:'badge-amber', MONITOR:'badge-gray' };
+  return '<span class="badge ' + (m[sev] || 'badge-gray') + '">' + _escA(sev) + '</span>';
+}
+function _excStatusBadge(st) {
+  var m = { open:'badge-amber', deferred:'badge-blue', cleared:'badge-green', blocked:'badge-red' };
+  return '<span class="badge ' + (m[st] || 'badge-gray') + '">' + _escA((st || '').toUpperCase()) + '</span>';
+}
+
+async function loadComplianceExceptions() {
+  var el = document.getElementById('cmpl-exc');
+  if (!el) return;
+  var st = (document.getElementById('cmpl-status') || {}).value || '';
+  el.innerHTML = '<div class="info-box">&#8987; Loading exceptions…</div>';
+  var res = await apiFetch('/compliance/exceptions' + (st ? '?status=' + st : ''));
+  if (!res || !res.status) { el.innerHTML = '<div class="warn-box">&#9888; ' + ((res && res.message) || 'Failed to load') + '</div>'; return; }
+  var rows = (res.data.exceptions || []);
+  if (!rows.length) { el.innerHTML = '<div class="info-box">No compliance exceptions' + (st ? ' with status "' + _escA(st) + '"' : '') + '.</div>'; return; }
+  var body = rows.map(function(x) {
+    var isMerchant = x.entity_type === 'merchant';
+    var canAct = x.status === 'open' || x.status === 'deferred';
+    var actions = canAct ? (
+      '<button class="btn btn-outline btn-sm" onclick="deferComplianceException(\'' + x.id + '\',' + (x.deferrable ? 'true' : 'false') + ')">Defer</button> ' +
+      '<button class="btn btn-outline btn-sm" style="color:var(--green);border-color:var(--green)" onclick="clearComplianceException(\'' + x.id + '\')">Clear</button> ' +
+      '<button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="blockComplianceException(\'' + x.id + '\')">Block</button>'
+    ) : '<span style="color:var(--gray-400);font-size:12px">—</span>';
+    var deferInfo = x.deferred_until ? '<div style="font-size:11px;color:var(--gray-400)">until ' + new Date(x.deferred_until).toLocaleDateString() + '</div>' : '';
+    return '<tr>' +
+      '<td><span class="tag">' + _escA(x.rule_code) + '</span></td>' +
+      '<td>' + _sevBadge(x.severity) + (x.deferrable ? '' : ' <span class="badge badge-red" title="absolute prohibition">HARD</span>') + '</td>' +
+      '<td>' + _excStatusBadge(x.status) + deferInfo + '</td>' +
+      '<td style="font-size:12px">' + _escA(x.merchant_name || x.entity_type) + '</td>' +
+      '<td style="font-size:12px;max-width:340px">' + _escA(x.description || '') + (x.reason ? '<div style="font-size:11px;color:var(--gray-400)">SA: ' + _escA(x.reason) + '</div>' : '') + '</td>' +
+      '<td style="white-space:nowrap">' + actions + '</td>' +
+    '</tr>';
+  }).join('');
+  var sum = res.data.summary || {};
+  var chips = Object.keys(sum).map(function(k){ return '<span class="badge badge-gray" style="margin-right:6px">' + _escA(k) + ': ' + sum[k] + '</span>'; }).join('');
+  el.innerHTML = '<div style="margin-bottom:10px">' + chips + '</div>' +
+    '<div class="card"><div class="table-wrap"><table style="width:100%"><thead><tr>' +
+    '<th>Rule</th><th>Severity</th><th>Status</th><th>Entity</th><th>Detail</th><th>Action</th></tr></thead><tbody>' +
+    body + '</tbody></table></div></div>';
+}
+
+async function deferComplianceException(id, deferrable) {
+  var months = prompt('Defer for how many months? (1, 2, 3 or 6)', '3');
+  if (months === null) return;
+  if (['1','2','3','6'].indexOf(String(months).trim()) === -1) { alert('Enter 1, 2, 3 or 6.'); return; }
+  var reason = prompt('Reason / disposition note' + (deferrable ? ' (optional)' : ' (REQUIRED — overriding an absolute prohibition):'), '');
+  if (reason === null) return;
+  var force = !deferrable;
+  if (force && !String(reason).trim()) { alert('A reason is required to override an absolute prohibition.'); return; }
+  if (force && !confirm('This is a HARD prohibition. Overriding it is logged against your account. Proceed?')) return;
+  var res = await apiFetch('/compliance/exceptions/' + id + '/defer', {
+    method: 'POST', body: JSON.stringify({ duration_months: Number(months), reason: reason || undefined, force: force }),
+  });
+  if (res && res.status) loadComplianceExceptions();
+  else alert('Error: ' + ((res && res.message) || 'Defer failed'));
+}
+
+async function clearComplianceException(id) {
+  var reason = prompt('Clear this exception (false positive / resolved). Reason:', '');
+  if (reason === null) return;
+  var res = await apiFetch('/compliance/exceptions/' + id + '/clear', { method: 'POST', body: JSON.stringify({ reason: reason || undefined }) });
+  if (res && res.status) loadComplianceExceptions();
+  else alert('Error: ' + ((res && res.message) || 'Clear failed'));
+}
+
+async function blockComplianceException(id) {
+  if (!confirm('Confirm the block? The merchant will be suspended.')) return;
+  var reason = prompt('Reason for the block:', '');
+  if (reason === null) return;
+  var res = await apiFetch('/compliance/exceptions/' + id + '/block', { method: 'POST', body: JSON.stringify({ reason: reason || undefined }) });
+  if (res && res.status) loadComplianceExceptions();
+  else alert('Error: ' + ((res && res.message) || 'Block failed'));
+}
+
+async function loadComplianceMatrix() {
+  var el = document.getElementById('cmpl-matrix');
+  if (!el) return;
+  var res = await apiFetch('/compliance/matrix');
+  if (!res || !res.status) { el.innerHTML = '<div class="warn-box">&#9888; ' + ((res && res.message) || 'Failed to load') + '</div>'; return; }
+  var cls = function(v) { var m = { prohibited:'badge-red', restricted:'badge-amber', allowed:'badge-green' }; return '<span class="badge ' + (m[v] || 'badge-gray') + '">' + _escA(v) + '</span>'; };
+  var mccRows = (res.data.mccs || []).map(function(r) {
+    return '<tr><td class="mono">' + _escA(r.mcc) + '</td><td style="font-size:12px">' + _escA(r.label) + '</td><td>' + cls(r.local) + '</td><td>' + cls(r.international) + '</td></tr>';
+  }).join('');
+  var bramRows = (res.data.bram || []).map(function(b) {
+    return '<tr><td style="font-size:12px">' + _escA(b.category) + '</td><td style="font-size:11px;color:var(--gray-400)">' + _escA((b.keywords || []).join(', ')) + '</td></tr>';
+  }).join('');
+  el.innerHTML =
+    '<div class="card" style="margin-bottom:16px"><div class="card-header"><div class="card-title">Merchant Category Codes (MCC)</div>' +
+    '<div class="card-subtitle">Classification differs by card-acceptance scope. Prohibited = hard block; Restricted = enhanced due diligence.</div></div>' +
+    '<div class="table-wrap"><table style="width:100%"><thead><tr><th>MCC</th><th>Category</th><th>Local</th><th>International</th></tr></thead><tbody>' + mccRows + '</tbody></table></div></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">BRAM — Prohibited Activities</div>' +
+    '<div class="card-subtitle">Screened from the business description; any match is an absolute block.</div></div>' +
+    '<div class="table-wrap"><table style="width:100%"><thead><tr><th>Category</th><th>Trigger keywords</th></tr></thead><tbody>' + bramRows + '</tbody></table></div></div>';
+}
 
 function riskBadge(level) {
   var map = { high:'badge-red', medium:'badge-amber', low:'badge-green' };
@@ -4680,12 +4781,31 @@ async function viewOnboardingApp(ref) {
   var docsHtml = docs ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Documents</div><div>' + docs + '</div>' : '<div class="info-box" style="margin-top:12px;font-size:12px">No document files stored on server.</div>';
 
   var notes = (a.screeningNotes || []);
+
+  // Mastercard Rules compliance exceptions for the provisioned merchant (if any).
+  var excHtml = '';
+  if (a.merchantId) {
+    var excRes = await apiFetch('/compliance/exceptions?entity_type=merchant&entity_id=' + encodeURIComponent(a.merchantId));
+    var exc = (excRes && excRes.data && excRes.data.exceptions) || [];
+    if (exc.length) {
+      var excRows = exc.map(function(x) {
+        return '<div class="rev-row"><span class="rev-label">' + _sevBadge(x.severity) + ' ' + _escA(x.rule_code) + '</span>' +
+          '<span class="rev-value" style="font-size:12px;text-align:right">' + _excStatusBadge(x.status) + '<br><span style="color:var(--gray-400)">' + _escA(x.description || '') + '</span></span></div>';
+      }).join('');
+      var hasBlock = exc.some(function(x){ return x.severity === 'BLOCKING' && (x.status === 'open' || x.status === 'blocked'); });
+      excHtml = '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Compliance Exceptions ' +
+        (hasBlock ? '<span class="badge badge-red">BLOCKED — cannot approve</span>' : '') + '</div>' + excRows +
+        '<div class="info-box" style="font-size:11px;margin-top:6px">Manage these in <strong>Compliance Exceptions</strong> (defer / clear / block).</div>';
+    }
+  }
+
   var screeningHtml =
     '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Screening</div>' +
     '<div class="rev-row"><span class="rev-label">Risk level</span><span class="rev-value">' + riskBadge(a.riskLevel) + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">PEP</span><span class="rev-value">' + yesNoBadge(a.pepFlag) + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">Sanctions match</span><span class="rev-value">' + (a.sanctionsHit ? '<span class="badge badge-red">REVIEW</span>' : '<span class="badge badge-green">Clear</span>') + '</span></div>' +
-    (notes.length ? '<ul style="font-size:12px;color:var(--gray-500);margin:8px 0 0 18px">' + notes.map(function(n){return '<li>' + _escA(n) + '</li>';}).join('') + '</ul>' : '');
+    (notes.length ? '<ul style="font-size:12px;color:var(--gray-500);margin:8px 0 0 18px">' + notes.map(function(n){return '<li>' + _escA(n) + '</li>';}).join('') + '</ul>' : '') +
+    excHtml;
 
   var sig = a.signature ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Signature</div><img src="' + a.signature + '" style="max-width:260px;border:1px solid var(--gray-200);border-radius:6px">' : '';
 

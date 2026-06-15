@@ -359,6 +359,38 @@ const BUSINESS_TYPES = ['Limited Liability Company','Sole Proprietorship','Partn
 
 const BUSINESS_SEGMENTS = ['Retail','E-Commerce','Education','Healthcare','Hotel / Guest House','Travel & Entertainment','Transportation','Church / NGO','Technology','Agriculture','Real Estate','Financial Services','Other'];
 
+// Curated Merchant Category Codes — common low-risk codes plus the high-risk codes
+// the Mastercard Rules screening (complianceRules.js) classifies as restricted/prohibited.
+const MCC_OPTIONS = [
+  {code:'5411', label:'Grocery stores / supermarkets'},
+  {code:'5311', label:'Department stores'},
+  {code:'5651', label:'Family clothing stores'},
+  {code:'5812', label:'Restaurants / eating places'},
+  {code:'5814', label:'Fast food'},
+  {code:'5912', label:'Drug stores & pharmacies (restricted)'},
+  {code:'5999', label:'Miscellaneous retail'},
+  {code:'7372', label:'Computer programming / software'},
+  {code:'4816', label:'Computer network / information services (restricted)'},
+  {code:'8299', label:'Educational services'},
+  {code:'8011', label:'Doctors / health practitioners'},
+  {code:'4722', label:'Travel agencies & tour operators'},
+  {code:'5816', label:'Digital goods — games (restricted)'},
+  {code:'5817', label:'Digital goods — applications'},
+  {code:'5966', label:'Outbound telemarketing (restricted)'},
+  {code:'5967', label:'Inbound teleservices / adult (prohibited)'},
+  {code:'7273', label:'Dating & escort services (restricted)'},
+  {code:'7995', label:'Betting / gambling (restricted/prohibited)'},
+  {code:'6051', label:'Quasi-cash / crypto / money orders (restricted)'},
+  {code:'6211', label:'Securities — brokers / dealers (restricted)'},
+  {code:'5921', label:'Beer, wine & liquor stores (restricted)'},
+  {code:'5993', label:'Cigar stores / tobacco (restricted)'},
+  {code:'9223', label:'Bail & bond payments (restricted)'},
+];
+function onCardScopeChange(v) {
+  var n = document.getElementById('intl-card-note');
+  if (n) n.style.display = (v === 'international') ? 'block' : 'none';
+}
+
 const DD_QUESTIONS = [
   {n:1,  q:'Please indicate the types of services that your business undertake (tick all that apply)', type:'multicheck', options:['Deposit Taking','Current Account and Third-Party Payments','Securities Dealing','Foreign Currency Dealing','Funds Management','Digital Currency','Crowd Funding','Lending','Leasing','Bill payments/Airtime vending','Mobile/Web Payment/Wallet Services','Payment Solution Service Provider','Others']},
   {n:2,  q:'Please indicate the nature of your customer base (tick all that apply)', type:'multicheck', options:['Domestic','International','Retail Customers','Commercial Customers','Corporate Customers','Financial Institutions','Others']},
@@ -619,6 +651,7 @@ function renderNPBusiness() {
     <div class="form-grid">
       <div class="field"><label>Trading Name</label><input type="text" name="trading_name" placeholder="Name customers will see"></div>
       <div class="field"><label>Business Category <span class="req">*</span></label><select name="category"><option value="">Select category</option>${BUSINESS_SEGMENTS.map(s=>`<option>${s}</option>`).join('')}</select></div>
+      <div class="field"><label>Merchant Category Code (MCC)</label><select name="mcc"><option value="">Select MCC</option>${MCC_OPTIONS.map(m=>`<option value="${m.code}">${m.code} — ${m.label}</option>`).join('')}</select></div>
       <div class="field full"><label>Description of products / services <span class="req">*</span></label><textarea name="product_description" placeholder="What do you sell or provide?"></textarea></div>
       <div class="field"><label>Website / Social URL</label><input type="text" name="website_url" placeholder="https://"></div>
       <div class="field"><label>Source of Funds <span class="req">*</span></label><select name="source_of_funds"><option value="">Select</option>${SOURCE_OF_FUNDS.map(s=>`<option>${s}</option>`).join('')}</select></div>
@@ -630,6 +663,17 @@ function renderNPBusiness() {
         <div class="check-group">
           <label class="check-item"><input type="checkbox" name="mkt_domestic" value="1"><span>Domestic (Nigeria)</span></label>
           <label class="check-item"><input type="checkbox" name="mkt_intl" value="1"><span>International</span></label>
+        </div>
+      </div>
+      <div class="field"><label>Card Acceptance <span class="req">*</span></label>
+        <select name="card_acceptance_scope" onchange="onCardScopeChange&&onCardScopeChange(this.value)">
+          <option value="local">Local cards only (NGN)</option>
+          <option value="international">International cards (USD / cross-border)</option>
+        </select>
+        <div id="intl-card-note" style="display:none;font-size:12px;color:var(--muted,#666);margin-top:6px">
+          International card acceptance is subject to enhanced due diligence under the Mastercard Rules
+          (business-model description, refund/delivery policy, processing history) and stricter prohibited-category rules.
+          Our compliance team will request these before your live international cards are enabled.
         </div>
       </div>
       <div class="field"><label>Expected Monthly Transaction Value <span class="req">*</span></label>
