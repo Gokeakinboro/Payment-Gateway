@@ -1678,7 +1678,23 @@ async function submitForm() {
       body:    JSON.stringify(payload),
     });
 
-    const result = await res.json();
+    if (res.status === 413) {
+      showAlert('Your uploaded documents are too large to submit. Please upload smaller or compressed files (clear photos/PDFs are usually under a few MB each) and try again.');
+      btn.textContent = '✓ Submit Application'; btn.disabled = false;
+      return;
+    }
+    if (res.status === 429) {
+      showAlert('Too many submission attempts. Please wait a little while and try again.');
+      btn.textContent = '✓ Submit Application'; btn.disabled = false;
+      return;
+    }
+    let result;
+    try { result = await res.json(); }
+    catch (_) {
+      showAlert('The server could not process the submission (it may be too large). Please reduce your file sizes and try again.');
+      btn.textContent = '✓ Submit Application'; btn.disabled = false;
+      return;
+    }
 
     if (result.status) {
       clearDraft();
