@@ -56,59 +56,67 @@ var DEV_SDK_ITEMS = [
   {id:'sdk_test',     icon:'⚡', label:'Test Cards'     },
 ];
 
+// Sidebar = section entries. Single-item sections link straight to the page
+// (e.g. Dashboard stays a direct analytics link); multi-item sections open a
+// card HUB (renderSectionHub). Icons per section below.
+var SECTION_ICON = {
+  'Dashboard':'◉', 'Users':'▦', 'Operations':'⚙', 'Reports':'▤', 'System Config':'⚙',
+  'Developer':'▶', 'Management':'▦', 'Finance':'₦', 'Merchants':'▦', 'Transactions':'↕',
+  'Payouts':'⇄', 'Integration':'⚿', 'Account':'⊙', 'System':'⊕', 'SDK':'▶', 'Reference':'!',
+};
 var NAV = {
   superadmin: [
-    { section:'USERS', items:[
-      {id:'merchants',       icon:'▦', label:'Merchants'       },
-      {id:'aggregators',     icon:'⬡', label:'Aggregators'     },
-      {id:'admin_onboard',   icon:'+', label:'Onboard Merchant'},
-      {id:'deferrals',       icon:'⧗', label:'Doc Deferrals'   },
-      {id:'users',           icon:'⊕', label:'Staff Accounts'  },
+    { section:'Dashboard', items:[ {id:'overview', icon:'◉', label:'Dashboard'} ]},
+    { section:'Users', items:[
+      {id:'merchants',     icon:'▦', label:'Merchants'       },
+      {id:'aggregators',   icon:'⬡', label:'Aggregators'     },
+      {id:'admin_onboard', icon:'+', label:'Onboard Merchant'},
+      {id:'deferrals',     icon:'⧗', label:'Doc Deferrals'   },
+      {id:'users',         icon:'⊕', label:'Staff Accounts'  },
     ]},
-    { section:'REPORTS', items:[
-      {id:'overview',        icon:'◉', label:'Dashboard'       },
+    { section:'Operations', items:[
       {id:'transactions',    icon:'↕', label:'Transactions'    },
       {id:'settlement',      icon:'✓', label:'Settlements'     },
       {id:'wallets',         icon:'◈', label:'Merchant Wallets'},
       {id:'compliance',      icon:'⚖', label:'Compliance'      },
       {id:'onboarding_apps', icon:'▤', label:'Applications'    },
-      {id:'reports_hub',     icon:'▦', label:'Reports'         },
     ]},
-    { section:'SYSTEM CONFIG', items:[
+    { section:'Reports', items:[
+      {id:'revenue',         icon:'₦', label:'Revenue Report'  },
+      {id:'vat_report',      icon:'⊟', label:'VAT Report'      },
+      {id:'cbn_report',      icon:'⊡', label:'CBN Report'      },
+      {id:'payout_report',   icon:'⇄', label:'Payout Report'   },
+      {id:'rail_settlement', icon:'⊞', label:'Rail Settlement' },
+    ]},
+    { section:'System Config', items:[
       {id:'fee_config',          icon:'₦', label:'Fee Configuration'},
       {id:'rails',               icon:'⊞', label:'Rail Costs'       },
       {id:'settle_verification', icon:'⊙', label:'Bank Verification'},
       {id:'email_tpl',           icon:'✉', label:'Email Templates'  },
       {id:'settings',            icon:'⚙', label:'Settings'         },
     ]},
-    { section:'DEVELOPER SDK', items:[
-      {id:'sdk_start',    icon:'▶', label:'Quick Start'   },
-      {id:'sdk_payments', icon:'₦', label:'Payments API'  },
-      {id:'sdk_verify',   icon:'✓', label:'Verify Payment'},
-      {id:'sdk_payouts',  icon:'⇄', label:'Payouts API'   },
-      {id:'sdk_webhook',  icon:'⇀', label:'Webhooks'      },
-      {id:'sdk_mobile',   icon:'□', label:'Published SDKs'},
-      {id:'sdk_errors',   icon:'!', label:'Error Codes'   },
-      {id:'sdk_test',     icon:'⚡', label:'Test Cards'    },
-    ]},
-  ],
-  admin: [
-    { section:'Overview',    items:[{id:'overview',icon:'◉',label:'Dashboard'},{id:'transactions',icon:'↕',label:'All Transactions'}]},
-    { section:'Management',  items:[{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'}]},
-    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'wallets',icon:'◈',label:'Merchant Wallets'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
-    { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'}]},
-  ],
-  aggregator: [
-    { section:'Overview', items:[{id:'agg_overview',icon:'◉',label:'Dashboard'},{id:'agg_merchants',icon:'▦',label:'My Merchants'},{id:'agg_onboard',icon:'+',label:'Onboard Merchant'}]},
-    { section:'Finance',  items:[{id:'agg_revenue',icon:'₦',label:'Revenue Share'},{id:'agg_transactions',icon:'↕',label:'Transactions'}]},
     { section:'Developer', items:DEV_SDK_ITEMS },
   ],
-  merchant: [
-    { section:'Overview',    items:[{id:'merch_overview',icon:'◉',label:'Dashboard'},{id:'merch_transactions',icon:'↕',label:'Transactions'},{id:'merch_settlements',icon:'✓',label:'Settlements'}]},
-    { section:'Payouts',     items:[{id:'payouts',icon:'⇄',label:'Send Payouts'},{id:'payout_logs',icon:'≡',label:'Payout Logs'}]},
-    { section:'Integration', items:[{id:'merch_apikeys',icon:'⚿',label:'API Keys'},{id:'merch_webhooks',icon:'⇀',label:'Webhooks'}]},
+  admin: [
+    { section:'Dashboard',  items:[{id:'overview',icon:'◉',label:'Dashboard'}]},
+    { section:'Management',  items:[{id:'transactions',icon:'↕',label:'All Transactions'},{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'}]},
+    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'wallets',icon:'◈',label:'Merchant Wallets'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
+    { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'}]},
     { section:'Developer',   items:DEV_SDK_ITEMS },
-    { section:'Account',     items:[{id:'merch_profile',icon:'⊙',label:'Business Profile'}]},
+  ],
+  aggregator: [
+    { section:'Dashboard',  items:[{id:'agg_overview',icon:'◉',label:'Dashboard'}]},
+    { section:'Merchants',  items:[{id:'agg_merchants',icon:'▦',label:'My Merchants'},{id:'agg_onboard',icon:'+',label:'Onboard Merchant'}]},
+    { section:'Finance',    items:[{id:'agg_revenue',icon:'₦',label:'Revenue Share'},{id:'agg_transactions',icon:'↕',label:'Transactions'}]},
+    { section:'Developer',  items:DEV_SDK_ITEMS },
+  ],
+  merchant: [
+    { section:'Dashboard',    items:[{id:'merch_overview',icon:'◉',label:'Dashboard'}]},
+    { section:'Transactions', items:[{id:'merch_transactions',icon:'↕',label:'Transactions'},{id:'merch_settlements',icon:'✓',label:'Settlements'}]},
+    { section:'Payouts',      items:[{id:'payouts',icon:'⇄',label:'Send Payouts'},{id:'payout_logs',icon:'≡',label:'Payout Logs'}]},
+    { section:'Integration',  items:[{id:'merch_apikeys',icon:'⚿',label:'API Keys'},{id:'merch_webhooks',icon:'⇀',label:'Webhooks'}]},
+    { section:'Developer',    items:DEV_SDK_ITEMS },
+    { section:'Account',      items:[{id:'merch_profile',icon:'⊙',label:'Business Profile'}]},
   ],
   developer: [
     { section:'SDK',       items:[
@@ -227,31 +235,37 @@ function renderNav() {
       return userHasPerm(NAV_PERM[item.id]);
     }) };
   }).filter(function(sec) { return sec.items.length > 0; });
-  // Auto-expand the section that contains the current page
-  nav.forEach(function(sec) {
-    if (sec.items.some(function(i) { return i.id === currentPage; })) {
-      __navOpen[sec.section] = true;
-    }
-  });
+  // Sidebar = one entry per section. Single-item section → links straight to the
+  // page (Dashboard stays a direct analytics link). Multi-item → opens a card hub.
   container.innerHTML = nav.map(function(sec) {
-    var open  = !!__navOpen[sec.section];
-    var arrow = open ? '&#9660;' : '&#9658;';
-    var items = open ? sec.items.map(function(item) {
-      return '<div class="nav-item ' + (item.id === currentPage ? 'active' : '') + '" onclick="navigate(\'' + item.id + '\')">' +
-             '<span class="nav-icon">' + item.icon + '</span>' + item.label + '</div>';
-    }).join('') : '';
-    return '<div class="nav-section">' +
-      '<div class="nav-section-label" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" ' +
-        'onclick="toggleNav(\'' + sec.section.replace(/'/g,"\\'") + '\')">' +
-        '<span>' + sec.section + '</span>' +
-        '<span style="font-size:10px;opacity:.5;margin-left:4px">' + arrow + '</span>' +
-      '</div>' +
-      (open ? '<div>' + items + '</div>' : '') +
-      '</div>';
+    var single   = sec.items.length === 1 ? sec.items[0] : null;
+    var targetId = single ? single.id : ('hub::' + sec.section);
+    var active   = (currentPage === targetId) || sec.items.some(function(i){ return i.id === currentPage; });
+    var icon     = single ? single.icon : (SECTION_ICON[sec.section] || '▦');
+    var label    = single ? single.label : sec.section;
+    return '<div class="nav-item ' + (active ? 'active' : '') + '" onclick="navigate(\'' + targetId.replace(/'/g,"\\'") + '\')">' +
+           '<span class="nav-icon">' + icon + '</span>' + label + '</div>';
   }).join('');
   document.querySelectorAll('.role-btn').forEach(function(btn, i) {
     btn.classList.toggle('active', ['superadmin','admin','aggregator','merchant','developer'][i] === currentRole);
   });
+}
+
+// Generic section hub: a grid of cards for a section's (permitted) pages.
+function renderSectionHub(sectionName) {
+  var sec = (NAV[currentRole] || []).filter(function(s){ return s.section === sectionName; })[0];
+  if (!sec) return '<div class="page-header"><div class="page-title">' + sectionName + '</div></div>';
+  var items = sec.items.filter(function(i){ return userHasPerm(NAV_PERM[i.id]); });
+  var cards = items.map(function(i){
+    return '<div class="card" style="cursor:pointer;text-align:center;transition:box-shadow .15s" ' +
+      'onclick="navigate(\'' + i.id.replace(/'/g,"\\'") + '\')" ' +
+      'onmouseover="this.style.boxShadow=\'0 4px 16px rgba(0,0,0,.10)\'" onmouseout="this.style.boxShadow=\'\'">' +
+      '<div style="font-size:30px;margin-bottom:10px">' + i.icon + '</div>' +
+      '<div style="font-weight:600;font-size:14px">' + i.label + '</div></div>';
+  }).join('');
+  return '<div class="page-header"><div class="page-title">' + sectionName + '</div>' +
+    '<div class="page-desc">Choose a ' + sectionName.toLowerCase() + ' page</div></div>' +
+    '<div class="grid-3">' + (cards || '<div class="card">No pages available</div>') + '</div>';
 }
 
 function switchRole(role) { currentRole = role; currentPage = ROLE_META[role].defaultPage; renderNav(); renderPage(); closeSidebar(); }
@@ -297,6 +311,10 @@ function renderPage() {
     sdk_webhook:renderSdkWebhookDocs,
     sdk_mobile:renderSdkMobile, sdk_errors:renderSdkErrors, sdk_test:renderSdkTestCards,
   };
+  if (currentPage && currentPage.indexOf('hub::') === 0) {
+    document.getElementById('main-content').innerHTML = renderSectionHub(currentPage.slice(5));
+    return;
+  }
   document.getElementById('main-content').innerHTML = (pages[currentPage] || renderSuperOverview)();
 }
 
