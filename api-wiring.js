@@ -3499,13 +3499,14 @@ async function loadPayouts() {
 async function showPayoutUpload() {
   const banks = await apiFetch('/payouts/banks');
   const bankList = banks?.data || [];
+  window._payoutBanks = bankList;   // cached for client-side upload validation
   const formArea = document.getElementById('payout-form-area');
   formArea.innerHTML = `
   <div class="card">
     <div class="card-header"><div class="card-title">Create New Payout Batch</div></div>
     <div class="tab-nav">
       <button class="tab-btn active" onclick="switchTab(this,'manual-tab','upload-tab')">Manual Entry</button>
-      <button class="tab-btn" onclick="switchTab(this,'upload-tab','manual-tab')">CSV Upload</button>
+      <button class="tab-btn" onclick="switchTab(this,'upload-tab','manual-tab')">File Upload (Excel/CSV)</button>
     </div>
     <div id="manual-tab">
       <div class="form-grid" style="margin-bottom:16px">
@@ -3531,14 +3532,19 @@ async function showPayoutUpload() {
       </div>
     </div>
     <div id="upload-tab" style="display:none">
-      <div class="info-box" style="margin-bottom:16px;font-size:12px">
-        CSV format: <strong>account_number, bank_code, amount_naira, narration</strong><br>
-        Example: 0123456789, 058, 5000, Salary payment
+      <div class="info-box" style="margin-bottom:12px;font-size:12px">
+        <strong>Required columns:</strong> account_number, bank_code, amount &nbsp;|&nbsp; <strong>Optional:</strong> narration, account_name.
+        The file is checked for errors before anything is submitted.
+        <button class="btn btn-outline btn-sm" style="margin-left:8px" onclick="downloadPayoutTemplate()">&#8681; Download Template</button>
       </div>
-      <div class="form-group"><label class="form-label">Upload CSV File</label>
-        <input type="file" accept=".csv" id="payout-csv" class="form-input" onchange="previewCsv(this)">
+      <div class="warn-box" style="margin-bottom:12px;font-size:12px">
+        &#9888; <strong>Resending failed payouts?</strong> Do NOT re-upload the original file — that pays everyone again.
+        Upload a NEW file containing ONLY the failed transactions (open the batch &rarr; "Download failed for resend").
       </div>
-      <div id="csv-preview"></div>
+      <div class="form-group"><label class="form-label">Upload Excel (.xlsx) or CSV</label>
+        <input type="file" accept=".xlsx,.xls,.csv" id="payout-file" class="form-input" onchange="validatePayoutFile(this)">
+      </div>
+      <div id="payout-validation"></div>
     </div>
   </div>`;
 }
@@ -3573,32 +3579,120 @@ async function submitManualPayout() {
   else alert('Error: ' + (res?.message||'Failed'));
 }
 
-async function previewCsv(input) {
-  const file = input.files[0]; if (!file) return;
-  const form = new FormData(); form.append('file', file);
-  const token = getToken();
-  const res = await fetch('/api/v1/payouts/batches/upload', { method:'POST', headers:{'Authorization':'Bearer '+token}, body: form });
-  const data = await res.json();
-  const preview = document.getElementById('csv-preview');
-  if (data.status) {
-    preview.innerHTML = `<div class="info-box" style="margin:12px 0">${data.data.total_items} beneficiaries parsed — Total: ₦${data.data.total_amount_naira?.toLocaleString()}</div>
-    <button class="btn btn-primary" onclick="submitCsvPayout(${JSON.stringify(data.data.items).replace(/"/g,'&quot;')})">Confirm & Submit Batch</button>`;
-  } else {
-    preview.innerHTML = `<div class="warn-box">${data.message}<br>${(data.errors||[]).slice(0,5).join('<br>')}</div>`;
-  }
+// Downloadable payout template (Excel) + a Bank Codes reference sheet.
+function downloadPayoutTemplate() {
+  if (typeof XLSX === 'undefined') { alert('Excel library still loading — try again in a moment.'); return; }
+  var tmpl = [
+    ['account_number', 'bank_code', 'amount', 'narration', 'account_name'],
+    ['0123456789', '058', 5000, 'Salary - May', 'John Doe'],
+  ];
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(tmpl), 'Payouts');
+  var banks = [['bank_code', 'bank_name']].concat((window._payoutBanks || []).map(function (b) { return [b.bank_code, b.bank_name]; }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(banks), 'Bank Codes');
+  XLSX.writeFile(wb, 'Paylode Payout Template.xlsx');
 }
 
-async function submitCsvPayout(items) {
-  const desc = prompt('Batch description (optional):') || '';
-  const res = await apiFetch('/payouts/batches', { method:'POST', body: JSON.stringify({ description: desc, items }) });
-  if (res?.status) { alert(`Batch created! ${res.data.total_items} payments, ${res.data.total_amount}`); loadPayouts(); }
-  else alert('Error: ' + (res?.message||'Failed'));
+// Parse + validate an uploaded Excel/CSV BEFORE anything is submitted.
+function validatePayoutFile(input) {
+  var file = input.files[0]; if (!file) return;
+  var out = document.getElementById('payout-validation');
+  if (typeof XLSX === 'undefined') { out.innerHTML = '<div class="warn-box" style="font-size:12px">Excel library still loading — try again.</div>'; return; }
+  out.innerHTML = loading();
+  var reader = new FileReader();
+  reader.onload = function (e) {
+    try {
+      var wb = XLSX.read(e.target.result, { type: 'array' });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+      runPayoutValidation(rows);
+    } catch (err) { out.innerHTML = '<div class="warn-box" style="font-size:12px">Could not read the file: ' + err.message + '</div>'; }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function _normKey(k) { return String(k).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+function runPayoutValidation(rawRows) {
+  var out = document.getElementById('payout-validation');
+  var bankCodes = {}; (window._payoutBanks || []).forEach(function (b) { bankCodes[String(b.bank_code)] = b.bank_name; });
+  // map header synonyms -> canonical
+  var syn = {
+    account_number: ['accountnumber', 'account', 'accountno', 'acct', 'acctno', 'nuban'],
+    bank_code: ['bankcode', 'bank', 'code'],
+    amount: ['amount', 'amountnaira', 'amount_naira', 'amt', 'value'],
+    narration: ['narration', 'description', 'remark', 'reference', 'note'],
+    account_name: ['accountname', 'name', 'beneficiary', 'beneficiaryname'],
+  };
+  function pick(row, canon) {
+    for (var k in row) { var nk = _normKey(k); if (nk === canon || (syn[canon] && syn[canon].indexOf(nk) !== -1)) return row[k]; }
+    return '';
+  }
+  if (!rawRows.length) { out.innerHTML = '<div class="warn-box" style="font-size:12px">The file has no data rows.</div>'; return; }
+
+  var errors = [], items = [], seen = {}, total = 0;
+  rawRows.forEach(function (row, idx) {
+    var line = idx + 2; // +1 header, +1 to 1-index
+    var acctRaw = pick(row, 'account_number');
+    var bankRaw = String(pick(row, 'bank_code') || '').trim();
+    var amtRaw = pick(row, 'amount');
+    var narr = String(pick(row, 'narration') || '').trim();
+    var name = String(pick(row, 'account_name') || '').trim();
+    var acct = String(acctRaw == null ? '' : acctRaw).replace(/\D/g, '');
+    // skip fully blank rows silently
+    if (!acct && !bankRaw && (amtRaw === '' || amtRaw == null)) return;
+
+    var rowErrs = [];
+    if (acct.length !== 10) rowErrs.push('account_number must be exactly 10 digits');
+    var bankCode = bankRaw;
+    if (!bankRaw) rowErrs.push('bank_code is missing');
+    else if (!bankCodes[bankRaw]) {
+      // maybe they put the bank NAME — try to resolve
+      var match = Object.keys(bankCodes).filter(function (c) { return bankCodes[c].toLowerCase() === bankRaw.toLowerCase(); })[0];
+      if (match) bankCode = match; else rowErrs.push('bank_code "' + bankRaw + '" is not a recognised bank code');
+    }
+    var amt = parseFloat(amtRaw);
+    if (isNaN(amt) || amt <= 0) rowErrs.push('amount must be a number greater than 0');
+    else if (amt > 10000000) rowErrs.push('amount ₦' + amt.toLocaleString() + ' looks unusually large — please confirm');
+
+    var key = acct + '|' + bankCode + '|' + amt;
+    if (!rowErrs.length && seen[key]) rowErrs.push('duplicate of row ' + seen[key] + ' (same account, bank & amount)');
+    if (!seen[key]) seen[key] = line;
+
+    if (rowErrs.length) errors.push({ line: line, msgs: rowErrs });
+    else { items.push({ account_number: acct, bank_code: bankCode, amount: Math.round(amt * 100), narration: narr, account_name: name }); total += amt; }
+  });
+
+  window._payoutValidItems = items;
+  var html = '';
+  if (errors.length) {
+    html += '<div class="warn-box" style="margin:12px 0;font-size:12px"><strong>' + errors.length + ' row(s) have errors — fix them and re-upload. Nothing has been submitted.</strong></div>';
+    html += '<div class="table-wrap"><table style="width:100%"><thead><tr><th>Row</th><th>Issue(s)</th></tr></thead><tbody>' +
+      errors.slice(0, 100).map(function (e) { return '<tr><td>' + e.line + '</td><td style="font-size:12px;color:var(--red)">' + e.msgs.join('; ') + '</td></tr>'; }).join('') +
+      '</tbody></table></div>';
+    if (items.length) html += '<div class="info-box" style="margin-top:10px;font-size:12px">' + items.length + ' valid row(s) found, but the batch is blocked until all errors are fixed.</div>';
+  } else {
+    html += '<div class="info-box" style="margin:12px 0;font-size:13px;background:#f0fdf4;border-color:#bbf7d0;color:#166534">' +
+      '&#10003; ' + items.length + ' beneficiaries validated — total ₦' + total.toLocaleString('en-NG') + '. No errors found.</div>' +
+      '<div class="form-grid" style="grid-template-columns:1fr;gap:8px;margin-bottom:8px"><input class="form-input" id="upload-desc" placeholder="Batch description (optional)"></div>' +
+      '<button class="btn btn-primary" onclick="submitValidatedPayout()">Confirm &amp; Submit ' + items.length + ' Payouts</button>';
+  }
+  out.innerHTML = html;
+}
+
+async function submitValidatedPayout() {
+  var items = window._payoutValidItems || [];
+  if (!items.length) { alert('No validated rows to submit.'); return; }
+  var desc = (document.getElementById('upload-desc') || {}).value || '';
+  var res = await apiFetch('/payouts/batches', { method: 'POST', body: JSON.stringify({ description: desc, items: items }) });
+  if (res && res.status) { alert('Payout received — ' + res.data.total_items + ' beneficiaries.'); loadPayouts(); }
+  else alert('Error: ' + ((res && res.message) || 'Failed'));
 }
 
 async function viewBatch(id) {
   const res = await apiFetch(`/payouts/batches/${id}`);
   if (!res?.data) return;
   const { batch, items } = res.data;
+  window._viewBatchItems = items;   // for "download failed for resend"
   const el = document.getElementById('main-content');
 
   const feeInfo = (batch.total_fee_naira > 0 || batch.total_vat_naira > 0)
@@ -3626,9 +3720,10 @@ async function viewBatch(id) {
     <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value" style="color:var(--red)">${batch.failed_items}</div><div class="stat-sub">${batch.failed_items > 0 ? 'See reasons below' : 'None'}</div></div>
   </div>
   ${feeInfo}
+  ${batch.failed_items > 0 ? `<div class="warn-box" style="margin-bottom:12px;font-size:12px">&#9888; <strong>${batch.failed_items} payout(s) failed.</strong> To resend, click "Download failed for resend" and upload that file as a NEW batch — do NOT re-upload the original file (that would pay the successful beneficiaries again).</div>` : ''}
   <div class="card">
     <div class="card-header"><div class="card-title">Payout Items</div>
-      ${batch.failed_items > 0 ? `<button class="btn btn-outline btn-sm" onclick="retryBatch('${batch.id}')">Retry Failed</button>` : ''}
+      ${batch.failed_items > 0 ? `<button class="btn btn-lime btn-sm" onclick="downloadFailedForResend()">&#8681; Download failed for resend</button>` : ''}
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Account</th><th>Bank</th><th>Amount</th><th>Fee</th><th>VAT</th><th>Narration</th><th>Status</th><th>Failure Reason</th></tr></thead>
@@ -3652,6 +3747,21 @@ async function retryBatch(id) {
   if (!confirm('Retry all failed items in this batch?')) return;
   const res = await apiFetch(`/payouts/batches/${id}/retry-failed`, { method:'POST' });
   if (res?.status) { alert(`${res.data.retried} items requeued`); loadPayouts(); }
+}
+
+// Export ONLY the failed items in template format so the merchant can re-upload
+// them as a NEW batch (never re-upload the original file).
+function downloadFailedForResend() {
+  if (typeof XLSX === 'undefined') { alert('Excel library still loading — try again.'); return; }
+  var failed = (window._viewBatchItems || []).filter(function (i) { return i.status === 'failed'; });
+  if (!failed.length) { alert('No failed items to export.'); return; }
+  var aoa = [['account_number', 'bank_code', 'amount', 'narration', 'account_name']];
+  failed.forEach(function (i) {
+    aoa.push([i.account_number, i.bank_code, Number(i.amount) / 100, i.narration || '', i.account_name || '']);
+  });
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Payouts');
+  XLSX.writeFile(wb, 'Failed payouts for resend.xlsx');
 }
 
 // ── RAIL MANAGEMENT ───────────────────────────────────────────────────────────
