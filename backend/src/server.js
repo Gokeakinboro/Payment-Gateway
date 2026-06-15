@@ -66,6 +66,9 @@ app.use(morgan('combined', { stream: { write: msg => logger.info(msg.trim()) } }
 // ── Body parsing ──────────────────────────────────────────────────────────
 // Raw body preserved for webhook signature verification
 app.use('/api/v1/webhooks/inbound', express.raw({ type: 'application/json' }));
+// Onboarding submit carries base64 document scans + the signature image in one
+// JSON body — needs a much larger limit than the default API requests.
+app.use('/api/v1/onboarding/submit', express.json({ limit: process.env.ONBOARDING_BODY_LIMIT || '50mb' }));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 

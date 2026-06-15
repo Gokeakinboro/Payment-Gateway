@@ -1,8 +1,10 @@
 'use strict';
 const router = require('express').Router();
 const { prisma }  = require('../utils/db');
-const { requireAuth, requireCompliance } = require('../middleware/auth');
+const { requireAuth, requireCompliance, requireSuperAdmin } = require('../middleware/auth');
 const { ok, fail, created, generateRef, koboToNaira } = require('../utils/helpers');
+const { logAudit } = require('../services/auditService');
+const compliance = require('../services/complianceService');
 
 // ─── CBN Monthly Return ────────────────────────────────────────────────────
 
@@ -207,6 +209,120 @@ router.patch('/dsr/:id/reject', requireAuth, requireCompliance, async (req, res,
       data:  { status: 'rejected', handledBy: req.user.id, responseNotes: responseNotes || null },
     }), 'Request rejected');
   } catch(e) { next(e); }
+});
+
+// ─── Compliance exceptions (Mastercard Rules screening dispositions) ─────────
+// SA-driven defer / clear / block workflow over compliance_exceptions. A merchant
+// is re-rolled-up + (de)activated as its exceptions are dispositioned, mirroring the
+// per-document deferral pattern in routes/documents.js.
+
+const VALID_DURATIONS = [1, 2, 3, 6];
+const VALID_ENTITY = new Set(['merchant', 'aggregator', 'transaction']);
+
+async function getException(id) {
+  const [row] = await prisma.$queryRaw`
+    SELECT id::text, entity_type, entity_id::text, rule_code, severity, status,
+           description, rule_ref, is_deferrable AS deferrable, deferred_until, reason
+    FROM compliance_exceptions WHERE id = ${id}::uuid`;
+  return row || null;
+}
+
+// Recompute merchant compliance_status + (de)activate based on remaining exceptions.
+async function reconcileMerchant(merchantId) {
+  const status = await compliance.rollupComplianceStatus(merchantId);
+  if (status === 'blocked') {
+    await prisma.merchant.update({ where: { id: merchantId }, data: { isActive: false, kycStatus: 'SUSPENDED' } });
+  }
+  return status;
+}
+
+// GET /api/v1/compliance/exceptions?entity_type=&entity_id=&status=
+router.get('/exceptions', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { entity_type, entity_id, status } = req.query;
+    const rows = await prisma.$queryRaw`
+      SELECT ce.id::text, ce.entity_type, ce.entity_id::text, ce.rule_code, ce.severity,
+             ce.status, ce.description, ce.rule_ref, ce.is_deferrable AS deferrable, ce.deferred_until,
+             ce.deferred_by::text, ce.reason, ce.created_at, ce.updated_at,
+             m.business_name AS merchant_name
+      FROM compliance_exceptions ce
+      LEFT JOIN merchants m ON m.id = ce.entity_id AND ce.entity_type='merchant'
+      WHERE (${entity_type || null}::text IS NULL OR ce.entity_type = ${entity_type || null})
+        AND (${entity_id || null}::uuid IS NULL OR ce.entity_id = ${entity_id || null}::uuid)
+        AND (${status || null}::text IS NULL OR ce.status = ${status || null})
+      ORDER BY (ce.severity='BLOCKING') DESC, (ce.status='open') DESC, ce.created_at DESC
+      LIMIT 500`;
+    const summary = rows.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a; }, {});
+    ok(res, { exceptions: rows, summary });
+  } catch (e) { next(e); }
+});
+
+// POST /api/v1/compliance/exceptions/:id/defer — SA defers and proceeds.
+// Non-deferrable (absolute prohibition) requires force:true + ack (SUPER_ADMIN only).
+router.post('/exceptions/:id/defer', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { duration_months, reason, force } = req.body;
+    if (!VALID_DURATIONS.includes(Number(duration_months))) return fail(res, 'duration_months must be 1, 2, 3 or 6');
+    const ex = await getException(req.params.id);
+    if (!ex) return fail(res, 'Exception not found', 'NOT_FOUND', 404);
+    if (!ex.deferrable && !force)
+      return fail(res, 'This is an absolute prohibition and cannot be deferred. Pass force:true to override (logged, SUPER_ADMIN only).', 'NOT_DEFERRABLE', 409);
+    if (!ex.deferrable && !reason)
+      return fail(res, 'A reason is required to force-override an absolute prohibition.', 'REASON_REQUIRED');
+
+    const expiresAt = new Date(); expiresAt.setMonth(expiresAt.getMonth() + Number(duration_months));
+    await prisma.$executeRaw`
+      UPDATE compliance_exceptions SET status='deferred', deferred_until=${expiresAt},
+             deferred_by=${req.user.id}::uuid, reason=${reason || null}, updated_at=now()
+      WHERE id=${req.params.id}::uuid`;
+    if (ex.entity_type === 'merchant') await reconcileMerchant(ex.entity_id);
+    await logAudit(req.user.id, ex.deferrable ? 'COMPLIANCE_EXCEPTION_DEFERRED' : 'COMPLIANCE_EXCEPTION_FORCE_OVERRIDE',
+      'compliance_exceptions', req.params.id, {}, { rule_code: ex.rule_code, duration_months, expires_at: expiresAt, reason, force: !!force });
+    ok(res, await getException(req.params.id), `Exception deferred until ${expiresAt.toDateString()}.`);
+  } catch (e) { next(e); }
+});
+
+// POST /api/v1/compliance/exceptions/:id/clear — false positive / resolved.
+router.post('/exceptions/:id/clear', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { reason } = req.body;
+    const ex = await getException(req.params.id);
+    if (!ex) return fail(res, 'Exception not found', 'NOT_FOUND', 404);
+    await prisma.$executeRaw`
+      UPDATE compliance_exceptions SET status='cleared', deferred_until=NULL,
+             deferred_by=${req.user.id}::uuid, reason=${reason || null}, updated_at=now()
+      WHERE id=${req.params.id}::uuid`;
+    if (ex.entity_type === 'merchant') await reconcileMerchant(ex.entity_id);
+    await logAudit(req.user.id, 'COMPLIANCE_EXCEPTION_CLEARED', 'compliance_exceptions', req.params.id, {}, { rule_code: ex.rule_code, reason });
+    ok(res, await getException(req.params.id), 'Exception cleared.');
+  } catch (e) { next(e); }
+});
+
+// POST /api/v1/compliance/exceptions/:id/block — confirm the block (suspends merchant).
+router.post('/exceptions/:id/block', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { reason } = req.body;
+    const ex = await getException(req.params.id);
+    if (!ex) return fail(res, 'Exception not found', 'NOT_FOUND', 404);
+    await prisma.$executeRaw`
+      UPDATE compliance_exceptions SET status='blocked', deferred_until=NULL,
+             deferred_by=${req.user.id}::uuid, reason=${reason || null}, updated_at=now()
+      WHERE id=${req.params.id}::uuid`;
+    if (ex.entity_type === 'merchant') await reconcileMerchant(ex.entity_id);
+    await logAudit(req.user.id, 'COMPLIANCE_EXCEPTION_BLOCKED', 'compliance_exceptions', req.params.id, {}, { rule_code: ex.rule_code, reason });
+    ok(res, await getException(req.params.id), 'Exception confirmed — merchant blocked.');
+  } catch (e) { next(e); }
+});
+
+// GET /api/v1/compliance/matrix — the prohibited/restricted MCC + BRAM reference matrix.
+router.get('/matrix', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const rules = require('../config/complianceRules');
+    const mccs = Object.entries(rules.MCC_CATALOGUE).map(([code, v]) => ({
+      mcc: code, label: v.label, local: v.base, international: v.intl || v.base,
+    }));
+    ok(res, { mccs, bram: rules.BRAM_CATEGORIES, reason_codes: rules.REASON_CODES });
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

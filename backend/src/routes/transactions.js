@@ -10,6 +10,7 @@ const {
 } = require('../utils/helpers');
 const { dispatchWebhook } = require('../services/webhookService');
 const { checkAmlRules }   = require('../services/amlService');
+const compliance          = require('../services/complianceService');
 
 const validate = rules => async (req, res, next) => {
   await Promise.all(rules.map(r => r.run(req)));
@@ -32,6 +33,13 @@ router.post('/initialize', requireApiKey,
       const merchant    = req.merchant;
       const isSandbox   = req.isSandbox;
       const { email, amount, currency='NGN', reference, channels, metadata, callback_url, card_scheme, card_bin } = req.body;
+
+      // ── COMPLIANCE GATE (Mastercard Rules) — merchant-level hard prohibitions ──
+      // Reject a compliance-blocked / MATCH-listed merchant or a prohibited MCC before
+      // a transaction is even created. (Customer sanctions screening happens at the
+      // charge step where the cardholder name/BIN is known.)
+      const gate = compliance.screenTransaction(merchant, { customerEmail: email });
+      if (gate.decision === 'REJECT') return fail(res, gate.message, gate.reasonCode, 403);
 
       const channel  = (channels?.[0] || 'CARD').toUpperCase();
       const isUSD    = currency === 'USD';

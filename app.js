@@ -79,6 +79,7 @@ var NAV = {
       {id:'settlement',      icon:'✓', label:'Settlements'     },
       {id:'wallets',         icon:'◈', label:'Merchant Wallets'},
       {id:'compliance',      icon:'⚖', label:'Compliance'      },
+      {id:'compliance_exceptions', icon:'⚑', label:'Compliance Exceptions'},
       {id:'onboarding_apps', icon:'▤', label:'Applications'    },
     ]},
     { section:'Reports', items:[
@@ -100,7 +101,7 @@ var NAV = {
   admin: [
     { section:'Dashboard',  items:[{id:'overview',icon:'◉',label:'Dashboard'}]},
     { section:'Management',  items:[{id:'transactions',icon:'↕',label:'All Transactions'},{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'}]},
-    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'wallets',icon:'◈',label:'Merchant Wallets'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
+    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'wallets',icon:'◈',label:'Merchant Wallets'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'compliance_exceptions',icon:'⚑',label:'Compliance Exceptions'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
     { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'}]},
     { section:'Developer',   items:DEV_SDK_ITEMS },
   ],
@@ -198,7 +199,7 @@ var NAV_PERM = {
   merchants:'view_merchants', aggregators:'view_aggregators', admin_onboard:'edit_onboarding',
   deferrals:'view_doc_referrals', users:'view_staff', overview:'view_dashboard',
   transactions:'view_transactions', settlement:'view_settlements', rail_settlement:'view_settlements',
-  payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', vat_report:'view_reports', reports_hub:'view_reports', cbn_report:'view_reports', compliance:'view_compliance',
+  payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', vat_report:'view_reports', reports_hub:'view_reports', cbn_report:'view_reports', compliance:'view_compliance', compliance_exceptions:'view_compliance',
   onboarding_apps:'view_onboarding', fee_config:'view_fees', rails:'view_rails',
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
 };
@@ -291,12 +292,36 @@ function closeModal(e)   { if (e.target.id === 'modal') document.getElementById(
 function sdkTabState()   { return window.__sdkTab || 'js'; }
 function setSdkTab(t)    { window.__sdkTab = t; renderPage(); }
 
+// Compliance Exceptions — Mastercard Rules screening dispositions (SA defer/clear/block)
+// + the prohibited/restricted MCC reference matrix. Data loaded by loadComplianceExceptions
+// / loadComplianceMatrix in api-wiring.js.
+function complianceExcTab() { return window.__cmplExcTab || 'exceptions'; }
+function setComplianceExcTab(t) { window.__cmplExcTab = t; renderPage(); loadPageData('compliance_exceptions'); }
+function renderComplianceExceptions() {
+  var tab = complianceExcTab();
+  var tabBtn = function(id, label) {
+    return '<button class="btn ' + (tab === id ? 'btn-lime' : 'btn-outline') + ' btn-sm" onclick="setComplianceExcTab(\'' + id + '\')">' + label + '</button>';
+  };
+  return '<div class="page-header"><div><h1 class="page-title">Compliance Exceptions</h1>' +
+    '<p class="page-subtitle">Mastercard Rules screening findings — defer &amp; proceed, clear false positives, or confirm a block. Hard prohibitions require an explicit override.</p></div></div>' +
+    '<div class="flex" style="gap:8px;margin-bottom:14px">' + tabBtn('exceptions', 'Exceptions') + tabBtn('matrix', 'Rule Matrix') + '</div>' +
+    (tab === 'matrix'
+      ? '<div id="cmpl-matrix"><div class="info-box">&#8987; Loading rule matrix…</div></div>'
+      : '<div class="card" style="margin-bottom:12px"><div class="flex" style="gap:8px;align-items:flex-end;flex-wrap:wrap">' +
+        '<div class="form-group" style="margin:0"><label class="form-label">Status</label>' +
+        '<select class="form-input" id="cmpl-status" style="width:160px" onchange="loadComplianceExceptions()">' +
+        '<option value="">All</option><option value="open">Open</option><option value="deferred">Deferred</option><option value="cleared">Cleared</option><option value="blocked">Blocked</option></select></div>' +
+        '<button class="btn btn-outline btn-sm" onclick="loadComplianceExceptions()">&#8635; Refresh</button>' +
+        '</div></div><div id="cmpl-exc"><div class="info-box">&#8987; Loading exceptions…</div></div>');
+}
+
 function renderPage() {
   var pages = {
     overview:renderSuperOverview, transactions:renderTransactions,
     merchants:renderMerchants, aggregators:renderAggregators,
     revenue:renderRevenueConfig, rails:renderRailCosts,
     settlement:renderSettlement, compliance:renderCompliance, settings:renderSettings,
+    compliance_exceptions:renderComplianceExceptions,
     email_tpl:renderEmailTemplates,
     users:renderUserManagement,
     agg_overview:renderAggOverview, agg_merchants:renderAggMerchants,

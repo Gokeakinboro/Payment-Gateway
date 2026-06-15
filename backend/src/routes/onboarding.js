@@ -11,6 +11,7 @@ const { sendEmail, getEmailContent } = require('../services/emailService');
 const { logger } = require('../utils/logger');
 const { requireAuth, requireCompliance } = require('../middleware/auth');
 const { CHECK_ITEMS } = require('./documents');
+const compliance = require('../services/complianceService');
 
 // Required documents seeded into kyc_documents when a merchant is provisioned,
 // keyed by entity sub-type. Uploaded application docs are marked 'submitted'.
@@ -65,11 +66,6 @@ function writeDeadLetter(reference, payload, errMsg) {
     return true;
   } catch (e) { logger.error({ err: e, reference }, 'dead-letter write failed'); return false; }
 }
-
-// Placeholder consolidated sanctions list. Replace with a live feed (NFIU / UN /
-// OFAC / EU) or route names through the YouVerify screening API before go-live.
-const SANCTIONS_NAMES = (process.env.SANCTIONS_NAMES || '')
-  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function genReference() {
@@ -130,42 +126,7 @@ function deriveSummary(formType, applicantType, data, principals) {
   };
 }
 
-// Basic AML screening — PEP self-declaration + sanctions name match + risk band.
-function screen(applicantType, data, principals) {
-  const np = data.np_identity || {};
-  const biz = data.np_business || {};
-  const notes = [];
-
-  let pepFlag = (np.is_pep === 'yes');
-  if (pepFlag) notes.push('Individual applicant self-declared as a PEP.');
-
-  const names = [];
-  if (applicantType === 'natural') names.push(fullName(np));
-  (principals || []).forEach(p => {
-    names.push(fullName(p));
-    if (p.is_pep) { pepFlag = true; notes.push(`${p.role || 'Principal'} ${fullName(p)} declared as a PEP.`); }
-  });
-
-  let sanctionsHit = false;
-  for (const n of names) {
-    const low = (n || '').toLowerCase();
-    if (low && SANCTIONS_NAMES.some(s => low.includes(s))) {
-      sanctionsHit = true;
-      notes.push(`Possible sanctions-list match: "${n}" — requires manual review.`);
-    }
-  }
-
-  const intl = biz.mkt_intl === '1';
-  const highVol = ['50to200m', 'above200m'].includes(biz.expected_monthly_value);
-  let riskLevel = 'low';
-  if (pepFlag || sanctionsHit) riskLevel = 'high';
-  else if (highVol || intl) riskLevel = 'medium';
-  else if (biz.expected_monthly_value && biz.expected_monthly_value !== 'below1m') riskLevel = 'medium';
-
-  if (SANCTIONS_NAMES.length === 0) notes.push('Note: live sanctions list not configured — only PEP self-declaration screened.');
-
-  return { pepFlag, sanctionsHit, riskLevel, screeningNotes: notes };
-}
+// AML/Mastercard screening now lives in services/complianceService.js (screenMerchant).
 
 // ── POST /api/v1/onboarding/invite — SA/admin/aggregator emails a self-onboard link
 // type: 'merchant' (default) | 'aggregator'. The applicant completes the public
@@ -232,7 +193,12 @@ router.post('/submit', async (req, res, next) => {
     });
 
     const summary = deriveSummary(form_type, applicant_type, data, cleanPrincipals);
-    const screening = screen(applicant_type, data, cleanPrincipals);
+    // Mastercard Rules screening — BRAM/MCC matrix + sanctions/PEP/MATCH/enhanced-DD.
+    // Returns the legacy shape (pepFlag/sanctionsHit/riskLevel/screeningNotes) PLUS
+    // exceptions[]/scope/mcc which are persisted against the provisioned merchant below.
+    const screening = compliance.screenMerchant({
+      applicantType: applicant_type, data, principals: cleanPrincipals, documents,
+    });
 
     let record = null;
     try {
@@ -281,6 +247,12 @@ router.post('/submit', async (req, res, next) => {
           signupProv = prov;
         }, { timeout: 20000 });
       } catch (e) { logger.error({ err: e, reference }, 'application-time provisioning failed (non-fatal)'); }
+      // Persist compliance exceptions against the merchant + roll up its status.
+      // BLOCKING exceptions will prevent activation at approval until SA clears them.
+      if (signupProv?.merchantId && screening.exceptions?.length) {
+        try { await compliance.persistExceptions('merchant', signupProv.merchantId, screening.exceptions); }
+        catch (e) { logger.error({ err: e, reference }, 'persisting compliance exceptions failed (non-fatal)'); }
+      }
     }
 
     logger.info({
@@ -475,6 +447,9 @@ async function provisionMerchant(tx, sub, opts = {}) {
     businessPhone:     (isNatural ? np.phone : ent.business_phone) || '',
     website:           biz.website_url || null,
     expectedMonthlyVol: biz.expected_monthly_value || null,
+    // Compliance: structured MCC + card-acceptance scope (selects local vs intl matrix).
+    mcc:                 data.mcc || biz.mcc || ent.mcc || null,
+    cardAcceptanceScope: (data.card_acceptance_scope || biz.card_acceptance_scope) === 'international' ? 'international' : 'local',
     kycStatus: active ? 'ACTIVE' : 'PENDING_KYC', kycTier: active ? 1 : null, isActive: active,
     settlementBank:        biz.bank_name || null,
     settlementAccount:     biz.account_number || null,
@@ -570,6 +545,15 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
         sendEmail({ to: row.contactEmail, subject: content.subject, html: content.html }).catch(e => logger.error({ err: e }, 'review email failed'));
       }
       return ok(res, row, 'Submission updated');
+    }
+
+    // Compliance gate: a merchant with an unresolved BLOCKING exception (prohibited
+    // MCC / BRAM / MATCH / confirmed sanctions) cannot be activated. SA must clear or
+    // force-override it in Compliance → Exceptions first.
+    const pre = await prisma.onboardingSubmission.findUnique({ where: { reference } });
+    if (pre && pre.formType === 'merchant' && pre.merchantId &&
+        await compliance.hasOpenBlocking('merchant', pre.merchantId)) {
+      return fail(res, 'Cannot approve — unresolved BLOCKING compliance exceptions. Clear or override them in Compliance → Exceptions first.', 'COMPLIANCE_BLOCKED', 409);
     }
 
     // Approval: claim + provision atomically so it happens EXACTLY once even under
