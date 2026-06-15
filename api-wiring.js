@@ -890,7 +890,10 @@ async function loadAggregators() {
         <div class="page-title">Aggregators</div>
         <div class="page-desc">${aggs.length} active aggregator partners</div>
       </div>
-      <button class="btn btn-lime" onclick="openCreateAggregator()">+ Create Aggregator</button>
+      <div class="flex" style="gap:6px">
+        <button class="btn btn-outline" onclick="inviteAggregator()">&#9993; Invite to Self-Onboard</button>
+        <button class="btn btn-lime" onclick="openCreateAggregator()">+ Create Aggregator</button>
+      </div>
     </div>
     <div class="grid-2">
       ${aggs.map(a => `
@@ -916,6 +919,32 @@ async function loadAggregators() {
   } catch(e) {
     el.innerHTML = errorBox('Failed to load aggregators: ' + e.message);
   }
+}
+
+// ── SA: invite an aggregator to self-onboard (they fill the form themselves) ──
+function inviteAggregator() {
+  showModal(
+    '<div class="modal-header"><div class="modal-title">Invite Aggregator to Self-Onboard</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:12px">Sends a link to the public onboarding form (aggregator). They complete it themselves; on approval their aggregator account is provisioned.</div>' +
+    '<div class="form-group"><label class="form-label">Aggregator / Company Name *</label><input class="form-input" id="iagg-name" placeholder="e.g. FinConnect Nigeria"></div>' +
+    '<div class="form-group"><label class="form-label">Email *</label><input class="form-input" id="iagg-email" type="email" placeholder="contact@company.com"></div>' +
+    '<div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="iagg-phone" placeholder="+234 800 000 0000"></div>' +
+    '<div id="iagg-msg"></div>' +
+    '<div class="flex-between" style="margin-top:8px">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" id="iagg-btn" onclick="submitInviteAggregator()">Send Invite</button></div>');
+}
+async function submitInviteAggregator() {
+  var name = (document.getElementById('iagg-name').value||'').trim();
+  var email = (document.getElementById('iagg-email').value||'').trim();
+  var phone = (document.getElementById('iagg-phone').value||'').trim();
+  var msg = document.getElementById('iagg-msg');
+  if (!name || !email) { msg.innerHTML = '<div class="warn-box" style="font-size:12px">Name and email are required.</div>'; return; }
+  var btn = document.getElementById('iagg-btn'); btn.disabled = true; btn.textContent = 'Sending...';
+  var res = await apiFetch('/onboarding/invite', { method:'POST', body: JSON.stringify({ type:'aggregator', name:name, email:email, phone:phone }) });
+  if (res && res.status) { msg.innerHTML = '<div class="info-box" style="font-size:12px;background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; Invite sent to ' + email + '.</div>'; setTimeout(function(){ document.getElementById('modal').style.display='none'; }, 1200); }
+  else { msg.innerHTML = '<div class="warn-box" style="font-size:12px">' + ((res&&res.message)||'Failed') + '</div>'; btn.disabled=false; btn.textContent='Send Invite'; }
 }
 
 // ── SA: create aggregator ─────────────────────────────────────────────────────

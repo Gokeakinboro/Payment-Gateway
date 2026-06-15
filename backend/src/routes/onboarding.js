@@ -167,6 +167,38 @@ function screen(applicantType, data, principals) {
   return { pepFlag, sanctionsHit, riskLevel, screeningNotes: notes };
 }
 
+// ── POST /api/v1/onboarding/invite — SA/admin/aggregator emails a self-onboard link
+// type: 'merchant' (default) | 'aggregator'. The applicant completes the public
+// onboarding form themselves; approval provisions the account.
+router.post('/invite', requireAuth, async (req, res, next) => {
+  try {
+    const { name, email, phone } = req.body;
+    const type = req.body.type === 'aggregator' ? 'aggregator' : 'merchant';
+    if (!name || !email) return fail(res, 'name and email are required');
+    if (!['SUPER_ADMIN', 'ADMIN', 'AGGREGATOR'].includes(req.user.role))
+      return res.status(403).json({ status: false, message: 'Not permitted', error_code: 'FORBIDDEN' });
+
+    const base = process.env.APP_URL || 'https://paylodeservices.com';
+    const link = `${base}/onboarding.html?type=${type}&via=invite&email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`;
+    const content = await getEmailContent('onboarding_invite',
+      { name, email, business: name, link, invite_link: link, type },
+      `You're invited to onboard on Paylode`,
+      `<h2>Welcome to Paylode</h2><p>Hi ${name},</p>` +
+        `<p>You have been invited to open a <strong>${type}</strong> account on Paylode. ` +
+        `Click below to complete your onboarding — the link is valid for 7 days:</p>` +
+        `<p><a href="${link}">Start onboarding</a></p>` +
+        `<p>Or paste this link into your browser:<br>${link}</p>`);
+    try {
+      await sendEmail({ to: email, subject: content.subject, html: content.html });
+    } catch (e) {
+      logger.error({ err: e, email }, 'onboarding invite email failed');
+      return fail(res, 'Could not send the invite email — please try again.');
+    }
+    logAudit(req.user.id, 'ONBOARDING_INVITE_SENT', 'onboarding', req.user.id, null, { email, name, type, phone: phone || null }, null, req.ip).catch(() => {});
+    ok(res, { email, type }, 'Invitation sent');
+  } catch (e) { next(e); }
+});
+
 // ── POST /api/v1/onboarding/submit — public, no auth ──────────────────────────
 router.post('/submit', async (req, res, next) => {
   try {
