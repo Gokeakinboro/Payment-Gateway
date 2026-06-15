@@ -551,7 +551,6 @@ model MerchantWallet {
 
   merchant  Merchant       @relation(fields: [merchantId], references: [id])
   rail      PaymentRail?   @relation(fields: [railId], references: [id])
-  ledger    WalletLedger[]
 
   @@unique([merchantId, railId])
   @@map("merchant_wallets")
