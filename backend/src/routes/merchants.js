@@ -1,7 +1,7 @@
 'use strict';
 const router = require('express').Router();
 const { prisma } = require('../utils/db');
-const { requireAuth, requireSuperAdmin, requireCompliance, requirePermission } = require('../middleware/auth');
+const { requireAuth, requireSuperAdmin, requireCompliance, requireAdmin, requireAdminOrCompliance, requirePermission } = require('../middleware/auth');
 const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
 const { hasPermission } = require('../config/permissions');
@@ -249,7 +249,10 @@ router.delete('/:id/outlets/:outletId', requireAuth, requireSuperAdmin, async (r
 
 // ── Suspend / activate ───────────────────────────────────────────────────────
 
-router.put('/:id/suspend', requireAuth, requireCompliance, async (req, res, next) => {
+// Suspend / activate = a KYC decision: SA, Admin or Compliance Officer may act.
+// (Activation despite OUTSTANDING documents still requires an SA deferral — that
+//  path is the documents /defer endpoint, which is SUPER_ADMIN only.)
+router.put('/:id/suspend', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
   try {
     const m = await prisma.merchant.update({ where:{id:req.params.id}, data:{kycStatus:'SUSPENDED',isActive:false} });
     await logAudit(req.user.id, 'MERCHANT_SUSPENDED', 'merchants', m.id, {isActive:true}, {isActive:false}, req.body.reason);
@@ -257,11 +260,20 @@ router.put('/:id/suspend', requireAuth, requireCompliance, async (req, res, next
   } catch (e) { next(e); }
 });
 
-router.put('/:id/activate', requireAuth, requireCompliance, async (req, res, next) => {
+router.put('/:id/activate', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
   try {
     const m = await prisma.merchant.update({ where:{id:req.params.id}, data:{kycStatus:'ACTIVE',isActive:true} });
     await logAudit(req.user.id, 'MERCHANT_REACTIVATED', 'merchants', m.id, {isActive:false}, {isActive:true});
     ok(res, { message:'Merchant reactivated' });
+  } catch (e) { next(e); }
+});
+
+// Close (off-board) a merchant — SA + Admin only. Deactivates and marks closed.
+router.put('/:id/close', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const m = await prisma.merchant.update({ where:{id:req.params.id}, data:{kycStatus:'SUSPENDED',isActive:false} });
+    await logAudit(req.user.id, 'MERCHANT_CLOSED', 'merchants', m.id, {isActive:true}, {isActive:false, closed:true}, req.body.reason || 'Account closed');
+    ok(res, { message:'Merchant account closed' });
   } catch (e) { next(e); }
 });
 

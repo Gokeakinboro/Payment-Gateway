@@ -71,7 +71,7 @@ var NAV = {
       {id:'merchants',     icon:'▦', label:'Merchants'       },
       {id:'aggregators',   icon:'⬡', label:'Aggregators'     },
       {id:'admin_onboard', icon:'+', label:'Onboard Merchant'},
-      {id:'users',         icon:'⊕', label:'Staff Accounts'  },
+      {id:'users',         icon:'⊕', label:'Users & Permissions'},
     ]},
     { section:'Operations', items:[
       {id:'transactions',    icon:'↕', label:'Transactions'    },
@@ -79,7 +79,8 @@ var NAV = {
       {id:'wallets',         icon:'◈', label:'Merchant Wallets'},
       {id:'compliance',      icon:'⚖', label:'KYC Review'      },
       {id:'deferrals',       icon:'⧗', label:'KYC Docs & Deferrals'},
-      {id:'compliance_exceptions', icon:'⚑', label:'Compliance Exceptions'},
+      {id:'compliance_exceptions', icon:'⚑', label:'Intl / Mastercard Compliance'},
+      {id:'compliance_centre', icon:'▣', label:'Compliance Centre'},
       {id:'onboarding_apps', icon:'▤', label:'Applications'    },
     ]},
     { section:'Reports', items:[
@@ -101,7 +102,7 @@ var NAV = {
   admin: [
     { section:'Dashboard',  items:[{id:'overview',icon:'◉',label:'Dashboard'}]},
     { section:'Management',  items:[{id:'transactions',icon:'↕',label:'All Transactions'},{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'}]},
-    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'wallets',icon:'◈',label:'Merchant Wallets'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'deferrals',icon:'⧗',label:'KYC Docs & Deferrals'},{id:'compliance_exceptions',icon:'⚑',label:'Compliance Exceptions'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
+    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'wallets',icon:'◈',label:'Merchant Wallets'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'deferrals',icon:'⧗',label:'KYC Docs & Deferrals'},{id:'compliance_exceptions',icon:'⚑',label:'Intl / Mastercard Compliance'},{id:'compliance_centre',icon:'▣',label:'Compliance Centre'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
     { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'}]},
     { section:'Developer',   items:DEV_SDK_ITEMS },
   ],
@@ -199,7 +200,7 @@ var NAV_PERM = {
   merchants:'view_merchants', aggregators:'view_aggregators', admin_onboard:'edit_onboarding',
   deferrals:'view_doc_referrals', users:'view_staff', overview:'view_dashboard',
   transactions:'view_transactions', settlement:'view_settlements', rail_settlement:'view_settlements',
-  payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', vat_report:'view_reports', reports_hub:'view_reports', cbn_report:'view_reports', compliance:'view_compliance', compliance_exceptions:'view_compliance',
+  payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', vat_report:'view_reports', reports_hub:'view_reports', cbn_report:'view_reports', compliance:'view_compliance', compliance_centre:'view_compliance', compliance_exceptions:'view_compliance',
   onboarding_apps:'view_onboarding', fee_config:'view_fees', rails:'view_rails',
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
 };
@@ -320,8 +321,8 @@ function renderPage() {
     overview:renderSuperOverview, transactions:renderTransactions,
     merchants:renderMerchants, aggregators:renderAggregators,
     revenue:renderRevenueConfig, rails:renderRailCosts,
-    settlement:renderSettlement, compliance:renderCompliance, settings:renderSettings,
-    compliance_exceptions:renderComplianceExceptions,
+    settlement:renderSettlement, compliance:renderKycReview, compliance_centre:renderCompliance, settings:renderSettings,
+    compliance_exceptions:renderComplianceExceptions, deferrals:renderDocDeferralsShell,
     email_tpl:renderEmailTemplates,
     users:renderUserManagement,
     agg_overview:renderAggOverview, agg_merchants:renderAggMerchants,
@@ -541,6 +542,21 @@ function renderSettlement() {
 function compTab() { return window.__compTab || 'overview'; }
 function setCompTab(t) { window.__compTab = t; renderPage(); }
 
+// KYC Documents & Deferrals shell — body rendered by loadDeferrals() in api-wiring.js.
+function renderDocDeferralsShell() {
+  return '<div class="page-header"><div class="page-title">KYC Documents &amp; Deferrals</div></div>' +
+    '<div class="card"><div style="padding:24px;text-align:center;color:var(--gray-400)">Loading&hellip;</div></div>';
+}
+
+// Domestic (Naira) KYC Review — review queue + AML/PEP + full merchant register.
+// Body is rendered by loadCompliance() in api-wiring.js (it overwrites #main-content).
+function renderKycReview() {
+  return '<div class="page-header"><div class="page-title">KYC Review</div>' +
+    '<div class="page-desc">Domestic merchant KYC, AML flags &amp; PEP &mdash; review queue and merchant register</div></div>' +
+    '<div class="card"><div style="padding:24px;text-align:center;color:var(--gray-400)">Loading&hellip;</div></div>';
+}
+
+// Compliance Centre — regulatory obligations (CBN Returns / STR / NDPR / Retention).
 function renderCompliance() {
   var tab = compTab();
   var tabs = [['overview','Overview'],['cbnn','CBN Returns'],['str','STR Filing'],['retention','Data Retention'],['ndpr','NDPR / Privacy']];

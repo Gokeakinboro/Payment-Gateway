@@ -421,12 +421,17 @@ async function viewMerchant(id) {
   var m = res.data;
   var rate = m.processingRate ? (Number(m.processingRate) * 100).toFixed(1) + '%' : '—';
   var isSA = (currentRole === 'superadmin');
+  var canReview = (['superadmin','admin','compliance'].indexOf(currentRole) !== -1); // suspend/activate/docs
+  var canManage = (currentRole === 'superadmin' || currentRole === 'admin');         // edit/close
+  var nameEsc = (m.businessName||'').replace(/'/g,'');
 
   var overviewHtml =
     '<div class="rev-row"><span class="rev-label">Merchant Code</span><span class="rev-value mono" style="font-size:12px">' + (m.merchantCode || '—') + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">Category</span><span class="rev-value">' + (m.category || '—') + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">KYC Status</span><span class="rev-value">' + statusBadge(m.kycStatus) + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">KYC Tier</span><span class="rev-value">' + (m.kycTier ? 'Tier ' + m.kycTier : '—') + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Compliance / PEP</span><span class="rev-value">' + _mComplianceBadge(m) + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Card Scope</span><span class="rev-value">' + (m.cardAcceptanceScope === 'international' ? '<span class="badge badge-blue">International (USD/Mastercard)</span>' : '<span class="badge badge-gray">Domestic (Naira)</span>') + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">Default Rate</span><span class="rev-value">' + rate + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">Email</span><span class="rev-value" style="font-size:12px">' + (m.user && m.user.email ? m.user.email : (m.businessEmail || '—')) + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">Phone</span><span class="rev-value">' + (m.phone || (m.user && m.user.phone) || '—') + '</span></div>' +
@@ -445,11 +450,13 @@ async function viewMerchant(id) {
     '<div class="divider"></div>' +
     '<div class="flex-between">' +
       '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Close</button>' +
-      '<div class="flex" style="gap:8px">' +
-        (m.isActive
-          ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';suspendMerchant(\'' + id + '\',\'' + (m.businessName||'').replace(/'/g,'') + '\')">Suspend</button>'
-          : '<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="document.getElementById(\'modal\').style.display=\'none\';activateMerchant(\'' + id + '\',\'' + (m.businessName||'').replace(/'/g,'') + '\')">Activate</button>') +
-        '<button class="btn btn-lime" onclick="document.getElementById(\'modal\').style.display=\'none\';editMerchant(\'' + id + '\')">&#9998; Edit</button>' +
+      '<div class="flex" style="gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
+        (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')">&#128196; KYC Documents</button>' : '') +
+        (canReview ? (m.isActive
+          ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';suspendMerchant(\'' + id + '\',\'' + nameEsc + '\')">Suspend</button>'
+          : '<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="document.getElementById(\'modal\').style.display=\'none\';activateMerchant(\'' + id + '\',\'' + nameEsc + '\')">Activate</button>') : '') +
+        (canManage ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';closeMerchant(\'' + id + '\',\'' + nameEsc + '\')">Close Account</button>' : '') +
+        (canManage ? '<button class="btn btn-lime" onclick="document.getElementById(\'modal\').style.display=\'none\';editMerchant(\'' + id + '\')">&#9998; Edit</button>' : '') +
       '</div>' +
     '</div>';
 
@@ -675,6 +682,18 @@ async function activateMerchant(id, name) {
     alert('Error: ' + ((res && res.message) || 'Activate failed'));
   }
 }
+
+async function closeMerchant(id, name) {
+  if (!confirm('Close (off-board) ' + name + '? The account will be deactivated and can only be reopened by re-activation.')) return;
+  var reason = prompt('Reason for closure (shown in audit log):');
+  if (reason === null) return;
+  var res = await apiFetch('/merchants/' + id + '/close', { method: 'PUT', body: JSON.stringify({ reason: reason }) });
+  if (res && res.status) { alert(name + ' has been closed.'); loadMerchants(); }
+  else alert('Error: ' + ((res && res.message) || 'Close failed'));
+}
+
+// Merchant detail action hub — alias used by the KYC Review register.
+function openMerchantDetail(id) { return viewMerchant(id); }
 
 // ── MERCHANT EDIT (role-aware) ────────────────────────────────────────────────
 async function editMerchant(id) {
@@ -1064,31 +1083,77 @@ async function removeAggRateOverride(aggId, merchantId) {
   else alert('Error: ' + ((res && res.message) || 'Remove failed'));
 }
 
-// ── KYC / COMPLIANCE QUEUE ────────────────────────────────────────────────────
+// ── KYC REVIEW (domestic) — merchant register + KYC queue + AML flags ──────────
+// Actor matrix: Compliance Officer PASSES merchants for activation (approve/reject/verify docs),
+// alongside SA + Admin. Only DOCUMENT DEFERRAL (activate despite outstanding docs) is SA-only.
+function _complianceCanDecide() { return ['superadmin','admin','compliance'].indexOf(currentRole) !== -1; }
+
+// 3-panel tab switch for the KYC Review page.
+function cmplReviewTab(btn, panelId) {
+  var wrap = document.getElementById('cmpl-review-tabs');
+  if (wrap) wrap.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  ['cmpl-merchants','cmpl-kyc','cmpl-aml'].forEach(function(p){
+    var e = document.getElementById(p); if (e) e.style.display = (p === panelId ? 'block' : 'none');
+  });
+}
+
+// PEP / MATCH / compliance-status badge for a merchant row.
+function _mComplianceBadge(m) {
+  if (m.matchListed) return '<span class="badge badge-red" title="MATCH/TMF listed">MATCH</span>';
+  var s = (m.complianceStatus || '').toLowerCase();
+  if (s === 'blocked') return '<span class="badge badge-red">Blocked</span>';
+  if (s === 'review')  return '<span class="badge badge-amber">Review</span>';
+  if (s === 'clear')   return '<span class="badge badge-green">Clear</span>';
+  return '<span class="badge badge-gray">—</span>';
+}
+
 async function loadCompliance() {
   const el = document.getElementById('main-content');
   if (!el) return;
   el.innerHTML = loading();
 
+  const canDecide = _complianceCanDecide();
   try {
-    const [queue, flags] = await Promise.all([
+    const [queueR, flagsR, merchantsR] = await Promise.allSettled([
       apiFetch('/kyc/queue?status=submitted&perPage=20'),
       apiFetch('/reports/aml-flags?riskLevel=HIGH'),
+      apiFetch('/merchants?perPage=200'),
     ]);
+    const submissions  = (queueR.status === 'fulfilled' && queueR.value?.data?.submissions) || [];
+    const amlFlags     = (flagsR.status === 'fulfilled' && flagsR.value?.data) || [];
+    const allMerchants = (merchantsR.status === 'fulfilled' && merchantsR.value?.data) || [];
 
-    const submissions = queue?.data?.submissions || [];
-    const amlFlags    = flags?.data || [];
+    const merchantRows = allMerchants.length ? allMerchants.map(function(m){
+      var name = _escA(m.businessName || '—');
+      var docsBtn = '<button class="btn btn-outline btn-sm" onclick="openDocsModal(\'merchant\',\'' + m.id + '\',\'' + _escA((m.businessName||'').replace(/\x27/g,'')) + '\')">' + (canDecide ? 'Docs' : 'View') + '</button>';
+      var manageBtn = canDecide ? ' <button class="btn btn-outline btn-sm" onclick="openMerchantDetail(\'' + m.id + '\')">Manage</button>' : '';
+      return '<tr>' +
+        '<td><div style="font-weight:500">' + name + '</div><div style="font-size:11px;color:var(--gray-400)">' + _escA(m.merchantCode||'') + '</div></td>' +
+        '<td>' + statusBadge(m.kycStatus) + '</td>' +
+        '<td>' + _mComplianceBadge(m) + '</td>' +
+        '<td>' + (m.isActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Inactive</span>') + '</td>' +
+        '<td style="white-space:nowrap">' + docsBtn + manageBtn + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:20px">No merchants</td></tr>';
 
     el.innerHTML = `
     <div class="page-header">
-      <div class="page-title">Compliance</div>
-      <div class="page-desc">KYC review queue and AML monitoring</div>
+      <div class="page-title">KYC Review</div>
+      <div class="page-desc">Domestic merchant KYC, AML &amp; PEP${canDecide ? '' : ' — read-only'}</div>
     </div>
-    <div class="tab-nav">
-      <button class="tab-btn active" onclick="switchTab(this,'kyc-panel','aml-panel')">KYC Queue (${submissions.length})</button>
-      <button class="tab-btn" onclick="switchTab(this,'aml-panel','kyc-panel')">AML Flags (${amlFlags.length})</button>
+    <div class="tab-nav" id="cmpl-review-tabs">
+      <button class="tab-btn active" onclick="cmplReviewTab(this,'cmpl-merchants')">All Merchants (${allMerchants.length})</button>
+      <button class="tab-btn" onclick="cmplReviewTab(this,'cmpl-kyc')">KYC Queue (${submissions.length})</button>
+      <button class="tab-btn" onclick="cmplReviewTab(this,'cmpl-aml')">AML Flags (${amlFlags.length})</button>
     </div>
-    <div id="kyc-panel">
+    <div id="cmpl-merchants">
+      <div class="card"><div class="table-wrap"><table>
+        <thead><tr><th>Merchant</th><th>KYC Status</th><th>Compliance / PEP</th><th>Account</th><th>Actions</th></tr></thead>
+        <tbody>${merchantRows}</tbody>
+      </table></div></div>
+    </div>
+    <div id="cmpl-kyc" style="display:none">
       <div class="card">
         <div class="table-wrap">
           <table>
@@ -1100,16 +1165,16 @@ async function loadCompliance() {
                                    addrStatus === 'failed'  ? '<span class="badge badge-red">&#10007; Failed</span>' :
                                                               '<span class="badge badge-amber">Pending</span>';
                 return `<tr>
-                <td><div style="font-weight:500">${s.merchant.name}</div><div style="font-size:11px;color:var(--gray-400)">${s.merchant.code}</div></td>
-                <td>${s.merchant.category}</td>
+                <td><div style="font-weight:500">${_escA(s.merchant.name)}</div><div style="font-size:11px;color:var(--gray-400)">${_escA(s.merchant.code)}</div></td>
+                <td>${_escA(s.merchant.category||'')}</td>
                 <td><span class="badge badge-blue">Tier ${s.tier_applied}</span></td>
-                <td>${s.merchant.aggregator||'Direct'}</td>
+                <td>${_escA(s.merchant.aggregator||'Direct')}</td>
                 <td>${addrBadge}</td>
                 <td style="font-size:12px">${new Date(s.submitted_at).toLocaleDateString('en-NG')}</td>
                 <td style="white-space:nowrap">
                   <button class="btn btn-outline btn-sm" onclick="showAddrVerification('${s.id}','${addrStatus}','${s.addr_report_url||''}')">&#128205; Addr</button>
-                  <button class="btn btn-lime btn-sm" onclick="approveKyc('${s.id}')">Approve</button>
-                  <button class="btn btn-outline btn-sm" onclick="rejectKyc('${s.id}')">Reject</button>
+                  ${canDecide ? `<button class="btn btn-lime btn-sm" onclick="approveKyc('${s.id}')">Approve</button>
+                  <button class="btn btn-outline btn-sm" onclick="rejectKyc('${s.id}')">Reject</button>` : ''}
                 </td>
               </tr>`;}).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:20px">No pending KYC submissions</td></tr>'}
             </tbody>
@@ -1117,18 +1182,18 @@ async function loadCompliance() {
         </div>
       </div>
     </div>
-    <div id="aml-panel" style="display:none">
+    <div id="cmpl-aml" style="display:none">
       <div class="card">
         <div class="table-wrap">
           <table>
             <thead><tr><th>Merchant</th><th>Flag Type</th><th>Risk Level</th><th>Transaction</th><th>Description</th><th>Raised</th></tr></thead>
             <tbody>
               ${amlFlags.length ? amlFlags.map(f => `<tr>
-                <td style="font-weight:500">${f.merchant?.businessName||'—'}</td>
-                <td><span class="tag">${f.flag_type}</span></td>
+                <td style="font-weight:500">${_escA(f.merchant?.businessName||'—')}</td>
+                <td><span class="tag">${_escA(f.flag_type)}</span></td>
                 <td>${statusBadge(f.risk_level?.toLowerCase())}</td>
-                <td class="mono" style="font-size:11px">${f.transaction?.reference||'—'}</td>
-                <td style="font-size:12px">${f.description||'—'}</td>
+                <td class="mono" style="font-size:11px">${_escA(f.transaction?.reference||'—')}</td>
+                <td style="font-size:12px">${_escA(f.description||'—')}</td>
                 <td style="font-size:12px">${new Date(f.created_at).toLocaleDateString('en-NG')}</td>
               </tr>`).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:20px">No open AML flags</td></tr>'}
             </tbody>
@@ -4547,6 +4612,8 @@ loadPageData = function(page) {
     case 'settle_verification':  loadSettlementQueue(); break;
     case 'email_tpl':            loadEmailTemplates(); break;
     case 'onboarding_apps':      loadOnboardingApps(); break;
+    case 'compliance':           loadCompliance(); break;          // KYC Review (domestic Naira)
+    case 'compliance_centre':    break;                            // renderCompliance() self-loads its tabs
     case 'compliance_exceptions':
       if ((window.__cmplExcTab || 'exceptions') === 'matrix') loadComplianceMatrix(); else loadComplianceExceptions(); break;
     case 'deferrals':            loadDeferrals(); break;
@@ -4593,7 +4660,8 @@ async function loadComplianceExceptions() {
   if (!rows.length) { el.innerHTML = '<div class="info-box">No compliance exceptions' + (st ? ' with status "' + _escA(st) + '"' : '') + '.</div>'; return; }
   var body = rows.map(function(x) {
     var isMerchant = x.entity_type === 'merchant';
-    var canAct = x.status === 'open' || x.status === 'deferred';
+    // Mastercard exception dispositions (defer/clear/block) are SA-only (backend requireSuperAdmin).
+    var canAct = (x.status === 'open' || x.status === 'deferred') && currentRole === 'superadmin';
     var actions = canAct ? (
       '<button class="btn btn-outline btn-sm" onclick="deferComplianceException(\'' + x.id + '\',' + (x.deferrable ? 'true' : 'false') + ')">Defer</button> ' +
       '<button class="btn btn-outline btn-sm" style="color:var(--green);border-color:var(--green)" onclick="clearComplianceException(\'' + x.id + '\')">Clear</button> ' +
@@ -4861,7 +4929,9 @@ async function downloadAppDoc(ref, key) {
 // ── Superadmin: Document Deferrals ────────────────────────────────────────────
 async function loadDeferrals() {
   var el = document.getElementById('main-content');
+  if (!el) return;
   el.innerHTML = loading();
+  try {
   var res = await apiFetch('/merchants');
   var ms = (res && res.data) ? res.data : [];
 
@@ -4893,6 +4963,9 @@ async function loadDeferrals() {
       '<thead><tr><th>Merchant</th><th>KYC Status</th><th>Account</th><th></th></tr></thead>' +
       '<tbody>' + body + '</tbody>' +
     '</table></div></div>';
+  } catch (e) {
+    el.innerHTML = errorBox('Failed to load KYC Documents & Deferrals: ' + (e && e.message ? e.message : e));
+  }
 }
 
 async function openDocsModal(entityType, id, name) {
@@ -4900,40 +4973,52 @@ async function openDocsModal(entityType, id, name) {
   var data = (res && res.data) ? res.data : { docs: [], summary: {} };
   window._docCtx = { entityType: entityType, id: id, name: name };
 
+  // Actor matrix: doc review (verify/reject/submitted/waive) = SA + Admin + Compliance;
+  // document DEFERRAL (activate despite outstanding) = SA only.
+  var canEdit  = (['superadmin','admin','compliance'].indexOf(currentRole) !== -1);
+  var canDefer = (currentRole === 'superadmin');
+
   var rows = data.docs.map(function(doc) {
     var isCheck = (doc.doc_key || '').indexOf('check_') === 0;
     var bad = doc.status === 'overdue' || doc.status === 'failed' || doc.status === 'rejected';
     var deferInfo = (doc.status === 'deferred' && doc.deferred_until)
       ? '<div class="upload-hint">until ' + new Date(doc.deferred_until).toLocaleDateString('en-NG') + '</div>' : '';
     var noteInfo = doc.notes ? '<div class="upload-hint">' + _escA(doc.notes) + '</div>' : '';
-    return '<tr' + (bad ? ' style="background:#fef2f2"' : '') + '>' +
-      '<td><input type="checkbox" class="doc-cb" value="' + doc.id + '"></td>' +
-      '<td style="font-weight:500">' + _escA(doc.doc_label) + (isCheck ? ' <span class="tag">CHECK</span>' : '') + deferInfo + noteInfo + '</td>' +
-      '<td>' + docStatusBadge(doc.status) + '</td>' +
-      '<td style="white-space:nowrap">' +
+    var actions = canEdit ? (
         (isCheck
           ? '<button class="btn btn-outline btn-sm" onclick="runCheck(\'' + doc.id + '\')">Run check</button> '
           : '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'submitted\')">Submitted</button> ') +
         '<button class="btn btn-outline btn-sm" style="color:var(--green)" onclick="setDocStatus(\'' + doc.id + '\',\'verified\')">Approve</button> ' +
         '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="setDocStatus(\'' + doc.id + '\',\'rejected\')">Reject</button> ' +
         '<button class="btn btn-outline btn-sm" onclick="requestReupload(\'' + doc.id + '\')">Re-upload</button> ' +
-        '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'waived\')">Waive</button>' +
-      '</td>' +
+        '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'waived\')">Waive</button>'
+      ) : '<span style="color:var(--gray-400);font-size:12px">—</span>';
+    return '<tr' + (bad ? ' style="background:#fef2f2"' : '') + '>' +
+      (canDefer ? '<td><input type="checkbox" class="doc-cb" value="' + doc.id + '"></td>' : '') +
+      '<td style="font-weight:500">' + _escA(doc.doc_label) + (isCheck ? ' <span class="tag">CHECK</span>' : '') + deferInfo + noteInfo + '</td>' +
+      '<td>' + docStatusBadge(doc.status) + '</td>' +
+      '<td style="white-space:nowrap">' + actions + '</td>' +
     '</tr>';
   }).join('');
 
+  var colspan = canDefer ? 4 : 3;
   showModal(
     '<div class="modal-header"><div class="modal-title">Documents — ' + _escA(name) + '</div>' +
       '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
-    '<div class="page-desc" style="margin-bottom:10px">Each required document is tracked individually. Tick rows and set a period to defer specific documents and activate the account — an overdue deferral auto-suspends the account so nothing slips.</div>' +
-    '<div class="table-wrap"><table style="width:100%"><thead><tr><th></th><th>Document</th><th>Status</th><th>Actions</th></tr></thead>' +
-      '<tbody>' + (rows || '<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:16px">No documents</td></tr>') + '</tbody></table></div>' +
-    '<div class="divider"></div>' +
-    '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end">' +
-      '<div><label class="form-label">Defer ticked for</label><select class="form-input form-select" id="doc-duration"><option value="1">1 month</option><option value="2">2 months</option><option value="3" selected>3 months</option><option value="6">6 months</option></select></div>' +
-      '<div><label class="form-label">Reason</label><input class="form-input" id="doc-reason" placeholder="Reason"></div>' +
-      '<div><button class="btn btn-lime" onclick="deferSelectedDocs()">Defer ticked &amp; activate</button></div>' +
-    '</div>'
+    (canDefer
+      ? '<div class="page-desc" style="margin-bottom:10px">Each required document is tracked individually. Tick rows and set a period to defer specific documents and activate the account — an overdue deferral auto-suspends the account so nothing slips.</div>'
+      : (canEdit ? '<div class="page-desc" style="margin-bottom:10px">Mark each document submitted/verified/waived. Document deferral is Super-Admin only.</div>'
+                 : '<div class="page-desc" style="margin-bottom:10px">Read-only view of the merchant\'s KYC documents.</div>')) +
+    '<div class="table-wrap"><table style="width:100%"><thead><tr>' + (canDefer ? '<th></th>' : '') + '<th>Document</th><th>Status</th><th>Actions</th></tr></thead>' +
+      '<tbody>' + (rows || '<tr><td colspan="' + colspan + '" style="text-align:center;color:var(--gray-400);padding:16px">No documents</td></tr>') + '</tbody></table></div>' +
+    (canDefer
+      ? '<div class="divider"></div>' +
+        '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end">' +
+          '<div><label class="form-label">Defer ticked for</label><select class="form-input form-select" id="doc-duration"><option value="1">1 month</option><option value="2">2 months</option><option value="3" selected>3 months</option><option value="6">6 months</option></select></div>' +
+          '<div><label class="form-label">Reason</label><input class="form-input" id="doc-reason" placeholder="Reason"></div>' +
+          '<div><button class="btn btn-lime" onclick="deferSelectedDocs()">Defer ticked &amp; activate</button></div>' +
+        '</div>'
+      : '')
   );
 }
 
