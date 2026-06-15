@@ -247,71 +247,67 @@ router.post('/batches', requireAuthOrApiKey,
 
       const needsRouting  = !chosen;                       // total covers it, no single rail does → SA queue
       const chosenRailId  = chosen ? chosen.railId : null;
-      const balanceBefore = chosen ? chosen.balance : 0n;
-      const balanceAfter  = chosen ? (chosen.balance - totalDeduction) : 0n;
-
       const batchRef    = generateRef('PAY');
       const scheduledAt = scheduled_at ? new Date(scheduled_at) : new Date();
-
       const isInstant   = !scheduled_at || new Date(scheduled_at) <= new Date();
-      // needs_routing → SA queue; else scheduled/processing.
       const batchStatus = needsRouting ? 'needs_routing' : (isInstant ? 'processing' : 'pending');
       const itemStatus  = needsRouting ? 'queued' : (isInstant ? 'processing' : 'queued');
 
-      // ── Create batch record ─────────────────────────────────────────────────────
-      const batch = await prisma.$queryRaw`
-        INSERT INTO payout_batches
-          (merchant_id, batch_ref, description, total_amount, total_fee, total_vat,
-           fee_rate, total_items, status, rail_id, scheduled_at, created_by, created_at, updated_at)
-        VALUES
-          (${merchantId}::uuid, ${batchRef}, ${description||null},
-           ${totalAmount}, ${totalFee}, ${totalVat},
-           ${feeRate}::decimal,
-           ${items.length}, ${batchStatus},
-           ${chosenRailId}::uuid,
-           ${scheduledAt}, ${req.user.id}::uuid, NOW(), NOW())
-        RETURNING *
-      `;
-      const batchId = batch[0].id;
-
-      // ── Create payout items ─────────────────────────────────────────────────────
-      for (const item of itemsWithFees) {
-        const bank = await prisma.$queryRaw`
-          SELECT bank_name FROM nigerian_banks WHERE bank_code = ${item.bank_code}
-        `;
-        await prisma.$executeRaw`
-          INSERT INTO payout_items
-            (batch_id, merchant_id, account_number, account_name, bank_code, bank_name,
-             amount, item_fee, item_vat, narration, status, scheduled_at, created_at)
-          VALUES
-            (${batchId}::uuid, ${merchantId}::uuid,
-             ${item.account_number}, ${item.account_name||null},
-             ${item.bank_code}, ${bank[0]?.bank_name||item.bank_code},
-             ${BigInt(item.amount)}, ${item.fee}, ${item.vat},
-             ${item.narration||null}, ${itemStatus}, ${scheduledAt}, NOW())
-        `;
-      }
-
-      // ── Debit the chosen rail (auto-routed only). Queued batches are NOT debited
-      //    until SA routes them from the routing queue. ────────────────────────────
-      if (chosen) {
-        await prisma.merchantWallet.update({
-          where: { id: chosen.id },
-          data:  { balance: balanceAfter, lastUsedAt: new Date() },
-        });
-        await prisma.$executeRaw`
-          INSERT INTO wallet_ledger
-            (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
-          VALUES
-            (${merchantId}::uuid, ${chosenRailId}::uuid, 'DEBIT', ${totalAmount}, ${balanceBefore},
-             ${balanceBefore - totalAmount}, ${batchRef},
-             ${'Payout batch to ' + items.length + ' beneficiaries: ' + (description||batchRef)}, ${req.user.id}::uuid, NOW()),
-            (${merchantId}::uuid, ${chosenRailId}::uuid, 'FEE', ${totalFee}, ${balanceBefore - totalAmount},
-             ${balanceBefore - totalAmount - totalFee}, ${batchRef},
-             ${'Paylode payout service fee (' + (feeRate*100).toFixed(2) + '%)'}, ${req.user.id}::uuid, NOW()),
-            (${merchantId}::uuid, ${chosenRailId}::uuid, 'VAT', ${totalVat}, ${balanceBefore - totalAmount - totalFee},
-             ${balanceAfter}, ${batchRef}, ${'VAT on payout fee (7.5%)'}, ${req.user.id}::uuid, NOW())
-        `;
+      // All-or-nothing: atomic GUARDED rail debit (WHERE balance >= amount — blocks
+      // concurrent over-spend) + batch + items + ledger in ONE transaction.
+      let batchId;
+      try {
+        await prisma.$transaction(async (tx) => {
+          let bBefore = 0n, bAfter = 0n;
+          if (chosen) {
+            const dec = await tx.$queryRaw`
+              UPDATE merchant_wallets
+              SET balance = balance - ${totalDeduction}, last_used_at = NOW(), updated_at = NOW()
+              WHERE id = ${chosen.id}::uuid AND balance >= ${totalDeduction}
+              RETURNING balance`;
+            if (!dec.length) throw Object.assign(new Error('Rail balance changed during processing — please retry'), { _client: true });
+            bAfter  = dec[0].balance;
+            bBefore = bAfter + totalDeduction;
+          }
+          const batch = await tx.$queryRaw`
+            INSERT INTO payout_batches
+              (merchant_id, batch_ref, description, total_amount, total_fee, total_vat,
+               fee_rate, total_items, status, rail_id, scheduled_at, created_by, created_at, updated_at)
+            VALUES
+              (${merchantId}::uuid, ${batchRef}, ${description||null},
+               ${totalAmount}, ${totalFee}, ${totalVat}, ${feeRate}::decimal,
+               ${items.length}, ${batchStatus}, ${chosenRailId}::uuid,
+               ${scheduledAt}, ${req.user.id}::uuid, NOW(), NOW())
+            RETURNING id`;
+          batchId = batch[0].id;
+          for (const item of itemsWithFees) {
+            const bank = await tx.$queryRaw`SELECT bank_name FROM nigerian_banks WHERE bank_code = ${item.bank_code}`;
+            await tx.$executeRaw`
+              INSERT INTO payout_items
+                (batch_id, merchant_id, account_number, account_name, bank_code, bank_name,
+                 amount, item_fee, item_vat, narration, status, scheduled_at, created_at)
+              VALUES
+                (${batchId}::uuid, ${merchantId}::uuid, ${item.account_number}, ${item.account_name||null},
+                 ${item.bank_code}, ${bank[0]?.bank_name||item.bank_code},
+                 ${BigInt(item.amount)}, ${item.fee}, ${item.vat},
+                 ${item.narration||null}, ${itemStatus}, ${scheduledAt}, NOW())`;
+          }
+          if (chosen) {
+            await tx.$executeRaw`
+              INSERT INTO wallet_ledger
+                (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
+              VALUES
+                (${merchantId}::uuid, ${chosenRailId}::uuid, 'DEBIT', ${totalAmount}, ${bBefore}, ${bBefore - totalAmount}, ${batchRef},
+                 ${'Payout batch to ' + items.length + ' beneficiaries: ' + (description||batchRef)}, ${req.user.id}::uuid, NOW()),
+                (${merchantId}::uuid, ${chosenRailId}::uuid, 'FEE', ${totalFee}, ${bBefore - totalAmount}, ${bBefore - totalAmount - totalFee}, ${batchRef},
+                 ${'Paylode payout service fee (' + (feeRate*100).toFixed(2) + '%)'}, ${req.user.id}::uuid, NOW()),
+                (${merchantId}::uuid, ${chosenRailId}::uuid, 'VAT', ${totalVat}, ${bBefore - totalAmount - totalFee}, ${bAfter}, ${batchRef},
+                 ${'VAT on payout fee (7.5%)'}, ${req.user.id}::uuid, NOW())`;
+          }
+        }, { timeout: 30000 });
+      } catch (e) {
+        if (e && e._client) return fail(res, e.message, 'RETRY');
+        throw e;
       }
 
       // Response is MERCHANT-facing — never reveal rails or the SA routing queue.
@@ -419,16 +415,23 @@ router.get('/batches', requireAuth, async (req, res, next) => {
       ? req.user.merchant?.id
       : req.query.merchant_id;
 
-    const where = merchantId ? `WHERE pb.merchant_id = '${merchantId}'::uuid` : '';
-
-    const batches = await prisma.$queryRaw`
-      SELECT pb.*, m.business_name, pr.name as rail_name
-      FROM payout_batches pb
-      JOIN merchants m ON pb.merchant_id = m.id
-      LEFT JOIN payment_rails pr ON pb.rail_id = pr.id
-      ORDER BY pb.created_at DESC
-      LIMIT 50
-    `;
+    // Scope to the merchant when one applies (merchants see ONLY their own
+    // batches); parameterised to avoid SQL injection. SA/admin (no merchantId)
+    // see all. (Was: an unused WHERE string -> every merchant saw all batches.)
+    const batches = merchantId
+      ? await prisma.$queryRaw`
+          SELECT pb.*, m.business_name, pr.name as rail_name
+          FROM payout_batches pb
+          JOIN merchants m ON pb.merchant_id = m.id
+          LEFT JOIN payment_rails pr ON pb.rail_id = pr.id
+          WHERE pb.merchant_id = ${merchantId}::uuid
+          ORDER BY pb.created_at DESC LIMIT 50`
+      : await prisma.$queryRaw`
+          SELECT pb.*, m.business_name, pr.name as rail_name
+          FROM payout_batches pb
+          JOIN merchants m ON pb.merchant_id = m.id
+          LEFT JOIN payment_rails pr ON pb.rail_id = pr.id
+          ORDER BY pb.created_at DESC LIMIT 50`;
 
     const isMerchant = req.user.role === 'MERCHANT';
     ok(res, batches.map(b => {
@@ -463,6 +466,9 @@ router.get('/batches/:id', requireAuth, async (req, res, next) => {
     if (!batch[0]) return notFound(res, 'Payout batch');
     const b = batch[0];
     const isMerchant = req.user.role === 'MERCHANT';
+    // Ownership: a merchant may only view their own batch (prevents IDOR).
+    if (isMerchant && b.merchant_id !== req.user.merchant?.id)
+      return fail(res, 'You can only view your own payout batches', 'FORBIDDEN', 403);
     if (isMerchant) { // rails are internal — never expose to merchants
       delete b.rail_id; delete b.rail_name;
       if (b.status === 'needs_routing') b.status = 'processing';
