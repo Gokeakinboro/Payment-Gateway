@@ -14,6 +14,10 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 // ── Dual-auth middleware: accepts JWT Bearer token OR sk_live_/sk_test_ API key ──
 function requireAuthOrApiKey(req, res, next) {
   const auth = req.headers.authorization || '';
+  // Payouts are prepaid (funded wallet = the safeguard), so a merchant still in
+  // KYC may run LIVE payouts. Opt this router into live keys for unverified
+  // merchants; SUSPENDED/REJECTED accounts are still blocked in the handler.
+  req.allowInactiveLivePayout = true;
   if (auth.startsWith('Bearer sk_live_') || auth.startsWith('Bearer sk_test_')) {
     // API key path — sets req.merchant
     requireApiKey(req, res, () => {
@@ -182,7 +186,12 @@ router.post('/batches', requireAuthOrApiKey,
       if (!merchantId) return fail(res, 'No merchant account');
 
       const merchant = await prisma.merchant.findUnique({ where: { id: merchantId } });
-      if (!merchant?.isActive) return fail(res, 'Merchant account is not active');
+      if (!merchant) return fail(res, 'No merchant account');
+      // Payouts are prepaid — a merchant still undergoing KYC MAY run live payouts
+      // as long as their wallet is funded (the balance check below is the safeguard).
+      // Only a SUSPENDED or REJECTED account is hard-blocked from payouts.
+      if (['SUSPENDED', 'KYC_REJECTED'].includes(merchant.kycStatus))
+        return fail(res, 'Account is suspended or rejected — payouts are disabled', 'ACCOUNT_BLOCKED');
 
       const { description, scheduled_at, items } = req.body;
 

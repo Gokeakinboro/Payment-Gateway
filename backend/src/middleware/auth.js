@@ -59,8 +59,12 @@ async function requireApiKey(req, res, next) {
     return unauthorized(res, 'Invalid API key');
 
   // Sandbox/test keys work immediately (so developers can integrate before KYC);
-  // only LIVE keys require the merchant to be KYC-active.
-  if (!apiKey.isSandbox && !apiKey.merchant.isActive)
+  // only LIVE keys require the merchant to be KYC-active — EXCEPT the payout route,
+  // which lets a merchant still in KYC run LIVE payouts as long as their prepaid
+  // wallet is funded (the funded balance is the safeguard). That route opts in via
+  // req.allowInactiveLivePayout; a SUSPENDED/REJECTED account is still blocked in
+  // the payout handler.
+  if (!apiKey.isSandbox && !apiKey.merchant.isActive && !req.allowInactiveLivePayout)
     return unauthorized(res, 'Merchant account is not active. Complete KYC to enable live payments.');
 
   // Update last used (non-blocking)
