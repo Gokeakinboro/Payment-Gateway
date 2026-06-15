@@ -8,6 +8,7 @@ const { requireAuth, requireApiKey, requireSuperAdmin, requireCompliance } = req
 const { ok, fail, notFound, created, koboToNaira, generateRef } = require('../utils/helpers');
 const { routeTransaction } = require('../services/feeEngine');
 const { logAudit } = require('../services/auditService');
+const { notifyRailIncident } = require('../services/railHealth');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -553,6 +554,19 @@ router.put('/admin/payout-rails/:id', requireAuth, requireSuperAdmin, async (req
     const rail = await prisma.paymentRail.update({ where: { id: req.params.id }, data });
     await logAudit(req.user.id, 'PAYOUT_RAIL_UPDATED', 'payment_rails', rail.id, {}, data, null, req.ip);
     ok(res, { id: rail.id, name: rail.name, status: rail.status, payoutEnabled: rail.payoutEnabled }, 'Rail updated');
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/payouts/admin/rail-incident-test — SA verifies rail alerting ─
+// Sends a test rail-incident alert email to OPS so we can confirm the failure-
+// notification path works before any rail is integrated.
+router.post('/admin/rail-incident-test', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const rail = await prisma.paymentRail.findFirst({ where: { id: req.body.rail_id || undefined } })
+      || { id: 'test', name: req.body.rail_name || 'Test Rail' };
+    const sent = await notifyRailIncident(rail, req.body.reason || 'Test alert from SA dashboard',
+      { kind: 'test', force: true });
+    ok(res, { sent }, sent ? 'Test rail alert sent to ops inbox' : 'Alert suppressed (debounced)');
   } catch (e) { next(e); }
 });
 

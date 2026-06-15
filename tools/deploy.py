@@ -47,6 +47,7 @@ MANIFEST = [
     ('backend/src/services/deferralExpiryService.js', '/opt/paylode-api/backend/src/services/deferralExpiryService.js'),
     ('backend/src/services/emailService.js',       '/opt/paylode-api/backend/src/services/emailService.js'),
     ('backend/src/services/feeEngine.js',          '/opt/paylode-api/backend/src/services/feeEngine.js'),
+    ('backend/src/services/railHealth.js',         '/opt/paylode-api/backend/src/services/railHealth.js'),
     ('backend/src/routes/checkout.js',             '/opt/paylode-api/backend/src/routes/checkout.js'),
     ('backend/src/server.js',                      '/opt/paylode-api/backend/src/server.js'),
     ('backend/prisma/schema.prisma',               '/opt/paylode-api/backend/prisma/schema.prisma'),
