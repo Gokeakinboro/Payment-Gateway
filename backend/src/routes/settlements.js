@@ -20,6 +20,10 @@ router.get('/', requireAuth, async (req, res, next) => {
     });
     ok(res, settlements.map(s => ({
       ...s,
+      // BigInt kobo fields can't be JSON-serialized — return as Numbers.
+      grossAmount:   Number(s.grossAmount),
+      feesDeducted:  Number(s.feesDeducted),
+      netSettled:    Number(s.netSettled),
       currency:      s.currency || 'NGN',
       gross_major:   Number(s.grossAmount) / 100,
       fees_major:    Number(s.feesDeducted) / 100,
