@@ -5,7 +5,10 @@
 const router = require('express').Router();
 const { prisma } = require('../utils/db');
 const { ok, fail, notFound } = require('../utils/helpers');
-const { requireAuth, requireCompliance, requireSuperAdmin } = require('../middleware/auth');
+const { requireAuth, requireCompliance, requireSuperAdmin, requireAdminOrCompliance } = require('../middleware/auth');
+const path = require('path');
+const fs   = require('fs');
+const UPLOAD_DIR = process.env.ONBOARDING_UPLOAD_DIR || path.join(__dirname, '../../uploads/onboarding');
 const { logAudit } = require('../services/auditService');
 const { sendEmail, getEmailContent } = require('../services/emailService');
 const { logger } = require('../utils/logger');
@@ -180,6 +183,49 @@ router.post('/item/:docId/run-check', requireAuth, requireCompliance, async (req
              notes='Automated verification pending Interswitch integration — manual review required', updated_at=now()
       WHERE id = ${req.params.docId}::uuid`;
     ok(res, await listDocs(doc.entity_type, doc.entity_id), 'Check queued (3rd-party integration pending — manual review for now).');
+  } catch (e) { next(e); }
+});
+
+// ── Uploaded document VIEWER (SA / Admin / Compliance) ───────────────────────
+// The actual files an applicant uploaded at onboarding live on disk, referenced
+// (relative to UPLOAD_DIR) in their OnboardingSubmission.documents[]. Reviewers
+// must SEE these before they Pass/Fail/Defer the checklist items.
+
+// The submission that provisioned this entity (merchantId is set on approval for
+// both merchants and aggregators).
+async function submissionForEntity(id) {
+  return prisma.onboardingSubmission.findFirst({ where: { merchantId: id }, orderBy: { createdAt: 'desc' } });
+}
+
+// GET /api/v1/documents/uploaded/:entityType/:id — list the uploaded files.
+router.get('/uploaded/:entityType/:id', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
+  try {
+    const { entityType, id } = req.params;
+    if (!entityCol(entityType)) return fail(res, 'entityType must be merchant or aggregator');
+    const sub  = await submissionForEntity(id);
+    const docs = (sub && Array.isArray(sub.documents)) ? sub.documents : [];
+    ok(res, {
+      reference: sub ? sub.reference : null,
+      files: docs.map((d, i) => ({ i, key: d.key, name: d.name || d.key, doc_type: d.docType || null, principal: d.principal || null, has_file: !!d.path })),
+    });
+  } catch (e) { next(e); }
+});
+
+// GET /api/v1/documents/file/:ref/:idx — stream one uploaded file inline.
+router.get('/file/:ref/:idx', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
+  try {
+    const sub = await prisma.onboardingSubmission.findUnique({ where: { reference: req.params.ref } });
+    if (!sub) return notFound(res, 'Submission');
+    const docs = Array.isArray(sub.documents) ? sub.documents : [];
+    const doc  = docs[parseInt(req.params.idx, 10)];
+    if (!doc || !doc.path) return notFound(res, 'Document file');
+    // Path-traversal guard: the resolved file MUST sit inside UPLOAD_DIR.
+    const abs  = path.resolve(UPLOAD_DIR, doc.path);
+    if (abs !== path.resolve(UPLOAD_DIR) && !abs.startsWith(path.resolve(UPLOAD_DIR) + path.sep))
+      return fail(res, 'Invalid document path', 'BAD_PATH', 400);
+    if (!fs.existsSync(abs)) return notFound(res, 'File not found on disk');
+    res.setHeader('Content-Disposition', 'inline; filename="' + String(doc.name || 'document').replace(/[^a-z0-9._-]/gi, '_') + '"');
+    res.sendFile(abs);
   } catch (e) { next(e); }
 });
 

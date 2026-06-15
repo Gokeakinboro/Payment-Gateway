@@ -932,6 +932,7 @@ async function loadAggregators() {
           <button class="btn btn-outline btn-sm" onclick="editSplit('${a.id}','${a.revenueSplitPct}')">Edit Split</button>
           <button class="btn btn-outline btn-sm" onclick="viewAggRates('${a.id}','${a.companyName}')">Rate Config</button>
           <button class="btn btn-outline btn-sm" onclick="viewAggMerchants('${a.id}')">View Merchants</button>
+          <button class="btn btn-outline btn-sm" onclick="openDocsModal('aggregator','${a.id}','${(a.companyName||'').replace(/'/g,'')}')">&#128196; Documents</button>
         </div>
       </div>`).join('')}
     </div>`;
@@ -4973,6 +4974,22 @@ async function openDocsModal(entityType, id, name) {
   var data = (res && res.data) ? res.data : { docs: [], summary: {} };
   window._docCtx = { entityType: entityType, id: id, name: name };
 
+  // Actual files the applicant uploaded at onboarding — reviewers VIEW these before acting.
+  var upRes = await apiFetch('/documents/uploaded/' + entityType + '/' + id);
+  var uploaded = (upRes && upRes.data) ? upRes.data : { reference: null, files: [] };
+  var uploadedHtml = (uploaded.files && uploaded.files.length)
+    ? '<div style="font-weight:600;margin:2px 0 6px">Uploaded documents (' + uploaded.files.length + ')</div>' +
+      '<div class="table-wrap" style="margin-bottom:14px"><table style="width:100%"><thead><tr><th>Document</th><th>Type</th><th></th></tr></thead><tbody>' +
+      uploaded.files.map(function(f){
+        return '<tr><td style="font-weight:500">' + _escA(f.name) + (f.principal ? ' <span class="upload-hint">(' + _escA(f.principal) + ')</span>' : '') + '</td>' +
+          '<td style="font-size:12px;color:var(--gray-500)">' + _escA(f.doc_type || f.key || '') + '</td>' +
+          '<td style="text-align:right;white-space:nowrap">' + (f.has_file
+            ? '<button class="btn btn-outline btn-sm" onclick="viewUploadedFile(\'' + uploaded.reference + '\',' + f.i + ')">View</button> ' +
+              '<button class="btn btn-outline btn-sm" onclick="downloadUploadedFile(\'' + uploaded.reference + '\',' + f.i + ',\'' + _escA((f.name||'document').replace(/\x27/g,'')) + '\')">Download</button>'
+            : '<span style="color:var(--gray-400);font-size:12px">no file</span>') + '</td></tr>';
+      }).join('') + '</tbody></table></div>'
+    : '<div class="page-desc" style="margin-bottom:12px">No uploaded files on record for this account.</div>';
+
   // Actor matrix: doc review (verify/reject/submitted/waive) = SA + Admin + Compliance;
   // document DEFERRAL (activate despite outstanding) = SA only.
   var canEdit  = (['superadmin','admin','compliance'].indexOf(currentRole) !== -1);
@@ -4988,8 +5005,9 @@ async function openDocsModal(entityType, id, name) {
         (isCheck
           ? '<button class="btn btn-outline btn-sm" onclick="runCheck(\'' + doc.id + '\')">Run check</button> '
           : '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'submitted\')">Submitted</button> ') +
-        '<button class="btn btn-outline btn-sm" style="color:var(--green)" onclick="setDocStatus(\'' + doc.id + '\',\'verified\')">Approve</button> ' +
-        '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="setDocStatus(\'' + doc.id + '\',\'rejected\')">Reject</button> ' +
+        '<button class="btn btn-outline btn-sm" style="color:var(--green);border-color:var(--green)" onclick="setDocStatus(\'' + doc.id + '\',\'verified\')">Pass</button> ' +
+        '<button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="setDocStatus(\'' + doc.id + '\',\'rejected\')">Fail</button> ' +
+        (canDefer ? '<button class="btn btn-outline btn-sm" style="color:var(--navy)" onclick="deferOneDoc(\'' + doc.id + '\')">Defer</button> ' : '') +
         '<button class="btn btn-outline btn-sm" onclick="requestReupload(\'' + doc.id + '\')">Re-upload</button> ' +
         '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'waived\')">Waive</button>'
       ) : '<span style="color:var(--gray-400);font-size:12px">—</span>';
@@ -5009,6 +5027,8 @@ async function openDocsModal(entityType, id, name) {
       ? '<div class="page-desc" style="margin-bottom:10px">Each required document is tracked individually. Tick rows and set a period to defer specific documents and activate the account — an overdue deferral auto-suspends the account so nothing slips.</div>'
       : (canEdit ? '<div class="page-desc" style="margin-bottom:10px">Mark each document submitted/verified/waived. Document deferral is Super-Admin only.</div>'
                  : '<div class="page-desc" style="margin-bottom:10px">Read-only view of the merchant\'s KYC documents.</div>')) +
+    uploadedHtml +
+    '<div style="font-weight:600;margin:2px 0 6px">Document checklist</div>' +
     '<div class="table-wrap"><table style="width:100%"><thead><tr>' + (canDefer ? '<th></th>' : '') + '<th>Document</th><th>Status</th><th>Actions</th></tr></thead>' +
       '<tbody>' + (rows || '<tr><td colspan="' + colspan + '" style="text-align:center;color:var(--gray-400);padding:16px">No documents</td></tr>') + '</tbody></table></div>' +
     (canDefer
@@ -5046,6 +5066,50 @@ async function setDocStatus(docId, status) {
   var res = await apiFetch('/documents/item/' + docId, { method:'PATCH', body: JSON.stringify({ status: status }) });
   if (res && res.status) { var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
   else alert('Error: ' + ((res && res.message) || 'Update failed'));
+}
+
+// Fetch an uploaded file (auth header can't ride on a plain <a>/window.open, so
+// pull it as a blob with the token, then view or download it).
+async function _fetchDocBlob(ref, idx) {
+  var token = localStorage.getItem('paylode_token');
+  var res = await fetch(API_BASE + '/documents/file/' + encodeURIComponent(ref) + '/' + idx, {
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.blob();
+}
+async function viewUploadedFile(ref, idx) {
+  try {
+    var blob = await _fetchDocBlob(ref, idx);
+    var url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+  } catch (e) { alert('Could not open document: ' + e.message); }
+}
+async function downloadUploadedFile(ref, idx, name) {
+  try {
+    var blob = await _fetchDocBlob(ref, idx);
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name || 'document';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+  } catch (e) { alert('Could not download document: ' + e.message); }
+}
+
+// Defer a SINGLE document (per-row action, SA only).
+async function deferOneDoc(docId) {
+  var c = window._docCtx;
+  var months = prompt('Defer this document for how many months? (1, 2, 3 or 6)', '3');
+  if (months === null) return;
+  var duration = parseInt(months, 10);
+  if ([1,2,3,6].indexOf(duration) === -1) { alert('Duration must be 1, 2, 3 or 6 months.'); return; }
+  var reason = prompt('Reason for deferral (optional):', '') || '';
+  var res = await apiFetch('/documents/' + c.entityType + '/' + c.id + '/defer', {
+    method:'POST', body: JSON.stringify({ doc_ids: [docId], duration_months: duration, reason: reason })
+  });
+  if (res && res.status) { alert(res.message || 'Document deferred.'); openDocsModal(c.entityType, c.id, c.name); }
+  else alert('Error: ' + ((res && res.message) || 'Deferral failed'));
 }
 
 async function deferSelectedDocs() {

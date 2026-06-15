@@ -48,8 +48,26 @@ const ROLE_ENDPOINTS = {
 };
 
 let failures = 0;
+const failMsgs = [];
 const log  = (...a) => console.log(...a);
-const fail = (m) => { failures++; console.log('  ✗ FAIL ' + m); };
+const fail = (m) => { failures++; failMsgs.push(m); console.log('  ✗ FAIL ' + m); };
+
+// On failure, alert SA by email (used by the daily cron). Silent when green.
+async function alertOnFailure() {
+  const to = process.env.SMOKE_ALERT_EMAIL;
+  if (!failures || !to) return;
+  try {
+    const { sendEmail } = require(require('path').resolve('src/services/emailService'));
+    await sendEmail({
+      to,
+      subject: `⚠ Paylode smoke test FAILED (${failures}) — ${new Date().toISOString()}`,
+      html: '<h3>Paylode runtime smoke test failed</h3><p>' + failures + ' failure(s):</p><ul>' +
+            failMsgs.map(m => '<li>' + String(m).replace(/</g,'&lt;') + '</li>').join('') + '</ul>' +
+            '<p>Host: ' + (process.env.PAYLODE_HOST || 'prod') + '. Investigate immediately.</p>',
+    });
+    log('  (alert email sent to ' + to + ')');
+  } catch (e) { log('  (alert email failed: ' + e.message + ')'); }
+}
 
 async function checkOwnership() {
   log('\n[A] DB table ownership (every public table must be owned by ' + APPUSER + ')');
@@ -95,5 +113,6 @@ async function probe(role) {
     await prisma.$disconnect();
   }
   log('\n' + (failures ? '✗ ' + failures + ' failure(s)' : '✓ all checks passed'));
+  await alertOnFailure();
   process.exit(failures ? 1 : 0);
 })();

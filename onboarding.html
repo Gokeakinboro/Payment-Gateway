@@ -804,10 +804,10 @@ function renderPrincipalCards() {
         <div class="field"><label>Date of Birth <span class="req">*</span></label><input type="date" value="${esc(p.dob)}" oninput="updatePrincipal(${i},'dob',this.value)"></div>
         <div class="field"><label>Nationality <span class="req">*</span></label><select onchange="updatePrincipal(${i},'nationality',this.value)"><option value="">Select</option>${COUNTRIES.map(co=>`<option ${co===p.nationality?'selected':''}>${co}</option>`).join('')}</select></div>
         <div class="field full"><label>Residential Address <span class="req">*</span></label><input type="text" value="${esc(p.address)}" oninput="updatePrincipal(${i},'address',this.value)"></div>
-        <div class="field"><label>Phone</label><input type="tel" value="${esc(p.phone)}" oninput="updatePrincipal(${i},'phone',this.value)"></div>
-        <div class="field"><label>Email</label><input type="email" value="${esc(p.email)}" oninput="updatePrincipal(${i},'email',this.value)"></div>
+        <div class="field"><label>Phone <span class="req">*</span></label><input type="tel" value="${esc(p.phone)}" oninput="updatePrincipal(${i},'phone',this.value)"></div>
+        <div class="field"><label>Email <span class="req">*</span></label><input type="email" value="${esc(p.email)}" oninput="updatePrincipal(${i},'email',this.value)"></div>
         <div class="field"><label>BVN <span class="req">*</span></label><input type="tel" maxlength="11" value="${esc(p.bvn)}" oninput="updatePrincipal(${i},'bvn',this.value)"></div>
-        <div class="field"><label>NIN</label><input type="tel" maxlength="11" value="${esc(p.nin)}" oninput="updatePrincipal(${i},'nin',this.value)"></div>
+        <div class="field"><label>NIN <span class="req">*</span></label><input type="tel" maxlength="11" value="${esc(p.nin)}" oninput="updatePrincipal(${i},'nin',this.value)"></div>
         ${isShareholder ? `<div class="field"><label>Shareholding %</label><input type="number" min="0" max="100" value="${esc(p.pct_shareholding)}" oninput="updatePrincipal(${i},'pct_shareholding',this.value)"></div>
         <div class="field"><label>Beneficial Owner (≥5%)</label><div class="radio-group" style="margin-top:6px"><label class="check-item"><input type="checkbox" ${p.is_ubo?'checked':''} onchange="updatePrincipal(${i},'is_ubo',this.checked)"><span>Yes, a UBO</span></label></div></div>` : ''}
         <div class="field full"><label>Politically Exposed Person?</label><div class="radio-group" style="margin-top:6px"><label class="check-item"><input type="checkbox" ${p.is_pep?'checked':''} onchange="updatePrincipal(${i},'is_pep',this.checked)"><span>This person is a PEP</span></label></div></div>
@@ -1652,7 +1652,9 @@ function validateStep(stepId) {
     for (let i = 0; i < principals.length; i++) {
       const p = principals[i];
       if (!p.first_name || !p.surname || !p.dob || !p.nationality || !p.address) { showAlert(`Complete the name, date of birth, nationality and address for ${p.role} #${i+1}.`); return false; }
+      if (!p.email || !p.phone) { showAlert(`Enter the email and phone number for ${p.role} #${i+1}.`); return false; }
       if (!/^\d{11}$/.test(p.bvn||'')) { showAlert(`Enter a valid 11-digit BVN for ${p.role} #${i+1}.`); return false; }
+      if (!/^\d{11}$/.test(p.nin||'')) { showAlert(`Enter a valid 11-digit NIN for ${p.role} #${i+1}.`); return false; }
       if (!p.id_type || !p.id_number || !p.id_country) { showAlert(`Complete the ID details for ${p.role} #${i+1}.`); return false; }
       if (!p.id_file) { showAlert(`Upload an ID for ${p.role} #${i+1}.`); return false; }
     }
