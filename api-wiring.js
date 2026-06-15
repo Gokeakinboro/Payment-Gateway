@@ -4507,6 +4507,8 @@ async function submitAggOnboard() {
 // ── UPDATE loadPageData TO INCLUDE NEW PAGES ─────────────────────────────────
 var _origLoadPageData = loadPageData;
 loadPageData = function(page) {
+  // Section hubs are rendered by renderSectionHub() in renderPage(); no data load.
+  if (page && page.indexOf('hub::') === 0) return;
   switch(page) {
     case 'agg_onboard':          loadAggOnboard(); break;
     case 'agg_revenue':          loadAggRevenue(); break;
