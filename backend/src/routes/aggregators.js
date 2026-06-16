@@ -243,4 +243,44 @@ aggRouter.get('/my/revenue', requireAuth, requireAggregator, async (req,res,next
   } catch(e){ next(e); }
 });
 
+// ── DELETE an aggregator — SUPER_ADMIN only. GUARDED hard delete. ─────────────
+// Removes an aggregator ONLY if it has no sub-merchants and no payout history.
+// Otherwise it must be retained (off-board the merchants first) → use closure.
+aggRouter.delete('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const agg = await prisma.aggregator.findUnique({ where: { id } });
+    if (!agg) return notFound(res, 'Aggregator not found');
+
+    const [merchants, payouts] = await Promise.all([
+      prisma.merchant.count({ where: { aggregatorId: id } }),
+      prisma.aggPayout.count({ where: { aggregatorId: id } }),
+    ]);
+    const blockers = [];
+    if (merchants) blockers.push(`${merchants} linked merchant(s)`);
+    if (payouts)   blockers.push(`${payouts} payout record(s)`);
+    if (blockers.length) {
+      return res.status(409).json({
+        status: false,
+        error_code: 'AGGREGATOR_HAS_HISTORY',
+        message: `This aggregator has ${blockers.join(' and ')} and cannot be deleted. Re-assign or off-board its merchants first.`,
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.aggregatorRateConfig.deleteMany({ where: { aggregatorId: id } });
+      await tx.aggregator.delete({ where: { id } });
+      await tx.user.delete({ where: { id: agg.userId } });
+    });
+    await logAudit(req.user.id, 'AGGREGATOR_DELETED', 'aggregators', id,
+      { companyName: agg.companyName }, null, req.body?.reason || 'Hard delete (no merchants/payouts)');
+    ok(res, { id }, 'Aggregator deleted');
+  } catch (e) {
+    if (e && e.code === 'P2003')
+      return res.status(409).json({ status: false, error_code: 'AGGREGATOR_HAS_HISTORY',
+        message: 'This aggregator is referenced by other records and cannot be deleted.' });
+    next(e);
+  }
+});
+
 module.exports = aggRouter;

@@ -5,6 +5,7 @@ const { requireAuth, requireSuperAdmin, requireCompliance, requireAdmin, require
 const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
 const { hasPermission } = require('../config/permissions');
+const { sendEmail, getEmailContent } = require('../services/emailService');
 
 // Field-level gate (#8): only viewers with view_merchant_contact (SUPER_ADMIN by
 // default) may see merchant contact details. Strips PII from list/detail payloads.
@@ -264,6 +265,19 @@ router.put('/:id/activate', requireAuth, requireAdminOrCompliance, async (req, r
   try {
     const m = await prisma.merchant.update({ where:{id:req.params.id}, data:{kycStatus:'ACTIVE',isActive:true} });
     await logAudit(req.user.id, 'MERCHANT_REACTIVATED', 'merchants', m.id, {isActive:false}, {isActive:true});
+    // Notify the merchant their account is active (best-effort — never blocks the action).
+    if (m.businessEmail) {
+      const login = (process.env.APP_URL || 'https://paylodeservices.com') + '/login.html';
+      getEmailContent('account_activated',
+        { name: m.businessName, business: m.businessName, login_url: login },
+        'Your Paylode account is active',
+        `<h2>Your account is active</h2><p>Hi ${m.businessName},</p>` +
+          `<p>Good news — your Paylode account has been <strong>activated</strong>. ` +
+          `You can now sign in and use your live keys and dashboard.</p>` +
+          `<p><a href="${login}">Sign in to Paylode</a></p>`)
+        .then(c => sendEmail({ to: m.businessEmail, subject: c.subject, html: c.html }))
+        .catch(() => {});
+    }
     ok(res, { message:'Merchant reactivated' });
   } catch (e) { next(e); }
 });
@@ -275,6 +289,63 @@ router.put('/:id/close', requireAuth, requireAdmin, async (req, res, next) => {
     await logAudit(req.user.id, 'MERCHANT_CLOSED', 'merchants', m.id, {isActive:true}, {isActive:false, closed:true}, req.body.reason || 'Account closed');
     ok(res, { message:'Merchant account closed' });
   } catch (e) { next(e); }
+});
+
+// ── DELETE a merchant — SUPER_ADMIN only. GUARDED hard delete. ────────────────
+// Permanently removes a merchant ONLY if it has no financial history (no
+// transactions / settlements / payouts and no wallet balance) — i.e. test,
+// duplicate or abandoned accounts. Accounts WITH history (or sub-merchant
+// outlets) cannot be deleted for audit/compliance reasons → use Close instead.
+router.delete('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const merchant = await prisma.merchant.findUnique({ where: { id } });
+    if (!merchant) return notFound(res, 'Merchant not found');
+
+    const [txns, setts, batches, outlets, fundedWallets] = await Promise.all([
+      prisma.transaction.count({ where: { merchantId: id } }),
+      prisma.settlement.count({ where: { merchantId: id } }),
+      prisma.payoutBatch.count({ where: { merchantId: id } }),
+      prisma.merchant.count({ where: { parentMerchantId: id } }),
+      prisma.merchantWallet.count({ where: { merchantId: id, balance: { gt: 0n } } }),
+    ]);
+    const blockers = [];
+    if (txns)          blockers.push(`${txns} transaction(s)`);
+    if (setts)         blockers.push(`${setts} settlement(s)`);
+    if (batches)       blockers.push(`${batches} payout batch(es)`);
+    if (outlets)       blockers.push(`${outlets} sub-merchant outlet(s)`);
+    if (fundedWallets) blockers.push('a funded wallet balance');
+    if (blockers.length) {
+      return res.status(409).json({
+        status: false,
+        error_code: 'MERCHANT_HAS_HISTORY',
+        message: `This account has ${blockers.join(', ')} and cannot be deleted for audit/compliance. Use "Close" to off-board it instead.`,
+      });
+    }
+
+    // No history — safe to hard delete. Remove dependents then the account + its
+    // login user, all in ONE transaction so a partial delete can never happen.
+    await prisma.$transaction(async (tx) => {
+      await tx.apiKey.deleteMany({ where: { merchantId: id } });
+      await tx.merchantWallet.deleteMany({ where: { merchantId: id } });
+      await tx.kycSubmission.deleteMany({ where: { merchantId: id } });
+      await tx.amlFlag.deleteMany({ where: { merchantId: id } });
+      await tx.merchantRateConfig.deleteMany({ where: { merchantId: id } });
+      await tx.aggregatorRateConfig.deleteMany({ where: { merchantId: id } });
+      await tx.$executeRaw`DELETE FROM kyc_documents WHERE merchant_id = ${id}::uuid`;
+      await tx.merchant.delete({ where: { id } });
+      await tx.user.delete({ where: { id: merchant.userId } });
+    });
+    await logAudit(req.user.id, 'MERCHANT_DELETED', 'merchants', id,
+      { businessName: merchant.businessName, businessEmail: merchant.businessEmail }, null,
+      req.body?.reason || 'Hard delete (no financial history)');
+    ok(res, { id }, 'Merchant deleted');
+  } catch (e) {
+    if (e && e.code === 'P2003')
+      return res.status(409).json({ status: false, error_code: 'MERCHANT_HAS_HISTORY',
+        message: 'This account is referenced by other records and cannot be deleted. Use "Close" instead.' });
+    next(e);
+  }
 });
 
 // ── API keys ──────────────────────────────────────────────────────────────────

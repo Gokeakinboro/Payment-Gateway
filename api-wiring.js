@@ -456,6 +456,7 @@ async function viewMerchant(id) {
           ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';suspendMerchant(\'' + id + '\',\'' + nameEsc + '\')">Suspend</button>'
           : '<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="document.getElementById(\'modal\').style.display=\'none\';activateMerchant(\'' + id + '\',\'' + nameEsc + '\')">Activate</button>') : '') +
         (canManage ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';closeMerchant(\'' + id + '\',\'' + nameEsc + '\')">Close Account</button>' : '') +
+        (isSA ? '<button class="btn btn-outline" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';deleteMerchant(\'' + id + '\',\'' + nameEsc + '\')">&#128465; Delete</button>' : '') +
         (canManage ? '<button class="btn btn-lime" onclick="document.getElementById(\'modal\').style.display=\'none\';editMerchant(\'' + id + '\')">&#9998; Edit</button>' : '') +
       '</div>' +
     '</div>';
@@ -690,6 +691,27 @@ async function closeMerchant(id, name) {
   var res = await apiFetch('/merchants/' + id + '/close', { method: 'PUT', body: JSON.stringify({ reason: reason }) });
   if (res && res.status) { alert(name + ' has been closed.'); loadMerchants(); }
   else alert('Error: ' + ((res && res.message) || 'Close failed'));
+}
+
+// Permanently delete a merchant (SA only). Backend refuses if the account has any
+// financial history → those must be Closed instead (the alert relays that reason).
+async function deleteMerchant(id, name) {
+  if (!confirm('PERMANENTLY DELETE ' + name + '?\n\nThis cannot be undone. Only empty/test accounts (no transactions, settlements or payouts) can be deleted — accounts with history must be Closed instead.')) return;
+  if (!confirm('Final check: type-confirm by clicking OK to permanently delete ' + name + '.')) return;
+  var reason = prompt('Reason for deletion (shown in audit log):') || '';
+  var res = await apiFetch('/merchants/' + id, { method: 'DELETE', body: JSON.stringify({ reason: reason }) });
+  if (res && res.status) { alert(name + ' has been permanently deleted.'); loadMerchants(); }
+  else alert((res && res.message) || 'Delete failed'); // relays "use Close instead" for accounts with history
+}
+
+// Permanently delete an aggregator (SA only). Backend refuses if it still has
+// linked merchants or payout history.
+async function deleteAggregator(id, name) {
+  if (!confirm('PERMANENTLY DELETE aggregator ' + name + '?\n\nThis cannot be undone. Only aggregators with no linked merchants and no payout history can be deleted.')) return;
+  var reason = prompt('Reason for deletion (shown in audit log):') || '';
+  var res = await apiFetch('/aggregators/' + id, { method: 'DELETE', body: JSON.stringify({ reason: reason }) });
+  if (res && res.status) { alert(name + ' has been permanently deleted.'); loadAggregators(); }
+  else alert((res && res.message) || 'Delete failed');
 }
 
 // Merchant detail action hub — alias used by the KYC Review register.
@@ -933,6 +955,7 @@ async function loadAggregators() {
           <button class="btn btn-outline btn-sm" onclick="viewAggRates('${a.id}','${a.companyName}')">Rate Config</button>
           <button class="btn btn-outline btn-sm" onclick="viewAggMerchants('${a.id}')">View Merchants</button>
           <button class="btn btn-outline btn-sm" onclick="openDocsModal('aggregator','${a.id}','${(a.companyName||'').replace(/'/g,'')}')">&#128196; Documents</button>
+          <button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="deleteAggregator('${a.id}','${(a.companyName||'').replace(/'/g,'')}')">&#128465; Delete</button>
         </div>
       </div>`).join('')}
     </div>`;
