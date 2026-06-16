@@ -5083,25 +5083,36 @@ async function openDocsModal(entityType, id, name) {
 
   var rows = data.docs.map(function(doc) {
     var isCheck = (doc.doc_key || '').indexOf('check_') === 0;
-    var bad = doc.status === 'overdue' || doc.status === 'failed' || doc.status === 'rejected';
+    var bad = doc.result === 'fail';
     var deferInfo = (doc.status === 'deferred' && doc.deferred_until)
-      ? '<div class="upload-hint">until ' + new Date(doc.deferred_until).toLocaleDateString('en-NG') + '</div>' : '';
+      ? '<div class="upload-hint">deferred until ' + new Date(doc.deferred_until).toLocaleDateString('en-NG') + '</div>' : '';
     var noteInfo = doc.notes ? '<div class="upload-hint">' + _escA(doc.notes) + '</div>' : '';
-    var actions = canEdit ? (
-        (isCheck
-          ? '<button class="btn btn-outline btn-sm" onclick="runCheck(\'' + doc.id + '\')">Run check</button> '
-          : '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'submitted\')">Submitted</button> ') +
-        '<button class="btn btn-outline btn-sm" style="color:var(--green);border-color:var(--green)" onclick="setDocStatus(\'' + doc.id + '\',\'verified\')">Pass</button> ' +
-        '<button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="setDocStatus(\'' + doc.id + '\',\'rejected\')">Fail</button> ' +
-        (canDefer ? '<button class="btn btn-outline btn-sm" style="color:var(--navy)" onclick="deferOneDoc(\'' + doc.id + '\')">Defer</button> ' : '') +
+    var subjInfo = doc.subject_name ? '<div class="upload-hint">' + _escA(doc.subject_name) + '</div>' : '';
+    var idInfo = doc.id_type ? '<div class="upload-hint">' + _escA(doc.id_type) + ' ' + _escA(doc.id_number || '') + (doc.id_country ? ' · ' + _escA(doc.id_country) : '') + (doc.id_expiry ? ' · exp ' + _escA(doc.id_expiry) : '') + '</div>' : '';
+    var comments = Array.isArray(doc.comments) ? doc.comments : [];
+    var commentsHtml = comments.length ? '<div style="margin-top:5px">' + comments.map(function(c){
+        return '<div class="upload-hint" style="display:flex;gap:6px;align-items:flex-start">&#128172; ' + _escA(c.body) +
+          ' <span style="color:var(--gray-400)">&mdash; ' + _escA(String(c.author||'').split('@')[0]) + '</span>' +
+          (currentRole === 'superadmin' ? ' <button class="btn btn-outline btn-sm" style="padding:0 6px;line-height:1.4" title="Remove (SA)" onclick="removeDocComment(\'' + c.id + '\')">&times;</button>' : '') +
+          '</div>';
+      }).join('') + '</div>' : '';
+    var result = canEdit ? (
+        '<button class="btn btn-outline btn-sm" style="color:var(--green);border-color:var(--green)" onclick="setDocResult(\'' + doc.id + '\',\'pass\')">Pass</button> ' +
+        '<button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="setDocResult(\'' + doc.id + '\',\'fail\')">Fail</button> ' +
+        '<button class="btn btn-outline btn-sm" onclick="setDocResult(\'' + doc.id + '\',\'unknown\')">Unknown</button> ' +
+        '<button class="btn btn-outline btn-sm" onclick="addDocComment(\'' + doc.id + '\')">&#128172; Comment</button>'
+      ) : '<span style="color:var(--gray-400);font-size:12px">view only</span>';
+    var lifecycle = canEdit ? (
+        (isCheck ? '<button class="btn btn-outline btn-sm" onclick="runCheck(\'' + doc.id + '\')">Run check</button> ' : '') +
+        (canDefer ? '<button class="btn btn-outline btn-sm" onclick="deferOneDoc(\'' + doc.id + '\')">Defer</button> ' : '') +
         '<button class="btn btn-outline btn-sm" onclick="requestReupload(\'' + doc.id + '\')">Re-upload</button> ' +
         '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'waived\')">Waive</button>'
-      ) : '<span style="color:var(--gray-400);font-size:12px">—</span>';
+      ) : '';
     return '<tr' + (bad ? ' style="background:#fef2f2"' : '') + '>' +
       (canDefer ? '<td><input type="checkbox" class="doc-cb" value="' + doc.id + '"></td>' : '') +
-      '<td style="font-weight:500">' + _escA(doc.doc_label) + (isCheck ? ' <span class="tag">CHECK</span>' : '') + deferInfo + noteInfo + '</td>' +
-      '<td>' + docStatusBadge(doc.status) + '</td>' +
-      '<td style="white-space:nowrap">' + actions + '</td>' +
+      '<td style="font-weight:500">' + _escA(doc.doc_label) + (isCheck ? ' <span class="tag">CHECK</span>' : '') + subjInfo + idInfo + deferInfo + noteInfo + commentsHtml + '</td>' +
+      '<td>' + docResultBadge(doc.result) + '</td>' +
+      '<td style="white-space:nowrap">' + result + (lifecycle ? '<div style="margin-top:4px">' + lifecycle + '</div>' : '') + '</td>' +
     '</tr>';
   }).join('');
 
@@ -5115,7 +5126,7 @@ async function openDocsModal(entityType, id, name) {
                  : '<div class="page-desc" style="margin-bottom:10px">Read-only view of the merchant\'s KYC documents.</div>')) +
     uploadedHtml +
     '<div style="font-weight:600;margin:2px 0 6px">Document checklist</div>' +
-    '<div class="table-wrap"><table style="width:100%"><thead><tr>' + (canDefer ? '<th></th>' : '') + '<th>Document</th><th>Status</th><th>Actions</th></tr></thead>' +
+    '<div class="table-wrap"><table style="width:100%"><thead><tr>' + (canDefer ? '<th></th>' : '') + '<th>Requirement</th><th>Result</th><th>Actions</th></tr></thead>' +
       '<tbody>' + (rows || '<tr><td colspan="' + colspan + '" style="text-align:center;color:var(--gray-400);padding:16px">No documents</td></tr>') + '</tbody></table></div>' +
     (canDefer
       ? '<div class="divider"></div>' +
@@ -5132,6 +5143,32 @@ function docStatusBadge(s) {
   var map = { outstanding:'badge-amber', submitted:'badge-blue', verified:'badge-green', deferred:'badge-purple',
               overdue:'badge-red', waived:'badge-gray', failed:'badge-red', rejected:'badge-red', reupload_requested:'badge-amber' };
   return '<span class="badge ' + (map[s] || 'badge-gray') + '">' + ((s || '—').replace(/_/g,' ')) + '</span>';
+}
+
+// Per-requirement KYC verdict: PASS / FAIL / UNKNOWN.
+function docResultBadge(r) {
+  var m = { pass:'badge-green', fail:'badge-red', unknown:'badge-gray' };
+  return '<span class="badge ' + (m[r] || 'badge-gray') + '">' + String(r || 'unknown').toUpperCase() + '</span>';
+}
+async function setDocResult(docId, result) {
+  var res = await apiFetch('/documents/item/' + docId + '/result', { method:'PATCH', body: JSON.stringify({ result: result }) });
+  if (res && res.status) { var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
+  else alert('Error: ' + ((res && res.message) || 'Failed to set result'));
+}
+async function addDocComment(docId) {
+  var body = prompt('Comment (max 200 characters):', '');
+  if (body === null) return;
+  body = body.trim(); if (!body) return;
+  if (body.length > 200) { alert('Max 200 characters.'); return; }
+  var res = await apiFetch('/documents/item/' + docId + '/comment', { method:'POST', body: JSON.stringify({ body: body }) });
+  if (res && res.status) { var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
+  else alert('Error: ' + ((res && res.message) || 'Failed to add comment'));
+}
+async function removeDocComment(commentId) {
+  if (!confirm('Remove this comment?')) return;
+  var res = await apiFetch('/documents/comment/' + commentId, { method:'DELETE' });
+  if (res && res.status) { var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
+  else alert('Error: ' + ((res && res.message) || 'Failed to remove comment'));
 }
 
 async function runCheck(docId) {

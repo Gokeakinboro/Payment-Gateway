@@ -61,11 +61,18 @@ async function seedIfEmpty(entityType, entityId) {
 
 async function listDocs(entityType, entityId) {
   return prisma.$queryRaw`
-    SELECT id::text, doc_key, doc_label, status, file_path,
-           deferred_until, deferred_by::text, notes, updated_at
-    FROM kyc_documents
-    WHERE entity_type = ${entityType} AND entity_id = ${entityId}::uuid
-    ORDER BY doc_label ASC`;
+    SELECT d.id::text, d.doc_key, d.doc_label, d.status, d.file_path, d.result,
+           d.id_type, d.id_number, d.id_country, d.id_expiry, d.subject_name,
+           d.deferred_until, d.deferred_by::text, d.notes, d.updated_at,
+           COALESCE((
+             SELECT json_agg(json_build_object('id', c.id::text, 'body', c.body,
+                                                'author', c.author_email, 'at', c.created_at)
+                              ORDER BY c.created_at)
+             FROM kyc_document_comments c WHERE c.document_id = d.id
+           ), '[]') AS comments
+    FROM kyc_documents d
+    WHERE d.entity_type = ${entityType} AND d.entity_id = ${entityId}::uuid
+    ORDER BY d.doc_label ASC`;
 }
 
 // ── GET /api/v1/documents/:entityType/:id ─────────────────────────────────────
@@ -183,6 +190,49 @@ router.post('/item/:docId/run-check', requireAuth, requireCompliance, async (req
              notes='Automated verification pending Interswitch integration — manual review required', updated_at=now()
       WHERE id = ${req.params.docId}::uuid`;
     ok(res, await listDocs(doc.entity_type, doc.entity_id), 'Check queued (3rd-party integration pending — manual review for now).');
+  } catch (e) { next(e); }
+});
+
+// ── Per-requirement RESULT (pass/fail/unknown) — SA + Admin + Compliance ─────
+const VALID_RESULTS = ['pass', 'fail', 'unknown'];
+router.patch('/item/:docId/result', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
+  try {
+    const result = String(req.body.result || '').toLowerCase();
+    if (!VALID_RESULTS.includes(result)) return fail(res, 'result must be pass, fail or unknown');
+    const [doc] = await prisma.$queryRaw`SELECT entity_type, entity_id::text FROM kyc_documents WHERE id = ${req.params.docId}::uuid`;
+    if (!doc) return notFound(res, 'Document');
+    await prisma.$executeRaw`UPDATE kyc_documents SET result = ${result}, updated_at = now() WHERE id = ${req.params.docId}::uuid`;
+    await logAudit(req.user.id, 'KYC_REQUIREMENT_RESULT', 'kyc_documents', req.params.docId, {}, { result });
+    ok(res, await listDocs(doc.entity_type, doc.entity_id), 'Result set to ' + result);
+  } catch (e) { next(e); }
+});
+
+// ── Comments on a requirement (≤200 chars) — add: reviewers; remove: SA only ──
+router.post('/item/:docId/comment', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
+  try {
+    const body = String(req.body.body || '').trim();
+    if (!body) return fail(res, 'Comment cannot be empty');
+    if (body.length > 200) return fail(res, 'Comment must be 200 characters or fewer');
+    const [doc] = await prisma.$queryRaw`SELECT entity_type, entity_id::text FROM kyc_documents WHERE id = ${req.params.docId}::uuid`;
+    if (!doc) return notFound(res, 'Document');
+    await prisma.$executeRaw`
+      INSERT INTO kyc_document_comments (document_id, body, author_id, author_email)
+      VALUES (${req.params.docId}::uuid, ${body}, ${req.user.id}::uuid, ${req.user.email})`;
+    await logAudit(req.user.id, 'KYC_REQUIREMENT_COMMENT_ADDED', 'kyc_documents', req.params.docId, {}, { body });
+    ok(res, await listDocs(doc.entity_type, doc.entity_id), 'Comment added');
+  } catch (e) { next(e); }
+});
+
+router.delete('/comment/:commentId', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const [c] = await prisma.$queryRaw`
+      SELECT c.id, d.entity_type, d.entity_id::text
+      FROM kyc_document_comments c JOIN kyc_documents d ON d.id = c.document_id
+      WHERE c.id = ${req.params.commentId}::uuid`;
+    if (!c) return notFound(res, 'Comment');
+    await prisma.$executeRaw`DELETE FROM kyc_document_comments WHERE id = ${req.params.commentId}::uuid`;
+    await logAudit(req.user.id, 'KYC_REQUIREMENT_COMMENT_REMOVED', 'kyc_document_comments', req.params.commentId, {}, {});
+    ok(res, await listDocs(c.entity_type, c.entity_id), 'Comment removed');
   } catch (e) { next(e); }
 });
 
