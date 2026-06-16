@@ -270,6 +270,11 @@ canvas#sigCanvas{width:100%;height:150px;cursor:crosshair;display:block;border-r
 const API = window.location.origin + '/api/v1';
 
 // ── State ─────────────────────────────────────────────────────────────────────
+// PREVIEW MODE (internal review only): requires the secret key below, so the public
+// can never trigger it. Disables validation, lets you click/jump through every step,
+// blocks submission. Nothing is saved. URL: /onboarding?preview=<KEY>
+const PREVIEW_KEY = 'gk-review-9X4kQ2';
+const PREVIEW = new URLSearchParams(location.search).get('preview') === PREVIEW_KEY;
 let formType = 'merchant'; // merchant | aggregator | dd
 let applicantType = null;  // natural | entity  (merchant only)
 let merchantFlow = null;   // resolved step array once applicantType is chosen
@@ -460,7 +465,7 @@ function selectType(type) {
 function buildStepper(steps) {
   const el = document.getElementById('stepper');
   el.innerHTML = steps.map((s,i) => `
-    <div class="step" id="step-dot-${i}">
+    <div class="step" id="step-dot-${i}" ${PREVIEW ? `style="cursor:pointer" title="Jump to step" onclick="jumpToStep(${i})"` : ''}>
       <div class="step-circle">${i+1}</div>
       <span class="step-label">${s.label}</span>
     </div>
@@ -1682,10 +1687,21 @@ function nextStep() {
   const steps = getSteps();
   const stepId = steps[currentStep].id;
   collectStep(stepId);
-  if (!validateStep(stepId)) return;
+  if (!PREVIEW && !validateStep(stepId)) return;          // preview: skip validation
   saveDraft(true); // auto-save on Next
-  if (currentStep === steps.length - 1) { submitForm(); return; }
+  if (currentStep === steps.length - 1) {
+    if (PREVIEW) { alert('Preview mode — submission is disabled. This is review only.'); return; }
+    submitForm(); return;
+  }
   currentStep++;
+  renderStep();
+  window.scrollTo(0,0);
+}
+
+// Preview-only: jump straight to any step via the stepper.
+function jumpToStep(i) {
+  collectStep(getSteps()[currentStep].id);
+  currentStep = i;
   renderStep();
   window.scrollTo(0,0);
 }
@@ -1784,6 +1800,12 @@ function hideAlert() {
   }
   if ((t === 'merchant' || t === 'aggregator' || t === 'dd') && !hasDraft()) {
     setTimeout(function() { selectType(t); }, 0);
+  }
+  if (PREVIEW) {
+    var b = document.createElement('div');
+    b.style.cssText = 'position:sticky;top:0;z-index:9999;background:#1a2744;color:#fff;padding:9px 16px;text-align:center;font-size:13px;font-weight:600;letter-spacing:.2px';
+    b.innerHTML = '🔍 PREVIEW MODE — internal review only · validation OFF · submission DISABLED · nothing saved · click any step number to jump';
+    document.body.insertBefore(b, document.body.firstChild);
   }
 })();
 </script>
