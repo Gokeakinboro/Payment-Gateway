@@ -1,8 +1,12 @@
 'use strict';
 const router = require('express').Router();
 const { prisma } = require('../utils/db');
-const { requireAuth, requireSuperAdmin } = require('../middleware/auth');
+const { requireAuth, requireSuperAdmin, requireRole } = require('../middleware/auth');
 const { ok, koboToNaira } = require('../utils/helpers');
+
+// Activity-log actor classification.
+const STAFF_ROLES    = ['SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER', 'AUDIT'];
+const CUSTOMER_ROLES = ['MERCHANT', 'AGGREGATOR'];
 
 router.get('/dashboard', requireAuth, requireSuperAdmin, async (req,res,next) => {
   try {
@@ -51,15 +55,46 @@ router.get('/dashboard', requireAuth, requireSuperAdmin, async (req,res,next) =>
   } catch(e){next(e);}
 });
 
-router.get('/audit-log', requireAuth, requireSuperAdmin, async (req,res,next) => {
+// Activity log — SA + AUDIT (read-only auditors). Staff vs customer split by actor role,
+// plus action / entity / actor / date-range / free-text filters.
+router.get('/audit-log', requireAuth, requireRole('SUPER_ADMIN', 'AUDIT'), async (req,res,next) => {
   try {
-    const { page=1, perPage=50, action } = req.query;
-    const where = action ? { action } : {};
+    const { page=1, perPage=50, action, actorType, actorId, entityType, from, to, q } = req.query;
+    const where = {};
+    if (action)     where.action     = action;
+    if (entityType) where.entityType = entityType;
+    if (actorId)    where.actorId    = actorId;
+    if (actorType === 'staff')    where.actor = { role: { in: STAFF_ROLES } };
+    if (actorType === 'customer') where.actor = { role: { in: CUSTOMER_ROLES } };
+    if (from || to) {
+      where.createdAt = {};
+      if (from) where.createdAt.gte = new Date(from);
+      if (to)   { const t = new Date(to); t.setHours(23,59,59,999); where.createdAt.lte = t; }
+    }
+    if (q) where.OR = [
+      { action:     { contains: q, mode: 'insensitive' } },
+      { entityType: { contains: q, mode: 'insensitive' } },
+      { notes:      { contains: q, mode: 'insensitive' } },
+      { actor: { email: { contains: q, mode: 'insensitive' } } },
+    ];
+
     const [logs, total] = await Promise.all([
-      prisma.auditLog.findMany({ where, skip:(parseInt(page)-1)*parseInt(perPage), take:parseInt(perPage), orderBy:{createdAt:'desc'}, include:{actor:{select:{email:true,firstName:true,role:true}}} }),
+      prisma.auditLog.findMany({ where, skip:(parseInt(page)-1)*parseInt(perPage), take:parseInt(perPage), orderBy:{createdAt:'desc'}, include:{actor:{select:{email:true,firstName:true,lastName:true,role:true}}} }),
       prisma.auditLog.count({ where }),
     ]);
-    ok(res, { data:logs, meta:{total, page:parseInt(page), pages:Math.ceil(total/parseInt(perPage))} });
+    // id is BigInt — must be stringified for JSON.
+    const data = logs.map(l => ({
+      id: String(l.id), action: l.action, entity_type: l.entityType, entity_id: l.entityId,
+      before: l.beforeState, after: l.afterState, notes: l.notes, ip: l.ipAddress,
+      created_at: l.createdAt,
+      actor: l.actor ? {
+        email: l.actor.email,
+        name: [l.actor.firstName, l.actor.lastName].filter(Boolean).join(' ') || l.actor.email,
+        role: l.actor.role,
+        is_staff: STAFF_ROLES.includes(l.actor.role),
+      } : null,
+    }));
+    ok(res, { data, meta:{total, page:parseInt(page), pages:Math.ceil(total/parseInt(perPage))} });
   } catch(e){next(e);}
 });
 

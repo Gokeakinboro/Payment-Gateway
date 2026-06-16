@@ -95,6 +95,7 @@ var NAV = {
       {id:'rails',               icon:'⊞', label:'Rail Costs'       },
       {id:'settle_verification', icon:'⊙', label:'Bank Verification'},
       {id:'email_tpl',           icon:'✉', label:'Email Templates'  },
+      {id:'activity_log',        icon:'☰', label:'Activity Log'     },
       {id:'settings',            icon:'⚙', label:'Settings'         },
     ]},
     { section:'Developer', items:DEV_SDK_ITEMS },
@@ -172,6 +173,7 @@ var FUNCTIONALITIES = [
   { id:'webhooks',         label:'Webhooks',                               edit:true },
   { id:'staff',            label:'Staff Accounts',                         edit:true,  editLabel:'Create / manage' },
   { id:'settings',         label:'Platform Settings',                      edit:true },
+  { id:'audit_log',        label:'Activity / Audit Log',                   edit:false },
 ];
 function viewPerm(id){ return 'view_' + id; }
 function editPerm(id){ return 'edit_' + id; }
@@ -189,7 +191,7 @@ var PERM_ROLE_DEFAULTS = {
     .concat(_grant(['staff'],false)),
   COMPLIANCE_OFFICER: _grant(['merchants','aggregators','transactions'],false)
     .concat(_grant(['compliance','doc_referrals','reports'],true)),
-  AUDIT: _grant(['transactions','merchants','aggregators','settlements','payouts','chargebacks','compliance','revenue'],false)
+  AUDIT: _grant(['transactions','merchants','aggregators','settlements','payouts','chargebacks','compliance','revenue','audit_log'],false)
     .concat(_grant(['reports'],true)),
   MERCHANT: _grant(['dashboard','transactions','settlements','reports'],false).concat(_grant(['webhooks'],true)),
   AGGREGATOR: _grant(['dashboard','transactions','settlements','merchants','reports'],false).concat(_grant(['onboarding'],true)),
@@ -203,6 +205,7 @@ var NAV_PERM = {
   payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', vat_report:'view_reports', reports_hub:'view_reports', cbn_report:'view_reports', compliance:'view_compliance', compliance_centre:'view_compliance', compliance_exceptions:'view_compliance',
   onboarding_apps:'view_onboarding', fee_config:'view_fees', rails:'view_rails',
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
+  activity_log:'view_audit_log',
 };
 // Does the logged-in user hold this permission? (SUPER_ADMIN bypasses everything.)
 // Self-healing: a user whose stored permissions predate the view_/edit_ vocab
@@ -323,6 +326,7 @@ function renderPage() {
     revenue:renderRevenueConfig, rails:renderRailCosts,
     settlement:renderSettlement, compliance:renderKycReview, compliance_centre:renderCompliance, settings:renderSettings,
     compliance_exceptions:renderComplianceExceptions, deferrals:renderDocDeferralsShell,
+    activity_log:renderActivityLogShell,
     email_tpl:renderEmailTemplates,
     users:renderUserManagement,
     agg_overview:renderAggOverview, agg_merchants:renderAggMerchants,
@@ -541,6 +545,12 @@ function renderSettlement() {
 // ── Compliance Centre (tabbed) ────────────────────────────────────────────
 function compTab() { return window.__compTab || 'overview'; }
 function setCompTab(t) { window.__compTab = t; renderPage(); }
+
+// Activity Log shell — body rendered by loadActivityLog() in api-wiring.js.
+function renderActivityLogShell() {
+  return '<div class="page-header"><div class="page-title">Activity Log</div></div>' +
+    '<div class="card"><div style="padding:24px;text-align:center;color:var(--gray-400)">Loading&hellip;</div></div>';
+}
 
 // KYC Documents & Deferrals shell — body rendered by loadDeferrals() in api-wiring.js.
 function renderDocDeferralsShell() {

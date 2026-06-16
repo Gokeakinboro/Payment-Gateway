@@ -7,6 +7,7 @@ const { body, validationResult } = require('express-validator');
 const { prisma }  = require('../utils/db');
 const { ok, fail, created } = require('../utils/helpers');
 const { requireAuth } = require('../middleware/auth');
+const { logAudit } = require('../services/auditService');
 
 const validate = rules => async (req, res, next) => {
   await Promise.all(rules.map(r => r.run(req)));
@@ -87,6 +88,8 @@ router.post('/login',
         return fail(res, 'Account has been suspended. Contact support@paylodeservices.com', 'ACCOUNT_SUSPENDED', 401);
 
       await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+      // Activity log: record the sign-in (staff vs customer derived from role).
+      logAudit(user.id, 'LOGIN', 'users', user.id, null, { role: user.role }, null, req.ip).catch(() => {});
 
       // 2FA check
       if (user.totpEnabled && user.totpSecret) {

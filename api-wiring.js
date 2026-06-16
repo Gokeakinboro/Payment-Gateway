@@ -1084,6 +1084,91 @@ async function removeAggRateOverride(aggId, merchantId) {
   else alert('Error: ' + ((res && res.message) || 'Remove failed'));
 }
 
+// ── ACTIVITY LOG (SA + Audit) — staff vs customer, filterable ──────────────────
+function _actRoleBadge(role) {
+  var m = { SUPER_ADMIN:'badge-purple', ADMIN:'badge-blue', COMPLIANCE_OFFICER:'badge-amber',
+            AUDIT:'badge-gray', MERCHANT:'badge-green', AGGREGATOR:'badge-lime' };
+  var lbl = { SUPER_ADMIN:'Super Admin', ADMIN:'Admin', COMPLIANCE_OFFICER:'Compliance',
+              AUDIT:'Audit', MERCHANT:'Merchant', AGGREGATOR:'Aggregator' };
+  return '<span class="badge ' + (m[role]||'badge-gray') + '">' + (lbl[role]||role||'—') + '</span>';
+}
+
+async function loadActivityLog(tab) {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  tab = tab || window._actLogTab || 'staff';
+  window._actLogTab = tab;
+  // Read filters BEFORE wiping the DOM.
+  var q    = (document.getElementById('actlog-q')    || {}).value || '';
+  var from = (document.getElementById('actlog-from') || {}).value || '';
+  var to   = (document.getElementById('actlog-to')   || {}).value || '';
+  el.innerHTML = loading();
+  try {
+    var qs = 'actorType=' + tab + '&perPage=200';
+    if (q)    qs += '&q='    + encodeURIComponent(q);
+    if (from) qs += '&from=' + encodeURIComponent(from);
+    if (to)   qs += '&to='   + encodeURIComponent(to);
+    var res = await apiFetch('/admin/audit-log?' + qs);
+    if (!res || !res.status) { el.innerHTML = errorBox((res && res.message) || 'Failed to load activity log'); return; }
+    var rows = res.data || [];
+    window._actLogRows = rows;
+
+    var tabBtn = function(id, label) {
+      return '<button class="tab-btn ' + (tab === id ? 'active' : '') + '" onclick="loadActivityLog(\'' + id + '\')">' + label + '</button>';
+    };
+    var body = rows.length ? rows.map(function(r, i) {
+      var entity = _escA(r.entity_type || '') + (r.entity_id ? ' <span class="mono" style="font-size:11px;color:var(--gray-400)">' + _escA(String(r.entity_id).slice(0,8)) + '</span>' : '');
+      var hasDetail = r.before || r.after || r.notes;
+      return '<tr>' +
+        '<td style="font-size:12px;white-space:nowrap">' + new Date(r.created_at).toLocaleString('en-NG') + '</td>' +
+        '<td><div style="font-weight:500">' + _escA(r.actor ? r.actor.name : '—') + '</div>' +
+          '<div style="font-size:11px;color:var(--gray-400)">' + _escA(r.actor ? r.actor.email : '') + '</div></td>' +
+        '<td>' + (r.actor ? _actRoleBadge(r.actor.role) : '—') + '</td>' +
+        '<td><span class="tag">' + _escA(r.action) + '</span></td>' +
+        '<td style="font-size:12px">' + entity + '</td>' +
+        '<td class="mono" style="font-size:11px">' + _escA(r.ip || '—') + '</td>' +
+        '<td>' + (hasDetail ? '<button class="btn btn-outline btn-sm" onclick="viewActivityDetail(' + i + ')">View</button>' : '<span style="color:var(--gray-400);font-size:12px">—</span>') + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:20px">No activity found for these filters</td></tr>';
+
+    el.innerHTML =
+      '<div class="page-header"><div class="page-title">Activity Log</div>' +
+        '<div class="page-desc">Who did what, when &mdash; staff and customer activity (' + (res.meta ? res.meta.total : rows.length) + ' total)</div></div>' +
+      '<div class="tab-nav">' + tabBtn('staff','Staff Activity') + tabBtn('customer','Customer Activity') + '</div>' +
+      '<div class="card" style="margin-bottom:12px"><div class="flex" style="gap:8px;align-items:flex-end;flex-wrap:wrap">' +
+        '<div class="form-group" style="margin:0"><label class="form-label">Search</label><input class="form-input" id="actlog-q" style="width:200px" value="' + _escA(q) + '" placeholder="action, entity, email" onkeydown="if(event.key===\'Enter\')loadActivityLog(\'' + tab + '\')"></div>' +
+        '<div class="form-group" style="margin:0"><label class="form-label">From</label><input type="date" class="form-input" id="actlog-from" value="' + _escA(from) + '"></div>' +
+        '<div class="form-group" style="margin:0"><label class="form-label">To</label><input type="date" class="form-input" id="actlog-to" value="' + _escA(to) + '"></div>' +
+        '<button class="btn btn-lime btn-sm" onclick="loadActivityLog(\'' + tab + '\')">Apply</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="document.getElementById(\'actlog-q\').value=\'\';document.getElementById(\'actlog-from\').value=\'\';document.getElementById(\'actlog-to\').value=\'\';loadActivityLog(\'' + tab + '\')">Clear</button>' +
+      '</div></div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Time</th><th>Actor</th><th>Role</th><th>Action</th><th>Entity</th><th>IP</th><th></th></tr></thead>' +
+        '<tbody>' + body + '</tbody>' +
+      '</table></div></div>';
+  } catch (e) {
+    el.innerHTML = errorBox('Failed to load activity log: ' + (e && e.message ? e.message : e));
+  }
+}
+
+function viewActivityDetail(i) {
+  var r = (window._actLogRows || [])[i];
+  if (!r) return;
+  var fmt = function(o) { try { return o ? '<pre style="white-space:pre-wrap;font-size:11px;background:var(--gray-50);padding:10px;border-radius:8px;overflow:auto">' + _escA(JSON.stringify(o, null, 2)) + '</pre>' : '<span style="color:var(--gray-400)">—</span>'; } catch(e){ return '—'; } };
+  showModal(
+    '<div class="modal-header"><div class="modal-title">' + _escA(r.action) + '</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="rev-row"><span class="rev-label">When</span><span class="rev-value">' + new Date(r.created_at).toLocaleString('en-NG') + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Actor</span><span class="rev-value">' + _escA(r.actor ? (r.actor.name + ' (' + r.actor.email + ')') : '—') + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Entity</span><span class="rev-value">' + _escA((r.entity_type||'') + ' ' + (r.entity_id||'')) + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">IP</span><span class="rev-value mono">' + _escA(r.ip || '—') + '</span></div>' +
+    (r.notes ? '<div class="rev-row"><span class="rev-label">Notes</span><span class="rev-value">' + _escA(r.notes) + '</span></div>' : '') +
+    '<div class="divider"></div>' +
+    '<div style="font-weight:600;font-size:12px;margin-bottom:4px">Before</div>' + fmt(r.before) +
+    '<div style="font-weight:600;font-size:12px;margin:10px 0 4px">After</div>' + fmt(r.after)
+  );
+}
+
 // ── KYC REVIEW (domestic) — merchant register + KYC queue + AML flags ──────────
 // Actor matrix: Compliance Officer PASSES merchants for activation (approve/reject/verify docs),
 // alongside SA + Admin. Only DOCUMENT DEFERRAL (activate despite outstanding docs) is SA-only.
@@ -4618,6 +4703,7 @@ loadPageData = function(page) {
     case 'compliance_exceptions':
       if ((window.__cmplExcTab || 'exceptions') === 'matrix') loadComplianceMatrix(); else loadComplianceExceptions(); break;
     case 'deferrals':            loadDeferrals(); break;
+    case 'activity_log':         loadActivityLog(); break;
     // Static pages — _origRenderPage already rendered them, do not overwrite
     case 'settings':
     case 'sdk_start':
