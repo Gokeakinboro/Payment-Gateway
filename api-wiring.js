@@ -3729,8 +3729,8 @@ async function showPayoutUpload() {
     </div>
     <div id="upload-tab" style="display:none">
       <div class="info-box" style="margin-bottom:12px;font-size:12px">
-        <strong>Required columns:</strong> account_number, bank_code, amount &nbsp;|&nbsp; <strong>Optional:</strong> narration, account_name.
-        The file is checked for errors before anything is submitted.
+        <strong>Required columns:</strong> Bank Name, Account Number, Amount &nbsp;|&nbsp; <strong>Optional:</strong> Narration.
+        You don't need bank codes — pick the bank by name and we attach the right code &amp; verify each account before anything is submitted.
         <button class="btn btn-outline btn-sm" style="margin-left:8px" onclick="downloadPayoutTemplate()">&#8681; Download Template</button>
       </div>
       <div class="warn-box" style="margin-bottom:12px;font-size:12px">
@@ -3775,18 +3775,67 @@ async function submitManualPayout() {
   else alert('Error: ' + (res?.message||'Failed'));
 }
 
-// Downloadable payout template (Excel) + a Bank Codes reference sheet.
+// Download the official payout template (.xlsx) — Bank Name / Account Number /
+// Amount / Narration, with a dropdown-validated Bank Name and a 'Bank List' tab.
+// Served as a static file so the dropdown + instructions are preserved; falls
+// back to client-side generation if the static file isn't reachable.
 function downloadPayoutTemplate() {
-  if (typeof XLSX === 'undefined') { alert('Excel library still loading — try again in a moment.'); return; }
-  var tmpl = [
-    ['account_number', 'bank_code', 'amount', 'narration', 'account_name'],
-    ['0123456789', '058', 5000, 'Salary - May', 'John Doe'],
-  ];
-  var wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(tmpl), 'Payouts');
-  var banks = [['bank_code', 'bank_name']].concat((window._payoutBanks || []).map(function (b) { return [b.bank_code, b.bank_name]; }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(banks), 'Bank Codes');
-  XLSX.writeFile(wb, 'Paylode Payout Template.xlsx');
+  var url = '/paylode_payout_template.xlsx';
+  fetch(url).then(function (r) {
+    if (!r.ok) throw new Error('not found');
+    return r.blob();
+  }).then(function (blob) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Paylode Payout Template.xlsx';
+    document.body.appendChild(a); a.click(); a.remove();
+  }).catch(function () {
+    // Fallback: build a basic template client-side (no dropdown).
+    if (typeof XLSX === 'undefined') { alert('Could not load the template — please try again.'); return; }
+    var tmpl = [
+      ['Bank Name', 'Account Number', 'Amount (NGN)', 'Narration (Optional)'],
+      ['OPay', '7030000266', 200, 'Salary June'],
+      ['GTBank', '0123456789', 15000, 'Vendor payment'],
+    ];
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(tmpl), 'Payouts');
+    var banks = [['Bank Name', 'NIBSS Code (reference only)']].concat((window._payoutBanks || []).map(function (b) { return [b.bank_name, b.bank_code]; }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(banks), 'Bank List');
+    XLSX.writeFile(wb, 'Paylode Payout Template.xlsx');
+  });
+}
+
+// Client-side bank-name → code resolver (mirrors backend src/data/nibssBanks.js).
+// Uses the cached /payouts/banks list (window._payoutBanks) + common aliases.
+var _BANK_ALIASES = {
+  'GTB': 'GTBANK', 'GT BANK': 'GTBANK', 'GUARANTY TRUST': 'GTBANK', 'GUARANTY TRUST BANK': 'GTBANK',
+  'UBA': 'UNITED BANK FOR AFRICA', 'FIRST BANK': 'FIRST BANK OF NIGERIA', 'FIRSTBANK': 'FIRST BANK OF NIGERIA',
+  'FBN': 'FIRST BANK OF NIGERIA', 'ZENITH': 'ZENITH BANK', 'ACCESS': 'ACCESS BANK',
+  'WEMA': 'WEMA BANK', 'ALAT': 'WEMA BANK', 'ALAT BY WEMA': 'WEMA BANK', 'UNION': 'UNION BANK OF NIGERIA',
+  'UNION BANK': 'UNION BANK OF NIGERIA', 'STANBIC': 'STANBIC IBTC BANK', 'STANBIC IBTC': 'STANBIC IBTC BANK',
+  'POLARIS': 'POLARIS BANK', 'ECOBANK': 'ECOBANK NIGERIA', 'STERLING': 'STERLING BANK',
+  'FIDELITY': 'FIDELITY BANK', 'PAYCOM': 'OPAY', 'KUDA': 'KUDA MFB', 'KUDA BANK': 'KUDA MFB',
+  'KEYSTONE': 'KEYSTONE BANK', 'PROVIDUS': 'PROVIDUS BANK', 'GLOBUS': 'GLOBUS BANK', 'FCMB': 'FCMB MFB',
+};
+function _normBank(s) { return String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+function _bankIndex() {
+  if (window._payoutBankIdx) return window._payoutBankIdx;
+  var byName = {}, byCode = {};
+  (window._payoutBanks || []).forEach(function (b) { byName[_normBank(b.bank_name)] = b; byCode[String(b.bank_code)] = b; });
+  window._payoutBankIdx = { byName: byName, byCode: byCode };
+  return window._payoutBankIdx;
+}
+// returns { bank_code, bank_name } or null
+function resolveBankName(input) {
+  if (input == null || String(input).trim() === '') return null;
+  var raw = String(input).trim(), idx = _bankIndex();
+  if (idx.byCode[raw]) return { bank_code: idx.byCode[raw].bank_code, bank_name: idx.byCode[raw].bank_name };
+  var n = _normBank(raw);
+  if (idx.byName[n]) return { bank_code: idx.byName[n].bank_code, bank_name: idx.byName[n].bank_name };
+  if (_BANK_ALIASES[n] && idx.byName[_BANK_ALIASES[n]]) {
+    var b = idx.byName[_BANK_ALIASES[n]]; return { bank_code: b.bank_code, bank_name: b.bank_name };
+  }
+  return null;
 }
 
 // Parse + validate an uploaded Excel/CSV BEFORE anything is submitted.
@@ -3799,7 +3848,13 @@ function validatePayoutFile(input) {
   reader.onload = function (e) {
     try {
       var wb = XLSX.read(e.target.result, { type: 'array' });
-      var ws = wb.Sheets[wb.SheetNames[0]];
+      // Use the 'Payouts' sheet if present (our template has Instructions/Bank List
+      // tabs too); otherwise fall back to the first non-reference sheet.
+      var skip = { 'instructions': 1, 'bank list': 1, 'bank codes': 1, 'banks': 1 };
+      var sheetName = wb.SheetNames.filter(function (n) { return n.toLowerCase() === 'payouts'; })[0]
+        || wb.SheetNames.filter(function (n) { return !skip[n.toLowerCase()]; })[0]
+        || wb.SheetNames[0];
+      var ws = wb.Sheets[sheetName];
       var rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
       runPayoutValidation(rows);
     } catch (err) { out.innerHTML = '<div class="warn-box" style="font-size:12px">Could not read the file: ' + err.message + '</div>'; }
@@ -3814,9 +3869,9 @@ function runPayoutValidation(rawRows) {
   // map header synonyms -> canonical
   var syn = {
     account_number: ['accountnumber', 'account', 'accountno', 'acct', 'acctno', 'nuban'],
-    bank_code: ['bankcode', 'bank', 'code'],
-    amount: ['amount', 'amountnaira', 'amount_naira', 'amt', 'value'],
-    narration: ['narration', 'description', 'remark', 'reference', 'note'],
+    bank: ['bankname', 'bank', 'bankcode', 'code'],
+    amount: ['amount', 'amountngn', 'amountnaira', 'amount_naira', 'amt', 'value'],
+    narration: ['narration', 'narrationoptional', 'description', 'remark', 'reference', 'note'],
     account_name: ['accountname', 'name', 'beneficiary', 'beneficiaryname'],
   };
   function pick(row, canon) {
@@ -3829,7 +3884,7 @@ function runPayoutValidation(rawRows) {
   rawRows.forEach(function (row, idx) {
     var line = idx + 2; // +1 header, +1 to 1-index
     var acctRaw = pick(row, 'account_number');
-    var bankRaw = String(pick(row, 'bank_code') || '').trim();
+    var bankRaw = String(pick(row, 'bank') || '').trim();
     var amtRaw = pick(row, 'amount');
     var narr = String(pick(row, 'narration') || '').trim();
     var name = String(pick(row, 'account_name') || '').trim();
@@ -3838,16 +3893,15 @@ function runPayoutValidation(rawRows) {
     if (!acct && !bankRaw && (amtRaw === '' || amtRaw == null)) return;
 
     var rowErrs = [];
-    if (acct.length !== 10) rowErrs.push('account_number must be exactly 10 digits');
-    var bankCode = bankRaw;
-    if (!bankRaw) rowErrs.push('bank_code is missing');
-    else if (!bankCodes[bankRaw]) {
-      // maybe they put the bank NAME — try to resolve
-      var match = Object.keys(bankCodes).filter(function (c) { return bankCodes[c].toLowerCase() === bankRaw.toLowerCase(); })[0];
-      if (match) bankCode = match; else rowErrs.push('bank_code "' + bankRaw + '" is not a recognised bank code');
-    }
+    if (acct.length !== 10) rowErrs.push('Account Number must be exactly 10 digits');
+    // Resolve the merchant-supplied Bank NAME (or code) to a canonical code.
+    var resolved = bankRaw ? resolveBankName(bankRaw) : null;
+    var bankCode = '', bankName = '';
+    if (!bankRaw) rowErrs.push('Bank Name is missing');
+    else if (!resolved) rowErrs.push('bank "' + bankRaw + '" was not recognised — pick a name from the Bank List tab');
+    else { bankCode = resolved.bank_code; bankName = resolved.bank_name; }
     var amt = parseFloat(amtRaw);
-    if (isNaN(amt) || amt <= 0) rowErrs.push('amount must be a number greater than 0');
+    if (isNaN(amt) || amt <= 0) rowErrs.push('Amount must be a number greater than 0');
     else if (amt > 10000000) rowErrs.push('amount ₦' + amt.toLocaleString() + ' looks unusually large — please confirm');
 
     var key = acct + '|' + bankCode + '|' + amt;
@@ -3855,7 +3909,7 @@ function runPayoutValidation(rawRows) {
     if (!seen[key]) seen[key] = line;
 
     if (rowErrs.length) errors.push({ line: line, msgs: rowErrs });
-    else { items.push({ account_number: acct, bank_code: bankCode, amount: Math.round(amt * 100), narration: narr, account_name: name }); total += amt; }
+    else { items.push({ account_number: acct, bank_code: bankCode, bank_name: bankName, amount: Math.round(amt * 100), narration: narr, account_name: name }); total += amt; }
   });
 
   window._payoutValidItems = items;
@@ -3868,8 +3922,16 @@ function runPayoutValidation(rawRows) {
     if (items.length) html += '<div class="info-box" style="margin-top:10px;font-size:12px">' + items.length + ' valid row(s) found, but the batch is blocked until all errors are fixed.</div>';
   } else {
     html += '<div class="info-box" style="margin:12px 0;font-size:13px;background:#f0fdf4;border-color:#bbf7d0;color:#166534">' +
-      '&#10003; ' + items.length + ' beneficiaries validated — total ₦' + total.toLocaleString('en-NG') + '. No errors found.</div>' +
-      '<div class="form-grid" style="grid-template-columns:1fr;gap:8px;margin-bottom:8px"><input class="form-input" id="upload-desc" placeholder="Batch description (optional)"></div>' +
+      '&#10003; ' + items.length + ' beneficiaries validated — total ₦' + total.toLocaleString('en-NG') + '. ' +
+      'Confirm the matched banks below — the account name is verified by the bank before any money is sent.</div>';
+    html += '<div class="table-wrap" style="max-height:280px;overflow:auto"><table style="width:100%;font-size:12px"><thead><tr>' +
+      '<th>#</th><th>Account Number</th><th>Bank (matched)</th><th style="text-align:right">Amount (₦)</th><th>Narration</th></tr></thead><tbody>' +
+      items.slice(0, 200).map(function (it, i) {
+        return '<tr><td>' + (i + 1) + '</td><td>' + it.account_number + '</td><td>' + (it.bank_name || it.bank_code) +
+          '</td><td style="text-align:right">' + (it.amount / 100).toLocaleString('en-NG') + '</td><td>' + (it.narration || '') + '</td></tr>';
+      }).join('') + '</tbody></table></div>' +
+      (items.length > 200 ? '<div style="font-size:11px;color:var(--gray-400);margin-top:4px">Showing first 200 of ' + items.length + ' rows.</div>' : '');
+    html += '<div class="form-grid" style="grid-template-columns:1fr;gap:8px;margin:10px 0 8px"><input class="form-input" id="upload-desc" placeholder="Batch description (optional)"></div>' +
       '<button class="btn btn-primary" onclick="submitValidatedPayout()">Confirm &amp; Submit ' + items.length + ' Payouts</button>';
   }
   out.innerHTML = html;

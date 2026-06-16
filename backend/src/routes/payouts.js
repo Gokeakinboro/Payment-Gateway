@@ -8,6 +8,7 @@ const { requireAuth, requireApiKey, requireSuperAdmin, requireCompliance } = req
 const { ok, fail, notFound, created, koboToNaira, generateRef } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
 const { notifyRailIncident } = require('../services/railHealth');
+const { BANKS, resolveBank } = require('../data/nibssBanks');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -156,16 +157,12 @@ router.get('/wallet/ledger', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// ── GET /api/v1/payouts/banks — list all Nigerian banks ──────────────────────
+// ── GET /api/v1/payouts/banks — list all Nigerian banks (NIBSS registry) ─────
+// Canonical 6-digit NIBSS codes (816 banks incl. fintechs). This is the SAME
+// code set the payout rail expects, so merchants/SDKs resolve names → codes here.
 router.get('/banks', requireAuth, async (req, res, next) => {
   try {
-    const banks = await prisma.$queryRaw`
-      SELECT bank_code, bank_name, bank_type
-      FROM nigerian_banks
-      WHERE is_active = true
-      ORDER BY bank_name ASC
-    `;
-    ok(res, banks);
+    ok(res, BANKS.map(b => ({ bank_code: b.code, bank_name: b.name })));
   } catch (e) { next(e); }
 });
 
@@ -177,13 +174,32 @@ router.post('/batches', requireAuthOrApiKey,
     body('scheduled_at').optional().isISO8601(),
     body('items').isArray({ min: 1 }).withMessage('At least one beneficiary required'),
     body('items.*.account_number').isLength({ min: 10, max: 10 }).matches(/^\d+$/).withMessage('Each account_number must be 10 digits'),
-    body('items.*.bank_code').notEmpty().withMessage('bank_code required for each item'),
+    // bank_code OR bank_name accepted (resolved below). At least one is required.
+    body('items.*').custom(it => it && (it.bank_code || it.bank_name)).withMessage('Each item needs a bank_code or bank_name'),
     body('items.*.amount').isInt({ min: 1 }).withMessage('amount in kobo required for each item'),
   ]),
   async (req, res, next) => {
     try {
       const merchantId = req.user.merchant?.id;
       if (!merchantId) return fail(res, 'No merchant account');
+
+      // ── Resolve bank_name → bank_code where a code wasn't supplied ───────────
+      // Lets SDK merchants send a human bank name; the file-upload path resolves
+      // client-side, but this makes the API forgiving too. Reject unknown banks.
+      const bankErrors = [];
+      for (let i = 0; i < (req.body.items || []).length; i++) {
+        const it = req.body.items[i];
+        if (!it.bank_code && it.bank_name) {
+          const hit = resolveBank(it.bank_name);
+          if (hit) { it.bank_code = hit.code; it.bank_name = hit.name; }
+          else bankErrors.push(`Item ${i + 1}: bank "${it.bank_name}" not recognised`);
+        } else if (it.bank_code) {
+          const hit = resolveBank(it.bank_code);   // normalises / validates the code too
+          if (hit) it.bank_code = hit.code;
+        }
+      }
+      if (bankErrors.length)
+        return res.status(400).json({ status: false, message: bankErrors[0], errors: bankErrors, error_code: 'BANK_UNRESOLVED' });
 
       const merchant = await prisma.merchant.findUnique({ where: { id: merchantId } });
       if (!merchant) return fail(res, 'No merchant account');

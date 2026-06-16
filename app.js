@@ -1280,18 +1280,30 @@ function renderSdkPayouts() {
     '<div class="card" style="margin-bottom:12px"><div class="card-header">' +
     '<div><div class="card-title"><span class="badge badge-green" style="margin-right:8px">POST</span>/v1/payouts/batches</div><div class="card-subtitle">Create a payout batch — single or bulk beneficiaries</div></div>' +
     '<span class="badge badge-amber">Requires Secret Key</span></div>' +
-    '<div class="code-block"><span class="comment">// Request body</span>\n{\n  <span class="str">"description"</span>: <span class="str">"May salary payments"</span>,\n  <span class="str">"scheduled_at"</span>: <span class="str">"2026-06-15T09:00:00Z"</span>,  <span class="comment">// optional, omit for instant</span>\n  <span class="str">"items"</span>: [\n    {\n      <span class="str">"account_number"</span>: <span class="str">"0123456789"</span>,\n      <span class="str">"bank_code"</span>: <span class="str">"058"</span>,           <span class="comment">// GTBank</span>\n      <span class="str">"amount"</span>: <span class="num">500000</span>,             <span class="comment">// ₦5,000 in kobo</span>\n      <span class="str">"narration"</span>: <span class="str">"May salary"</span>,\n      <span class="str">"account_name"</span>: <span class="str">"John Doe"</span>    <span class="comment">// optional</span>\n    }\n  ]\n}</div>' +
+    '<div class="code-block"><span class="comment">// Request body</span>\n{\n  <span class="str">"description"</span>: <span class="str">"May salary payments"</span>,\n  <span class="str">"scheduled_at"</span>: <span class="str">"2026-06-15T09:00:00Z"</span>,  <span class="comment">// optional, omit for instant</span>\n  <span class="str">"items"</span>: [\n    {\n      <span class="str">"account_number"</span>: <span class="str">"0123456789"</span>,\n      <span class="str">"bank_code"</span>: <span class="str">"000013"</span>,        <span class="comment">// GTBank (NIBSS code) — OR send "bank_name"</span>\n      <span class="str">"amount"</span>: <span class="num">500000</span>,             <span class="comment">// ₦5,000 in kobo</span>\n      <span class="str">"narration"</span>: <span class="str">"May salary"</span>,\n      <span class="str">"account_name"</span>: <span class="str">"John Doe"</span>    <span class="comment">// optional</span>\n    }\n  ]\n}</div>' +
+    '<div class="info-box" style="margin-top:8px;font-size:12px"><strong>Bank identifier:</strong> send <span class="mono">bank_code</span> (6-digit NIBSS, from <span class="mono">GET /v1/payouts/banks</span>) <em>or</em> a human <span class="mono">bank_name</span> (e.g. <span class="mono">"GTBank"</span>, <span class="mono">"OPay"</span>) and we resolve it. Amounts are always in <strong>kobo</strong> over the API. Unknown banks are rejected with <span class="mono">BANK_UNRESOLVED</span>.</div>' +
     '<div class="code-block" style="margin-top:8px"><span class="comment">// Response (201)</span>\n{\n  <span class="str">"status"</span>: <span class="kw">true</span>,\n  <span class="str">"data"</span>: {\n    <span class="str">"batch_id"</span>: <span class="str">"uuid"</span>,\n    <span class="str">"batch_ref"</span>: <span class="str">"PAY-LX4F-A1B2"</span>,\n    <span class="str">"total_amount"</span>: <span class="num">5000</span>,           <span class="comment">// naira</span>\n    <span class="str">"total_items"</span>: <span class="num">1</span>,\n    <span class="str">"status"</span>: <span class="str">"processing"</span>,        <span class="comment">// or "scheduled"</span>\n    <span class="str">"wallet_balance_after"</span>: <span class="num">45000</span>  <span class="comment">// naira remaining</span>\n  }\n}</div>' +
     '<div class="info-box" style="margin-top:12px;font-size:12px">Funds are <strong>reserved immediately</strong> when the batch is created. If the payout fails, funds are returned to your wallet.</div></div>' +
 
     '<div class="card" style="margin-bottom:12px"><div class="card-header"><div class="card-title"><span class="badge badge-blue" style="margin-right:8px">GET</span>/v1/payouts/batches/:id</div></div>' +
     '<div class="code-block"><span class="comment">// Response</span>\n{\n  <span class="str">"data"</span>: {\n    <span class="str">"batch"</span>: { <span class="str">"batch_ref"</span>: <span class="str">"PAY-LX4F-A1B2"</span>, <span class="str">"status"</span>: <span class="str">"completed"</span>, ... },\n    <span class="str">"items"</span>: [\n      { <span class="str">"account_number"</span>: <span class="str">"0123456789"</span>, <span class="str">"status"</span>: <span class="str">"success"</span>, ... }\n    ]\n  }\n}</div></div>' +
 
-    '<div class="card"><div class="card-header"><div class="card-title">Common Bank Codes</div></div>' +
+    '<div class="card" style="margin-bottom:12px"><div class="card-header"><div><div class="card-title">Bulk payouts via file (no coding)</div><div class="card-subtitle">For non-developer merchants — upload Excel/CSV on the Payouts page</div></div></div>' +
+    '<p style="font-size:13px;color:var(--gray-500);margin:4px 0 10px">The uploaded file needs just three columns (a fourth is optional). You do <strong>not</strong> supply bank codes — Paylode matches the bank by name and verifies each account before any money moves.</p>' +
+    '<div class="table-wrap"><table><thead><tr><th>Column</th><th>Required</th><th>Format</th><th>Example</th></tr></thead><tbody>' +
+    '<tr><td class="mono">Bank Name</td><td>Yes</td><td>Pick from the template dropdown / Bank List</td><td>OPay</td></tr>' +
+    '<tr><td class="mono">Account Number</td><td>Yes</td><td>10-digit NUBAN (keep leading zeros)</td><td>7030000266</td></tr>' +
+    '<tr><td class="mono">Amount</td><td>Yes</td><td>Naira (no commas, no ₦)</td><td>200</td></tr>' +
+    '<tr><td class="mono">Narration</td><td>No</td><td>Free text reference</td><td>Salary June</td></tr>' +
+    '</tbody></table></div>' +
+    '<div class="info-box" style="margin-top:10px;font-size:12px">In the file, <strong>Amount is in Naira</strong> (e.g. <span class="mono">200</span>). Over the API it is in <strong>kobo</strong> (e.g. <span class="mono">20000</span>). Accepted file types: <span class="mono">.xlsx</span> and <span class="mono">.csv</span>, up to 1,000 beneficiaries / 5 MB. ' +
+    '<button class="btn btn-outline btn-sm" style="margin-left:6px" onclick="downloadPayoutTemplate && downloadPayoutTemplate()">&#8681; Download Template</button></div></div>' +
+
+    '<div class="card"><div class="card-header"><div class="card-title">Common Bank Codes (NIBSS)</div></div>' +
     '<div class="table-wrap"><table>' +
     '<thead><tr><th>Bank</th><th>Code</th><th>Bank</th><th>Code</th></tr></thead>' +
     '<tbody>' +
-    [['Zenith Bank','057'],['Guaranty Trust Bank (GTB)','058'],['Access Bank','044'],['UBA','033'],['First Bank','011'],['FCMB','214'],['Sterling Bank','232'],['Stanbic IBTC','221'],['Union Bank','032'],['Ecobank','050'],['Keystone Bank','082'],['Wema Bank','035']].reduce(function(acc,item,i) {
+    [['Zenith Bank','000015'],['GTBank','000013'],['Access Bank','000014'],['UBA','000004'],['First Bank Of Nigeria','000016'],['Fidelity Bank','000007'],['Sterling Bank','000001'],['Stanbic IBTC','000012'],['Union Bank','000018'],['Ecobank Nigeria','000010'],['Keystone Bank','000002'],['Wema Bank','000017'],['OPay','100004'],['Moniepoint','090405'],['Kuda MFB','090267'],['PalmPay','100033']].reduce(function(acc,item,i) {
       if (i%2===0) acc.push([item]);
       else acc[acc.length-1].push(item);
       return acc;
@@ -1300,7 +1312,7 @@ function renderSdkPayouts() {
         (pair[1] ? '<td>' + pair[1][0] + '</td><td class="mono">' + pair[1][1] + '</td>' : '<td></td><td></td>') + '</tr>';
     }).join('') +
     '</tbody></table></div>' +
-    '<div class="info-box" style="margin-top:12px;font-size:12px">Get the full live bank list via <span class="mono">GET /v1/payouts/banks</span> — returns current CBN-registered bank codes.</div></div>';
+    '<div class="info-box" style="margin-top:12px;font-size:12px">These are 6-digit <strong>NIBSS</strong> codes. Get the full live list (816 banks) via <span class="mono">GET /v1/payouts/banks</span>, or just send the <span class="mono">bank_name</span> and let Paylode resolve it.</div></div>';
 }
 
 function renderSdkWebhookDocs() {
