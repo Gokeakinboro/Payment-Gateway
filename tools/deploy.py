@@ -57,6 +57,8 @@ MANIFEST = [
     ('backend/src/config/complianceRules.js',      '/opt/paylode-api/backend/src/config/complianceRules.js'),
     ('backend/src/data/sanctionsList.js',          '/opt/paylode-api/backend/src/data/sanctionsList.js'),
     ('backend/src/services/complianceService.js',  '/opt/paylode-api/backend/src/services/complianceService.js'),
+    ('backend/src/services/palmpayService.js',     '/opt/paylode-api/backend/src/services/palmpayService.js'),
+    ('backend/src/routes/palmpay-webhook.js',      '/opt/paylode-api/backend/src/routes/palmpay-webhook.js'),
     ('backend/src/server.js',                      '/opt/paylode-api/backend/src/server.js'),
     ('backend/prisma/schema.prisma',               '/opt/paylode-api/backend/prisma/schema.prisma'),
 ]
