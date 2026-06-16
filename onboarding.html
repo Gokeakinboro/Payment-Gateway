@@ -741,21 +741,41 @@ function onEntityTypeChange(v) {
 // ── Registered entity: documents (conditional on entity type) ─────────────────
 function renderEntityDocs() {
   const type = (formData.entity_details && formData.entity_details.entity_type) || '';
-  const docs = ENTITY_DOCS[type] || [];
+  const all = ENTITY_DOCS[type] || [];
   const typeLabel = (ENTITY_TYPES.find(t=>t.v===type)||{}).label || 'your business';
   if (!type) {
     return `<div class="card"><div class="empty-note">Please choose your entity type on the previous page first.</div></div>`;
   }
+  // TIN is captured as a number on the Business Details step — no upload needed.
+  // Status Report / CO2 / CO7 are handled specially below.
+  const coKeys = ['status_report','form_co2','form_co7'];
+  const regular = all.filter(d => d.k !== 'tin_cert' && coKeys.indexOf(d.k) === -1);
+  const hasCo = all.some(d => d.k === 'status_report'); // LLC/ULC: status report OR CO2+CO7
   return `<div class="card">
     <div class="card-title">Registration documents</div>
     <div class="card-sub">Required documents for <strong>${typeLabel}</strong>. Clear photos or PDFs are accepted (max 5MB each).</div>
     <div class="doc-list">
-      ${docs.map(d => uploadWidget('doc_'+d.k, d.label, d.k, !!d.req, d.hint||'')).join('')}
+      ${regular.map(d => uploadWidget('doc_'+d.k, d.label, d.k, !!d.req, d.hint||'')).join('')}
       ${uploadWidget('entity_proof_address','Proof of business address','proof_of_address',true,'Utility bill or bank statement dated within the last 3 months')}
+      ${hasCo ? `
+      ${uploadWidget('doc_status_report','CAC Status Report','status_report',false,'Preferred. If unavailable, tick the box below and upload Form CO2 + CO7 instead.')}
+      <label class="check-item" style="margin:8px 0">
+        <input type="checkbox" name="status_report_na" onchange="toggleCoDocs(this.checked)">
+        <span>Status Report is not available — I will provide Form CO2 &amp; CO7 instead</span>
+      </label>
+      <div id="co-docs" style="display:none">
+        ${uploadWidget('doc_form_co2','Form CO2 (Particulars of Shareholders)','form_co2',false,'')}
+        ${uploadWidget('doc_form_co7','Form CO7 (Particulars of Directors)','form_co7',false,'')}
+      </div>` : ''}
     </div>
     <div class="section-divider"></div>
     <div class="field"><label>Notes (optional)</label><textarea name="doc_notes" placeholder="Anything we should know about your documents"></textarea></div>
   </div>`;
+}
+
+function toggleCoDocs(checked) {
+  var e = document.getElementById('co-docs');
+  if (e) e.style.display = checked ? 'block' : 'none';
 }
 
 // ── Registered entity: directors / shareholders / trustees ────────────────────
@@ -1630,6 +1650,7 @@ function validateStep(stepId) {
     const type = (formData.entity_details && formData.entity_details.entity_type) || '';
     const docs = ENTITY_DOCS[type] || [];
     for (const d of docs) {
+      if (d.k === 'tin_cert') continue; // TIN is a number on Business Details, not an upload
       if (d.req && !uploads['doc_'+d.k]) { showAlert('Please upload: ' + d.label); return false; }
     }
     // LLC/ULC: Status Report OR (CO2 + CO7)
