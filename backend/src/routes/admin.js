@@ -1,7 +1,7 @@
 'use strict';
 const router = require('express').Router();
 const { prisma } = require('../utils/db');
-const { requireAuth, requireSuperAdmin, requireRole } = require('../middleware/auth');
+const { requireAuth, requireSuperAdmin, requireRole, requirePermission } = require('../middleware/auth');
 const { ok, koboToNaira } = require('../utils/helpers');
 
 // Activity-log actor classification.
@@ -55,9 +55,10 @@ router.get('/dashboard', requireAuth, requireSuperAdmin, async (req,res,next) =>
   } catch(e){next(e);}
 });
 
-// Activity log — SA + AUDIT (read-only auditors). Staff vs customer split by actor role,
+// Activity log — permission-gated (view_audit_log) so SA can grant it to any role
+// (AUDIT has it by default; SA bypasses). Staff vs customer split by actor role,
 // plus action / entity / actor / date-range / free-text filters.
-router.get('/audit-log', requireAuth, requireRole('SUPER_ADMIN', 'AUDIT'), async (req,res,next) => {
+router.get('/audit-log', requireAuth, requirePermission('view_audit_log'), async (req,res,next) => {
   try {
     const { page=1, perPage=50, action, actorType, actorId, entityType, from, to, q } = req.query;
     const where = {};

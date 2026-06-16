@@ -29,6 +29,7 @@ const FUNCTIONALITIES = [
   { id: 'webhooks',         label: 'Webhooks',                           edit: true },
   { id: 'staff',            label: 'Staff Accounts',                     edit: true,  editLabel: 'Create / manage' },
   { id: 'settings',         label: 'Platform Settings',                  edit: true },
+  { id: 'audit_log',        label: 'Activity / Audit Log',               edit: false },
 ];
 
 function viewPerm(id) { return 'view_' + id; }
@@ -82,7 +83,7 @@ const ROLE_DEFAULTS = {
   AUDIT: [].concat(
     grant([
       'transactions', 'merchants', 'aggregators', 'settlements',
-      'payouts', 'chargebacks', 'compliance', 'revenue',
+      'payouts', 'chargebacks', 'compliance', 'revenue', 'audit_log',
     ], false), // view-only across the board
     grant(['reports'], true), // download reports
   ),

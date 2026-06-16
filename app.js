@@ -104,7 +104,7 @@ var NAV = {
     { section:'Dashboard',  items:[{id:'overview',icon:'◉',label:'Dashboard'}]},
     { section:'Management',  items:[{id:'transactions',icon:'↕',label:'All Transactions'},{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'}]},
     { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'wallets',icon:'◈',label:'Merchant Wallets'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'deferrals',icon:'⧗',label:'KYC Docs & Deferrals'},{id:'compliance_exceptions',icon:'⚑',label:'Intl / Mastercard Compliance'},{id:'compliance_centre',icon:'▣',label:'Compliance Centre'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
-    { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'}]},
+    { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'},{id:'activity_log',icon:'☰',label:'Activity Log'}]},
     { section:'Developer',   items:DEV_SDK_ITEMS },
   ],
   aggregator: [
