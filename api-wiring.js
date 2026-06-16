@@ -5102,15 +5102,17 @@ async function openDocsModal(entityType, id, name) {
         '<button class="btn btn-outline btn-sm" onclick="setDocResult(\'' + doc.id + '\',\'unknown\')">Unknown</button> ' +
         '<button class="btn btn-outline btn-sm" onclick="addDocComment(\'' + doc.id + '\')">&#128172; Comment</button>'
       ) : '<span style="color:var(--gray-400);font-size:12px">view only</span>';
+    var reportInfo = doc.report_file ? '<div class="upload-hint">&#128206; Report: ' + _escA(doc.report_name || 'report') + ' <button class="btn btn-outline btn-sm" style="padding:0 6px" onclick="viewDocReport(\'' + doc.id + '\')">View</button></div>' : '';
     var lifecycle = canEdit ? (
         (isCheck ? '<button class="btn btn-outline btn-sm" onclick="runCheck(\'' + doc.id + '\')">Run check</button> ' : '') +
+        '<button class="btn btn-outline btn-sm" onclick="uploadDocReport(\'' + doc.id + '\')">&#128206; ' + (doc.report_file ? 'Replace report' : 'Upload report') + '</button> ' +
         (canDefer ? '<button class="btn btn-outline btn-sm" onclick="deferOneDoc(\'' + doc.id + '\')">Defer</button> ' : '') +
         '<button class="btn btn-outline btn-sm" onclick="requestReupload(\'' + doc.id + '\')">Re-upload</button> ' +
         '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'waived\')">Waive</button>'
       ) : '';
     return '<tr' + (bad ? ' style="background:#fef2f2"' : '') + '>' +
       (canDefer ? '<td><input type="checkbox" class="doc-cb" value="' + doc.id + '"></td>' : '') +
-      '<td style="font-weight:500">' + _escA(doc.doc_label) + (isCheck ? ' <span class="tag">CHECK</span>' : '') + subjInfo + idInfo + deferInfo + noteInfo + commentsHtml + '</td>' +
+      '<td style="font-weight:500">' + _escA(doc.doc_label) + (isCheck ? ' <span class="tag">CHECK</span>' : '') + subjInfo + idInfo + deferInfo + noteInfo + reportInfo + commentsHtml + '</td>' +
       '<td>' + docResultBadge(doc.result) + '</td>' +
       '<td style="white-space:nowrap">' + result + (lifecycle ? '<div style="margin-top:4px">' + lifecycle + '</div>' : '') + '</td>' +
     '</tr>';
@@ -5169,6 +5171,34 @@ async function removeDocComment(commentId) {
   var res = await apiFetch('/documents/comment/' + commentId, { method:'DELETE' });
   if (res && res.status) { var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
   else alert('Error: ' + ((res && res.message) || 'Failed to remove comment'));
+}
+
+// Reviewer uploads a verification report file against a requirement (e.g. address vs utility bill).
+function uploadDocReport(docId) {
+  var input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*,application/pdf';
+  input.onchange = async function() {
+    var f = input.files && input.files[0]; if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { alert('Report must be under 5MB.'); return; }
+    var fd = new FormData(); fd.append('report', f);
+    var token = localStorage.getItem('paylode_token');
+    try {
+      var res = await fetch(API_BASE + '/documents/item/' + docId + '/report', { method:'POST', headers:{ Authorization:'Bearer ' + token }, body: fd });
+      var d = await res.json();
+      if (res.ok && d.status) { var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
+      else alert('Error: ' + ((d && d.message) || ('HTTP ' + res.status)));
+    } catch (e) { alert('Upload failed: ' + e.message); }
+  };
+  input.click();
+}
+async function viewDocReport(docId) {
+  var token = localStorage.getItem('paylode_token');
+  try {
+    var res = await fetch(API_BASE + '/documents/item/' + docId + '/report', { headers:{ Authorization:'Bearer ' + token } });
+    if (!res.ok) { alert('Could not open report (' + res.status + ')'); return; }
+    var blob = await res.blob(); var url = URL.createObjectURL(blob);
+    window.open(url, '_blank'); setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+  } catch (e) { alert('Error: ' + e.message); }
 }
 
 async function runCheck(docId) {

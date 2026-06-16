@@ -9,6 +9,9 @@ const { requireAuth, requireCompliance, requireSuperAdmin, requireAdminOrComplia
 const path = require('path');
 const fs   = require('fs');
 const UPLOAD_DIR = process.env.ONBOARDING_UPLOAD_DIR || path.join(__dirname, '../../uploads/onboarding');
+const REPORTS_DIR = process.env.KYC_REPORTS_DIR || path.join(__dirname, '../../uploads/kyc-reports');
+const multer = require('multer');
+const reportUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 const { logAudit } = require('../services/auditService');
 const { sendEmail, getEmailContent } = require('../services/emailService');
 const { logger } = require('../utils/logger');
@@ -63,6 +66,7 @@ async function listDocs(entityType, entityId) {
   return prisma.$queryRaw`
     SELECT d.id::text, d.doc_key, d.doc_label, d.status, d.file_path, d.result,
            d.id_type, d.id_number, d.id_country, d.id_expiry, d.subject_name,
+           d.report_file, d.report_name,
            d.deferred_until, d.deferred_by::text, d.notes, d.updated_at,
            COALESCE((
              SELECT json_agg(json_build_object('id', c.id::text, 'body', c.body,
@@ -233,6 +237,35 @@ router.delete('/comment/:commentId', requireAuth, requireSuperAdmin, async (req,
     await prisma.$executeRaw`DELETE FROM kyc_document_comments WHERE id = ${req.params.commentId}::uuid`;
     await logAudit(req.user.id, 'KYC_REQUIREMENT_COMMENT_REMOVED', 'kyc_document_comments', req.params.commentId, {}, {});
     ok(res, await listDocs(c.entity_type, c.entity_id), 'Comment removed');
+  } catch (e) { next(e); }
+});
+
+// ── Verification REPORT upload per requirement (e.g. address report vs utility bill) ──
+router.post('/item/:docId/report', requireAuth, requireAdminOrCompliance, reportUpload.single('report'), async (req, res, next) => {
+  try {
+    if (!req.file) return fail(res, 'No report file uploaded');
+    const [doc] = await prisma.$queryRaw`SELECT entity_type, entity_id::text FROM kyc_documents WHERE id = ${req.params.docId}::uuid`;
+    if (!doc) return notFound(res, 'Document');
+    fs.mkdirSync(REPORTS_DIR, { recursive: true });
+    const ext = (String(req.file.originalname).split('.').pop() || 'bin').replace(/[^a-z0-9]/gi, '').slice(0, 5);
+    const rel = req.params.docId + '-' + Date.now().toString(36) + '.' + ext;
+    fs.writeFileSync(path.join(REPORTS_DIR, rel), req.file.buffer);
+    await prisma.$executeRaw`UPDATE kyc_documents SET report_file = ${rel}, report_name = ${req.file.originalname}, updated_at = now() WHERE id = ${req.params.docId}::uuid`;
+    await logAudit(req.user.id, 'KYC_REPORT_UPLOADED', 'kyc_documents', req.params.docId, {}, { name: req.file.originalname });
+    ok(res, await listDocs(doc.entity_type, doc.entity_id), 'Report uploaded');
+  } catch (e) { next(e); }
+});
+
+// GET /item/:docId/report — stream the verification report inline (reviewers).
+router.get('/item/:docId/report', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
+  try {
+    const [doc] = await prisma.$queryRaw`SELECT report_file, report_name FROM kyc_documents WHERE id = ${req.params.docId}::uuid`;
+    if (!doc || !doc.report_file) return notFound(res, 'Report');
+    const abs = path.resolve(REPORTS_DIR, doc.report_file);
+    if (abs !== path.resolve(REPORTS_DIR) && !abs.startsWith(path.resolve(REPORTS_DIR) + path.sep)) return fail(res, 'Invalid path', 'BAD_PATH', 400);
+    if (!fs.existsSync(abs)) return notFound(res, 'Report file not found');
+    res.setHeader('Content-Disposition', 'inline; filename="' + String(doc.report_name || 'report').replace(/[^a-z0-9._-]/gi, '_') + '"');
+    res.sendFile(abs);
   } catch (e) { next(e); }
 });
 
