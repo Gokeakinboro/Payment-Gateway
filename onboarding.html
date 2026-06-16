@@ -392,8 +392,13 @@ const MCC_OPTIONS = [
   {code:'9223', label:'Bail & bond payments (restricted)'},
 ];
 function onCardScopeChange(v) {
+  var intl = (v === 'international');
   var n = document.getElementById('intl-card-note');
-  if (n) n.style.display = (v === 'international') ? 'block' : 'none';
+  if (n) n.style.display = intl ? 'block' : 'none';
+  // MCC + expected activity are only relevant to international (MPGS) card processing.
+  ['mcc-field','exp-value-field','exp-count-field'].forEach(function(id){
+    var e = document.getElementById(id); if (e) e.style.display = intl ? '' : 'none';
+  });
 }
 
 const DD_QUESTIONS = [
@@ -656,7 +661,7 @@ function renderNPBusiness() {
     <div class="form-grid">
       <div class="field"><label>Trading Name</label><input type="text" name="trading_name" placeholder="Name customers will see"></div>
       <div class="field"><label>Business Category <span class="req">*</span></label><select name="category"><option value="">Select category</option>${BUSINESS_SEGMENTS.map(s=>`<option>${s}</option>`).join('')}</select></div>
-      <div class="field"><label>Merchant Category Code (MCC)</label><select name="mcc"><option value="">Select MCC</option>${MCC_OPTIONS.map(m=>`<option value="${m.code}">${m.code} — ${m.label}</option>`).join('')}</select></div>
+      <div class="field" id="mcc-field" style="display:none"><label>Merchant Category Code (MCC)</label><select name="mcc"><option value="">Select MCC</option>${MCC_OPTIONS.map(m=>`<option value="${m.code}">${m.code} — ${m.label}</option>`).join('')}</select></div>
       <div class="field full"><label>Description of products / services <span class="req">*</span></label><textarea name="product_description" placeholder="What do you sell or provide?"></textarea></div>
       <div class="field"><label>Website / Social URL</label><input type="text" name="website_url" placeholder="https://"></div>
       <div class="field"><label>Source of Funds <span class="req">*</span></label><select name="source_of_funds"><option value="">Select</option>${SOURCE_OF_FUNDS.map(s=>`<option>${s}</option>`).join('')}</select></div>
@@ -681,7 +686,7 @@ function renderNPBusiness() {
           Our compliance team will request these before your live international cards are enabled.
         </div>
       </div>
-      <div class="field"><label>Expected Monthly Transaction Value <span class="req">*</span></label>
+      <div class="field" id="exp-value-field" style="display:none"><label>Expected Monthly Transaction Value</label>
         <select name="expected_monthly_value"><option value="">Select range</option>
           <option value="below1m">Below ₦1 million</option>
           <option value="1to10m">₦1m – ₦10m</option>
@@ -690,7 +695,7 @@ function renderNPBusiness() {
           <option value="above200m">Above ₦200 million</option>
         </select>
       </div>
-      <div class="field"><label>Expected Monthly Transaction Count</label><input type="number" name="expected_monthly_count" min="0" placeholder="e.g. 500"></div>
+      <div class="field" id="exp-count-field" style="display:none"><label>Expected Monthly Transaction Count</label><input type="number" name="expected_monthly_count" min="0" placeholder="e.g. 500"></div>
     </div>
     <div class="section-divider"></div>
     <div class="card-title" style="margin-bottom:4px">Settlement Account</div>
@@ -1200,43 +1205,25 @@ function renderPayments() {
   return `<div class="card">
   <div class="card-title">Payment Options</div>
   <div class="card-sub">Select the payment channels you wish to accept on your platform. You must select at least one.</div>
-  <div class="check-group" style="margin-bottom:20px">
+  <div class="check-group" style="margin-bottom:8px">
     <label class="check-item">
       <input type="checkbox" name="pay_local_cards" value="1">
-      <span><strong>Local Cards</strong> — Accept Visa, Mastercard and Verve cards issued in Nigeria</span>
+      <span><strong>Local Cards</strong> — Visa, Mastercard and Verve cards issued in Nigeria</span>
     </label>
     <label class="check-item">
       <input type="checkbox" name="pay_intl_cards" value="1">
-      <span><strong>International Cards</strong> — Accept Visa and Mastercard issued outside Nigeria</span>
+      <span><strong>International Cards</strong> — Visa / Mastercard issued outside Nigeria (MPGS)</span>
     </label>
     <label class="check-item">
-      <input type="checkbox" name="pay_transfer" value="1">
-      <span><strong>Bank Transfer</strong> — Accept payments via NIBSS Instant Payment (NIP)</span>
+      <input type="checkbox" name="pay_va" value="1">
+      <span><strong>Virtual Accounts (Pay-in)</strong> — Accept bank transfers via dedicated virtual accounts</span>
     </label>
     <label class="check-item">
-      <input type="checkbox" name="pay_ussd" value="1">
-      <span><strong>USSD</strong> — Accept payments via USSD codes (*737#, *966#, etc.)</span>
-    </label>
-    <label class="check-item">
-      <input type="checkbox" name="pay_pos" value="1">
-      <span><strong>POS</strong> — Point of Sale terminal payments</span>
+      <input type="checkbox" name="pay_payouts" value="1">
+      <span><strong>Payouts</strong> — Send disbursements / transfers out to recipients</span>
     </label>
   </div>
-  <div class="section-divider"></div>
-  <div class="card-title" style="margin-bottom:4px">Webhook Configuration (Optional)</div>
-  <div class="card-sub">We will notify your server when payment events occur.</div>
-  <div class="form-grid">
-    <div class="field">
-      <label>Webhook URL</label>
-      <input type="text" name="webhook_url" placeholder="https://yoursite.com/webhook">
-      <div class="hint">Must be HTTPS. We send POST requests with payment status updates.</div>
-    </div>
-    <div class="field">
-      <label>Callback / Redirect URL</label>
-      <input type="text" name="callback_url" placeholder="https://yoursite.com/payment/complete">
-      <div class="hint">Where customers are redirected after payment.</div>
-    </div>
-  </div>
+  <div class="hint">Webhook &amp; redirect URLs are set later in your dashboard's Developer / API settings — not needed to apply.</div>
 </div>`;
 }
 
@@ -1614,7 +1601,7 @@ function validateStep(stepId) {
   }
 
   if (stepId === 'payments') {
-    const any = ['pay_local_cards','pay_intl_cards','pay_transfer','pay_ussd','pay_pos'].some(n => document.querySelector(`[name="${n}"]`)?.checked);
+    const any = ['pay_local_cards','pay_intl_cards','pay_va','pay_payouts'].some(n => document.querySelector(`[name="${n}"]`)?.checked);
     if (!any) { showAlert('Please select at least one payment option.'); return false; }
   }
 
@@ -1629,7 +1616,7 @@ function validateStep(stepId) {
   }
 
   if (stepId === 'np_business') {
-    if (!requireFields(['category','product_description','source_of_funds','expected_monthly_value','account_number','account_name','bank_name'])) return false;
+    if (!requireFields(['category','product_description','source_of_funds','account_number','account_name','bank_name'])) return false;
     if (!/^\d{10}$/.test(val('account_number'))) { showAlert('Account number must be a 10-digit NUBAN.'); return false; }
     if (!document.querySelector('[name="mkt_domestic"]')?.checked && !document.querySelector('[name="mkt_intl"]')?.checked) { showAlert('Please select at least one target market.'); return false; }
   }
