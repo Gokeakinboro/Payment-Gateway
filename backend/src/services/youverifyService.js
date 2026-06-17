@@ -43,41 +43,28 @@ function request(method, path, body) {
  * Verify BVN against YouVerify.
  * Returns { success, requestId, status, data }
  */
-async function verifyBvn(bvn, firstName, lastName, dob) {
-  const res = await request('POST', '/api/identity/ng/bvn', {
-    id:               bvn,
-    isSubjectConsent: true,
-    ...(firstName && { firstname: firstName }),
-    ...(lastName  && { lastname:  lastName  }),
-    ...(dob       && { dob }),
-  });
+// NOTE: YouVerify's ID endpoints REJECT firstname/lastname in the request
+// ("ValidationError: firstname is not allowed"). The lookup is by ID only; the
+// endpoint RETURNS the registered name/DOB, which the caller matches locally.
+async function verifyBvn(bvn /*, firstName, lastName, dob — matched on our side */) {
+  const res = await request('POST', '/api/identity/ng/bvn', { id: bvn, isSubjectConsent: true });
   return normalise(res, 'bvn');
 }
 
 /**
- * Verify NIN against YouVerify.
+ * Verify NIN against YouVerify (ID-only; name matched on our side).
  */
-async function verifyNin(nin, firstName, lastName) {
-  const res = await request('POST', '/api/identity/ng/nin', {
-    id:               nin,
-    isSubjectConsent: true,
-    ...(firstName && { firstname: firstName }),
-    ...(lastName  && { lastname:  lastName  }),
-  });
+async function verifyNin(nin) {
+  const res = await request('POST', '/api/identity/ng/nin', { id: nin, isSubjectConsent: true });
   return normalise(res, 'nin');
 }
 
 /**
- * Verify CAC RC number against YouVerify.
+ * Verify CAC RC number against YouVerify (returns company name to match locally).
  * businessType: 'limited_liability' | 'business_name' | 'incorporated_trustee'
  */
 async function verifyCac(rcNumber, businessName, businessType = 'limited_liability') {
-  const res = await request('POST', '/api/identity/ng/cac', {
-    id:           rcNumber,
-    isSubjectConsent: true,
-    ...(businessName && { businessName }),
-    businessType,
-  });
+  const res = await request('POST', '/api/identity/ng/cac', { id: rcNumber, isSubjectConsent: true, businessType });
   return normalise(res, 'cac');
 }
 
