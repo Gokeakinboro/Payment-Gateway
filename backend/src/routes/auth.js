@@ -8,6 +8,12 @@ const { prisma }  = require('../utils/db');
 const { ok, fail, created } = require('../utils/helpers');
 const { requireAuth } = require('../middleware/auth');
 const { logAudit } = require('../services/auditService');
+const { sendEmail, getEmailContent } = require('../services/emailService');
+const { logger } = require('../utils/logger');
+
+function genTempPassword() {
+  return Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!';
+}
 
 const validate = rules => async (req, res, next) => {
   await Promise.all(rules.map(r => r.run(req)));
@@ -207,5 +213,35 @@ router.post('/change-password', requireAuth,
     } catch (e) { next(e); }
   }
 );
+
+// ── POST /api/v1/auth/forgot-password — PUBLIC self-service password reset ────
+// Issues a new temporary password to the REGISTERED email (so no takeover) and
+// forces a change on next sign-in. Always returns the same response so it can't
+// be used to discover which emails exist.
+router.post('/forgot-password', async (req, res, next) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) return fail(res, 'A valid email is required');
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (user) {
+      const tempPassword = genTempPassword();
+      await prisma.user.update({ where: { id: user.id }, data: {
+        passwordHash: await bcrypt.hash(tempPassword, 12), mustChangePassword: true,
+      }});
+      const loginUrl = (process.env.APP_URL || 'https://paylodeservices.com') + '/login.html';
+      const content = await getEmailContent('password_reset',
+        { name: user.firstName || '', email, temp_password: tempPassword, login_url: loginUrl },
+        'Reset your Paylode password',
+        `<h2>Password reset</h2><p>Hi ${user.firstName || ''},</p>` +
+          `<p>We received a request to reset your Paylode password. Sign in with this temporary password and you'll be prompted to set a new one:</p>` +
+          `<p><strong>Email:</strong> ${email}<br><strong>Temporary password:</strong> ${tempPassword}</p>` +
+          `<p><a href="${loginUrl}">Sign in to Paylode</a>. If you didn't request this, you can ignore this email.</p>`);
+      sendEmail({ to: email, subject: content.subject, html: content.html })
+        .catch(e => logger.error({ err: e, email }, 'forgot-password email failed'));
+      logAudit(user.id, 'PASSWORD_RESET_REQUESTED', 'users', user.id, null, { email }, null, req.ip).catch(() => {});
+    }
+    ok(res, { requested: true }, 'If that email is registered, a temporary password has been sent. Please check your inbox (and spam).');
+  } catch (e) { next(e); }
+});
 
 module.exports = router;

@@ -62,9 +62,28 @@ input:focus{border-color:#1a2744;box-shadow:0 0 0 3px rgba(26,39,68,.08)}
       </div>
     </div>
     <button class="btn" id="btn" onclick="doLogin()">Sign In</button>
+    <div style="text-align:center;margin-top:12px"><button type="button" onclick="showForgot()" style="background:none;border:none;color:#64748b;font-size:12px;cursor:pointer;font-family:inherit;text-decoration:underline">Forgot password?</button></div>
     <div class="footer-note">Paylode Services Limited &nbsp;·&nbsp; CBN Licensed PSSP</div>
   </div>
   </div><!-- /login-step -->
+
+  <!-- Step 3: Forgot password -->
+  <div id="forgot-step" style="display:none">
+  <div class="card">
+    <div style="text-align:center;margin-bottom:20px">
+      <div style="width:56px;height:56px;background:#e8edf5;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:12px">🔑</div>
+      <div style="font-size:17px;font-weight:700;color:#1a2744">Reset your password</div>
+      <div style="font-size:12px;color:#64748b;margin-top:6px">Enter your account email — we'll send a temporary password to set a new one.</div>
+    </div>
+    <div class="err" id="forgot-err"></div>
+    <div id="forgot-msg" style="display:none;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:12px"></div>
+    <div class="field"><label>Email</label><input type="email" id="forgot-em" placeholder="you@business.com" autocomplete="email"></div>
+    <button class="btn" id="forgot-btn" onclick="submitForgot()">Send temporary password</button>
+    <div style="text-align:center;margin-top:14px">
+      <button type="button" onclick="showLoginStep()" style="background:none;border:none;color:#94a3b8;font-size:12px;cursor:pointer;font-family:inherit">← Back to login</button>
+    </div>
+  </div>
+  </div><!-- /forgot-step -->
 
   <!-- Step 2: 2FA verification -->
   <div id="twofa-step" style="display:none">
@@ -170,6 +189,34 @@ function back2Login() {
   document.getElementById('login-step').style.display='block';
   document.getElementById('btn').textContent='Sign In';
   document.getElementById('btn').disabled=false;
+}
+
+function showForgot() {
+  document.getElementById('login-step').style.display='none';
+  document.getElementById('twofa-step').style.display='none';
+  document.getElementById('forgot-step').style.display='block';
+  var e=document.getElementById('forgot-em'); if(e) e.focus();
+}
+function showLoginStep() {
+  document.getElementById('forgot-step').style.display='none';
+  document.getElementById('twofa-step').style.display='none';
+  document.getElementById('login-step').style.display='block';
+}
+async function submitForgot() {
+  var em  = document.getElementById('forgot-em').value.trim();
+  var err = document.getElementById('forgot-err');
+  var msg = document.getElementById('forgot-msg');
+  var btn = document.getElementById('forgot-btn');
+  err.style.display='none'; msg.style.display='none';
+  if (!em || em.indexOf('@') < 0) { err.textContent='Please enter a valid email'; err.style.display='block'; return; }
+  btn.textContent='Sending...'; btn.disabled=true;
+  try {
+    const res  = await fetch('/api/v1/auth/forgot-password', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ email: em }) });
+    const data = await res.json();
+    msg.textContent = (data && data.message) || 'If that email is registered, a temporary password has been sent. Check your inbox (and spam).';
+    msg.style.display='block';
+  } catch(e) { err.textContent='Cannot connect. Please try again.'; err.style.display='block'; }
+  btn.textContent='Send temporary password'; btn.disabled=false;
 }
 
 document.addEventListener('keydown', function(e) {
