@@ -364,7 +364,7 @@ router.post('/submit', async (req, res, next) => {
       const loginUrl = (process.env.APP_URL || '') + '/login.html';
       const content = await getEmailContent('sandbox_welcome',
         { business: summary.businessName, email: signupProv.email, temp_password: signupProv.tempPassword, login_url: loginUrl },
-        'Your Paylode sandbox access is ready',
+        'Your Paylode login details & sandbox access',
         `<h2>Start building now</h2><p>While we review your application, your <strong>test / sandbox</strong> access is ready. Sign in at <a href="${loginUrl}">the dashboard</a> with <strong>${signupProv.email}</strong> and temporary password <strong>${signupProv.tempPassword}</strong> (you'll set a new one on first login).</p>` +
         `<p>Go to <strong>Dashboard → API Keys</strong> to copy your <code>sk_test</code> / <code>pk_test</code> keys and test every product in our sandbox. Your <strong>live</strong> keys activate automatically once your KYC is approved.</p>`);
       sendEmail({ to: signupProv.email, subject: content.subject, html: content.html })
