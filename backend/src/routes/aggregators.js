@@ -86,6 +86,29 @@ aggRouter.put('/:id/split', requireAuth, requireSuperAdmin, async (req,res,next)
   } catch(e){next(e);}
 });
 
+// ── PUT /api/v1/aggregators/:id — SA edits aggregator details ────────────────
+aggRouter.put('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const agg = await prisma.aggregator.findUnique({ where: { id: req.params.id } });
+    if (!agg) return notFound(res, 'Aggregator');
+    const { company_name, rc_number, settlement_bank, settlement_account, revenue_split_pct } = req.body;
+    const data = {};
+    if (company_name      !== undefined) data.companyName       = String(company_name).trim();
+    if (rc_number         !== undefined) data.rcNumber          = rc_number || null;
+    if (settlement_bank   !== undefined) data.settlementBank    = settlement_bank || null;
+    if (settlement_account!== undefined) data.settlementAccount = settlement_account || null;
+    if (revenue_split_pct !== undefined) {
+      const split = parseFloat(revenue_split_pct);
+      if (isNaN(split) || split < 0 || split > 1) return fail(res, 'revenue_split_pct must be 0-1 (e.g. 0.30 for 30%)');
+      data.revenueSplitPct = split;
+    }
+    if (!Object.keys(data).length) return fail(res, 'Nothing to update');
+    const updated = await prisma.aggregator.update({ where: { id: req.params.id }, data });
+    await logAudit(req.user.id, 'AGGREGATOR_UPDATED', 'aggregators', updated.id, null, data, null, req.ip);
+    ok(res, { aggregator_id: updated.id, company_name: updated.companyName, revenue_split_pct: Number(updated.revenueSplitPct) }, 'Aggregator updated');
+  } catch (e) { next(e); }
+});
+
 // ── Per-merchant split overrides ─────────────────────────────────────────────
 
 aggRouter.get('/:id/rates', requireAuth, requireSuperAdmin, async (req,res,next) => {

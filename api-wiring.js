@@ -406,6 +406,7 @@ async function loadMerchants(page=1) {
                 ${m.isActive
                   ? `<button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="suspendMerchant('${m.id}','${m.businessName}')">Suspend</button>`
                   : `<button class="btn btn-outline btn-sm" style="color:var(--green);border-color:var(--green)" onclick="activateMerchant('${m.id}','${m.businessName}')">Activate</button>`}
+                ${userHasPerm('edit_merchants') ? `&nbsp;<button class="btn btn-lime btn-sm" onclick="editMerchant('${m.id}')">&#9998; Edit</button>` : ''}
               </td>
             </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:20px">No merchants yet</td></tr>'}
           </tbody>
@@ -956,6 +957,7 @@ async function loadAggregators() {
     if (!res?.data) { el.innerHTML = errorBox('Could not load aggregators'); return; }
 
     const aggs = res.data;
+    window._aggData = aggs;   // cached for the Edit modal
 
     el.innerHTML = `
     <div class="page-header flex-between">
@@ -983,6 +985,7 @@ async function loadAggregators() {
         <div class="rev-row"><span class="rev-label">Merchants</span><span class="rev-value">${a.merchant_count||0}</span></div>
         <div class="rev-row"><span class="rev-label">Settlement Bank</span><span class="rev-value">${a.settlementBank||'—'}</span></div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-lime btn-sm" onclick="editAggregator('${a.id}')">&#9998; Edit</button>
           <button class="btn btn-outline btn-sm" onclick="editSplit('${a.id}','${a.revenueSplitPct}')">Edit Split</button>
           <button class="btn btn-outline btn-sm" onclick="viewAggRates('${a.id}','${a.companyName}')">Rate Config</button>
           <button class="btn btn-outline btn-sm" onclick="viewAggMerchants('${a.id}')">View Merchants</button>
@@ -1902,6 +1905,44 @@ async function runSandboxSettlement() {
 }
 
 // ── AGGREGATOR SPLIT EDIT ─────────────────────────────────────────────────────
+// Full aggregator edit (company, RC, settlement, split).
+function editAggregator(id) {
+  if (!userHasPerm('edit_aggregators')) { alert('You have view-only access to aggregators.'); return; }
+  var a = (window._aggData || []).find(function(x){ return x.id === id; });
+  if (!a) { alert('Aggregator not found — reload the page.'); return; }
+  var esc = function(s){ return String(s||'').replace(/"/g,'&quot;'); };
+  showModal(
+    '<div class="modal-header"><div class="modal-title">Edit Aggregator</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="form-group"><label class="form-label">Company name</label><input class="form-input" id="ea-name" value="' + esc(a.companyName) + '"></div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">RC number</label><input class="form-input" id="ea-rc" value="' + esc(a.rcNumber) + '"></div>' +
+      '<div class="form-group"><label class="form-label">Revenue split %</label><input class="form-input" id="ea-split" type="number" min="0" max="100" value="' + (Number(a.revenueSplitPct)*100).toFixed(0) + '"></div>' +
+    '</div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">Settlement bank</label><input class="form-input" id="ea-bank" value="' + esc(a.settlementBank) + '"></div>' +
+      '<div class="form-group"><label class="form-label">Settlement account</label><input class="form-input" id="ea-acct" value="' + esc(a.settlementAccount) + '" maxlength="10"></div>' +
+    '</div>' +
+    '<div class="flex-between" style="margin-top:8px">' +
+      '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+      '<button class="btn btn-lime" id="ea-btn" onclick="saveAggregatorEdit(\'' + id + '\')">Save Changes</button></div>' +
+    '<div id="ea-msg" style="margin-top:8px"></div>');
+}
+async function saveAggregatorEdit(id) {
+  var splitPct = parseFloat(document.getElementById('ea-split').value);
+  var body = {
+    company_name:       document.getElementById('ea-name').value.trim(),
+    rc_number:          document.getElementById('ea-rc').value.trim(),
+    settlement_bank:    document.getElementById('ea-bank').value.trim(),
+    settlement_account: document.getElementById('ea-acct').value.trim(),
+  };
+  if (!isNaN(splitPct)) body.revenue_split_pct = splitPct / 100;
+  var btn = document.getElementById('ea-btn'); btn.disabled = true; btn.textContent = 'Saving...';
+  var res = await apiFetch('/aggregators/' + id, { method: 'PUT', body: JSON.stringify(body) });
+  if (res && res.status) { document.getElementById('modal').style.display = 'none'; loadAggregators(); }
+  else { document.getElementById('ea-msg').innerHTML = '<div class="warn-box" style="font-size:12px">' + ((res&&res.message)||'Failed') + '</div>'; btn.disabled=false; btn.textContent='Save Changes'; }
+}
+
 async function editSplit(id, currentSplit) {
   if (!userHasPerm('edit_aggregators')) { alert('You have view-only access to aggregators.'); return; }
   const newSplit = prompt(`Current split: ${(Number(currentSplit)*100).toFixed(0)}%\nEnter new split percentage (e.g. 30 for 30%):`);
