@@ -33,6 +33,10 @@ const checkoutRoutes    = require('./routes/checkout');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
+// res.json can't serialize BigInt (kobo amounts) — emit them as numbers so any
+// endpoint returning a raw Prisma row (e.g. payment_rails float/cost) won't 500.
+app.set('json replacer', (key, value) => (typeof value === 'bigint' ? Number(value) : value));
+
 // ── Security middleware ────────────────────────────────────────────────────
 app.set('trust proxy', 1); // Behind nginx/Cloudflare
 
