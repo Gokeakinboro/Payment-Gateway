@@ -229,6 +229,10 @@ model PaymentRail {
   // #payout twist: a rail Paylode can send payouts through (internal only —
   // never shown to merchants). SA toggles this + status (LIVE) to route traffic.
   payoutEnabled Boolean    @default(false) @map("payout_enabled")
+  // OUR float balance held with this rail (kobo) — internal only, never shown to
+  // merchants. Polled from the rail's balance API; SA allocates payouts against it.
+  floatBalance  BigInt     @default(0) @map("float_balance")
+  floatSyncedAt DateTime?  @map("float_synced_at")
   createdAt     DateTime   @default(now()) @map("created_at")
   updatedAt     DateTime   @updatedAt @map("updated_at")
 
@@ -586,7 +590,8 @@ model MerchantWallet {
   merchant  Merchant       @relation(fields: [merchantId], references: [id])
   rail      PaymentRail?   @relation(fields: [railId], references: [id])
 
-  @@unique([merchantId, railId])
+  // Single balance per merchant — rails are internal; funding is NOT per rail.
+  @@unique([merchantId])
   @@map("merchant_wallets")
 }
 

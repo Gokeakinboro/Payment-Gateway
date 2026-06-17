@@ -9,6 +9,7 @@ const { ok, fail, notFound, created, koboToNaira, generateRef } = require('../ut
 const { logAudit } = require('../services/auditService');
 const { notifyRailIncident } = require('../services/railHealth');
 const { BANKS, resolveBank } = require('../data/nibssBanks');
+const { syncRailFloat } = require('../services/railFloat');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -67,13 +68,12 @@ router.get('/wallet', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// ── POST /api/v1/payouts/wallet/fund — SA credits/debits a (merchant, rail) ──
-// Every credit MUST be matched to a payout rail (rail_id). Balance = spend cap.
-// direction: 'credit' (default) | 'debit'. Debit cannot drive a rail negative.
+// ── POST /api/v1/payouts/wallet/fund — SA credits/debits a merchant's BALANCE ─
+// Single balance per merchant (rails are internal — funding is NOT per rail).
+// direction: 'credit' (default) | 'debit'. Debit cannot drive the balance negative.
 router.post('/wallet/fund', requireAuth, requireSuperAdmin,
   validate([
     body('merchant_id').notEmpty().withMessage('merchant_id required'),
-    body('rail_id').notEmpty().withMessage('rail_id required — every credit must be matched to a payout rail'),
     body('amount').isInt({ min: 1 }).withMessage('amount in kobo required'),
     body('reference').notEmpty().withMessage('payment reference required'),
     body('description').optional().isString(),
@@ -81,26 +81,21 @@ router.post('/wallet/fund', requireAuth, requireSuperAdmin,
   ]),
   async (req, res, next) => {
     try {
-      const { merchant_id, rail_id, amount, reference, description } = req.body;
+      const { merchant_id, amount, reference, description } = req.body;
       const direction = req.body.direction === 'debit' ? 'debit' : 'credit';
       const amt = BigInt(amount);
 
       const merchant = await prisma.merchant.findUnique({ where: { id: merchant_id } });
       if (!merchant) return notFound(res, 'Merchant');
-      const rail = await prisma.paymentRail.findUnique({ where: { id: rail_id } });
-      if (!rail) return notFound(res, 'Rail');
-      if (!rail.payoutEnabled) return fail(res, `${rail.name} is not enabled for payouts`);
 
       const out = await prisma.$transaction(async (tx) => {
-        let w = await tx.merchantWallet.findUnique({
-          where: { merchantId_railId: { merchantId: merchant_id, railId: rail_id } },
-        });
+        let w = await tx.merchantWallet.findFirst({ where: { merchantId: merchant_id } });
         const before = w ? w.balance : 0n;
         const after  = direction === 'debit' ? before - amt : before + amt;
-        if (after < 0n) throw Object.assign(new Error('Debit exceeds the balance on this rail'), { _client: true });
+        if (after < 0n) throw Object.assign(new Error('Debit exceeds the merchant balance'), { _client: true });
         if (!w) {
           w = await tx.merchantWallet.create({ data: {
-            merchantId: merchant_id, railId: rail_id, balance: after,
+            merchantId: merchant_id, balance: after,
             lastFundedAt: direction === 'credit' ? new Date() : null, fundedBy: req.user.id,
           }});
         } else {
@@ -109,7 +104,7 @@ router.post('/wallet/fund', requireAuth, requireSuperAdmin,
           }});
         }
         await tx.walletLedger.create({ data: {
-          merchantId: merchant_id, railId: rail_id, entryType: direction === 'debit' ? 'DEBIT' : 'CREDIT',
+          merchantId: merchant_id, entryType: direction === 'debit' ? 'DEBIT' : 'CREDIT',
           amount: amt, balanceBefore: before, balanceAfter: after,
           reference, description: description || (direction === 'debit' ? 'SA debit' : 'Wallet funding'), createdBy: req.user.id,
         }});
@@ -117,13 +112,13 @@ router.post('/wallet/fund', requireAuth, requireSuperAdmin,
       });
 
       await logAudit(req.user.id, direction === 'debit' ? 'WALLET_DEBITED' : 'WALLET_FUNDED', 'merchant_wallets', merchant_id,
-        { balance: Number(out.before) }, { balance: Number(out.after), rail: rail.name },
-        `${direction === 'debit' ? 'Debited' : 'Credited'} ₦${koboToNaira(amt).toLocaleString()} on ${rail.name} — Ref: ${reference}`);
+        { balance: Number(out.before) }, { balance: Number(out.after) },
+        `${direction === 'debit' ? 'Debited' : 'Credited'} ₦${koboToNaira(amt).toLocaleString()} — Ref: ${reference}`);
 
       ok(res, {
-        merchant_id, business_name: merchant.businessName, rail: rail.name, direction,
-        amount: koboToNaira(amt), new_rail_balance: koboToNaira(out.after), reference,
-      }, `${direction === 'debit' ? 'Debited' : 'Credited'} ₦${koboToNaira(amt).toLocaleString()} ${direction === 'debit' ? 'from' : 'to'} ${merchant.businessName} (${rail.name})`);
+        merchant_id, business_name: merchant.businessName, direction,
+        amount: koboToNaira(amt), new_balance: koboToNaira(out.after), reference,
+      }, `${direction === 'debit' ? 'Debited' : 'Credited'} ₦${koboToNaira(amt).toLocaleString()} ${direction === 'debit' ? 'from' : 'to'} ${merchant.businessName}`);
     } catch (e) {
       if (e && e._client) return fail(res, e.message);
       next(e);
@@ -245,23 +240,15 @@ router.post('/batches', requireAuthOrApiKey,
       const totalVat      = itemsWithFees.reduce((s, i) => s + i.vat,  0n);
       const totalDeduction = totalAmount + totalFee + totalVat;  // full wallet deduction
 
-      // ── Per-rail hybrid routing (#payout twist, Paylode-internal) ───────────────
-      // Pick ONE payout-enabled LIVE rail whose (merchant,rail) balance covers the
-      // whole deduction; spread by least-recently-used. If no single rail covers it
-      // but the merchant's TOTAL across rails does, queue for SA manual routing.
-      // Reject only if the total across all rails is short. Rails are NEVER exposed.
-      const railWallets = await prisma.merchantWallet.findMany({
-        where: { merchantId, rail: { payoutEnabled: true, status: 'LIVE' } },
-        include: { rail: { select: { id: true, name: true } } },
-      });
-      const totalAcrossRails = railWallets.reduce((s, w) => s + w.balance, 0n);
-      const chosen = railWallets
-        .filter(w => w.balance >= totalDeduction)
-        .sort((a, b) => (a.lastUsedAt ? a.lastUsedAt.getTime() : 0) - (b.lastUsedAt ? b.lastUsedAt.getTime() : 0))[0] || null;
-
-      if (!chosen && totalAcrossRails < totalDeduction) {
+      // ── Single merchant balance; SA decides the rail (manual phase) ─────────────
+      // Rails are 100% internal. The merchant prepays ONE balance; we debit it
+      // atomically here and EVERY batch awaits SA routing — SA allocates the
+      // disbursement across rail floats via POST /admin/batches/:id/route.
+      const wallet = await prisma.merchantWallet.findFirst({ where: { merchantId } });
+      const available = wallet ? wallet.balance : 0n;
+      if (available < totalDeduction) {
         return fail(res,
-          `Insufficient wallet balance. Available: ₦${koboToNaira(totalAcrossRails).toLocaleString('en-NG')}, ` +
+          `Insufficient balance. Available: ₦${koboToNaira(available).toLocaleString('en-NG')}, ` +
           `Required: ₦${koboToNaira(totalDeduction).toLocaleString('en-NG')} ` +
           `(₦${koboToNaira(totalAmount).toLocaleString('en-NG')} payouts + ` +
           `₦${koboToNaira(totalFee).toLocaleString('en-NG')} fee + ` +
@@ -270,30 +257,24 @@ router.post('/batches', requireAuthOrApiKey,
         );
       }
 
-      const needsRouting  = !chosen;                       // total covers it, no single rail does → SA queue
-      const chosenRailId  = chosen ? chosen.railId : null;
       const batchRef    = generateRef('PAY');
       const scheduledAt = scheduled_at ? new Date(scheduled_at) : new Date();
-      const isInstant   = !scheduled_at || new Date(scheduled_at) <= new Date();
-      const batchStatus = needsRouting ? 'needs_routing' : (isInstant ? 'processing' : 'pending');
-      const itemStatus  = needsRouting ? 'queued' : (isInstant ? 'processing' : 'queued');
+      const batchStatus = 'needs_routing';   // SA always decides the rail (manual phase)
+      const itemStatus  = 'queued';
 
-      // All-or-nothing: atomic GUARDED rail debit (WHERE balance >= amount — blocks
-      // concurrent over-spend) + batch + items + ledger in ONE transaction.
+      // All-or-nothing: atomic GUARDED single-balance debit (WHERE balance >= amount
+      // — blocks concurrent over-spend) + batch + items + ledger in ONE transaction.
       let batchId;
       try {
         await prisma.$transaction(async (tx) => {
-          let bBefore = 0n, bAfter = 0n;
-          if (chosen) {
-            const dec = await tx.$queryRaw`
-              UPDATE merchant_wallets
-              SET balance = balance - ${totalDeduction}, last_used_at = NOW(), updated_at = NOW()
-              WHERE id = ${chosen.id}::uuid AND balance >= ${totalDeduction}
-              RETURNING balance`;
-            if (!dec.length) throw Object.assign(new Error('Rail balance changed during processing — please retry'), { _client: true });
-            bAfter  = dec[0].balance;
-            bBefore = bAfter + totalDeduction;
-          }
+          const dec = await tx.$queryRaw`
+            UPDATE merchant_wallets
+            SET balance = balance - ${totalDeduction}, last_used_at = NOW(), updated_at = NOW()
+            WHERE merchant_id = ${merchantId}::uuid AND balance >= ${totalDeduction}
+            RETURNING balance`;
+          if (!dec.length) throw Object.assign(new Error('Balance changed during processing — please retry'), { _client: true });
+          const bAfter  = dec[0].balance;
+          const bBefore = bAfter + totalDeduction;
           const batch = await tx.$queryRaw`
             INSERT INTO payout_batches
               (merchant_id, batch_ref, description, total_amount, total_fee, total_vat,
@@ -301,7 +282,7 @@ router.post('/batches', requireAuthOrApiKey,
             VALUES
               (${merchantId}::uuid, ${batchRef}, ${description||null},
                ${totalAmount}, ${totalFee}, ${totalVat}, ${feeRate}::decimal,
-               ${items.length}, ${batchStatus}, ${chosenRailId}::uuid,
+               ${items.length}, ${batchStatus}, NULL,
                ${scheduledAt}, ${req.user.id}::uuid, NOW(), NOW())
             RETURNING id`;
           batchId = batch[0].id;
@@ -317,18 +298,16 @@ router.post('/batches', requireAuthOrApiKey,
                  ${BigInt(item.amount)}, ${item.fee}, ${item.vat},
                  ${item.narration||null}, ${itemStatus}, ${scheduledAt}, NOW())`;
           }
-          if (chosen) {
-            await tx.$executeRaw`
-              INSERT INTO wallet_ledger
-                (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
-              VALUES
-                (${merchantId}::uuid, ${chosenRailId}::uuid, 'DEBIT', ${totalAmount}, ${bBefore}, ${bBefore - totalAmount}, ${batchRef},
-                 ${'Payout batch to ' + items.length + ' beneficiaries: ' + (description||batchRef)}, ${req.user.id}::uuid, NOW()),
-                (${merchantId}::uuid, ${chosenRailId}::uuid, 'FEE', ${totalFee}, ${bBefore - totalAmount}, ${bBefore - totalAmount - totalFee}, ${batchRef},
-                 ${'Paylode payout service fee (' + (feeRate*100).toFixed(2) + '%)'}, ${req.user.id}::uuid, NOW()),
-                (${merchantId}::uuid, ${chosenRailId}::uuid, 'VAT', ${totalVat}, ${bBefore - totalAmount - totalFee}, ${bAfter}, ${batchRef},
-                 ${'VAT on payout fee (7.5%)'}, ${req.user.id}::uuid, NOW())`;
-          }
+          await tx.$executeRaw`
+            INSERT INTO wallet_ledger
+              (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
+            VALUES
+              (${merchantId}::uuid, NULL, 'DEBIT', ${totalAmount}, ${bBefore}, ${bBefore - totalAmount}, ${batchRef},
+               ${'Payout batch to ' + items.length + ' beneficiaries: ' + (description||batchRef)}, ${req.user.id}::uuid, NOW()),
+              (${merchantId}::uuid, NULL, 'FEE', ${totalFee}, ${bBefore - totalAmount}, ${bBefore - totalAmount - totalFee}, ${batchRef},
+               ${'Paylode payout service fee (' + (feeRate*100).toFixed(2) + '%)'}, ${req.user.id}::uuid, NOW()),
+              (${merchantId}::uuid, NULL, 'VAT', ${totalVat}, ${bBefore - totalAmount - totalFee}, ${bAfter}, ${batchRef},
+               ${'VAT on payout fee (7.5%)'}, ${req.user.id}::uuid, NOW())`;
         }, { timeout: 30000 });
       } catch (e) {
         if (e && e._client) return fail(res, e.message, 'RETRY');
@@ -532,44 +511,49 @@ router.post('/batches/:id/retry-failed', requireAuth, async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
-// ── GET /api/v1/payouts/admin/wallets — SA: per-merchant, per-rail balances ───
+// ── GET /api/v1/payouts/admin/wallets — SA: per-merchant single balance ───────
 router.get('/admin/wallets', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
     const wallets = await prisma.merchantWallet.findMany({
-      include: {
-        merchant: { select: { businessName: true, merchantCode: true } },
-        rail:     { select: { id: true, name: true } },
-      },
+      include: { merchant: { select: { businessName: true, merchantCode: true } } },
       orderBy: { balance: 'desc' },
     });
-    const byMerchant = {};
-    for (const w of wallets) {
-      const m = byMerchant[w.merchantId] = byMerchant[w.merchantId] || {
-        merchant_id: w.merchantId, business_name: w.merchant.businessName,
-        merchant_code: w.merchant.merchantCode, total: 0n, rails: [],
-      };
-      m.total += w.balance;
-      m.rails.push({
-        rail_id: w.railId, rail_name: w.rail ? w.rail.name : 'Unallocated',
-        balance: Number(w.balance), balance_naira: koboToNaira(w.balance),
-        last_used_at: w.lastUsedAt, last_funded_at: w.lastFundedAt,
-      });
-    }
-    const out = Object.values(byMerchant).map(m => ({
-      ...m, total: Number(m.total), total_naira: koboToNaira(m.total),
+    const out = wallets.map(w => ({
+      merchant_id: w.merchantId, business_name: w.merchant.businessName,
+      merchant_code: w.merchant.merchantCode,
+      balance: Number(w.balance), balance_naira: koboToNaira(w.balance),
+      total: Number(w.balance), total_naira: koboToNaira(w.balance),
+      last_funded_at: w.lastFundedAt, last_used_at: w.lastUsedAt,
     })).sort((a, b) => b.total - a.total);
     ok(res, out);
   } catch (e) { next(e); }
 });
 
-// ── GET /api/v1/payouts/admin/payout-rails — SA: rails + payout flag ──────────
+// ── GET /api/v1/payouts/admin/payout-rails — SA: rails + payout flag + OUR float ─
 router.get('/admin/payout-rails', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
     const rails = await prisma.paymentRail.findMany({
-      select: { id: true, name: true, status: true, payoutEnabled: true },
+      select: { id: true, name: true, status: true, payoutEnabled: true, floatBalance: true, floatSyncedAt: true },
       orderBy: { name: 'asc' },
     });
-    ok(res, rails);
+    ok(res, rails.map(r => ({
+      id: r.id, name: r.name, status: r.status, payoutEnabled: r.payoutEnabled,
+      float_balance: Number(r.floatBalance), float_naira: koboToNaira(r.floatBalance), float_synced_at: r.floatSyncedAt,
+    })));
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/payouts/admin/rails/:id/sync-float — SA refreshes OUR balance ─
+// Pulls the live balance from the rail's API (if its adapter exposes getBalance)
+// and stores it as the rail float. Internal-only.
+router.post('/admin/rails/:id/sync-float', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const rail = await prisma.paymentRail.findUnique({ where: { id: req.params.id } });
+    if (!rail) return notFound(res, 'Rail');
+    const kobo = await syncRailFloat(rail);
+    if (kobo === null) return fail(res, `${rail.name} does not expose a balance API yet`);
+    ok(res, { rail_id: rail.id, name: rail.name, float_balance: Number(kobo), float_naira: koboToNaira(kobo) },
+      `${rail.name} float updated to ₦${koboToNaira(kobo).toLocaleString('en-NG')}`);
   } catch (e) { next(e); }
 });
 
@@ -611,21 +595,24 @@ router.get('/admin/routing-queue', requireAuth, requireSuperAdmin, async (req, r
       WHERE pb.status = 'needs_routing'
       ORDER BY pb.created_at ASC
     `;
-    // attach each merchant's per-rail balances so SA can decide the allocation
-    const out = [];
-    for (const b of rows) {
-      const rw = await prisma.merchantWallet.findMany({
-        where: { merchantId: b.merchant_id, rail: { payoutEnabled: true, status: 'LIVE' } },
-        include: { rail: { select: { id: true, name: true } } },
-      });
-      out.push({
-        batch_id: b.id, batch_ref: b.batch_ref, business_name: b.business_name, merchant_code: b.merchant_code,
-        total_deduction: Number(b.total_amount) + Number(b.total_fee) + Number(b.total_vat),
-        total_deduction_naira: koboToNaira(BigInt(b.total_amount) + BigInt(b.total_fee) + BigInt(b.total_vat)),
-        total_items: b.total_items, created_at: b.created_at,
-        rail_balances: rw.map(w => ({ rail_id: w.railId, rail_name: w.rail ? w.rail.name : 'Unallocated', balance_naira: koboToNaira(w.balance), balance: Number(w.balance) })),
-      });
-    }
+    // OUR rail floats (internal — never merchant-facing). SA allocates the
+    // disbursement across these; the merchant balance was already debited.
+    const rails = await prisma.paymentRail.findMany({
+      where: { payoutEnabled: true },
+      select: { id: true, name: true, status: true, floatBalance: true, floatSyncedAt: true },
+      orderBy: { name: 'asc' },
+    });
+    const rail_floats = rails.map(r => ({
+      rail_id: r.id, rail_name: r.name, status: r.status,
+      balance: Number(r.floatBalance), balance_naira: koboToNaira(r.floatBalance), synced_at: r.floatSyncedAt,
+    }));
+    const out = rows.map(b => ({
+      batch_id: b.id, batch_ref: b.batch_ref, business_name: b.business_name, merchant_code: b.merchant_code,
+      total_deduction: Number(b.total_amount) + Number(b.total_fee) + Number(b.total_vat),
+      total_deduction_naira: koboToNaira(BigInt(b.total_amount) + BigInt(b.total_fee) + BigInt(b.total_vat)),
+      total_items: b.total_items, created_at: b.created_at,
+      rail_floats,   // global floats (same list for every batch)
+    }));
     ok(res, out);
   } catch (e) { next(e); }
 });
@@ -650,20 +637,20 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
     if (allocTotal !== totalDeduction)
       return fail(res, `Allocations (₦${koboToNaira(allocTotal).toLocaleString('en-NG')}) must sum to the batch total ₦${koboToNaira(totalDeduction).toLocaleString('en-NG')}`);
 
+    // The merchant balance was already debited at batch creation. Here SA only
+    // allocates the disbursement across OUR rail floats — guarded so we never
+    // route more than a rail can actually send. The float self-reconciles on the
+    // next balance poll once the disbursement settles with the rail.
     await prisma.$transaction(async (tx) => {
       for (const a of allocations) {
-        const w = await tx.merchantWallet.findUnique({
-          where: { merchantId_railId: { merchantId: batch.merchant_id, railId: a.rail_id } },
-        });
         const amt = BigInt(a.amount);
-        if (!w || w.balance < amt) throw Object.assign(new Error('A selected rail no longer has enough balance'), { _client: true });
-        const before = w.balance, after = before - amt;
-        await tx.merchantWallet.update({ where: { id: w.id }, data: { balance: after, lastUsedAt: new Date() } });
-        await tx.walletLedger.create({ data: {
-          merchantId: batch.merchant_id, railId: a.rail_id, entryType: 'DEBIT', amount: amt,
-          balanceBefore: before, balanceAfter: after, reference: batch.batch_ref,
-          description: 'Payout routed by SA (' + batch.batch_ref + ')', createdBy: req.user.id,
-        }});
+        const dec = await tx.$queryRaw`
+          UPDATE payment_rails
+          SET float_balance = float_balance - ${amt}, updated_at = NOW()
+          WHERE id = ${a.rail_id}::uuid AND payout_enabled = true AND float_balance >= ${amt}
+          RETURNING name, float_balance`;
+        if (!dec.length) throw Object.assign(new Error(
+          'A selected rail is not payout-enabled or lacks enough float for ₦' + koboToNaira(amt).toLocaleString('en-NG')), { _client: true });
       }
       await tx.$executeRaw`UPDATE payout_batches SET status = 'processing', rail_id = ${allocations[0].rail_id}::uuid, updated_at = NOW() WHERE id = ${batchId}::uuid`;
       await tx.$executeRaw`UPDATE payout_items SET status = 'processing' WHERE batch_id = ${batchId}::uuid`;

@@ -280,8 +280,9 @@ router.get('/', requireAuth, async (req, res, next) => {
       prisma.transaction.count({ where }),
     ]);
 
+    const internal = req.user.role !== 'MERCHANT';   // SA/admin see full economics
     ok(res, {
-      data: txns.map(formatTxn),
+      data: txns.map(t => formatTxn(t, internal)),
       meta: { total, page: parseInt(page), perPage: parseInt(perPage), pages: Math.ceil(total/parseInt(perPage)) },
     });
   } catch (e) { next(e); }
@@ -322,7 +323,10 @@ router.post('/:ref/refund', requireAuth,
   }
 );
 
-function formatTxn(t) {
+// internal=true (SA/admin) → full economics. Default (merchant / SDK / webhook)
+// → only the merchant's own fee; OUR rail cost, margin, net revenue and the
+// aggregator's share are internal and MUST NOT be exposed to merchants.
+function formatTxn(t, internal = false) {
   return {
     id:             t.id,
     reference:      t.reference,
@@ -332,12 +336,14 @@ function formatTxn(t) {
     currency:       t.currency,
     channel:        t.channel,
     customer_email: t.customerEmail,
-    fees: {
+    fees: internal ? {
       merchant_fee:    Number(t.merchantFee),
       rail_cost:       Number(t.railCost),
       net_revenue:     Number(t.netRevenue),
       agg_share:       Number(t.aggShare),
       paylode_margin:  Number(t.paylodeMargin),
+    } : {
+      merchant_fee:    Number(t.merchantFee),
     },
     metadata:          t.metadata,
     failure_reason:    t.failureReason,

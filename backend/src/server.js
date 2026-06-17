@@ -162,6 +162,17 @@ async function start() {
       logger.info(`  Health: http://localhost:${PORT}/health`);
       logger.info(`  CBN License: ${process.env.CBN_LICENSE_NO}`);
     });
+
+    // Rail-float poll — refresh OUR balance on each payout rail (PalmPay etc.).
+    // Runs on ONE pm2 worker only (instance 0) to avoid N× polling.
+    if ((process.env.NODE_APP_INSTANCE || '0') === '0') {
+      const { syncAllFloats } = require('./services/railFloat');
+      const POLL_MS = Number(process.env.RAIL_FLOAT_POLL_MS || 10 * 60 * 1000); // 10 min
+      const run = () => syncAllFloats().catch(e => logger.error({ err: e }, 'rail float poll failed'));
+      setTimeout(run, 15000);          // once shortly after boot
+      setInterval(run, POLL_MS);       // then on a schedule
+      logger.info(`  Rail-float poll every ${Math.round(POLL_MS / 60000)} min (worker 0)`);
+    }
   } catch (err) {
     logger.error('Failed to start server:', err);
     process.exit(1);
