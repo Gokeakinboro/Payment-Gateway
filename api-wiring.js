@@ -734,11 +734,14 @@ async function editMerchant(id) {
   var results = await Promise.all([
     apiFetch('/merchants/' + id),
     isSuperAdmin ? apiFetch('/aggregators') : Promise.resolve(null),
+    isSuperAdmin ? apiFetch('/merchants/' + id + '/rates') : Promise.resolve(null),
   ]);
   var mRes = results[0]; var aggRes = results[1];
   if (!mRes || !mRes.data) { alert('Could not load merchant'); return; }
   var m    = mRes.data;
   var aggs = (aggRes && aggRes.data) ? aggRes.data : [];
+  var rateCfgs = (results[2] && results[2].data) ? results[2].data : [];
+  var rateByCh = {}; rateCfgs.forEach(function(r) { rateByCh[r.channel] = r; });
 
   var cats = ['Retail','E-commerce','Transport','Education','Healthcare','Technology','Financial Services','Other'];
   var catOpts = cats.map(function(c) {
@@ -805,19 +808,28 @@ async function editMerchant(id) {
         '</div>' +
         '<div class="form-hint">Customer pays: customer is debited principal + fee + VAT. Merchant pays: customer debited principal only, merchant settles net of fee.</div>' +
       '</div>' +
-      '<div style="font-size:12px;font-weight:500;color:var(--gray-600);margin-bottom:8px">Per-Channel Processing Rates (%)</div>' +
-      (function() {
-        var rates = m.channelRates || m.channel_rates || {};
-        var defaultRate = m.processingRate ? (Number(m.processingRate)*100).toFixed(2) : '1.50';
-        var channels = [['CARD','Card (Visa/Mastercard/Verve)'],['BANK_TRANSFER','Bank Transfer / VA'],['USSD','USSD'],['POS','POS']];
-        return '<div class="form-grid">' + channels.map(function(ch) {
-          var val = rates[ch[0]] !== undefined ? (Number(rates[ch[0]])*100).toFixed(2) : defaultRate;
-          return '<div class="form-group"><label class="form-label" style="font-size:11px">' + ch[1] + '</label>' +
-            '<div style="display:flex;align-items:center;gap:4px">' +
-            '<input class="form-input" id="em-rate-' + ch[0] + '" type="number" value="' + val + '" step="0.01" min="0" max="10" style="width:90px">' +
-            '<span style="font-size:12px;color:var(--gray-400)">%</span></div></div>';
-        }).join('') + '</div>';
-      })() +
+      (isSuperAdmin ? (function() {
+        var channels = [['CARD_LOCAL','Local Cards'],['CARD_INTL','International Cards'],['VIRTUAL_ACCOUNT','Virtual Accounts'],['USSD','USSD'],['PAYOUT','Payouts']];
+        return '<div style="font-size:12px;font-weight:500;color:var(--gray-600);margin:4px 0 6px">Per-product pricing — what we charge THIS merchant (overrides the platform default; leave a row blank to use the default)</div>' +
+          '<div class="table-wrap"><table style="width:100%;font-size:12px"><thead><tr style="border-bottom:1px solid var(--gray-200)">' +
+          '<th style="text-align:left;padding:4px">Product</th><th style="padding:4px">Rate %</th><th style="padding:4px">Flat ₦</th><th style="padding:4px">Max cap ₦</th><th style="padding:4px">Min ₦</th><th style="padding:4px">VAT %</th></tr></thead><tbody>' +
+          channels.map(function(ch) {
+            var c = rateByCh[ch[0]] || {};
+            var rate = (c.rate !== undefined && c.rate !== null) ? (Number(c.rate)*100) : '';
+            var flat = c.flat_fee ? (Number(c.flat_fee)/100) : '';
+            var cap  = c.cap ? (Number(c.cap)/100) : '';
+            var minc = c.min_charge ? (Number(c.min_charge)/100) : '';
+            var vat  = (c.vat_rate !== undefined && c.vat_rate !== null) ? (Number(c.vat_rate)*100) : 7.5;
+            var inp = function(f,v,w,st){ return '<input class="form-input" id="em-rc-'+ch[0]+'-'+f+'" type="number" '+(st||'')+' value="'+v+'" style="width:'+(w||70)+'px">'; };
+            return '<tr><td style="padding:3px">'+ch[1]+'</td>' +
+              '<td style="padding:3px">'+inp('rate',rate,68,'step="0.01" min="0" max="20"')+'</td>' +
+              '<td style="padding:3px">'+inp('flat',flat,68,'step="0.01" min="0"')+'</td>' +
+              '<td style="padding:3px">'+inp('cap',cap,72,'min="0"')+'</td>' +
+              '<td style="padding:3px">'+inp('min',minc,68,'min="0"')+'</td>' +
+              '<td style="padding:3px">'+inp('vat',vat,58,'step="0.1" min="0"')+'</td></tr>';
+          }).join('') + '</tbody></table></div>' +
+          '<div class="form-hint">Enter a Rate % and/or Flat ₦. Max cap / Min are optional. Clear all numeric fields on a row to remove the override (revert to platform default).</div>';
+      })() : '<div class="info-box" style="font-size:12px">Per-product rate changes require Super Admin.</div>') +
     '</div>' +
     '<div style="border-top:1px solid var(--gray-100);margin:16px 0;padding-top:16px">' +
       '<div style="font-size:12px;font-weight:600;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Settlement Account</div>' +
@@ -884,12 +896,6 @@ async function viewAggMerchants(aggId) {
 function _val(id) { var el = document.getElementById(id); return el ? el.value.trim() : null; }
 
 async function saveMerchantEdit(id) {
-  // Collect per-channel rates
-  var channelRates = {};
-  ['CARD','BANK_TRANSFER','USSD','POS'].forEach(function(ch) {
-    var el = document.getElementById('em-rate-' + ch);
-    if (el && el.value) channelRates[ch] = parseFloat(el.value) / 100;
-  });
   // Fee payer
   var feePayer = document.querySelector('input[name="em-fee-payer"]:checked');
 
@@ -904,12 +910,28 @@ async function saveMerchantEdit(id) {
     settlementAccount:     _val('em-acct'),
     settlementAccountName: _val('em-acct-name'),
   };
-  if (Object.keys(channelRates).length) body.channelRates = channelRates;
   if (feePayer) body.feePaidBy = feePayer.value;
   // Super-admin-only fields (elements won't exist in aggregator modal)
-  if (document.getElementById('em-rate'))   body.processingRate = parseFloat(_val('em-rate')) / 100;
   if (document.getElementById('em-status')) body.kycStatus      = _val('em-status');
   if (document.getElementById('em-agg'))    body.aggregatorId   = _val('em-agg') || null;
+
+  // Save per-product pricing (full model) — SA only; the inputs exist only then.
+  if (document.getElementById('em-rc-CARD_LOCAL-rate')) {
+    var num = function(idf){ var e=document.getElementById(idf); var v=e?parseFloat(e.value):NaN; return isNaN(v)?null:v; };
+    var channels = ['CARD_LOCAL','CARD_INTL','VIRTUAL_ACCOUNT','USSD','PAYOUT'];
+    for (var i=0;i<channels.length;i++) {
+      var ch = channels[i];
+      var rate=num('em-rc-'+ch+'-rate'), flat=num('em-rc-'+ch+'-flat'), cap=num('em-rc-'+ch+'-cap'), minc=num('em-rc-'+ch+'-min'), vat=num('em-rc-'+ch+'-vat');
+      var hasOverride = (rate!==null && rate>0) || (flat!==null && flat>0) || (cap!==null && cap>0) || (minc!==null && minc>0);
+      if (hasOverride) {
+        await apiFetch('/merchants/'+id+'/rates', { method:'POST', body: JSON.stringify({
+          channel: ch, rate: (rate||0)/100, flat_fee: Math.round((flat||0)*100),
+          cap: Math.round((cap||0)*100), min_charge: Math.round((minc||0)*100), vat_rate: (vat!=null?vat:7.5)/100 }) });
+      } else {
+        await apiFetch('/merchants/'+id+'/rates/'+ch, { method:'DELETE' }).catch(function(){});
+      }
+    }
+  }
 
   var res = await apiFetch('/merchants/' + id, { method: 'PUT', body: JSON.stringify(body) });
   if (res && res.status) {

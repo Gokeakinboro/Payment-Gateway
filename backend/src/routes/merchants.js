@@ -81,34 +81,42 @@ router.get('/:id/rates', requireAuth, async (req, res, next) => {
       flat_fee:   Number(r.flatFee),
       cap:        Number(r.cap),
       min_charge: Number(r.minCharge),
+      vat_rate:   Number(r.vatRate),
     })));
   } catch (e) { next(e); }
 });
 
 router.post('/:id/rates', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
-    const { channel, rate, flat_fee = 0, cap = 0, min_charge = 0, notes } = req.body;
+    const { channel, rate, flat_fee = 0, cap = 0, min_charge = 0, vat_rate, notes } = req.body;
     if (!VALID_CHANNELS.includes(channel)) return fail(res, `channel must be one of: ${VALID_CHANNELS.join(', ')}`);
     const rateNum = parseFloat(rate);
     if (isNaN(rateNum) || rateNum < 0 || rateNum > 0.2) return fail(res, 'rate must be between 0 and 0.2 (20%)');
+    const flatN   = Number(flat_fee);
+    const vatNum  = (vat_rate !== undefined && !isNaN(parseFloat(vat_rate))) ? parseFloat(vat_rate) : 0.075;
+    // Derive the fee model from what was entered (% and/or flat).
+    const feeModel = (rateNum > 0 && flatN > 0) ? 'PCT_PLUS_FLAT' : (flatN > 0 && rateNum === 0 ? 'FLAT' : 'PCT');
 
     const config = await prisma.merchantRateConfig.upsert({
       where: { merchantId_channel: { merchantId: req.params.id, channel } },
       create: {
         merchantId: req.params.id,
-        channel,
+        channel,    feeModel,
         rate:      rateNum,
-        flatFee:   BigInt(Math.round(Number(flat_fee))),
+        flatFee:   BigInt(Math.round(flatN)),
         cap:       BigInt(Math.round(Number(cap))),
         minCharge: BigInt(Math.round(Number(min_charge))),
+        vatRate:   vatNum,
         notes,
         setBy: req.user.id,
       },
       update: {
+        feeModel,
         rate:      rateNum,
-        flatFee:   BigInt(Math.round(Number(flat_fee))),
+        flatFee:   BigInt(Math.round(flatN)),
         cap:       BigInt(Math.round(Number(cap))),
         minCharge: BigInt(Math.round(Number(min_charge))),
+        vatRate:   vatNum,
         notes,
         setBy:     req.user.id,
         updatedAt: new Date(),
