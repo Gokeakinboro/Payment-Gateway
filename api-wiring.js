@@ -343,6 +343,11 @@ async function emailReportFile(filename, base64, mime, to) {
   if (res && res.status) alert(res.message || 'Report emailed to you.');
   else alert((res && res.message) || 'Could not email the report.');
 }
+// Email a SheetJS workbook (xlsx) to the logged-in user.
+async function _emailXlsx(wb, filename) {
+  var b64 = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+  await emailReportFile(filename, b64, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
 
 async function _buildTransactionsCsv() {
   const res = await apiFetch('/transactions?page=1&perPage=1000');
@@ -3144,6 +3149,7 @@ async function loadPayoutReport() {
       '<div class="page-header flex-between">' +
         '<div><div class="page-title">Payout Report</div><div class="page-desc">' + from + ' to ' + to + '</div></div>' +
         '<button class="btn btn-outline btn-sm" onclick="exportPayoutReport()">&#8681; Export CSV</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="emailPayoutReport()">&#9993; Email to me</button>' +
       '</div>' +
       '<div class="stats-grid">' +
         '<div class="stat-card"><div class="stat-label">Payout Batches</div><div class="stat-value">' + fmtNum(s.batch_count||0) + '</div><div class="stat-sub">' + (s.active_merchants||0) + ' merchants</div></div>' +
@@ -3168,9 +3174,9 @@ async function loadPayoutReport() {
   }
 }
 
-function exportPayoutReport() {
+function _buildPayoutReportCsv() {
   var d = window._payoutReportData;
-  if (!d) { alert('No report data to export'); return; }
+  if (!d) return null;
   var headers = ['Merchant','Code','Batches','Items','Success','Failed','Amount (NGN)','Fee Earned (NGN)','VAT (NGN)','Success Rate'];
   var rows = (d.by_merchant || []).map(function(m) {
     return [
@@ -3182,13 +3188,11 @@ function exportPayoutReport() {
       m.success_rate||'0%',
     ];
   });
-  var csv = [headers, ...rows].map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
-  var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'payout-report-' + new Date().toISOString().split('T')[0] + '.csv';
-  a.click();
+  var csv = '﻿' + [headers].concat(rows).map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
+  return { csv: csv, filename: 'payout-report-' + new Date().toISOString().split('T')[0] + '.csv' };
 }
+function exportPayoutReport() { var b = _buildPayoutReportCsv(); if (!b) { alert('No report data to export'); return; } _downloadText(b.csv, b.filename, 'text/csv'); }
+async function emailPayoutReport() { var b = _buildPayoutReportCsv(); if (!b) { alert('No report data to email'); return; } await emailReportFile(b.filename, _utf8ToBase64(b.csv), 'text/csv'); }
 
 // ── SETTLEMENT STATEMENT ──────────────────────────────────────────────────────
 async function downloadStatement() {
@@ -3397,6 +3401,7 @@ async function loadAggRevenue() {
         '<div><div class="page-title">Revenue Share Statement</div>' +
           '<div class="page-desc">Your aggregator earnings — local (NGN) and international (USD) shown separately</div></div>' +
         '<button class="btn btn-outline btn-sm" onclick="downloadAggRevenueLive()">&#8681; Download CSV</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="emailAggRevenueLive()">&#9993; Email to me</button>' +
       '</div>' +
 
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span></div>' +
@@ -3426,19 +3431,17 @@ async function loadAggRevenue() {
   }
 }
 
-function downloadAggRevenueLive() {
+function _buildAggRevenueCsv() {
   var rows = window._aggRevenueRows || [];
   var headers = ['Month','Merchant Volume (NGN)','Gross Fees (NGN)','Rail Costs (NGN)','Net Pool (NGN)','Your Share (NGN)','Status'];
   var data = rows.map(function(r) {
     return [r.month, r.merchant_volume||0, r.gross_fees||0, r.rail_costs||0, r.net_pool||0, r.agg_share_naira||0, r.status||'pending'];
   });
-  var csv = [headers, ...data].map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
-  var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'paylode-aggregator-revenue-' + new Date().toISOString().split('T')[0] + '.csv';
-  a.click();
+  var csv = '﻿' + [headers].concat(data).map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
+  return { csv: csv, filename: 'paylode-aggregator-revenue-' + new Date().toISOString().split('T')[0] + '.csv' };
 }
+function downloadAggRevenueLive() { var b = _buildAggRevenueCsv(); _downloadText(b.csv, b.filename, 'text/csv'); }
+async function emailAggRevenueLive() { var b = _buildAggRevenueCsv(); await emailReportFile(b.filename, _utf8ToBase64(b.csv), 'text/csv'); }
 
 // ── NAVIGATE FUNCTION ─────────────────────────────────────────────────────────
 // Use window assignment (not function declaration) to avoid hoisting conflicts
@@ -4528,7 +4531,8 @@ async function loadCbnReport() {
         '<div class="page-desc">' + (d.institution || '') + ' · ' + (d.frequency || 'Monthly') + ' · ' + (d.currency || 'NGN') + '. All transactions are WEB.</div></div>' +
         '<div class="flex" style="gap:6px"><a href="#" onclick="navigate(\'reports_hub\');return false" class="btn btn-outline btn-sm">← Reports</a>' +
           '<input type="month" id="cbn-month" value="' + month + '" class="form-input" style="width:auto" onchange="window._cbnMonth=this.value;loadCbnReport()">' +
-          '<button class="btn btn-lime btn-sm" onclick="downloadCbnExcel()">&#8681; Download Excel</button></div></div>' +
+          '<button class="btn btn-lime btn-sm" onclick="downloadCbnExcel()">&#8681; Download Excel</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="emailCbnExcel()">&#9993; Email to me</button></div></div>' +
       '<div class="card"><div class="table-wrap"><table>' +
         '<thead><tr><th>Channel Code</th><th>Channel</th><th>Volume</th><th>Value</th><th>Period</th></tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
@@ -4537,10 +4541,9 @@ async function loadCbnReport() {
       '</table></div></div>';
   } catch (e) { el.innerHTML = errorBox('Failed to load CBN report: ' + e.message); }
 }
-function downloadCbnExcel() {
+function _buildCbnWb() {
   var d = window._cbnData; var month = window._cbnMonth;
-  if (!d) { alert('No data loaded.'); return; }
-  if (typeof XLSX === 'undefined') { alert('Excel library still loading — try again in a moment.'); return; }
+  if (!d || typeof XLSX === 'undefined') return null;
   var aoa = [
     [],
     ['Frequency', 'Monthly', d.frequency_date],
@@ -4554,8 +4557,10 @@ function downloadCbnExcel() {
   aoa.push(['', '', '', '', d.total_value]);
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'PSSP_RETURNS');
-  XLSX.writeFile(wb, 'CBN Reporting PSSP-' + month + '.xlsx');
+  return { wb: wb, filename: 'CBN Reporting PSSP-' + month + '.xlsx' };
 }
+function downloadCbnExcel() { var b = _buildCbnWb(); if (!b) { alert('No data, or Excel still loading.'); return; } XLSX.writeFile(b.wb, b.filename); }
+async function emailCbnExcel() { var b = _buildCbnWb(); if (!b) { alert('No data, or Excel still loading.'); return; } await _emailXlsx(b.wb, b.filename); }
 
 // ── VAT REPORT (monthly, per product; Excel download for tax authorities) ─────
 function _lastMonthStr() {
@@ -4587,6 +4592,7 @@ async function loadVatReport() {
         '<div class="flex" style="gap:6px">' +
           '<input type="month" id="vat-month" value="' + month + '" class="form-input" style="width:auto" onchange="window._vatMonth=this.value;loadVatReport()">' +
           '<button class="btn btn-lime btn-sm" onclick="downloadVatExcel()">&#8681; Download Excel</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="emailVatExcel()">&#9993; Email to me</button>' +
         '</div></div>' +
       '<div class="stats-grid" style="margin-bottom:16px">' +
         '<div class="stat-card"><div class="stat-label">Output VAT</div><div class="stat-value">' + fmtNaira((t.output_vat_naira||0)*100) + '</div></div>' +
@@ -4600,10 +4606,9 @@ async function loadVatReport() {
       '<div class="info-box" style="margin-top:12px;font-size:12px">' + (d.note || '') + '</div>';
   } catch (e) { el.innerHTML = errorBox('Failed to load VAT report: ' + e.message); }
 }
-function downloadVatExcel() {
+function _buildVatWb() {
   var d = window._vatData; var month = window._vatMonth;
-  if (!d) { alert('No data loaded.'); return; }
-  if (typeof XLSX === 'undefined') { alert('Excel library still loading — try again in a moment.'); return; }
+  if (!d || typeof XLSX === 'undefined') return null;
   var t = d.totals || {};
   var summary = [
     ['Paylode Services Limited — VAT Report'],
@@ -4623,8 +4628,10 @@ function downloadVatExcel() {
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(perProduct), 'Per Product');
-  XLSX.writeFile(wb, 'Paylode VAT Report ' + month + '.xlsx');
+  return { wb: wb, filename: 'Paylode VAT Report ' + month + '.xlsx' };
 }
+function downloadVatExcel() { var b = _buildVatWb(); if (!b) { alert('No data, or Excel still loading.'); return; } XLSX.writeFile(b.wb, b.filename); }
+async function emailVatExcel() { var b = _buildVatWb(); if (!b) { alert('No data, or Excel still loading.'); return; } await _emailXlsx(b.wb, b.filename); }
 
 // ── PRODUCT REVENUE REPORT ────────────────────────────────────────────────────
 async function loadProductRevenue(period='month') {
