@@ -1708,7 +1708,8 @@ async function loadUsers() {
     var lastLogin = u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : 'Never';
     var actions = u.role !== 'SUPER_ADMIN'
       ? '<button class="btn btn-outline btn-sm" onclick="showEditPermissionsModal(\'' + u.id + '\')" style="margin-right:4px">Permissions</button>' +
-        '<button class="btn btn-outline btn-sm" onclick="toggleUserActive(\'' + u.id + '\',' + u.isActive + ')">' + (u.isActive ? 'Suspend' : 'Activate') + '</button>'
+        '<button class="btn btn-outline btn-sm" onclick="toggleUserActive(\'' + u.id + '\',' + u.isActive + ')" style="margin-right:4px">' + (u.isActive ? 'Suspend' : 'Activate') + '</button>' +
+        '<button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="deleteUser(\'' + u.id + '\',\'' + (u.email||'').replace(/'/g,'') + '\')">Delete</button>'
       : '<span style="font-size:11px;color:var(--gray-400)">Protected</span>';
     return '<tr>' +
       '<td style="font-weight:500">' + u.firstName + ' ' + u.lastName + '</td>' +
@@ -1867,6 +1868,15 @@ async function toggleUserActive(userId, currentlyActive) {
   });
   if (!res || !res.status) { alert(res && res.message || 'Error'); return; }
   loadUsers();
+}
+
+// SA: delete a staff user (backend refuses self / last Super Admin / merchant-
+// aggregator logins / users with audit history — suspend those instead).
+async function deleteUser(userId, email) {
+  if (!confirm('Delete user ' + email + '?\n\nOnly allowed for staff accounts with no audit history. Accounts that have taken actions should be Suspended instead.')) return;
+  var res = await apiFetch('/users/' + userId, { method:'DELETE' });
+  if (res && res.status) { alert(email + ' deleted.'); loadUsers(); }
+  else alert((res && res.message) || 'Delete failed');
 }
 
 renderNav();

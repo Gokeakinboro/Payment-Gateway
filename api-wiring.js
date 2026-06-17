@@ -1122,15 +1122,19 @@ async function loadActivityLog(tab) {
   tab = tab || window._actLogTab || 'staff';
   window._actLogTab = tab;
   // Read filters BEFORE wiping the DOM.
-  var q    = (document.getElementById('actlog-q')    || {}).value || '';
-  var from = (document.getElementById('actlog-from') || {}).value || '';
-  var to   = (document.getElementById('actlog-to')   || {}).value || '';
+  var q      = (document.getElementById('actlog-q')      || {}).value || '';
+  var from   = (document.getElementById('actlog-from')   || {}).value || '';
+  var to     = (document.getElementById('actlog-to')     || {}).value || '';
+  var action = (document.getElementById('actlog-action') || {}).value || '';
+  var role   = (document.getElementById('actlog-role')   || {}).value || '';
   el.innerHTML = loading();
   try {
     var qs = 'actorType=' + tab + '&perPage=200';
-    if (q)    qs += '&q='    + encodeURIComponent(q);
-    if (from) qs += '&from=' + encodeURIComponent(from);
-    if (to)   qs += '&to='   + encodeURIComponent(to);
+    if (q)      qs += '&q='      + encodeURIComponent(q);
+    if (from)   qs += '&from='   + encodeURIComponent(from);
+    if (to)     qs += '&to='     + encodeURIComponent(to);
+    if (action) qs += '&action=' + encodeURIComponent(action);
+    if (role)   qs += '&role='   + encodeURIComponent(role);
     var res = await apiFetch('/admin/audit-log?' + qs);
     if (!res || !res.status) { el.innerHTML = errorBox((res && res.message) || 'Failed to load activity log'); return; }
     var rows = res.data || [];
@@ -1159,11 +1163,15 @@ async function loadActivityLog(tab) {
         '<div class="page-desc">Who did what, when &mdash; staff and customer activity (' + (res.meta ? res.meta.total : rows.length) + ' total)</div></div>' +
       '<div class="tab-nav">' + tabBtn('staff','Staff Activity') + tabBtn('customer','Customer Activity') + '</div>' +
       '<div class="card" style="margin-bottom:12px"><div class="flex" style="gap:8px;align-items:flex-end;flex-wrap:wrap">' +
-        '<div class="form-group" style="margin:0"><label class="form-label">Search</label><input class="form-input" id="actlog-q" style="width:200px" value="' + _escA(q) + '" placeholder="action, entity, email" onkeydown="if(event.key===\'Enter\')loadActivityLog(\'' + tab + '\')"></div>' +
-        '<div class="form-group" style="margin:0"><label class="form-label">From</label><input type="date" class="form-input" id="actlog-from" value="' + _escA(from) + '"></div>' +
-        '<div class="form-group" style="margin:0"><label class="form-label">To</label><input type="date" class="form-input" id="actlog-to" value="' + _escA(to) + '"></div>' +
+        '<div class="form-group" style="margin:0"><label class="form-label">Action</label><select class="form-input form-select" id="actlog-action" style="width:190px" onchange="loadActivityLog(\'' + tab + '\')">' +
+          '<option value="">All actions</option>' + ((res.meta && res.meta.actions) || []).map(function(a){ return '<option value="' + _escA(a) + '"' + (action===a?' selected':'') + '>' + _escA(a.replace(/_/g,' ')) + '</option>'; }).join('') + '</select></div>' +
+        '<div class="form-group" style="margin:0"><label class="form-label">Role</label><select class="form-input form-select" id="actlog-role" style="width:150px" onchange="loadActivityLog(\'' + tab + '\')">' +
+          ['','SUPER_ADMIN','ADMIN','COMPLIANCE_OFFICER','AUDIT','MERCHANT','AGGREGATOR'].map(function(rr){ return '<option value="' + rr + '"' + (role===rr?' selected':'') + '>' + (rr?rr.replace(/_/g,' '):'All roles') + '</option>'; }).join('') + '</select></div>' +
+        '<div class="form-group" style="margin:0"><label class="form-label">Search</label><input class="form-input" id="actlog-q" style="width:180px" value="' + _escA(q) + '" placeholder="entity, email…" onkeydown="if(event.key===\'Enter\')loadActivityLog(\'' + tab + '\')"></div>' +
+        '<div class="form-group" style="margin:0"><label class="form-label">From</label><input type="date" class="form-input" id="actlog-from" value="' + _escA(from) + '" onchange="loadActivityLog(\'' + tab + '\')"></div>' +
+        '<div class="form-group" style="margin:0"><label class="form-label">To</label><input type="date" class="form-input" id="actlog-to" value="' + _escA(to) + '" onchange="loadActivityLog(\'' + tab + '\')"></div>' +
         '<button class="btn btn-lime btn-sm" onclick="loadActivityLog(\'' + tab + '\')">Apply</button>' +
-        '<button class="btn btn-outline btn-sm" onclick="document.getElementById(\'actlog-q\').value=\'\';document.getElementById(\'actlog-from\').value=\'\';document.getElementById(\'actlog-to\').value=\'\';loadActivityLog(\'' + tab + '\')">Clear</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="[\'actlog-q\',\'actlog-from\',\'actlog-to\',\'actlog-action\',\'actlog-role\'].forEach(function(id){var x=document.getElementById(id);if(x)x.value=\'\';});loadActivityLog(\'' + tab + '\')">Clear</button>' +
       '</div></div>' +
       '<div class="card"><div class="table-wrap"><table>' +
         '<thead><tr><th>Time</th><th>Actor</th><th>Role</th><th>Action</th><th>Entity</th><th>IP</th><th></th></tr></thead>' +

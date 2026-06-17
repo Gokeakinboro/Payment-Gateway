@@ -60,13 +60,14 @@ router.get('/dashboard', requireAuth, requireSuperAdmin, async (req,res,next) =>
 // plus action / entity / actor / date-range / free-text filters.
 router.get('/audit-log', requireAuth, requirePermission('view_audit_log'), async (req,res,next) => {
   try {
-    const { page=1, perPage=50, action, actorType, actorId, entityType, from, to, q } = req.query;
+    const { page=1, perPage=50, action, actorType, actorId, entityType, role, from, to, q } = req.query;
     const where = {};
     if (action)     where.action     = action;
     if (entityType) where.entityType = entityType;
     if (actorId)    where.actorId    = actorId;
     if (actorType === 'staff')    where.actor = { role: { in: STAFF_ROLES } };
     if (actorType === 'customer') where.actor = { role: { in: CUSTOMER_ROLES } };
+    if (role)       where.actor = { role };   // specific-role filter (overrides the tab scope)
     if (from || to) {
       where.createdAt = {};
       if (from) where.createdAt.gte = new Date(from);
@@ -79,9 +80,10 @@ router.get('/audit-log', requireAuth, requirePermission('view_audit_log'), async
       { actor: { email: { contains: q, mode: 'insensitive' } } },
     ];
 
-    const [logs, total] = await Promise.all([
+    const [logs, total, actionRows] = await Promise.all([
       prisma.auditLog.findMany({ where, skip:(parseInt(page)-1)*parseInt(perPage), take:parseInt(perPage), orderBy:{createdAt:'desc'}, include:{actor:{select:{email:true,firstName:true,lastName:true,role:true}}} }),
       prisma.auditLog.count({ where }),
+      prisma.$queryRaw`SELECT DISTINCT action FROM audit_log ORDER BY action`,
     ]);
     // id is BigInt — must be stringified for JSON.
     const data = logs.map(l => ({
@@ -95,7 +97,7 @@ router.get('/audit-log', requireAuth, requirePermission('view_audit_log'), async
         is_staff: STAFF_ROLES.includes(l.actor.role),
       } : null,
     }));
-    ok(res, { data, meta:{total, page:parseInt(page), pages:Math.ceil(total/parseInt(perPage))} });
+    ok(res, { data, meta:{total, page:parseInt(page), pages:Math.ceil(total/parseInt(perPage)), actions: actionRows.map(a=>a.action)} });
   } catch(e){next(e);}
 });
 

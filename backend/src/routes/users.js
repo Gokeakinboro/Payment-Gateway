@@ -206,4 +206,40 @@ router.patch('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── DELETE /api/v1/users/:id — SA deletes a STAFF user. GUARDED. ─────────────
+// Refuses: self, the last Super Admin, merchant/aggregator logins (delete those
+// from their own pages), and users with audit history (suspend to keep the trail).
+router.delete('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (id === req.user.id) return fail(res, 'You cannot delete your own account', 'SELF', 400);
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return fail(res, 'User not found', 'NOT_FOUND', 404);
+
+    const [isMerchant, isAgg, auditCount] = await Promise.all([
+      prisma.merchant.count({ where: { userId: id } }),
+      prisma.aggregator.count({ where: { userId: id } }),
+      prisma.auditLog.count({ where: { actorId: id } }),
+    ]);
+    if (isMerchant || isAgg)
+      return fail(res, 'This is a merchant/aggregator account — delete it from the Merchants/Aggregators page instead.', 'NOT_STAFF', 409);
+    if (user.role === 'SUPER_ADMIN') {
+      const saCount = await prisma.user.count({ where: { role: 'SUPER_ADMIN' } });
+      if (saCount <= 1) return fail(res, 'Cannot delete the last Super Admin', 'LAST_SA', 409);
+    }
+    if (auditCount)
+      return res.status(409).json({ status: false, error_code: 'HAS_HISTORY',
+        message: `This user has ${auditCount} audit-log action(s). Suspend the account instead, to preserve the audit trail.` });
+
+    // api_keys.user_id / kyc_submissions.reviewed_by are SET NULL on delete.
+    await prisma.user.delete({ where: { id } });
+    await logAudit(req.user.id, 'USER_DELETED', 'users', id, { email: user.email, role: user.role }, null, null, req.ip);
+    ok(res, { id }, 'User deleted');
+  } catch (e) {
+    if (e && e.code === 'P2003')
+      return res.status(409).json({ status: false, error_code: 'USER_IN_USE', message: 'This user is referenced by other records; suspend instead of deleting.' });
+    next(e);
+  }
+});
+
 module.exports = router;
