@@ -11,7 +11,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const router = require('express').Router();
 const palmpay = require('../services/palmpayService');
+const { prisma } = require('../utils/db');
 const { logger } = require('../utils/logger');
+
+// PalmPay orderStatus → our leg status. (2 = success; 1/0 = still processing;
+// anything else = failed.) Confirm exact codes against PalmPay's data dictionary.
+function legStatusFor(orderStatus) {
+  const s = String(orderStatus);
+  if (s === '2') return 'success';
+  if (s === '1' || s === '0') return null;   // not terminal yet
+  return 'failed';
+}
 
 // Verify the callback signature unless PalmPay isn't configured yet (scaffold).
 function verified(body) {
@@ -22,15 +32,51 @@ function verified(body) {
   return palmpay.verifyCallback(body);
 }
 
-// POST /api/v1/webhooks/palmpay/payout — payout result notification
-router.post('/payout', (req, res) => {
+// POST /api/v1/webhooks/palmpay/payout — payout result notification.
+// Matches the leg by rail_order_id (=orderId we sent), records the rail's order
+// number + NIBSS sessionId (recon key), and rolls the result up to the item/batch.
+router.post('/payout', async (req, res) => {
   const b = req.body || {};
   if (!verified(b)) { logger.warn({ orderId: b.orderId }, 'PalmPay payout callback: BAD signature'); return res.status(401).send('invalid signature'); }
-  logger.info({ orderId: b.orderId, orderNo: b.orderNo, orderStatus: b.orderStatus, amount: b.amount }, 'PalmPay payout result');
-  // TODO(keys): match payout_item/batch by orderId → set status from orderStatus
-  //   (success → 'success', failure → 'failed' + failureReason=b.errorMsg). Then
-  //   feed railHealth.recordRailResult(palmpayRail, {ok, reason, isLowBalance}).
-  res.status(200).send('success');
+  logger.info({ orderId: b.orderId, orderNo: b.orderNo, orderStatus: b.orderStatus, sessionId: b.sessionId }, 'PalmPay payout result');
+  try {
+    const legs = await prisma.$queryRaw`SELECT id, payout_item_id, batch_id FROM rail_disbursements WHERE rail_order_id = ${b.orderId}`;
+    if (!legs.length) { logger.warn({ orderId: b.orderId }, 'PalmPay payout callback: no matching leg'); return res.status(200).send('success'); }
+    const leg = legs[0];
+    const status = legStatusFor(b.orderStatus);
+    const settledAt = (status === 'success' || status === 'failed') ? new Date() : null;
+    // Update the ledger leg (always capture orderNo + sessionId; set status if terminal).
+    await prisma.$executeRaw`
+      UPDATE rail_disbursements
+      SET rail_order_no = ${b.orderNo || null}, rail_session_id = ${b.sessionId || null},
+          error_msg = ${b.errorMsg || null},
+          status = COALESCE(${status}, status),
+          settled_at = COALESCE(${settledAt}, settled_at), updated_at = NOW()
+      WHERE id = ${leg.id}::uuid`;
+    if (status) {
+      const itemStatus = status === 'success' ? 'success' : 'failed';
+      await prisma.$executeRaw`
+        UPDATE payout_items SET status = ${itemStatus}, failure_reason = ${status === 'failed' ? (b.errorMsg || 'Rail reported failure') : null},
+          provider_ref = ${b.orderNo || null}, processed_at = NOW()
+        WHERE id = ${leg.payout_item_id}::uuid`;
+      // Roll the batch up: counts + terminal status when every item is done.
+      await prisma.$executeRaw`
+        UPDATE payout_batches pb SET
+          processed_items = (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'success'),
+          failed_items    = (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'failed'),
+          status = CASE
+            WHEN (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status IN ('queued','processing')) > 0 THEN pb.status
+            WHEN (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'failed') = 0 THEN 'completed'
+            WHEN (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'success') = 0 THEN 'failed'
+            ELSE 'partially_failed' END,
+          updated_at = NOW()
+        WHERE pb.id = ${leg.batch_id}::uuid`;
+    }
+    res.status(200).send('success');
+  } catch (e) {
+    logger.error({ err: e, orderId: b.orderId }, 'PalmPay payout callback processing failed');
+    res.status(500).send('error');   // PalmPay will retry
+  }
 });
 
 // POST /api/v1/webhooks/palmpay/va-cashin — virtual-account pay-in (collection)

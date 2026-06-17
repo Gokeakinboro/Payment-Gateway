@@ -233,6 +233,12 @@ model PaymentRail {
   // merchants. Polled from the rail's balance API; SA allocates payouts against it.
   floatBalance  BigInt     @default(0) @map("float_balance")
   floatSyncedAt DateTime?  @map("float_synced_at")
+  // Payout routing config (internal). Cost is flat per transfer; caps protect the
+  // sponsor bank from overload. tpsLimit + dailyValueCap drive the router.
+  payoutFlatCost BigInt    @default(0) @map("payout_flat_cost")  // our cost/transfer (kobo)
+  dailyValueCap  BigInt?   @map("daily_value_cap")               // max kobo/day; null = none
+  tpsLimit       Int?      @map("tps_limit")                     // max sends/sec; null = none
+  sponsorBank    String?   @map("sponsor_bank")                  // settlement bank/switch
   createdAt     DateTime   @default(now()) @map("created_at")
   updatedAt     DateTime   @updatedAt @map("updated_at")
 
@@ -658,6 +664,7 @@ model PayoutItem {
   status        String    @default("queued")  // queued | processing | success | failed | refunded
   failureReason String?   @map("failure_reason")
   providerRef   String?   @map("provider_ref")
+  railId        String?   @map("rail_id") @db.Uuid   // the rail this item is sent through (internal)
   scheduledAt   DateTime? @map("scheduled_at")
   processedAt   DateTime? @map("processed_at")
   createdAt     DateTime  @default(now()) @map("created_at")

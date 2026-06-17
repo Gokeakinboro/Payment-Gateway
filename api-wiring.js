@@ -4277,23 +4277,59 @@ async function submitFundWallet(merchantId, name) {
 async function managePayoutRails() {
   const res = await apiFetch('/payouts/admin/payout-rails');
   const rails = res?.data || [];
-  const rows = rails.map(r => `<tr style="border-bottom:1px solid var(--gray-100)">
-    <td style="padding:8px">${r.name}</td>
+  window.__railCfg = {};
+  const rows = rails.map(r => { window.__railCfg[r.id] = r; return `<tr style="border-bottom:1px solid var(--gray-100)">
+    <td style="padding:8px">${r.name}<div style="font-size:10px;color:var(--gray-400)">${r.sponsor_bank||'no sponsor set'}</div></td>
     <td style="padding:8px;font-weight:600;color:${r.float_balance>0?'var(--green)':'var(--gray-400)'}">${fmtNaira(r.float_balance||0)}<div style="font-size:10px;color:var(--gray-400);font-weight:400">${r.float_synced_at?('synced '+new Date(r.float_synced_at).toLocaleString()):'never synced'}</div></td>
-    <td style="padding:8px"><span class="badge ${r.status==='LIVE'?'badge-green':'badge-gray'}">${r.status}</span></td>
-    <td style="padding:8px">${r.payoutEnabled?'<span class="badge badge-green">enabled</span>':'<span class="badge badge-gray">off</span>'}</td>
+    <td style="padding:8px">${r.payout_flat_cost?fmtNaira(r.payout_flat_cost):'<span style="color:var(--gray-400)">—</span>'}<div style="font-size:10px;color:var(--gray-400)">per transfer</div></td>
+    <td style="padding:8px;font-size:12px">${r.daily_value_cap!=null?(fmtNaira(r.used_today||0)+' / '+fmtNaira(r.daily_value_cap)):'<span style="color:var(--gray-400)">no cap</span>'}${r.tps_limit?'<div style="font-size:10px;color:var(--gray-400)">'+r.tps_limit+' TPS</div>':''}</td>
+    <td style="padding:8px"><span class="badge ${r.status==='LIVE'?'badge-green':'badge-gray'}">${r.status}</span> ${r.payoutEnabled?'<span class="badge badge-green">on</span>':'<span class="badge badge-gray">off</span>'}</td>
     <td style="padding:8px;white-space:nowrap">
-      <button class="btn btn-outline btn-sm" onclick="syncRailFloat('${r.id}')">&#8635; Sync</button>
+      <button class="btn btn-lime btn-sm" onclick="editRailConfig('${r.id}')">Config</button>
+      <button class="btn btn-outline btn-sm" onclick="syncRailFloat('${r.id}')">&#8635;</button>
       <button class="btn btn-outline btn-sm" onclick="togglePayoutRail('${r.id}','enable',${!r.payoutEnabled})">${r.payoutEnabled?'Disable':'Enable'}</button>
-      <button class="btn btn-outline btn-sm" onclick="togglePayoutRail('${r.id}','status','${r.status==='LIVE'?'CONFIG_ONLY':'LIVE'}')">${r.status==='LIVE'?'Set Config-Only':'Set LIVE'}</button>
-    </td></tr>`).join('');
+      <button class="btn btn-outline btn-sm" onclick="togglePayoutRail('${r.id}','status','${r.status==='LIVE'?'CONFIG_ONLY':'LIVE'}')">${r.status==='LIVE'?'Config-Only':'Set LIVE'}</button>
+    </td></tr>`; }).join('');
   showModal(
-    `<div class="modal-header"><div class="modal-title">Rail Floats &amp; Status</div>
+    `<div class="modal-header"><div class="modal-title">Rail Floats, Cost &amp; Caps</div>
      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
-     <div class="info-box" style="font-size:12px;margin-bottom:12px"><strong>Float</strong> = OUR balance held with each rail (auto-polled; click Sync to refresh now). A rail must be <strong>payout-enabled</strong> AND <strong>LIVE</strong> to route payouts through it. Internal only — never shown to merchants.</div>
+     <div class="info-box" style="font-size:12px;margin-bottom:12px"><strong>Float</strong> = OUR balance with each rail (auto-polled; &#8635; to refresh). <strong>Cost</strong> = our flat charge per transfer. <strong>Cap</strong> = max value/day to protect the sponsor bank. All internal — never shown to merchants.</div>
      <div class="table-wrap"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)">
-       <th style="text-align:left;padding:8px">Rail</th><th style="text-align:left;padding:8px">Our Float</th><th style="text-align:left;padding:8px">Status</th><th style="text-align:left;padding:8px">Payout</th><th></th></tr></thead>
-       <tbody>${rows||'<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--gray-400)">No rails configured</td></tr>'}</tbody></table></div>`);
+       <th style="text-align:left;padding:8px">Rail / Sponsor</th><th style="text-align:left;padding:8px">Our Float</th><th style="text-align:left;padding:8px">Cost/txn</th><th style="text-align:left;padding:8px">Today / Daily cap</th><th style="text-align:left;padding:8px">State</th><th></th></tr></thead>
+       <tbody>${rows||'<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--gray-400)">No rails configured</td></tr>'}</tbody></table></div>`,'lg');
+}
+// SA: edit a rail's payout config (cost / daily cap / TPS / sponsor bank)
+function editRailConfig(id) {
+  const r = (window.__railCfg || {})[id] || {};
+  showModal(
+    `<div class="modal-header"><div class="modal-title">${r.name} — Payout Config</div>
+     <button class="modal-close" onclick="managePayoutRails()">&#10005;</button></div>
+     <div class="form-group"><label class="form-label">Sponsor bank / switch</label><input class="form-input" id="rc-sponsor" value="${r.sponsor_bank||''}" placeholder="e.g. Wema (sponsor)"></div>
+     <div class="form-grid">
+       <div class="form-group"><label class="form-label">Flat cost per transfer (₦)</label><input class="form-input" id="rc-cost" type="number" min="0" step="0.01" value="${r.payout_flat_cost!=null?(r.payout_flat_cost/100):''}" placeholder="e.g. 10"></div>
+       <div class="form-group"><label class="form-label">Daily value cap (₦, blank = none)</label><input class="form-input" id="rc-cap" type="number" min="0" value="${r.daily_value_cap!=null?(r.daily_value_cap/100):''}" placeholder="e.g. 50000000"></div>
+     </div>
+     <div class="form-group"><label class="form-label">TPS limit (sends/sec, blank = none)</label><input class="form-input" id="rc-tps" type="number" min="0" value="${r.tps_limit!=null?r.tps_limit:''}" placeholder="from the bank/switch"></div>
+     <div class="flex-between" style="margin-top:8px">
+       <button class="btn btn-outline" onclick="managePayoutRails()">Back</button>
+       <button class="btn btn-lime" id="rc-btn" onclick="saveRailConfig('${id}')">Save Config</button></div>
+     <div id="rc-msg" style="margin-top:8px"></div>`);
+}
+async function saveRailConfig(id) {
+  const cost = document.getElementById('rc-cost').value;
+  const cap  = document.getElementById('rc-cap').value;
+  const tps  = document.getElementById('rc-tps').value;
+  const sponsor = document.getElementById('rc-sponsor').value.trim();
+  const body = {
+    payout_flat_cost: cost === '' ? 0 : Math.round(parseFloat(cost) * 100),
+    daily_value_cap:  cap === '' ? null : Math.round(parseFloat(cap) * 100),
+    tps_limit:        tps === '' ? null : parseInt(tps, 10),
+    sponsor_bank:     sponsor || null,
+  };
+  const btn = document.getElementById('rc-btn'); btn.disabled = true; btn.textContent = 'Saving...';
+  const res = await apiFetch('/payouts/admin/payout-rails/'+id, { method:'PUT', body: JSON.stringify(body) });
+  if (res?.status) managePayoutRails();
+  else { document.getElementById('rc-msg').innerHTML = '<div class="warn-box" style="font-size:12px">'+((res&&res.message)||'Failed')+'</div>'; btn.disabled=false; btn.textContent='Save Config'; }
 }
 async function togglePayoutRail(id, kind, val) {
   const body = kind === 'enable' ? { payout_enabled: val } : { status: val };
@@ -4313,9 +4349,9 @@ async function loadRoutingQueue() {
   const q = res?.data || [];
   const rows = q.length ? q.map(b => `<tr style="border-bottom:1px solid var(--gray-100)">
     <td style="padding:8px">${b.business_name}<div class="mono" style="font-size:11px;color:var(--gray-400)">${b.batch_ref}</div></td>
-    <td style="padding:8px;font-weight:600">${fmtNaira(b.total_deduction)}</td>
+    <td style="padding:8px;font-weight:600">${fmtNaira(b.total_amount)}<div style="font-size:10px;color:var(--gray-400);font-weight:400">to beneficiaries</div></td>
     <td style="padding:8px;font-size:11px">${(b.rail_floats||[]).map(r=>r.rail_name+': '+fmtNaira(r.balance)).join('<br>')||'—'}</td>
-    <td style="padding:8px"><button class="btn btn-lime btn-sm" onclick="routeBatchPrompt('${b.batch_id}',${b.total_deduction},${JSON.stringify(b.rail_floats).replace(/"/g,'&quot;')})">Route</button></td>
+    <td style="padding:8px"><button class="btn btn-lime btn-sm" onclick="routeBatchPrompt('${b.batch_id}',${b.total_amount},${JSON.stringify(b.rail_floats).replace(/"/g,'&quot;')})">Route</button></td>
   </tr>`).join('') : '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--gray-400)">Nothing awaiting routing</td></tr>';
   showModal(
     `<div class="modal-header"><div class="modal-title">Payout Routing Queue</div>

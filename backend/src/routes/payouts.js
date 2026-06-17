@@ -533,12 +533,25 @@ router.get('/admin/wallets', requireAuth, requireSuperAdmin, async (req, res, ne
 router.get('/admin/payout-rails', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
     const rails = await prisma.paymentRail.findMany({
-      select: { id: true, name: true, status: true, payoutEnabled: true, floatBalance: true, floatSyncedAt: true },
+      select: { id: true, name: true, status: true, payoutEnabled: true, floatBalance: true, floatSyncedAt: true,
+                payoutFlatCost: true, dailyValueCap: true, tpsLimit: true, sponsorBank: true },
       orderBy: { name: 'asc' },
     });
+    // today's value already routed through each rail (for cap headroom display)
+    const usedRows = await prisma.$queryRaw`
+      SELECT rail_id, COALESCE(SUM(amount),0) AS used
+      FROM rail_disbursements
+      WHERE created_at >= date_trunc('day', NOW()) AND status NOT IN ('failed','reversed')
+      GROUP BY rail_id`;
+    const usedBy = {}; usedRows.forEach(r => { usedBy[r.rail_id] = BigInt(r.used); });
     ok(res, rails.map(r => ({
       id: r.id, name: r.name, status: r.status, payoutEnabled: r.payoutEnabled,
       float_balance: Number(r.floatBalance), float_naira: koboToNaira(r.floatBalance), float_synced_at: r.floatSyncedAt,
+      payout_flat_cost: Number(r.payoutFlatCost), payout_flat_cost_naira: koboToNaira(r.payoutFlatCost),
+      daily_value_cap: r.dailyValueCap != null ? Number(r.dailyValueCap) : null,
+      daily_value_cap_naira: r.dailyValueCap != null ? koboToNaira(r.dailyValueCap) : null,
+      used_today: Number(usedBy[r.id] || 0n), used_today_naira: koboToNaira(usedBy[r.id] || 0n),
+      tps_limit: r.tpsLimit, sponsor_bank: r.sponsorBank,
     })));
   } catch (e) { next(e); }
 });
@@ -560,10 +573,15 @@ router.post('/admin/rails/:id/sync-float', requireAuth, requireSuperAdmin, async
 // ── PUT /api/v1/payouts/admin/payout-rails/:id — SA toggles payout-enable/status ─
 router.put('/admin/payout-rails/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
-    const { payout_enabled, status } = req.body;
+    const { payout_enabled, status, payout_flat_cost, daily_value_cap, tps_limit, sponsor_bank } = req.body;
     const data = {};
     if (payout_enabled !== undefined) data.payoutEnabled = !!payout_enabled;
-    if (status !== undefined) data.status = status;
+    if (status !== undefined)         data.status = status;
+    // Config (kobo for money fields). daily_value_cap = null clears the cap.
+    if (payout_flat_cost !== undefined) data.payoutFlatCost = BigInt(Math.max(0, Math.round(Number(payout_flat_cost))));
+    if (daily_value_cap !== undefined)  data.dailyValueCap  = (daily_value_cap === null || daily_value_cap === '') ? null : BigInt(Math.max(0, Math.round(Number(daily_value_cap))));
+    if (tps_limit !== undefined)        data.tpsLimit       = (tps_limit === null || tps_limit === '') ? null : parseInt(tps_limit, 10);
+    if (sponsor_bank !== undefined)     data.sponsorBank    = sponsor_bank || null;
     if (!Object.keys(data).length) return fail(res, 'Nothing to update');
     const rail = await prisma.paymentRail.update({ where: { id: req.params.id }, data });
     await logAudit(req.user.id, 'PAYOUT_RAIL_UPDATED', 'payment_rails', rail.id, {}, data, null, req.ip);
@@ -608,6 +626,8 @@ router.get('/admin/routing-queue', requireAuth, requireSuperAdmin, async (req, r
     }));
     const out = rows.map(b => ({
       batch_id: b.id, batch_ref: b.batch_ref, business_name: b.business_name, merchant_code: b.merchant_code,
+      // SA allocates against the BENEFICIARY total (what rails actually send).
+      total_amount: Number(b.total_amount), total_amount_naira: koboToNaira(b.total_amount),
       total_deduction: Number(b.total_amount) + Number(b.total_fee) + Number(b.total_vat),
       total_deduction_naira: koboToNaira(BigInt(b.total_amount) + BigInt(b.total_fee) + BigInt(b.total_vat)),
       total_items: b.total_items, created_at: b.created_at,
@@ -618,9 +638,10 @@ router.get('/admin/routing-queue', requireAuth, requireSuperAdmin, async (req, r
 });
 
 // ── POST /api/v1/payouts/admin/batches/:id/route — SA routes a queued batch ───
-// body.allocations: [{ rail_id, amount(kobo) }] summing to the batch's total
-// deduction. Each rail must hold enough balance. Debits each rail + marks the
-// batch processing. (Manual SA judgment for multi-rail splits.)
+// body.allocations: [{ rail_id, amount(kobo) }] summing to the batch's BENEFICIARY
+// total (total_amount — fee+VAT is our revenue, never sent through a rail). Items
+// are packed into rails to match the split; each leg is written to the rail
+// allocation ledger (rail_disbursements). Guarded against float + daily cap.
 router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
     const batchId = req.params.id;
@@ -632,32 +653,70 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
     if (!batch) return notFound(res, 'Batch');
     if (batch.status !== 'needs_routing') return fail(res, `Batch is not awaiting routing (status: ${batch.status})`);
 
-    const totalDeduction = BigInt(batch.total_amount) + BigInt(batch.total_fee) + BigInt(batch.total_vat);
-    const allocTotal = allocations.reduce((s, a) => s + BigInt(a.amount), 0n);
-    if (allocTotal !== totalDeduction)
-      return fail(res, `Allocations (₦${koboToNaira(allocTotal).toLocaleString('en-NG')}) must sum to the batch total ₦${koboToNaira(totalDeduction).toLocaleString('en-NG')}`);
+    const totalAmount = BigInt(batch.total_amount);   // beneficiary total (what rails send)
+    const allocTotal  = allocations.reduce((s, a) => s + BigInt(a.amount), 0n);
+    if (allocTotal !== totalAmount)
+      return fail(res, `Allocations (₦${koboToNaira(allocTotal).toLocaleString('en-NG')}) must sum to the payout total ₦${koboToNaira(totalAmount).toLocaleString('en-NG')} (fee + VAT are not sent through a rail).`);
 
-    // The merchant balance was already debited at batch creation. Here SA only
-    // allocates the disbursement across OUR rail floats — guarded so we never
-    // route more than a rail can actually send. The float self-reconciles on the
-    // next balance poll once the disbursement settles with the rail.
+    // Items to disburse (largest first — first-fit-decreasing packing).
+    const items = await prisma.$queryRaw`
+      SELECT id, amount, bank_code FROM payout_items WHERE batch_id = ${batchId}::uuid ORDER BY amount DESC`;
+    // Pack each item into a rail whose remaining target still covers it.
+    const targets = allocations.map(a => ({ rail_id: a.rail_id, remaining: BigInt(a.amount), items: [], sum: 0n }));
+    for (const it of items) {
+      const amt = BigInt(it.amount);
+      let bucket = targets.find(t => t.remaining >= amt) ||
+                   targets.slice().sort((x, y) => (y.remaining > x.remaining ? 1 : -1))[0]; // overflow → most room
+      bucket.items.push({ id: it.id, amount: amt }); bucket.remaining -= amt; bucket.sum += amt;
+    }
+    const used = targets.filter(t => t.sum > 0n);
+
+    // Rail config for the allocated rails (cost + cap + payout flag).
+    const rails = await prisma.paymentRail.findMany({
+      where: { id: { in: used.map(t => t.rail_id) } },
+      select: { id: true, name: true, payoutEnabled: true, payoutFlatCost: true, dailyValueCap: true },
+    });
+    const railById = Object.fromEntries(rails.map(r => [r.id, r]));
+    for (const t of used) {
+      const r = railById[t.rail_id];
+      if (!r || !r.payoutEnabled) return fail(res, 'A selected rail is not payout-enabled.');
+    }
+
     await prisma.$transaction(async (tx) => {
-      for (const a of allocations) {
-        const amt = BigInt(a.amount);
+      for (const t of used) {
+        const r = railById[t.rail_id];
+        // Daily value cap (sponsor-bank overload guard).
+        if (r.dailyValueCap != null) {
+          const usedRows = await tx.$queryRaw`
+            SELECT COALESCE(SUM(amount),0) AS u FROM rail_disbursements
+            WHERE rail_id = ${t.rail_id}::uuid AND created_at >= date_trunc('day', NOW()) AND status NOT IN ('failed','reversed')`;
+          if (BigInt(usedRows[0].u) + t.sum > r.dailyValueCap)
+            throw Object.assign(new Error(`${r.name} would exceed its daily cap (${koboToNaira(r.dailyValueCap).toLocaleString('en-NG')}).`), { _client: true });
+        }
+        // GUARDED float debit — never send more than our balance with the rail.
         const dec = await tx.$queryRaw`
-          UPDATE payment_rails
-          SET float_balance = float_balance - ${amt}, updated_at = NOW()
-          WHERE id = ${a.rail_id}::uuid AND payout_enabled = true AND float_balance >= ${amt}
-          RETURNING name, float_balance`;
+          UPDATE payment_rails SET float_balance = float_balance - ${t.sum}, updated_at = NOW()
+          WHERE id = ${t.rail_id}::uuid AND float_balance >= ${t.sum} RETURNING float_balance`;
         if (!dec.length) throw Object.assign(new Error(
-          'A selected rail is not payout-enabled or lacks enough float for ₦' + koboToNaira(amt).toLocaleString('en-NG')), { _client: true });
+          `${r.name} lacks enough float for ₦${koboToNaira(t.sum).toLocaleString('en-NG')}.`), { _client: true });
+        // Write a ledger leg per item + tag the item with its rail.
+        for (const it of t.items) {
+          const orderId = `${batch.batch_ref}-${it.id.slice(0, 8)}`;   // unique, ≤32 chars
+          await tx.$executeRaw`
+            INSERT INTO rail_disbursements
+              (payout_item_id, batch_id, merchant_id, rail_id, amount, rail_cost, status, rail_order_id, created_at, updated_at)
+            VALUES
+              (${it.id}::uuid, ${batchId}::uuid, ${batch.merchant_id}::uuid, ${t.rail_id}::uuid,
+               ${it.amount}, ${r.payoutFlatCost}, 'pending', ${orderId}, NOW(), NOW())`;
+          await tx.$executeRaw`UPDATE payout_items SET rail_id = ${t.rail_id}::uuid, status = 'processing' WHERE id = ${it.id}::uuid`;
+        }
       }
-      await tx.$executeRaw`UPDATE payout_batches SET status = 'processing', rail_id = ${allocations[0].rail_id}::uuid, updated_at = NOW() WHERE id = ${batchId}::uuid`;
-      await tx.$executeRaw`UPDATE payout_items SET status = 'processing' WHERE batch_id = ${batchId}::uuid`;
+      await tx.$executeRaw`UPDATE payout_batches SET status = 'processing', rail_id = ${used[0].rail_id}::uuid, updated_at = NOW() WHERE id = ${batchId}::uuid`;
     });
 
-    await logAudit(req.user.id, 'PAYOUT_BATCH_ROUTED', 'payout_batches', batchId, {}, { allocations }, null, req.ip);
-    ok(res, { batch_id: batchId, status: 'processing' }, 'Batch routed and processing');
+    await logAudit(req.user.id, 'PAYOUT_BATCH_ROUTED', 'payout_batches', batchId, {},
+      { allocations: used.map(t => ({ rail_id: t.rail_id, amount: Number(t.sum), items: t.items.length })) }, null, req.ip);
+    ok(res, { batch_id: batchId, status: 'processing', rails_used: used.length }, 'Batch routed — ledger legs created');
   } catch (e) {
     if (e && e._client) return fail(res, e.message);
     next(e);
