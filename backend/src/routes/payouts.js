@@ -693,21 +693,27 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
           if (BigInt(usedRows[0].u) + t.sum > r.dailyValueCap)
             throw Object.assign(new Error(`${r.name} would exceed its daily cap (${koboToNaira(r.dailyValueCap).toLocaleString('en-NG')}).`), { _client: true });
         }
+        // The rail takes its fee + VAT from OUR float too, so the float must cover
+        // beneficiary amounts PLUS (rail flat cost + 7.5% VAT) × number of transfers.
+        const railVatUnit  = (r.payoutFlatCost * 75n) / 1000n;            // 7.5% VAT on the flat cost
+        const railCostUnit = r.payoutFlatCost + railVatUnit;             // VAT-inclusive cost per transfer
+        const railCostTotal = railCostUnit * BigInt(t.items.length);
+        const floatNeeded   = t.sum + railCostTotal;                     // beneficiary total + rail charges
         // GUARDED float debit — never send more than our balance with the rail.
         const dec = await tx.$queryRaw`
-          UPDATE payment_rails SET float_balance = float_balance - ${t.sum}, updated_at = NOW()
-          WHERE id = ${t.rail_id}::uuid AND float_balance >= ${t.sum} RETURNING float_balance`;
+          UPDATE payment_rails SET float_balance = float_balance - ${floatNeeded}, updated_at = NOW()
+          WHERE id = ${t.rail_id}::uuid AND float_balance >= ${floatNeeded} RETURNING float_balance`;
         if (!dec.length) throw Object.assign(new Error(
-          `${r.name} lacks enough float for ₦${koboToNaira(t.sum).toLocaleString('en-NG')}.`), { _client: true });
-        // Write a ledger leg per item + tag the item with its rail.
+          `${r.name} lacks enough float for ₦${koboToNaira(floatNeeded).toLocaleString('en-NG')} (payout ₦${koboToNaira(t.sum).toLocaleString('en-NG')} + rail fees).`), { _client: true });
+        // Write a ledger leg per item (rail_cost = base, rail_vat = VAT on it) + tag the item.
         for (const it of t.items) {
           const orderId = `${batch.batch_ref}-${it.id.slice(0, 8)}`;   // unique, ≤32 chars
           await tx.$executeRaw`
             INSERT INTO rail_disbursements
-              (payout_item_id, batch_id, merchant_id, rail_id, amount, rail_cost, status, rail_order_id, created_at, updated_at)
+              (payout_item_id, batch_id, merchant_id, rail_id, amount, rail_cost, rail_vat, status, rail_order_id, created_at, updated_at)
             VALUES
               (${it.id}::uuid, ${batchId}::uuid, ${batch.merchant_id}::uuid, ${t.rail_id}::uuid,
-               ${it.amount}, ${r.payoutFlatCost}, 'pending', ${orderId}, NOW(), NOW())`;
+               ${it.amount}, ${r.payoutFlatCost}, ${railVatUnit}, 'pending', ${orderId}, NOW(), NOW())`;
           await tx.$executeRaw`UPDATE payout_items SET rail_id = ${t.rail_id}::uuid, status = 'processing' WHERE id = ${it.id}::uuid`;
         }
       }
