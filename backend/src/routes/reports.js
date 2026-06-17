@@ -801,4 +801,29 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
   } catch (e) { next(e); }
 });
 
+// ── POST /api/v1/reports/email — email a generated report as an attachment ───
+// The client builds the file (CSV/Excel) and posts it base64; we email it.
+// Any logged-in user (incl. merchants) can email a report to themselves; staff
+// may specify another recipient. Works for EVERY report (download → email).
+const { sendEmail } = require('../services/emailService');
+const { logAudit }  = require('../services/auditService');
+router.post('/email', requireAuth, async (req, res, next) => {
+  try {
+    const { filename, content_base64, mime, subject, to } = req.body;
+    if (!filename || !content_base64) return fail(res, 'filename and content_base64 are required');
+    if (String(content_base64).length > 14_000_000) return fail(res, 'Report too large to email (max ~10MB)');
+    const staff = ['SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER', 'AUDIT'].includes(req.user.role);
+    const recipient = (staff && to) ? to : req.user.email;
+    if (!recipient) return fail(res, 'No email address on your account');
+    await sendEmail({
+      to: recipient,
+      subject: subject || ('Your Paylode report — ' + filename),
+      html: `<p>Hi,</p><p>Your requested report <strong>${filename}</strong> is attached.</p><p>— Paylode</p>`,
+      attachments: [{ filename, content: Buffer.from(content_base64, 'base64'), contentType: mime || 'application/octet-stream' }],
+    });
+    logAudit(req.user.id, 'REPORT_EMAILED', 'reports', req.user.id, null, { filename, to: recipient }).catch(() => {});
+    ok(res, { sent: true, to: recipient }, 'Report emailed to ' + recipient);
+  } catch (e) { next(e); }
+});
+
 module.exports = router;

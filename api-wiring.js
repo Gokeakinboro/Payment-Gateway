@@ -297,6 +297,7 @@ async function loadTransactions(page=1, filters={}) {
           <option value="USD"${filters.currency==='USD'?' selected':''}>$ International (USD)</option>
         </select>
         <button class="btn btn-outline btn-sm" onclick="exportTransactionsCsv()">&#8681; Export CSV</button>
+        <button class="btn btn-outline btn-sm" onclick="emailTransactionsCsv()">&#9993; Email to me</button>
       </div>
     </div>
     <div class="card">
@@ -330,35 +331,39 @@ async function loadTransactions(page=1, filters={}) {
   }
 }
 
+// ── Generic report helpers — download OR email any client-built report ───────
+function _utf8ToBase64(str) { return btoa(unescape(encodeURIComponent(str))); }
+function _downloadText(content, filename, mime) {
+  const blob = new Blob([content], { type: (mime||'text/plain') + ';charset=utf-8;' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+}
+// Email a report to the logged-in user (staff may pass a recipient).
+async function emailReportFile(filename, base64, mime, to) {
+  const res = await apiFetch('/reports/email', { method:'POST', body: JSON.stringify({ filename, content_base64: base64, mime, to }) });
+  if (res && res.status) alert(res.message || 'Report emailed to you.');
+  else alert((res && res.message) || 'Could not email the report.');
+}
+
+async function _buildTransactionsCsv() {
+  const res = await apiFetch('/transactions?page=1&perPage=1000');
+  const txns = res?.data?.data || [];
+  const headers = ['Reference','Merchant','Currency','Amount','Fee','Channel','International','Status','Date'];
+  const rows = txns.map(t => [
+    t.reference, (t.merchant?.businessName||'').replace(/,/g,' '), t.currency || 'NGN',
+    (Number(t.amount)/100).toFixed(2), (Number(t.fees?.merchant_fee||0)/100).toFixed(2),
+    t.channel, t.currency === 'USD' ? 'YES' : 'NO', t.status,
+    new Date(t.created_at).toLocaleDateString('en-NG'),
+  ]);
+  const csv = '﻿' + [headers, ...rows].map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n');
+  return { csv, filename: 'paylode-transactions-' + new Date().toISOString().split('T')[0] + '.csv' };
+}
 async function exportTransactionsCsv() {
-  const btn = document.querySelector('[onclick="exportTransactionsCsv()"]');
-  if (btn) { btn.textContent = '⟳ Loading...'; btn.disabled = true; }
-  try {
-    const res = await apiFetch('/transactions?page=1&perPage=1000');
-    const txns = res?.data?.data || [];
-    const headers = ['Reference','Merchant','Currency','Amount','Fee','Channel','International','Status','Date'];
-    const rows = txns.map(t => [
-      t.reference,
-      (t.merchant?.businessName||'').replace(/,/g,' '),
-      t.currency || 'NGN',
-      (Number(t.amount)/100).toFixed(2),
-      (Number(t.fees?.merchant_fee||0)/100).toFixed(2),
-      t.channel,
-      t.currency === 'USD' ? 'YES' : 'NO',
-      t.status,
-      new Date(t.created_at).toLocaleDateString('en-NG'),
-    ]);
-    const csv = [headers, ...rows].map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'paylode-transactions-' + new Date().toISOString().split('T')[0] + '.csv';
-    a.click();
-  } catch(e) {
-    alert('Export failed: ' + e.message);
-  } finally {
-    if (btn) { btn.textContent = '↓ Export CSV'; btn.disabled = false; }
-  }
+  try { const { csv, filename } = await _buildTransactionsCsv(); _downloadText(csv, filename, 'text/csv'); }
+  catch(e) { alert('Export failed: ' + e.message); }
+}
+async function emailTransactionsCsv() {
+  try { const { csv, filename } = await _buildTransactionsCsv(); await emailReportFile(filename, _utf8ToBase64(csv), 'text/csv'); }
+  catch(e) { alert('Email failed: ' + e.message); }
 }
 
 // ── MERCHANTS ─────────────────────────────────────────────────────────────────
@@ -2568,6 +2573,7 @@ async function loadRailSettlement() {
         '<div class="page-desc">Earnings by rail and product — local and international reported separately — ' + from + ' to ' + to + '</div>' +
       '</div>' +
         '<button class="btn btn-outline btn-sm" onclick="exportRailSettlement()">&#8681; Export CSV</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="emailRailSettlement()">&#9993; Email to me</button>' +
       '</div>' +
 
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span></div>' +
@@ -2591,9 +2597,9 @@ async function loadRailSettlement() {
   }
 }
 
-function exportRailSettlement() {
+function _buildRailSettlementCsv() {
   var d = window._railSettlementData;
-  if (!d) { alert('No data to export'); return; }
+  if (!d) return null;
   var headers = ['Section','Currency','Rail/Scheme','Product','Txns','Volume','Fee Revenue','Rail Cost','Margin'];
   var rows = (d.by_rail_product || []).map(function(p) {
     return ['Rail x Product', p.currency||'NGN', p.rail_name, p.product||'', p.txn_count, p.volume_major, p.fee_revenue_major, p.rail_cost_major, p.margin_major];
@@ -2601,12 +2607,16 @@ function exportRailSettlement() {
   (d.by_scheme || []).forEach(function(s) {
     rows.push(['Card Scheme (USD)', 'USD', s.scheme_label||s.scheme, 'International Card', s.txn_count, s.volume_major, s.fee_revenue_major, '', s.margin_major]);
   });
-  var csv = [headers].concat(rows).map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
-  var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'rail-settlement-' + new Date().toISOString().split('T')[0] + '.csv';
-  a.click();
+  var csv = '﻿' + [headers].concat(rows).map(function(r) { return r.map(function(v) { return '"' + String(v) + '"'; }).join(','); }).join('\n');
+  return { csv: csv, filename: 'rail-settlement-' + new Date().toISOString().split('T')[0] + '.csv' };
+}
+function exportRailSettlement() {
+  var b = _buildRailSettlementCsv(); if (!b) { alert('No data to export'); return; }
+  _downloadText(b.csv, b.filename, 'text/csv');
+}
+async function emailRailSettlement() {
+  var b = _buildRailSettlementCsv(); if (!b) { alert('No data to email'); return; }
+  await emailReportFile(b.filename, _utf8ToBase64(b.csv), 'text/csv');
 }
 
 // ── FEE CONFIGURATION PAGE ───────────────────────────────────────────────────
