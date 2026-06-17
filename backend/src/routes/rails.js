@@ -6,7 +6,9 @@ const { requireAuth, requireSuperAdmin } = require('../middleware/auth');
 const { ok, created, fail, notFound, koboToNaira } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
 
-const SERVICE_TYPES = ['VISA','MASTERCARD','VERVE','BANK_TRANSFER','USSD','PAYOUT'];
+const SERVICE_TYPES = ['VISA','MASTERCARD','VERVE','BANK_TRANSFER','VIRTUAL_ACCOUNT','PAY_WITH_TRANSFER','PAY_WITH_WALLET','USSD','PAYOUT'];
+const CHANNEL_MAP = { VISA:'CARD', MASTERCARD:'CARD', VERVE:'CARD', BANK_TRANSFER:'BANK_TRANSFER',
+  VIRTUAL_ACCOUNT:'BANK_TRANSFER', PAY_WITH_TRANSFER:'BANK_TRANSFER', PAY_WITH_WALLET:'BANK_TRANSFER', USSD:'USSD', PAYOUT:'DIRECT_DEBIT' };
 
 const validate = rules => async (req, res, next) => {
   await Promise.all(rules.map(r => r.run(req)));
@@ -17,11 +19,19 @@ const validate = rules => async (req, res, next) => {
 
 router.get('/', requireAuth, async (req, res, next) => {
   try {
-    const rails = await prisma.paymentRail.findMany({
-      include: { costs: { where: { effectiveTo: null }, orderBy: { channel: 'asc' } } },
-      orderBy: { name: 'asc' },
+    const rails = await prisma.paymentRail.findMany({ orderBy: { name: 'asc' } });
+    const costs = await prisma.$queryRaw`
+      SELECT rail_id, service_type, rate, flat_fee, cap, min_charge, vat_rate
+      FROM rail_costs WHERE effective_to IS NULL ORDER BY service_type`;
+    const byRail = {};
+    costs.forEach(c => {
+      (byRail[c.rail_id] = byRail[c.rail_id] || []).push({
+        service_type: c.service_type, rate: Number(c.rate),
+        flat_fee: Number(c.flat_fee), cap: Number(c.cap),
+        min_charge: Number(c.min_charge), vat_rate: Number(c.vat_rate),
+      });
     });
-    ok(res, rails);
+    ok(res, rails.map(r => ({ ...r, costs: byRail[r.id] || [] })));
   } catch(e){next(e);}
 });
 
@@ -77,41 +87,42 @@ router.post('/', requireAuth, requireSuperAdmin,
   }
 );
 
+// A rail cost can be % (rate) and/or flat ₦ (flat_fee), with an optional max cap
+// and/or min charge. At least one of rate / flat_fee is required.
 router.put('/:id/costs', requireAuth, requireSuperAdmin,
   validate([
     body('service_type').isIn(SERVICE_TYPES).withMessage('Invalid service_type'),
-    body('rate').isFloat({ min:0, max:1 }).withMessage('rate must be 0-1'),
-    body('fee_cap').optional().isInt({ min:0 }),
-    body('merchant_cap').optional().isInt({ min:0 }),
+    body('rate').optional().isFloat({ min:0, max:1 }).withMessage('rate must be a fraction 0-1'),
+    body('flat_fee').optional().isInt({ min:0 }),
+    body('cap').optional().isInt({ min:0 }),
+    body('min_charge').optional().isInt({ min:0 }),
     body('vat_rate').optional().isFloat({ min:0, max:1 }),
+    body().custom(b => Number(b.rate || 0) > 0 || Number(b.flat_fee || 0) > 0)
+      .withMessage('Enter a percentage rate, a flat fee, or both'),
   ]),
   async (req, res, next) => {
     try {
       const rail = await prisma.paymentRail.findUnique({ where: { id: req.params.id } });
       if (!rail) return notFound(res, 'Rail');
-      const { service_type, rate, fee_cap=0, merchant_cap=0, vat_rate=0.075 } = req.body;
+      const { service_type, rate=0, flat_fee=0, cap=0, min_charge=0, vat_rate=0.075 } = req.body;
 
-      await prisma.railCost.updateMany({
-        where: { railId: rail.id, effectiveTo: null },
-        data: { effectiveTo: new Date() },
-      });
-
-      const channelMap = { VISA:'CARD', MASTERCARD:'CARD', VERVE:'CARD', BANK_TRANSFER:'BANK_TRANSFER', USSD:'USSD', PAYOUT:'DIRECT_DEBIT' };
+      // Version: close only the active cost for THIS service type on THIS rail.
+      await prisma.$executeRaw`
+        UPDATE rail_costs SET effective_to = NOW()::date
+        WHERE rail_id = ${rail.id}::uuid AND service_type = ${service_type} AND effective_to IS NULL`;
 
       const cost = await prisma.$queryRaw`
         INSERT INTO rail_costs
-          (rail_id, channel, service_type, rate, fee_cap, merchant_cap, vat_rate, effective_from)
+          (rail_id, channel, service_type, rate, flat_fee, cap, min_charge, vat_rate, effective_from)
         VALUES
-          (${rail.id}::uuid, ${channelMap[service_type]}::"Channel",
-           ${service_type}, ${Number(rate)}, ${BigInt(fee_cap)}, ${BigInt(merchant_cap)},
-           ${Number(vat_rate)}, NOW()::date)
-        RETURNING *
-      `;
+          (${rail.id}::uuid, ${CHANNEL_MAP[service_type]}::"Channel", ${service_type},
+           ${Number(rate)}, ${BigInt(Math.round(flat_fee))}, ${BigInt(Math.round(cap))},
+           ${BigInt(Math.round(min_charge))}, ${Number(vat_rate)}, NOW()::date)
+        RETURNING id`;
 
       await logAudit(req.user.id, 'RAIL_COST_UPDATED', 'rail_costs', cost[0].id, null,
-        { service_type, rate, fee_cap, merchant_cap, vat_rate });
-
-      ok(res, cost[0], 'Rail cost updated');
+        { service_type, rate, flat_fee, cap, min_charge, vat_rate });
+      ok(res, { id: cost[0].id, service_type }, 'Rail cost updated');
     } catch(e){next(e);}
   }
 );
@@ -174,5 +185,43 @@ router.post('/routing-test', requireAuth, requireSuperAdmin,
     } catch(e){next(e);}
   }
 );
+
+// ── DELETE /api/v1/rails/:id — SA deletes a rail. GUARDED. ───────────────────
+// Refuses if the rail is in use (any disbursement/payout/transaction/wallet) or
+// still holds our float. Otherwise removes the rail + its cost rows.
+router.delete('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const rail = await prisma.paymentRail.findUnique({ where: { id } });
+    if (!rail) return notFound(res, 'Rail');
+
+    const [disb, items, wallets, txns] = await Promise.all([
+      prisma.$queryRaw`SELECT count(*)::int n FROM rail_disbursements WHERE rail_id = ${id}::uuid`,
+      prisma.$queryRaw`SELECT count(*)::int n FROM payout_items WHERE rail_id = ${id}::uuid`,
+      prisma.$queryRaw`SELECT count(*)::int n FROM merchant_wallets WHERE rail_id = ${id}::uuid`,
+      prisma.transaction.count({ where: { railId: id } }),
+    ]);
+    const blockers = [];
+    if (disb[0].n)    blockers.push(`${disb[0].n} disbursement(s)`);
+    if (items[0].n)   blockers.push(`${items[0].n} payout item(s)`);
+    if (wallets[0].n) blockers.push(`${wallets[0].n} wallet(s)`);
+    if (txns)         blockers.push(`${txns} transaction(s)`);
+    if (rail.floatBalance > 0n) blockers.push(`a float balance of ₦${koboToNaira(rail.floatBalance).toLocaleString('en-NG')}`);
+    if (blockers.length)
+      return res.status(409).json({ status: false, error_code: 'RAIL_IN_USE',
+        message: `Cannot delete ${rail.name}: it has ${blockers.join(', ')}. Set it Config-Only / move its traffic first.` });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.railCost.deleteMany({ where: { railId: id } });
+      await tx.paymentRail.delete({ where: { id } });
+    });
+    await logAudit(req.user.id, 'RAIL_DELETED', 'payment_rails', id, { name: rail.name }, null);
+    ok(res, { id }, `${rail.name} deleted`);
+  } catch (e) {
+    if (e && e.code === 'P2003')
+      return res.status(409).json({ status: false, error_code: 'RAIL_IN_USE', message: 'Rail is referenced by other records and cannot be deleted.' });
+    next(e);
+  }
+});
 
 module.exports = router;

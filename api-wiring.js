@@ -4067,6 +4067,14 @@ async function loadServiceProviders() {
   } catch (e) { el.innerHTML = errorBox('Failed to load service providers: ' + e.message); }
 }
 
+// SA: delete a rail (backend refuses if it's in use or holds float).
+async function deleteRail(id, name) {
+  if (!confirm('Delete rail "' + name + '"?\n\nAllowed only if it has no disbursements, payout items, transactions, wallets or float balance.')) return;
+  const res = await apiFetch('/rails/' + id, { method:'DELETE' });
+  if (res?.status) { alert(name + ' deleted.'); loadRails(); }
+  else alert((res && res.message) || 'Delete failed');
+}
+
 async function loadRails() {
   const el = document.getElementById('main-content');
   el.innerHTML = loading();
@@ -4104,25 +4112,27 @@ async function loadRails() {
         </div>
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Service Type</th><th>Rate</th><th>Rail Fee Cap</th><th>Merchant Cap</th><th>VAT Rate</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Service Type</th><th>Rate</th><th>Flat Fee</th><th>Max Cap</th><th>Min Charge</th><th>VAT</th><th>Actions</th></tr></thead>
         <tbody>
           ${(rail.costs||[]).length ? rail.costs.map(c=>`<tr>
-            <td><span class="tag">${c.service_type||'—'}</span></td>
-            <td class="mono">${(Number(c.rate||0)*100).toFixed(3)}%</td>
-            <td>${Number(c.fee_cap||0)>0?fmtNaira(c.fee_cap):'No cap'}</td>
-            <td>${Number(c.merchant_cap||0)>0?fmtNaira(c.merchant_cap):'No cap'}</td>
+            <td><span class="tag">${(c.service_type||'—').replace(/_/g,' ')}</span></td>
+            <td class="mono">${Number(c.rate||0)>0?(Number(c.rate)*100).toFixed(3)+'%':'—'}</td>
+            <td>${Number(c.flat_fee||0)>0?fmtNaira(c.flat_fee):'—'}</td>
+            <td>${Number(c.cap||0)>0?fmtNaira(c.cap):'No cap'}</td>
+            <td>${Number(c.min_charge||0)>0?fmtNaira(c.min_charge):'—'}</td>
             <td>${(Number(c.vat_rate||0.075)*100).toFixed(1)}%</td>
-            <td><button class="btn btn-outline btn-sm" onclick="editRailCost('${rail.id}','${c.service_type}',${c.rate},${c.fee_cap||0},${c.merchant_cap||0},${c.vat_rate||0.075})">Edit</button></td>
-          </tr>`).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:12px">No costs configured — click Add Service Type</td></tr>'}
+            <td><button class="btn btn-outline btn-sm" onclick="editRailCost('${rail.id}','${c.service_type}',${c.rate},${c.flat_fee||0},${c.cap||0},${c.min_charge||0},${c.vat_rate||0.075})">Edit</button></td>
+          </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:12px">No costs configured — click Add Service Type</td></tr>'}
         </tbody>
       </table></div>
       ${(catalogByName[(rail.name||'').toLowerCase()]?.products||[]).length ? `<div style="margin-top:12px;background:#f8fafc;border:1px solid var(--gray-100);border-radius:8px;padding:10px 12px">
         <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Agreed pricing — their price to us (2026 fee sheet · reference)</div>
         ${catalogByName[(rail.name||'').toLowerCase()].products.map(p=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0"><span>${p.product}</span><span style="font-weight:500">${p.cost}</span></div>`).join('')}
       </div>`:''}
-      <div style="margin-top:12px">
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-outline btn-sm" onclick="showAddServiceType('${rail.id}')">+ Add Service Type</button>
         <button class="btn btn-outline btn-sm" onclick="testRouting('${rail.id}')">Test Routing</button>
+        <button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red);margin-left:auto" onclick="deleteRail('${rail.id}','${(rail.name||'').replace(/'/g,'')}')">&#128465; Delete Rail</button>
       </div>
     </div>`).join('')}`;
   } catch(e){ el.innerHTML = errorBox('Failed to load rails: '+e.message); }
@@ -4149,61 +4159,50 @@ async function submitAddRail() {
   else alert('Error: ' + (res?.message||'Failed'));
 }
 
-function showAddServiceType(railId) {
-  const types = ['VISA','MASTERCARD','VERVE','BANK_TRANSFER','USSD','PAYOUT'];
+var _RAIL_SVC_TYPES = ['VISA','MASTERCARD','VERVE','BANK_TRANSFER','VIRTUAL_ACCOUNT','PAY_WITH_TRANSFER','PAY_WITH_WALLET','USSD','PAYOUT'];
+// Shared cost form. A cost = % rate and/or flat ₦, with optional max cap / min charge.
+// rate/vat shown as % (e.g. 1.5); money as ₦. type fixed on edit.
+function _railCostForm(railId, isEdit, type, ratePct, flatN, capN, minN, vatPct) {
+  var typeField = isEdit
+    ? '<input type="hidden" id="st-type" value="' + type + '"><div class="form-group"><label class="form-label">Service Type</label><div style="font-weight:600">' + type.replace(/_/g,' ') + '</div></div>'
+    : '<div class="form-group"><label class="form-label">Service Type</label><select class="form-input form-select" id="st-type">' +
+        _RAIL_SVC_TYPES.map(function(t){return '<option value="'+t+'">'+t.replace(/_/g,' ')+'</option>';}).join('') + '</select></div>';
   document.getElementById('modal-inner').innerHTML =
-    '<div class="modal-header"><div class="modal-title">Add Service Type</div>' +
+    '<div class="modal-header"><div class="modal-title">' + (isEdit ? 'Edit Cost' : 'Add Service Type') + '</div>' +
     '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
-    '<div class="form-group"><label class="form-label">Service Type</label>' +
-    '<select class="form-input form-select" id="st-type">' +
-      types.map(t => `<option value="${t}">${t.replace(/_/g,' ')}</option>`).join('') +
-    '</select></div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:10px">This is the rail\'s <strong>price to us</strong> for this product. Enter a <strong>% rate</strong>, a <strong>flat ₦ fee</strong>, or both. Cap/Min are optional (blank or 0 = none).</div>' +
+    typeField +
     '<div class="form-grid">' +
-    '<div class="form-group"><label class="form-label">Rate (e.g. 0.015 = 1.5%)</label><input class="form-input" id="st-rate" type="number" step="0.001" placeholder="0.015"></div>' +
-    '<div class="form-group"><label class="form-label">VAT Rate (default 0.075)</label><input class="form-input" id="st-vat" type="number" step="0.001" value="0.075"></div>' +
-    '<div class="form-group"><label class="form-label">Rail Fee Cap &#8358; (0 = no cap)</label><input class="form-input" id="st-cap" type="number" placeholder="800" value="0"></div>' +
-    '<div class="form-group"><label class="form-label">Merchant Cap &#8358; (0 = no cap)</label><input class="form-input" id="st-mcap" type="number" placeholder="2000" value="0"></div>' +
+    '<div class="form-group"><label class="form-label">Percentage rate (%)</label><input class="form-input" id="st-rate" type="number" step="0.001" placeholder="e.g. 1.5" value="' + (ratePct||'') + '"></div>' +
+    '<div class="form-group"><label class="form-label">Flat fee (₦)</label><input class="form-input" id="st-flat" type="number" step="0.01" placeholder="e.g. 12" value="' + (flatN||'') + '"></div>' +
+    '<div class="form-group"><label class="form-label">Max cap (₦, blank = none)</label><input class="form-input" id="st-cap" type="number" placeholder="e.g. 600" value="' + (capN||'') + '"></div>' +
+    '<div class="form-group"><label class="form-label">Min charge (₦, blank = none)</label><input class="form-input" id="st-min" type="number" value="' + (minN||'') + '"></div>' +
+    '<div class="form-group"><label class="form-label">VAT (%)</label><input class="form-input" id="st-vat" type="number" step="0.1" value="' + (vatPct!=null?vatPct:7.5) + '"></div>' +
     '</div>' +
     '<div class="flex-between" style="margin-top:4px">' +
     '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
-    '<button class="btn btn-primary" onclick="submitServiceType(\'' + railId + '\')">Add Service Type</button>' +
+    '<button class="btn btn-primary" onclick="submitServiceType(\'' + railId + '\')">' + (isEdit ? 'Update' : 'Add') + '</button>' +
     '</div>';
   document.getElementById('modal').style.display = 'flex';
 }
-
+function showAddServiceType(railId) { _railCostForm(railId, false, '', '', '', '', '', 7.5); }
+function editRailCost(railId, type, rate, flat, cap, min, vat) {
+  _railCostForm(railId, true, type, (Number(rate)*100)||'', (Number(flat)/100)||'', (Number(cap)/100)||'', (Number(min)/100)||'', (Number(vat)*100)||7.5);
+}
 async function submitServiceType(railId) {
-  const rate  = parseFloat(document.getElementById('st-rate').value);
-  const cap   = parseFloat(document.getElementById('st-cap').value) * 100; // naira to kobo
-  const mcap  = parseFloat(document.getElementById('st-mcap').value) * 100;
-  const vat   = parseFloat(document.getElementById('st-vat').value);
-  const type  = document.getElementById('st-type').value;
-  if (isNaN(rate)) { alert('Valid rate required'); return; }
-  const res = await apiFetch(`/rails/${railId}/costs`, {
-    method: 'PUT',
-    body: JSON.stringify({ service_type: type, rate, fee_cap: Math.round(cap), merchant_cap: Math.round(mcap), vat_rate: vat }),
-  });
-  if (res?.status) {
-    document.getElementById('modal').style.display = 'none';
-    loadRails();
-  } else alert('Error: ' + (res?.message||'Failed'));
-}
-
-function editRailCost(railId, type, rate, cap, mcap, vat) {
-  document.getElementById('modal-inner').innerHTML =
-    '<div class="modal-header"><div class="modal-title">Edit ' + type.replace(/_/g,' ') + ' Cost</div>' +
-    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
-    '<input type="hidden" id="st-type" value="' + type + '">' +
-    '<div class="form-grid">' +
-    '<div class="form-group"><label class="form-label">Rate</label><input class="form-input" id="st-rate" type="number" step="0.001" value="' + rate + '"></div>' +
-    '<div class="form-group"><label class="form-label">VAT Rate</label><input class="form-input" id="st-vat" type="number" step="0.001" value="' + vat + '"></div>' +
-    '<div class="form-group"><label class="form-label">Rail Fee Cap &#8358;</label><input class="form-input" id="st-cap" type="number" value="' + (Number(cap)/100) + '"></div>' +
-    '<div class="form-group"><label class="form-label">Merchant Cap &#8358;</label><input class="form-input" id="st-mcap" type="number" value="' + (Number(mcap)/100) + '"></div>' +
-    '</div>' +
-    '<div class="flex-between" style="margin-top:4px">' +
-    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
-    '<button class="btn btn-primary" onclick="submitServiceType(\'' + railId + '\')">Update</button>' +
-    '</div>';
-  document.getElementById('modal').style.display = 'flex';
+  var ratePct = parseFloat(document.getElementById('st-rate').value) || 0;
+  var flat    = parseFloat(document.getElementById('st-flat').value) || 0;
+  var cap     = parseFloat(document.getElementById('st-cap').value) || 0;
+  var minc    = parseFloat(document.getElementById('st-min').value) || 0;
+  var vatPct  = parseFloat(document.getElementById('st-vat').value);
+  var type    = document.getElementById('st-type').value;
+  if (ratePct <= 0 && flat <= 0) { alert('Enter a percentage rate, a flat fee, or both.'); return; }
+  var res = await apiFetch('/rails/' + railId + '/costs', { method:'PUT', body: JSON.stringify({
+    service_type: type, rate: ratePct/100, flat_fee: Math.round(flat*100),
+    cap: Math.round(cap*100), min_charge: Math.round(minc*100), vat_rate: isNaN(vatPct)?0.075:vatPct/100,
+  })});
+  if (res?.status) { document.getElementById('modal').style.display = 'none'; loadRails(); }
+  else alert('Error: ' + (res?.message||'Failed'));
 }
 
 async function changeRailStatus(id, status) {
