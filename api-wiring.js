@@ -785,7 +785,7 @@ async function editMerchant(id) {
     '<div class="form-group"><label class="form-label">Business Address</label>' +
       '<input class="form-input" id="em-address" value="' + (m.address || '') + '"></div>' +
     '<div style="border-top:1px solid var(--gray-100);margin:16px 0;padding-top:16px">' +
-      '<div style="font-size:12px;font-weight:600;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Fee Configuration</div>' +
+      '<div style="font-size:12px;font-weight:600;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Pricing &amp; Fees</div>' +
       '<div class="form-group"><label class="form-label">Fee Paid By</label>' +
         '<div class="flex" style="gap:12px;margin-top:4px">' +
           '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">' +
@@ -1358,7 +1358,7 @@ async function loadRevenueReport() {
       </div>
       <button class="btn btn-outline btn-sm" onclick="navigate('fee_config')">⚙ Configure Rates →</button>
     </div>
-    <div class="info-box" style="margin-bottom:16px;font-size:12px">This page <strong>reports</strong> earned revenue. Set rates in <strong>Fee Configuration</strong>. International card revenue is shown in <strong>USD</strong>, separate from local NGN revenue.</div>
+    <div class="info-box" style="margin-bottom:16px;font-size:12px">This page <strong>reports</strong> earned revenue. Set rates in <strong>Merchant Pricing</strong>. International card revenue is shown in <strong>USD</strong>, separate from local NGN revenue.</div>
 
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span></div>
     <div class="stats-grid">
@@ -2608,7 +2608,7 @@ async function loadFeeConfig() {
   el.innerHTML = loading();
   try {
     var res = await apiFetch('/merchants/platform-rates');
-    if (!res || !res.data) { el.innerHTML = errorBox('Could not load fee configuration'); return; }
+    if (!res || !res.data) { el.innerHTML = errorBox('Could not load merchant pricing'); return; }
     // New response shape: { rates:[], rails:[] }. Fall back to array for safety.
     var payload = res.data;
     var rates = Array.isArray(payload) ? payload : (payload.rates || []);
@@ -2717,8 +2717,8 @@ async function loadFeeConfig() {
 
     el.innerHTML =
       '<div class="page-header flex-between"><div>' +
-        '<div class="page-title">Fee Configuration</div>' +
-        '<div class="page-desc">Platform-wide default rates · All fees include 7.5% VAT as required by Nigerian law</div>' +
+        '<div class="page-title">Merchant Pricing</div>' +
+        '<div class="page-desc">Default rates we charge merchants, per product (override per merchant). This is our PRICE to merchants — distinct from rail/provider cost. All fees include 7.5% VAT as required by Nigerian law.</div>' +
       '</div>' +
         '<div class="flex" style="gap:8px">' +
           '<button class="btn btn-outline btn-sm" onclick="loadFeeConfig()">&#8635; Refresh</button>' +
@@ -2746,7 +2746,7 @@ async function loadFeeConfig() {
 
     window._feeConfigRates = rates;
   } catch(e) {
-    el.innerHTML = errorBox('Failed to load fee configuration: ' + e.message);
+    el.innerHTML = errorBox('Failed to load merchant pricing: ' + e.message);
   }
 }
 
@@ -4046,6 +4046,42 @@ function downloadFailedForResend() {
 }
 
 // ── RAIL MANAGEMENT ───────────────────────────────────────────────────────────
+// SA: Service Providers overview — every vendor we pay, what they offer us, their price.
+async function loadServiceProviders() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  try {
+    const res = await apiFetch('/rails/providers-overview');
+    const d = res?.data || { rails: [], screening: [] };
+    const railCards = (d.rails || []).map(r => {
+      const prod = (r.products || []).map(p =>
+        `<tr><td style="padding:6px 8px">${p.product}</td><td style="padding:6px 8px;text-align:right;font-weight:500">${p.cost}</td></tr>`).join('');
+      const badge = r.registered
+        ? `<span class="badge ${r.status==='LIVE'?'badge-green':'badge-gray'}">${r.status}</span>${r.payout_enabled?' <span class="badge badge-green">payout</span>':''}`
+        : '<span class="badge badge-amber">not registered</span>';
+      const float = r.float_balance!=null ? `Our float: <strong>${fmtNaira(r.float_balance)}</strong>${r.float_synced_at?` <span style="color:var(--gray-400)">(${new Date(r.float_synced_at).toLocaleString()})</span>`:''}` : '';
+      return `<div class="card" style="margin-bottom:12px">
+        <div class="flex-between" style="margin-bottom:8px"><div><div class="card-title">${r.name}</div><div style="font-size:11px;color:var(--gray-400)">${r.sponsor||''}</div></div><div>${badge}</div></div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="border-bottom:1px solid var(--gray-100)"><th style="text-align:left;padding:6px 8px;font-size:11px;color:var(--gray-500)">Product / Service</th><th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--gray-500)">Their price to us</th></tr></thead><tbody>${prod}</tbody></table>
+        ${float?`<div style="font-size:12px;color:var(--gray-500);margin-top:8px">${float}</div>`:''}
+      </div>`;
+    }).join('');
+    const screenRows = (d.screening || []).map(s =>
+      `<tr style="border-bottom:1px solid var(--gray-100)">
+        <td style="padding:8px">${s.name}</td><td style="padding:8px;font-size:12px">${s.type}</td>
+        <td style="padding:8px;font-size:12px">${(s.services||[]).join(', ')}</td>
+        <td style="padding:8px;font-weight:500">${s.cost}</td>
+        <td style="padding:8px;font-size:11px;color:var(--gray-500)">${s.status||''}</td></tr>`).join('');
+    el.innerHTML = `
+      <div class="page-header"><div class="page-title">Service Providers</div>
+        <div class="page-desc">Every vendor we pay — payment rails &amp; screening providers — what they offer us and their price to us. Internal only; never shown to merchants. Costs from the 2026 agreed-fees sheet — verify before relying.</div></div>
+      <div style="font-size:13px;font-weight:600;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;margin:4px 0 10px">Payment &amp; Payout Rails</div>
+      ${railCards || '<div class="info-box" style="font-size:12px">No rails configured.</div>'}
+      <div style="font-size:13px;font-weight:600;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 10px">Screening &amp; Verification Providers (KYC / AML)</div>
+      <div class="card"><div class="table-wrap"><table style="width:100%"><thead><tr><th>Provider</th><th>Type</th><th>Services</th><th>Cost</th><th>Status</th></tr></thead><tbody>${screenRows||''}</tbody></table></div></div>`;
+  } catch (e) { el.innerHTML = errorBox('Failed to load service providers: ' + e.message); }
+}
+
 async function loadRails() {
   const el = document.getElementById('main-content');
   el.innerHTML = loading();
@@ -4810,6 +4846,7 @@ loadPageData = function(page) {
     case 'fee_config':           loadFeeConfig(); break;
     case 'rail_settlement':      loadRailSettlement(); break;
     case 'rails':                loadRails(); break;
+    case 'service_providers':    loadServiceProviders(); break;
     case 'wallets':              loadWallets(); break;
     case 'product_revenue':      loadProductRevenue(); break;
     // Staff Accounts: app.js renderUserManagement() (full permission matrix +

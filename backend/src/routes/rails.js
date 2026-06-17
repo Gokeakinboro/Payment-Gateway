@@ -25,6 +25,33 @@ router.get('/', requireAuth, async (req, res, next) => {
   } catch(e){next(e);}
 });
 
+// ── GET /api/v1/rails/providers-overview — SA service-provider overview ───────
+// All vendors we pay (payment rails + screening providers), the products/services
+// they offer us and their price to us. Rails merge LIVE status + our float.
+router.get('/providers-overview', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { RAILS, SCREENING } = require('../config/serviceProviders');
+    const live = await prisma.paymentRail.findMany({
+      select: { name: true, status: true, payoutEnabled: true, floatBalance: true, floatSyncedAt: true, sponsorBank: true },
+    });
+    const liveByName = {}; live.forEach(r => { liveByName[r.name.toLowerCase()] = r; });
+    const rails = RAILS.map(r => {
+      const l = liveByName[r.name.toLowerCase()];
+      return {
+        ...r,
+        registered: !!l,
+        status: l ? l.status : 'not registered',
+        payout_enabled: l ? l.payoutEnabled : false,
+        float_balance: l ? Number(l.floatBalance) : null,
+        float_naira: l ? koboToNaira(l.floatBalance) : null,
+        float_synced_at: l ? l.floatSyncedAt : null,
+        sponsor: (l && l.sponsorBank) || r.sponsor,
+      };
+    });
+    ok(res, { rails, screening: SCREENING });
+  } catch (e) { next(e); }
+});
+
 router.get('/service-types', requireAuth, (req, res) => {
   ok(res, SERVICE_TYPES.map(t => ({
     value: t,
