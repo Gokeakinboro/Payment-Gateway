@@ -4046,39 +4046,24 @@ function downloadFailedForResend() {
 }
 
 // ── RAIL MANAGEMENT ───────────────────────────────────────────────────────────
-// SA: Service Providers overview — every vendor we pay, what they offer us, their price.
+// SA: Service Providers = the SCREENING / verification / AML vendors we pay
+// (NOT rails — rails live in Rail Configuration).
 async function loadServiceProviders() {
   const el = document.getElementById('main-content');
   el.innerHTML = loading();
   try {
     const res = await apiFetch('/rails/providers-overview');
-    const d = res?.data || { rails: [], screening: [] };
-    const railCards = (d.rails || []).map(r => {
-      const prod = (r.products || []).map(p =>
-        `<tr><td style="padding:6px 8px">${p.product}</td><td style="padding:6px 8px;text-align:right;font-weight:500">${p.cost}</td></tr>`).join('');
-      const badge = r.registered
-        ? `<span class="badge ${r.status==='LIVE'?'badge-green':'badge-gray'}">${r.status}</span>${r.payout_enabled?' <span class="badge badge-green">payout</span>':''}`
-        : '<span class="badge badge-amber">not registered</span>';
-      const float = r.float_balance!=null ? `Our float: <strong>${fmtNaira(r.float_balance)}</strong>${r.float_synced_at?` <span style="color:var(--gray-400)">(${new Date(r.float_synced_at).toLocaleString()})</span>`:''}` : '';
-      return `<div class="card" style="margin-bottom:12px">
-        <div class="flex-between" style="margin-bottom:8px"><div><div class="card-title">${r.name}</div><div style="font-size:11px;color:var(--gray-400)">${r.sponsor||''}</div></div><div>${badge}</div></div>
-        <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="border-bottom:1px solid var(--gray-100)"><th style="text-align:left;padding:6px 8px;font-size:11px;color:var(--gray-500)">Product / Service</th><th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--gray-500)">Their price to us</th></tr></thead><tbody>${prod}</tbody></table>
-        ${float?`<div style="font-size:12px;color:var(--gray-500);margin-top:8px">${float}</div>`:''}
-      </div>`;
-    }).join('');
+    const d = res?.data || { screening: [] };
     const screenRows = (d.screening || []).map(s =>
       `<tr style="border-bottom:1px solid var(--gray-100)">
-        <td style="padding:8px">${s.name}</td><td style="padding:8px;font-size:12px">${s.type}</td>
+        <td style="padding:8px;font-weight:500">${s.name}</td><td style="padding:8px;font-size:12px">${s.type}</td>
         <td style="padding:8px;font-size:12px">${(s.services||[]).join(', ')}</td>
         <td style="padding:8px;font-weight:500">${s.cost}</td>
         <td style="padding:8px;font-size:11px;color:var(--gray-500)">${s.status||''}</td></tr>`).join('');
     el.innerHTML = `
       <div class="page-header"><div class="page-title">Service Providers</div>
-        <div class="page-desc">Every vendor we pay — payment rails &amp; screening providers — what they offer us and their price to us. Internal only; never shown to merchants. Costs from the 2026 agreed-fees sheet — verify before relying.</div></div>
-      <div style="font-size:13px;font-weight:600;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;margin:4px 0 10px">Payment &amp; Payout Rails</div>
-      ${railCards || '<div class="info-box" style="font-size:12px">No rails configured.</div>'}
-      <div style="font-size:13px;font-weight:600;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 10px">Screening &amp; Verification Providers (KYC / AML)</div>
-      <div class="card"><div class="table-wrap"><table style="width:100%"><thead><tr><th>Provider</th><th>Type</th><th>Services</th><th>Cost</th><th>Status</th></tr></thead><tbody>${screenRows||''}</tbody></table></div></div>`;
+        <div class="page-desc">Screening, verification &amp; AML vendors we pay (KYC, sanctions/PEP). Payment rails are managed under <strong>Rail Configuration</strong>. Internal only — never shown to merchants. Costs are TBD — fill once agreed.</div></div>
+      <div class="card"><div class="table-wrap"><table style="width:100%"><thead><tr><th>Provider</th><th>Type</th><th>Services</th><th>Cost</th><th>Status</th></tr></thead><tbody>${screenRows||'<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--gray-400)">No screening providers configured</td></tr>'}</tbody></table></div></div>`;
   } catch (e) { el.innerHTML = errorBox('Failed to load service providers: ' + e.message); }
 }
 
@@ -4086,16 +4071,19 @@ async function loadRails() {
   const el = document.getElementById('main-content');
   el.innerHTML = loading();
   try {
-    const [rails, types] = await Promise.all([
+    const [rails, types, overview] = await Promise.all([
       apiFetch('/rails'),
       apiFetch('/rails/service-types'),
+      apiFetch('/rails/providers-overview'),
     ]);
     const railList = rails?.data || [];
     const typeList = types?.data || [];
+    const catalogByName = {};
+    ((overview?.data && overview.data.rails) || []).forEach(r => { catalogByName[r.name.toLowerCase()] = r; });
 
     el.innerHTML = `
     <div class="page-header flex-between">
-      <div><div class="page-title">Payment Rails</div><div class="page-desc">Manage rails, service types, fee caps, and VAT</div></div>
+      <div><div class="page-title">Rail Configuration</div><div class="page-desc">Rails, the products/services they offer us and their price to us (our cost), fee caps and VAT. Internal only.</div></div>
       <button class="btn btn-primary" onclick="showAddRail()">+ Add Rail</button>
     </div>
     <div id="rail-form-area"></div>
@@ -4128,6 +4116,10 @@ async function loadRails() {
           </tr>`).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:12px">No costs configured — click Add Service Type</td></tr>'}
         </tbody>
       </table></div>
+      ${(catalogByName[(rail.name||'').toLowerCase()]?.products||[]).length ? `<div style="margin-top:12px;background:#f8fafc;border:1px solid var(--gray-100);border-radius:8px;padding:10px 12px">
+        <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Agreed pricing — their price to us (2026 fee sheet · reference)</div>
+        ${catalogByName[(rail.name||'').toLowerCase()].products.map(p=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0"><span>${p.product}</span><span style="font-weight:500">${p.cost}</span></div>`).join('')}
+      </div>`:''}
       <div style="margin-top:12px">
         <button class="btn btn-outline btn-sm" onclick="showAddServiceType('${rail.id}')">+ Add Service Type</button>
         <button class="btn btn-outline btn-sm" onclick="testRouting('${rail.id}')">Test Routing</button>
