@@ -40,7 +40,7 @@ router.get('/', requireAuth, async (req, res, next) => {
 // they offer us and their price to us. Rails merge LIVE status + our float.
 router.get('/providers-overview', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
-    const { RAILS, SCREENING } = require('../config/serviceProviders');
+    const { RAILS } = require('../config/serviceProviders');
     const live = await prisma.paymentRail.findMany({
       select: { name: true, status: true, payoutEnabled: true, floatBalance: true, floatSyncedAt: true, sponsorBank: true },
     });
@@ -58,7 +58,31 @@ router.get('/providers-overview', requireAuth, requireSuperAdmin, async (req, re
         sponsor: (l && l.sponsorBank) || r.sponsor,
       };
     });
-    ok(res, { rails, screening: SCREENING });
+    // Screening/AML providers are now editable (DB) so SA can add/delete them.
+    const screening = await prisma.$queryRaw`SELECT id, name, type, services, cost, status FROM service_providers ORDER BY name`;
+    ok(res, { rails, screening });
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/rails/service-providers — SA adds a screening/AML provider ──
+router.post('/service-providers', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { name, type, services, cost, status } = req.body;
+    if (!name || !String(name).trim()) return fail(res, 'Provider name is required');
+    const rows = await prisma.$queryRaw`
+      INSERT INTO service_providers (name, type, services, cost, status)
+      VALUES (${String(name).trim()}, ${type||null}, ${services||null}, ${cost||null}, ${status||null}) RETURNING id`;
+    await logAudit(req.user.id, 'SERVICE_PROVIDER_ADDED', 'service_providers', rows[0].id, null, { name, type });
+    ok(res, { id: rows[0].id }, 'Service provider added');
+  } catch (e) { next(e); }
+});
+
+// ── DELETE /api/v1/rails/service-providers/:id — SA deletes a provider ───────
+router.delete('/service-providers/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    await prisma.$executeRaw`DELETE FROM service_providers WHERE id = ${req.params.id}::uuid`;
+    await logAudit(req.user.id, 'SERVICE_PROVIDER_DELETED', 'service_providers', req.params.id, null, null);
+    ok(res, { id: req.params.id }, 'Service provider deleted');
   } catch (e) { next(e); }
 });
 

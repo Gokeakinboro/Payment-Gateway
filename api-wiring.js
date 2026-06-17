@@ -4062,17 +4062,52 @@ async function loadServiceProviders() {
   try {
     const res = await apiFetch('/rails/providers-overview');
     const d = res?.data || { screening: [] };
+    const svc = s => Array.isArray(s.services) ? s.services.join(', ') : (s.services || '');
     const screenRows = (d.screening || []).map(s =>
       `<tr style="border-bottom:1px solid var(--gray-100)">
-        <td style="padding:8px;font-weight:500">${s.name}</td><td style="padding:8px;font-size:12px">${s.type}</td>
-        <td style="padding:8px;font-size:12px">${(s.services||[]).join(', ')}</td>
-        <td style="padding:8px;font-weight:500">${s.cost}</td>
-        <td style="padding:8px;font-size:11px;color:var(--gray-500)">${s.status||''}</td></tr>`).join('');
+        <td style="padding:8px;font-weight:500">${s.name}</td><td style="padding:8px;font-size:12px">${s.type||''}</td>
+        <td style="padding:8px;font-size:12px">${svc(s)}</td>
+        <td style="padding:8px;font-weight:500">${s.cost||''}</td>
+        <td style="padding:8px;font-size:11px;color:var(--gray-500)">${s.status||''}</td>
+        <td style="padding:8px">${s.id?`<button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="deleteServiceProvider('${s.id}','${(s.name||'').replace(/'/g,'')}')">Delete</button>`:''}</td></tr>`).join('');
     el.innerHTML = `
-      <div class="page-header"><div class="page-title">Service Providers</div>
-        <div class="page-desc">Screening, verification &amp; AML vendors we pay (KYC, sanctions/PEP). Payment rails are managed under <strong>Rail Configuration</strong>. Internal only — never shown to merchants. Costs are TBD — fill once agreed.</div></div>
-      <div class="card"><div class="table-wrap"><table style="width:100%"><thead><tr><th>Provider</th><th>Type</th><th>Services</th><th>Cost</th><th>Status</th></tr></thead><tbody>${screenRows||'<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--gray-400)">No screening providers configured</td></tr>'}</tbody></table></div></div>`;
+      <div class="page-header flex-between"><div><div class="page-title">Service Providers</div>
+        <div class="page-desc">Screening, verification &amp; AML vendors we pay (KYC, sanctions/PEP). Payment rails are managed under <strong>Rail Configuration</strong>. Internal only — never shown to merchants.</div></div>
+        <button class="btn btn-primary" onclick="showAddServiceProvider()">+ Add Provider</button></div>
+      <div class="card"><div class="table-wrap"><table style="width:100%"><thead><tr><th>Provider</th><th>Type</th><th>Services</th><th>Cost</th><th>Status</th><th></th></tr></thead><tbody>${screenRows||'<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--gray-400)">No providers yet — click Add Provider</td></tr>'}</tbody></table></div></div>`;
   } catch (e) { el.innerHTML = errorBox('Failed to load service providers: ' + e.message); }
+}
+function showAddServiceProvider() {
+  showModal(
+    `<div class="modal-header"><div class="modal-title">Add Service Provider</div>
+     <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+     <div class="form-group"><label class="form-label">Provider name *</label><input class="form-input" id="sp-name" placeholder="e.g. Dojah"></div>
+     <div class="form-group"><label class="form-label">Type</label><input class="form-input" id="sp-type" placeholder="e.g. KYC / Identity, AML screening"></div>
+     <div class="form-group"><label class="form-label">Services</label><input class="form-input" id="sp-services" placeholder="e.g. BVN, NIN, CAC, Address"></div>
+     <div class="form-grid">
+       <div class="form-group"><label class="form-label">Cost</label><input class="form-input" id="sp-cost" placeholder="e.g. ₦50 per check / TBD"></div>
+       <div class="form-group"><label class="form-label">Status</label><input class="form-input" id="sp-status" placeholder="e.g. active / KIV"></div>
+     </div>
+     <div class="flex-between" style="margin-top:8px">
+       <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Cancel</button>
+       <button class="btn btn-lime" id="sp-btn" onclick="submitServiceProvider()">Add Provider</button></div>
+     <div id="sp-msg" style="margin-top:8px"></div>`);
+}
+async function submitServiceProvider() {
+  const name = document.getElementById('sp-name').value.trim();
+  if (!name) { document.getElementById('sp-msg').innerHTML = '<div class="warn-box" style="font-size:12px">Provider name is required.</div>'; return; }
+  const body = { name, type: document.getElementById('sp-type').value.trim(),
+    services: document.getElementById('sp-services').value.trim(),
+    cost: document.getElementById('sp-cost').value.trim(), status: document.getElementById('sp-status').value.trim() };
+  const res = await apiFetch('/rails/service-providers', { method:'POST', body: JSON.stringify(body) });
+  if (res?.status) { document.getElementById('modal').style.display='none'; loadServiceProviders(); }
+  else document.getElementById('sp-msg').innerHTML = '<div class="warn-box" style="font-size:12px">'+((res&&res.message)||'Failed')+'</div>';
+}
+async function deleteServiceProvider(id, name) {
+  if (!confirm('Delete service provider "' + name + '"?')) return;
+  const res = await apiFetch('/rails/service-providers/' + id, { method:'DELETE' });
+  if (res?.status) { alert(name + ' deleted.'); loadServiceProviders(); }
+  else alert((res && res.message) || 'Delete failed');
 }
 
 // SA: delete a rail (backend refuses if it's in use or holds float).
