@@ -1879,8 +1879,11 @@ async function deleteUser(userId, email) {
   else alert((res && res.message) || 'Delete failed');
 }
 
-renderNav();
-renderPage();
+// Register the idle-logout timer FIRST, before any render code that could throw —
+// a render error must never leave a session running without an inactivity timeout.
+setupInactivityTimeout();
+try { renderNav(); }  catch (e) { console.error('renderNav failed', e); }
+try { renderPage(); } catch (e) { console.error('renderPage failed', e); }
 
 // ── Auth helpers (required by api-wiring.js) ──────────────────────────────
 function getUser() {
@@ -1908,7 +1911,9 @@ async function apiFetch(path, options) {
   return res.json();
 }
 // ── Inactivity timeout (5 minutes) ───────────────────────────────────────────
-(function() {
+// Hoisted function declaration — CALLED from the init block above (before render),
+// so it always registers even if a page renderer throws.
+function setupInactivityTimeout() {
   var TIMEOUT_MS = 5 * 60 * 1000;
   var lastActive  = Date.now();
   var timer;
@@ -1930,15 +1935,18 @@ async function apiFetch(path, options) {
     timer = setTimeout(doLogout, TIMEOUT_MS);
   }
 
-  // Catch browsers that throttle background-tab timers:
-  // when tab becomes visible again, check if idle time has passed
+  // Catch browsers that throttle background-tab timers, and machines that sleep:
+  // when the tab becomes visible / regains focus / is restored from bfcache,
+  // re-check whether the idle window has already elapsed.
   document.addEventListener('visibilitychange', function() {
     if (!document.hidden) checkElapsed();
   });
+  window.addEventListener('focus', checkElapsed);
+  window.addEventListener('pageshow', checkElapsed);
 
   ['mousemove', 'mousedown', 'keypress', 'touchstart', 'scroll', 'click'].forEach(function(evt) {
     document.addEventListener(evt, resetTimer, true);
   });
 
   resetTimer();
-})();
+}
