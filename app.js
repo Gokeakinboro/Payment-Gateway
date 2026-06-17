@@ -97,6 +97,7 @@ var NAV = {
       {id:'settle_verification', icon:'⊙', label:'Bank Verification'},
       {id:'email_tpl',           icon:'✉', label:'Email Templates'  },
       {id:'activity_log',        icon:'☰', label:'Activity Log'     },
+      {id:'invite_tracking',     icon:'✉', label:'Invite Tracking'  },
       {id:'settings',            icon:'⚙', label:'Settings'         },
     ]},
     { section:'Developer', items:DEV_SDK_ITEMS },
@@ -105,7 +106,7 @@ var NAV = {
     { section:'Dashboard',  items:[{id:'overview',icon:'◉',label:'Dashboard'}]},
     { section:'Management',  items:[{id:'transactions',icon:'↕',label:'All Transactions'},{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'}]},
     { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'wallets',icon:'◈',label:'Merchant Wallets'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'deferrals',icon:'⧗',label:'KYC Docs & Deferrals'},{id:'compliance_exceptions',icon:'⚑',label:'Intl / Mastercard Compliance'},{id:'compliance_centre',icon:'▣',label:'Compliance Centre'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
-    { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'},{id:'activity_log',icon:'☰',label:'Activity Log'}]},
+    { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'},{id:'activity_log',icon:'☰',label:'Activity Log'},{id:'invite_tracking',icon:'✉',label:'Invite Tracking'}]},
     { section:'Developer',   items:DEV_SDK_ITEMS },
   ],
   aggregator: [
@@ -204,7 +205,7 @@ var NAV_PERM = {
   deferrals:'view_doc_referrals', users:'view_staff', overview:'view_dashboard',
   transactions:'view_transactions', settlement:'view_settlements', rail_settlement:'view_settlements',
   payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', vat_report:'view_reports', reports_hub:'view_reports', cbn_report:'view_reports', compliance:'view_compliance', compliance_centre:'view_compliance', compliance_exceptions:'view_compliance',
-  onboarding_apps:'view_onboarding', fee_config:'view_fees', rails:'view_rails', service_providers:'view_rails',
+  onboarding_apps:'view_onboarding', invite_tracking:'view_audit_log', fee_config:'view_fees', rails:'view_rails', service_providers:'view_rails',
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
   activity_log:'view_audit_log',
 };

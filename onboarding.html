@@ -1815,6 +1815,24 @@ function hideAlert() {
     b.innerHTML = '🔍 PREVIEW MODE — internal review only · validation OFF · submission DISABLED · nothing saved · click any step number to jump';
     document.body.insertBefore(b, document.body.firstChild);
   }
+  // Invite funnel beacon — tell us the invitee OPENED the form (and later STARTED
+  // filling it) so staff can see "opened but not submitted" and chase the reason.
+  if (!PREVIEW) {
+    var em = (p.get('email') || '').trim();
+    if (em) {
+      var track = function(ev) {
+        try { fetch(API + '/onboarding/track', { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ email: em, event: ev, type: t || '' }), keepalive: true }).catch(function(){}); } catch(e){}
+      };
+      track('opened');
+      var _started = false;
+      document.addEventListener('input', function onFirst() {
+        if (_started) return; _started = true;
+        document.removeEventListener('input', onFirst, true);
+        track('started');
+      }, true);
+    }
+  }
 })();
 </script>
 </body>

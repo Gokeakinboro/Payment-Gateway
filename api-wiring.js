@@ -4847,6 +4847,7 @@ loadPageData = function(page) {
     case 'settle_verification':  loadSettlementQueue(); break;
     case 'email_tpl':            loadEmailTemplates(); break;
     case 'onboarding_apps':      loadOnboardingApps(); break;
+    case 'invite_tracking':      loadInviteTracking(); break;
     case 'compliance':           loadCompliance(); break;          // KYC Review (domestic Naira)
     case 'compliance_centre':    break;                            // renderCompliance() self-loads its tabs
     case 'compliance_exceptions':
@@ -5014,6 +5015,43 @@ function allDocChecklist() {
 }
 
 // ── Compliance: Applications list ─────────────────────────────────────────────
+// SA/compliance: invite funnel — who was invited, how far they got, who's pending.
+async function loadInviteTracking() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  try {
+    const res = await apiFetch('/onboarding/invites');
+    const rows = res?.data || [];
+    const badge = { submitted:'badge-green', started:'badge-blue', opened:'badge-amber', sent:'badge-gray' };
+    const label = { submitted:'Submitted', started:'Started form', opened:'Opened link', sent:'Not opened' };
+    const counts = { sent:0, opened:0, started:0, submitted:0 };
+    rows.forEach(r => { counts[r.status] = (counts[r.status]||0)+1; });
+    const pending = rows.filter(r => r.status !== 'submitted');
+    const fmtD = d => d ? new Date(d).toLocaleString() : '—';
+    const body = rows.length ? rows.map(r => `<tr style="border-bottom:1px solid var(--gray-100)${r.status!=='submitted'&&r.days_pending>=2?';background:#fffbeb':''}">
+      <td style="padding:8px"><div style="font-weight:500">${r.name||'—'}</div><div class="mono" style="font-size:11px;color:var(--gray-400)">${r.email}</div></td>
+      <td style="padding:8px;font-size:12px">${(r.type||'—')}</td>
+      <td style="padding:8px"><span class="badge ${badge[r.status]||'badge-gray'}">${label[r.status]||r.status}</span></td>
+      <td style="padding:8px;font-size:11px">opened: ${fmtD(r.opened_at)}<br>started: ${fmtD(r.started_at)}<br>submitted: ${fmtD(r.submitted_at)}</td>
+      <td style="padding:8px;font-size:12px">${fmtD(r.invited_at)}${r.status!=='submitted'?`<div style="color:${r.days_pending>=2?'var(--red)':'var(--gray-400)'};font-size:11px">${r.days_pending} day(s) pending</div>`:''}</td>
+      <td style="padding:8px;font-size:11px;color:var(--gray-500)">${r.invited_by||'—'}</td>
+    </tr>`).join('') : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No invites sent yet</td></tr>';
+    el.innerHTML = `
+      <div class="page-header"><div class="page-title">Invite Tracking</div>
+        <div class="page-desc">Invitees who got a self-onboard link — how far they got, and who hasn't submitted (highlighted) so you can follow up on the delay.</div></div>
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+        <div class="stat-card"><div class="stat-label">Not opened</div><div class="stat-value">${counts.sent||0}</div></div>
+        <div class="stat-card"><div class="stat-label">Opened, not started</div><div class="stat-value text-amber">${counts.opened||0}</div></div>
+        <div class="stat-card"><div class="stat-label">Started, not submitted</div><div class="stat-value" style="color:#1e40af">${counts.started||0}</div></div>
+        <div class="stat-card"><div class="stat-label">Submitted</div><div class="stat-value text-lime">${counts.submitted||0}</div></div>
+      </div>
+      ${pending.length?`<div class="info-box" style="margin-bottom:12px;font-size:12px">${pending.length} invitee(s) haven't submitted yet — rows pending 2+ days are highlighted.</div>`:''}
+      <div class="card"><div class="table-wrap"><table style="width:100%">
+        <thead><tr><th>Invitee</th><th>Type</th><th>Status</th><th>Funnel</th><th>Invited</th><th>By</th></tr></thead>
+        <tbody>${body}</tbody></table></div></div>`;
+  } catch (e) { el.innerHTML = errorBox('Failed to load invite tracking: ' + e.message); }
+}
+
 async function loadOnboardingApps() {
   var el = document.getElementById('main-content');
   el.innerHTML = loading();

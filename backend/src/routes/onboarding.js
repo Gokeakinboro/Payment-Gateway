@@ -160,6 +160,73 @@ router.post('/invite', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── POST /api/v1/onboarding/track — PUBLIC. Invitee opened/started the form. ──
+// Lets us see "opened but not submitted" (the WHY behind a delayed application).
+// No auth (the applicant isn't logged in); deduped to one event/email/hour.
+router.post('/track', async (req, res, next) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase().slice(0, 160);
+    const event = req.body.event === 'started' ? 'started' : 'opened';
+    const type  = String(req.body.type || '').slice(0, 40) || null;
+    if (!email || !email.includes('@')) return ok(res, { skipped: true }); // nothing to track
+    const dup = await prisma.$queryRaw`
+      SELECT 1 FROM onboarding_invite_events
+      WHERE lower(email) = ${email} AND event = ${event} AND created_at > NOW() - INTERVAL '1 hour' LIMIT 1`;
+    if (!dup.length) {
+      await prisma.$executeRaw`
+        INSERT INTO onboarding_invite_events (email, event, applicant_type, ip_address, user_agent, created_at)
+        VALUES (${email}, ${event}, ${type}, ${req.ip || null}, ${String(req.headers['user-agent'] || '').slice(0,300)}, NOW())`;
+    }
+    ok(res, { tracked: true });
+  } catch (e) { ok(res, { tracked: false }); } // never block the applicant on a tracking error
+});
+
+// ── GET /api/v1/onboarding/invites — SA/compliance: invite funnel + pending ──
+// Cross-references invites sent (audit log) × opens/starts (events) × submissions
+// so staff can chase invitees who haven't completed, and see how far they got.
+router.get('/invites', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const invites = await prisma.$queryRaw`
+      SELECT al.created_at AS invited_at,
+             al.after_state->>'email' AS email,
+             al.after_state->>'name'  AS name,
+             al.after_state->>'type'  AS type,
+             al.after_state->>'phone' AS phone,
+             u.email AS invited_by
+      FROM audit_log al LEFT JOIN users u ON u.id = al.actor_id
+      WHERE al.action = 'ONBOARDING_INVITE_SENT'
+      ORDER BY al.created_at DESC`;
+    const out = [];
+    for (const inv of invites) {
+      const email = (inv.email || '').toLowerCase();
+      if (!email) continue;
+      const [sub, ev] = await Promise.all([
+        prisma.$queryRaw`SELECT reference, status, submitted_at FROM onboarding_submissions WHERE lower(contact_email) = ${email} ORDER BY submitted_at DESC LIMIT 1`,
+        prisma.$queryRaw`SELECT event, MAX(created_at) AS at FROM onboarding_invite_events WHERE lower(email) = ${email} GROUP BY event`,
+      ]);
+      const opened  = ev.find(e => e.event === 'opened');
+      const started = ev.find(e => e.event === 'started');
+      const submitted = sub[0] || null;
+      const status = submitted ? 'submitted' : started ? 'started' : opened ? 'opened' : 'sent';
+      out.push({
+        email, name: inv.name, type: inv.type, phone: inv.phone, invited_by: inv.invited_by,
+        invited_at: inv.invited_at,
+        opened_at: opened ? opened.at : null,
+        started_at: started ? started.at : null,
+        submitted_at: submitted ? submitted.submitted_at : null,
+        submission_status: submitted ? submitted.status : null,
+        reference: submitted ? submitted.reference : null,
+        status,
+        days_pending: submitted ? null : Math.floor((Date.now() - new Date(inv.invited_at).getTime()) / 86400000),
+      });
+    }
+    // de-dupe by email (keep most recent invite), pending first
+    const seen = new Set(); const deduped = [];
+    for (const r of out) { if (!seen.has(r.email)) { seen.add(r.email); deduped.push(r); } }
+    ok(res, deduped);
+  } catch (e) { next(e); }
+});
+
 // ── POST /api/v1/onboarding/submit — public, no auth ──────────────────────────
 router.post('/submit', async (req, res, next) => {
   try {
