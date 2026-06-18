@@ -142,7 +142,13 @@ async function queryBankList() {
 async function nameEnquiry(bankCode, accountNumber) {
   const r = await call('/api/v2/payment/merchant/payout/queryBankAccount', { bankCode, bankAccNo: accountNumber });
   const d = r.data || {};
-  return { ok: d.status === 'Success', accountName: d.accountName || null, reason: d.errorMessage || r.respMsg };
+  // PalmPay returns the field as `Status` (capital S); accept either case.
+  const status = String(d.Status || d.status || '').toLowerCase();
+  return {
+    ok: r.respCode === '00000000' && status === 'success' && !!d.accountName,
+    accountName: d.accountName || null,
+    reason: d.errorMessage || r.respMsg,
+  };
 }
 
 // ── PAY-IN: Virtual Accounts (value-added-services/virtual-account/*) ──────────
