@@ -321,17 +321,21 @@ router.post('/batches', requireAuthOrApiKey,
       }
 
       // Response is MERCHANT-facing — never reveal rails or the SA routing queue.
+      // Single-balance model: the wallet is always debited and every batch awaits
+      // SA routing (merchant sees 'processing'). (Was referencing undefined leftover
+      // vars chosen/needsRouting/isInstant/totalAcrossRails → threw AFTER commit = 500.)
+      const isScheduled = scheduledAt && scheduledAt.getTime() > Date.now() + 1000;
       created(res, {
         batch_id:             batchId,
         batch_ref:            batchRef,
         total_payout:         koboToNaira(totalAmount),
         total_fee:            koboToNaira(totalFee),
         total_vat:            koboToNaira(totalVat),
-        total_deducted:       chosen ? koboToNaira(totalDeduction) : 0,
+        total_deducted:       koboToNaira(totalDeduction),
         total_items:          items.length,
-        status:               needsRouting ? 'processing' : (isInstant ? 'processing' : 'scheduled'),
+        status:               isScheduled ? 'scheduled' : 'processing',
         scheduled_at:         scheduledAt,
-        wallet_balance_after: koboToNaira(chosen ? (totalAcrossRails - totalDeduction) : totalAcrossRails),
+        wallet_balance_after: koboToNaira(available - totalDeduction),
         fee_rate_pct:         (feeRate * 100).toFixed(2) + '%',
       }, `Payout received — ${items.length} beneficiaries, ₦${koboToNaira(totalAmount).toLocaleString('en-NG')} (fee: ₦${koboToNaira(totalFee).toLocaleString('en-NG')})`);
     } catch (e) { next(e); }
