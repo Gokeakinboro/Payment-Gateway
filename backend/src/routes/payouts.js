@@ -740,9 +740,54 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
       await tx.$executeRaw`UPDATE payout_batches SET status = 'processing', rail_id = ${used[0].rail_id}::uuid, updated_at = NOW() WHERE id = ${batchId}::uuid`;
     });
 
-    await logAudit(req.user.id, 'PAYOUT_BATCH_ROUTED', 'payout_batches', batchId, {},
-      { allocations: used.map(t => ({ rail_id: t.rail_id, amount: Number(t.sum), items: t.items.length })) }, null, req.ip);
-    ok(res, { batch_id: batchId, status: 'processing', rails_used: used.length }, 'Batch routed — ledger legs created');
+    // ── Disburse each leg through its rail (REAL money) — AFTER the DB tx ─────────
+    // Never hold a DB transaction open across an external HTTP call. On failure we
+    // refund BOTH our rail float AND the merchant's wallet for that item, and mark
+    // the item failed. rail_fee/sessionId are read live from the rail response.
+    const palmpay = require('../services/palmpayService');
+    const railAdapter = (name) => (/palmpay/i.test(name || '') ? palmpay : null);
+    const legs = await prisma.$queryRaw`
+      SELECT rd.id AS leg_id, rd.rail_id, rd.amount, rd.rail_cost, rd.rail_vat, rd.rail_order_id,
+             pi.id AS item_id, pi.account_number, pi.account_name, pi.bank_code, pi.narration,
+             pi.item_fee, pi.item_vat
+      FROM rail_disbursements rd JOIN payout_items pi ON rd.payout_item_id = pi.id
+      WHERE rd.batch_id = ${batchId}::uuid AND rd.status = 'pending'`;
+    let nOk = 0, nFail = 0;
+    for (const leg of legs) {
+      const rail = railById[leg.rail_id];
+      const adapter = railAdapter(rail && rail.name);
+      let r;
+      try {
+        if (!adapter || !adapter.isConfigured()) r = { ok: false, reason: 'Rail adapter not configured' };
+        else r = await adapter.sendPayout({
+          orderId: leg.rail_order_id, amount: Number(leg.amount), bank_code: leg.bank_code,
+          account_number: leg.account_number, account_name: leg.account_name, narration: leg.narration,
+        });
+      } catch (e) { r = { ok: false, reason: e.message }; }
+
+      if (r.ok) {
+        const railFee = (r.raw && r.raw.data && r.raw.data.fee && r.raw.data.fee.fee) || Number(leg.rail_cost);
+        const sess = (r.raw && r.raw.data && r.raw.data.sessionId) || null;
+        await prisma.$executeRaw`UPDATE rail_disbursements SET status='success', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), settled_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
+        await prisma.$executeRaw`UPDATE payout_items SET status='success' WHERE id=${leg.item_id}::uuid`;
+        nOk++;
+      } else {
+        const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
+        const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
+        await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
+        await prisma.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW() WHERE merchant_id=${batch.merchant_id}::uuid`;
+        await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(r.reason || 'failed').slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
+        await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(r.reason || 'failed').slice(0, 280)} WHERE id=${leg.item_id}::uuid`;
+        nFail++;
+      }
+    }
+    const finalStatus = nFail === 0 ? 'completed' : (nOk > 0 ? 'partially_failed' : 'failed');
+    await prisma.$executeRaw`UPDATE payout_batches SET status=${finalStatus}, updated_at=NOW() WHERE id=${batchId}::uuid`;
+
+    await logAudit(req.user.id, 'PAYOUT_BATCH_DISBURSED', 'payout_batches', batchId, {},
+      { rails_used: used.length, disbursed: nOk, failed: nFail, status: finalStatus }, null, req.ip);
+    ok(res, { batch_id: batchId, status: finalStatus, disbursed: nOk, failed: nFail },
+      `Payout ${finalStatus} — ${nOk} sent${nFail ? `, ${nFail} failed (refunded)` : ''}`);
   } catch (e) {
     if (e && e._client) return fail(res, e.message);
     next(e);
