@@ -105,7 +105,7 @@ async function initiatePayout({ orderId, amountKobo, bankCode, accountNumber, ac
     payeeName: accountName || undefined,
     currency: 'NGN',
     amount: Number(amountKobo),
-    notifyUrl: notifyUrl || process.env.PALMPAY_NOTIFY_URL,
+    notifyUrl: notifyUrl || ((process.env.PALMPAY_NOTIFY_URL||'').replace(/\/$/, '') + '/payout'),
     remark: narration || 'Payout',
     title: 'Payout',
     description: narration || 'Merchant payout',
@@ -172,7 +172,7 @@ async function queryVirtualAccount(virtualAccountNo) {
 async function createPayWithPalmPayOrder({ orderId, amountKobo, callbackUrl, notifyUrl, title, description, customerEmail }) {
   const r = await call('/api/v2/payment/merchant/createorder', {
     orderId, amount: Number(amountKobo), currency: 'NGN', productType: 'pay_wallet',
-    notifyUrl: notifyUrl || process.env.PALMPAY_NOTIFY_URL,
+    notifyUrl: notifyUrl || ((process.env.PALMPAY_NOTIFY_URL||'').replace(/\/$/, '') + '/payin'),
     callBackUrl: callbackUrl,
     title: title || 'Payment', description: description || 'Pay with PalmPay',
     customerInfo: customerEmail ? { email: customerEmail } : undefined,

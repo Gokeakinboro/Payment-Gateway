@@ -4727,9 +4727,13 @@ function _lastMonthStr() {
   var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
 }
+function _currentMonthStr() {
+  var d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
 async function loadVatReport() {
   var el = document.getElementById('main-content'); if (!el) return;
-  var month = window._vatMonth || _lastMonthStr();
+  var month = window._vatMonth || _currentMonthStr();
   window._vatMonth = month;
   el.innerHTML = loading();
   try {

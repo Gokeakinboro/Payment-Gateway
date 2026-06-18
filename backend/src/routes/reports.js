@@ -227,7 +227,26 @@ router.get('/revenue', requireAuth, requireCompliance, async (req, res, next) =>
         volume_naira:     koboToNaira(r.volume),
       };
     };
-    const all = rows.map(mapRow);
+    // Payouts: gross = fee+VAT we charge merchant; rail cost = rail fee+VAT we
+    // pay the rail; margin = gross − rail cost. Correlated subquery sums rail
+    // cost per item to avoid double-counting retry legs.
+    const payoutRows = await prisma.$queryRaw`
+      SELECT DATE_TRUNC(${groupBy}, pi.created_at) AS period, 'NGN' AS currency, m.kyc_tier,
+             'PAYOUT'::text AS channel, COUNT(*)::int AS txn_count,
+             SUM(pi.amount)::bigint AS volume,
+             SUM(pi.item_fee + COALESCE(pi.item_vat,0))::bigint AS gross_revenue,
+             SUM(COALESCE((SELECT SUM(rd.rail_fee + COALESCE(rd.rail_vat,0)) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0))::bigint AS rail_costs,
+             (SUM(pi.item_fee + COALESCE(pi.item_vat,0)) - SUM(COALESCE((SELECT SUM(rd.rail_fee + COALESCE(rd.rail_vat,0)) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0)))::bigint AS net_after_rails,
+             0::bigint AS agg_payouts,
+             (SUM(pi.item_fee + COALESCE(pi.item_vat,0)) - SUM(COALESCE((SELECT SUM(rd.rail_fee + COALESCE(rd.rail_vat,0)) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0)))::bigint AS paylode_margin,
+             ROUND( (SUM(pi.item_fee + COALESCE(pi.item_vat,0)) - SUM(COALESCE((SELECT SUM(rd.rail_fee + COALESCE(rd.rail_vat,0)) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0))) * 100.0 / NULLIF(SUM(pi.item_fee + COALESCE(pi.item_vat,0)),0), 2) AS margin_pct
+      FROM payout_items pi
+      JOIN payout_batches pb ON pi.batch_id = pb.id
+      JOIN merchants m       ON pi.merchant_id = m.id
+      WHERE pi.status = 'success' AND pi.created_at BETWEEN ${fromDate} AND ${toDate}
+      GROUP BY period, m.kyc_tier
+    `;
+    const all = rows.concat(payoutRows).map(mapRow);
 
     ok(res, {
       period: { from: fromDate, to: toDate, group_by: groupBy },

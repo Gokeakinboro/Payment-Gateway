@@ -782,7 +782,13 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
       }
     }
     const finalStatus = nFail === 0 ? 'completed' : (nOk > 0 ? 'partially_failed' : 'failed');
-    await prisma.$executeRaw`UPDATE payout_batches SET status=${finalStatus}, updated_at=NOW() WHERE id=${batchId}::uuid`;
+    await prisma.$executeRaw`
+      UPDATE payout_batches pb SET
+        status          = ${finalStatus},
+        processed_items = (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status='success'),
+        failed_items    = (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status='failed'),
+        updated_at      = NOW()
+      WHERE pb.id = ${batchId}::uuid`;
 
     await logAudit(req.user.id, 'PAYOUT_BATCH_DISBURSED', 'payout_batches', batchId, {},
       { rails_used: used.length, disbursed: nOk, failed: nFail, status: finalStatus }, null, req.ip);
