@@ -587,31 +587,66 @@ async function provisionAggregator(tx, sub) {
 // ── PATCH /api/v1/onboarding/submissions/:reference — review decision ─────────
 router.patch('/submissions/:reference', requireAuth, requireCompliance, async (req, res, next) => {
   try {
-    const { status, review_notes } = req.body;
+    const { status, review_notes, missing_items } = req.body;
     const reference = req.params.reference;
     const allowed = ['pending', 'under_review', 'approved', 'rejected'];
     if (status && !allowed.includes(status)) return fail(res, 'Invalid status');
 
-    // Non-approval transitions are a plain update.
+    // Non-approval transitions (pending / under_review / rejected).
     if (status !== 'approved') {
       const existing = await prisma.onboardingSubmission.findUnique({ where: { reference } });
       if (!existing) return fail(res, 'Submission not found', 'NOT_FOUND', 404);
+
+      // Normalise the rejection checklist: [{key,label,type:'doc'|'info'}].
+      const missing = Array.isArray(missing_items)
+        ? missing_items.filter(m => m && m.key).map(m => ({
+            key: String(m.key), label: String(m.label || m.key), type: m.type === 'info' ? 'info' : 'doc',
+          }))
+        : null;
+
       const row = await prisma.onboardingSubmission.update({
         where: { reference },
-        data: { ...(status ? { status } : {}), ...(review_notes !== undefined ? { reviewNotes: review_notes } : {}), reviewedBy: req.user?.id || null },
+        data: {
+          ...(status ? { status } : {}),
+          ...(review_notes !== undefined ? { reviewNotes: review_notes } : {}),
+          ...(status === 'rejected' ? { missingItems: missing || [] } : {}),
+          reviewedBy: req.user?.id || null,
+        },
       });
+
+      // On rejection, reflect it on the merchant account and flag the specific
+      // documents the reviewer marked missing, so the dashboard shows what to re-upload.
+      if (status === 'rejected' && existing.merchantId) {
+        await prisma.merchant.update({ where: { id: existing.merchantId }, data: { kycStatus: 'KYC_REJECTED' } }).catch(() => {});
+        for (const m of (missing || [])) {
+          if (m.type !== 'doc') continue;
+          await prisma.$executeRaw`
+            UPDATE kyc_documents SET status='reupload_requested', updated_at=now()
+            WHERE entity_type='merchant' AND entity_id=${existing.merchantId}::uuid AND doc_key=${m.key}`.catch(() => {});
+        }
+      }
+
       // Notify the applicant on review-status changes (template-driven, best-effort).
       if (row.contactEmail && (status === 'under_review' || status === 'rejected')) {
         const slug = status === 'under_review' ? 'application_under_review' : 'application_rejected';
+        const loginUrl = (process.env.APP_URL || '') + '/login.html';
+        const itemsHtml = (missing && missing.length)
+          ? '<p><strong>Please provide or correct the following before resubmitting:</strong></p><ul>' +
+              missing.map(m => `<li>${m.label}${m.type === 'doc' ? ' <em>(document)</em>' : ''}</li>`).join('') + '</ul>'
+          : '';
         const content = await getEmailContent(slug,
-          { name: row.businessName, reference, business: row.businessName, notes: review_notes || '' },
-          status === 'under_review' ? `Your Paylode application is under review — ${reference}` : `Update on your Paylode application — ${reference}`,
+          { name: row.businessName, reference, business: row.businessName, notes: review_notes || '', missing_items_html: itemsHtml, login_url: loginUrl },
+          status === 'under_review' ? `Your Paylode application is under review — ${reference}` : `Action needed on your Paylode application — ${reference}`,
           status === 'under_review'
-            ? `<p>Your application (${reference}) for ${row.businessName} is now under review.</p>`
-            : `<p>After review, we are unable to approve your application (${reference}) at this time. ${review_notes || ''}</p>`);
+            ? `<p>Your application (${reference}) for ${row.businessName} is now under review. We'll be in touch shortly.</p>`
+            : `<h2>Action needed on your application</h2>` +
+              `<p>We reviewed your application (${reference}) for <strong>${row.businessName}</strong> and need a few corrections before we can approve it.</p>` +
+              (review_notes ? `<p><strong>Reviewer notes:</strong> ${review_notes}</p>` : '') +
+              itemsHtml +
+              `<p>Please sign in to <a href="${loginUrl}">your dashboard</a>, open <strong>My Application</strong>, make the corrections and resubmit — we'll review again right away.</p>`);
         sendEmail({ to: row.contactEmail, subject: content.subject, html: content.html }).catch(e => logger.error({ err: e }, 'review email failed'));
       }
-      return ok(res, row, 'Submission updated');
+      return ok(res, row, status === 'rejected' ? 'Application rejected — merchant notified with the correction checklist' : 'Submission updated');
     }
 
     // Compliance gate: a merchant with an unresolved BLOCKING exception (prohibited
@@ -645,19 +680,24 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
       }
       if (sub.formType !== 'merchant') { outcome = { skipped: true }; return; }
 
+      // Approval does NOT go live anymore — it marks the account KYC_APPROVED and
+      // the MERCHANT then self-activates (accepts go-live terms + confirms settlement)
+      // via POST /merchants/me/activate. Live keys stay OFF (isActive=false) until then.
       if (sub.merchantId) {
-        // Account was created at application time (inactive). Activate it so the
-        // merchant's existing LIVE keys start working — no re-provisioning.
+        // Account was created at application time (inactive). Move it to KYC_APPROVED.
         const m = await tx.merchant.update({
           where: { id: sub.merchantId },
-          data: { isActive: true, kycStatus: 'ACTIVE', kycTier: 1 },
+          data: { isActive: false, kycStatus: 'KYC_APPROVED', kycTier: 1 },
           select: { businessEmail: true, businessName: true },
         });
-        outcome = { prov: { merchantId: sub.merchantId, activated: true, email: m.businessEmail, businessName: m.businessName } };
+        // Clear any rejection checklist now that it's approved.
+        await tx.onboardingSubmission.update({ where: { reference }, data: { missingItems: [] } });
+        outcome = { prov: { merchantId: sub.merchantId, approved: true, email: m.businessEmail, businessName: m.businessName } };
       } else {
-        // No account yet (e.g. legacy submission) → provision it active now.
-        const prov = await provisionMerchant(tx, sub, { active: true });
-        await tx.onboardingSubmission.update({ where: { reference }, data: { merchantId: prov.merchantId } });
+        // No account yet (e.g. legacy submission) → provision it (inactive) + KYC_APPROVED.
+        const prov = await provisionMerchant(tx, sub, { active: false });
+        await tx.merchant.update({ where: { id: prov.merchantId }, data: { kycStatus: 'KYC_APPROVED', kycTier: 1 } });
+        await tx.onboardingSubmission.update({ where: { reference }, data: { merchantId: prov.merchantId, missingItems: [] } });
         outcome = { prov };
       }
     }, { timeout: 20000 });
@@ -665,19 +705,24 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
     if (outcome.notFound) return fail(res, 'Submission not found', 'NOT_FOUND', 404);
 
     // Best-effort approval email (outside the transaction) — rendered from template.
+    // Approval now means "approved — one step left: activate". The email lists the
+    // steps to go live (log in → Activate → accept terms + confirm settlement).
     if (outcome.prov && outcome.prov.email) {
       const loginUrl = (process.env.APP_URL || '') + '/login.html';
-      // Account created at signup → no temp password to send (they already have it);
-      // tell them their live keys are now active. Legacy fresh-provision → temp password.
-      const slug = outcome.prov.tempPassword ? 'application_approved' : 'application_approved_live';
-      const content = await getEmailContent(slug,
+      const signInLine = outcome.prov.tempPassword
+        ? `<li>Sign in at <a href="${loginUrl}">your dashboard</a> with <strong>${outcome.prov.email}</strong> and temporary password <strong>${outcome.prov.tempPassword}</strong> (you'll set a new one on first login).</li>`
+        : `<li>Sign in to <a href="${loginUrl}">your dashboard</a>.</li>`;
+      const content = await getEmailContent('application_approved',
         { business: outcome.prov.businessName, email: outcome.prov.email, temp_password: outcome.prov.tempPassword || '', login_url: loginUrl },
-        'Your Paylode merchant account is approved',
-        `<h2>Approved</h2><p>Your application for <strong>${outcome.prov.businessName}</strong> has been approved — your <strong>live</strong> API keys are now active.</p>` +
-          (outcome.prov.tempPassword
-            ? `<p>Sign in at <a href="${loginUrl}">the dashboard</a> with <strong>${outcome.prov.email}</strong> and temporary password <strong>${outcome.prov.tempPassword}</strong> — change it on first login.</p>`
-            : `<p>Sign in to your <a href="${loginUrl}">dashboard</a> and switch from your test keys to your live keys (Dashboard → API Keys).</p>`) +
-          `<p>Any outstanding KYC documents are listed in your dashboard.</p>`);
+        'Your Paylode application is approved — activate to go live',
+        `<h2>Approved 🎉</h2>` +
+          `<p>Your application for <strong>${outcome.prov.businessName}</strong> has been approved. ` +
+          `One step remains before your account goes live and your <strong>live</strong> API keys start working — <strong>activate your account</strong>:</p>` +
+          `<ol>${signInLine}` +
+          `<li>On your dashboard you'll see an <strong>Activate Account</strong> button.</li>` +
+          `<li>Accept the go-live terms and confirm your settlement bank account.</li>` +
+          `<li>Your account goes live immediately — switch your <code>sk_test</code> keys to <code>sk_live</code> (Dashboard → API Keys).</li></ol>` +
+          `<p>Until you activate, your test/sandbox access keeps working as before.</p>`);
       sendEmail({ to: outcome.prov.email, subject: content.subject, html: content.html })
         .catch(e => logger.error({ err: e }, 'approval email failed'));
     }
@@ -702,7 +747,7 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
     const msg = outcome.already ? 'Already approved (no change)'
       : outcome.provAgg ? 'Approved — aggregator provisioned'
       : outcome.skipped ? 'Approved (no account provisioned for this form type)'
-      : 'Approved — merchant provisioned';
+      : 'Approved — merchant notified to activate (account goes live when they accept terms + confirm settlement)';
     ok(res, fresh, msg);
   } catch (e) { next(e); }
 });
@@ -719,6 +764,113 @@ router.get('/submissions/:reference/document/:key', requireAuth, requireComplian
     if (!abs.startsWith(path.resolve(UPLOAD_DIR))) return fail(res, 'Invalid path', 'FORBIDDEN', 403);
     if (!fs.existsSync(abs)) return fail(res, 'File missing on server', 'NOT_FOUND', 404);
     res.download(abs, doc.name || path.basename(abs));
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/onboarding/my-application — the merchant's OWN application ─────
+// Lets a merchant see their review status, the reviewer's notes + missing-items
+// checklist, and (for prefill) the full data they submitted. Read-only here;
+// editing is via PUT below and only while not yet approved.
+router.get('/my-application', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account on this login', 'NO_MERCHANT', 404);
+    const sub = await prisma.onboardingSubmission.findFirst({
+      where: { merchantId }, orderBy: { submittedAt: 'desc' },
+    });
+    if (!sub) return ok(res, null, 'No application on file');
+    const editable = ['rejected', 'pending', 'under_review'].includes(sub.status);
+    ok(res, {
+      reference: sub.reference, status: sub.status, editable,
+      formType: sub.formType, applicantType: sub.applicantType,
+      businessName: sub.businessName,
+      reviewNotes: sub.reviewNotes, missingItems: sub.missingItems || [],
+      data: sub.data, principals: sub.principals, documents: sub.documents,
+      signature: sub.signature, submittedAt: sub.submittedAt,
+    }, 'Your application');
+  } catch (e) { next(e); }
+});
+
+// ── PUT /api/v1/onboarding/my-application — merchant corrects & resubmits ──────
+// Allowed only while the application is NOT approved (rejected/pending/under_review).
+// Re-runs screening, merges any newly uploaded files, marks provided docs submitted,
+// flips status back to 'pending' and clears the rejection checklist.
+router.put('/my-application', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account on this login', 'NO_MERCHANT', 404);
+    const sub = await prisma.onboardingSubmission.findFirst({
+      where: { merchantId }, orderBy: { submittedAt: 'desc' },
+    });
+    if (!sub) return fail(res, 'No application on file', 'NOT_FOUND', 404);
+    if (sub.status === 'approved')
+      return fail(res, 'Your application is already approved and can no longer be edited.', 'LOCKED', 409);
+
+    const { data = {}, principals = [], uploads = {}, signature } = req.body;
+    const reference = sub.reference;
+    const destDir = path.join(UPLOAD_DIR, reference);
+
+    // Merge documents: keep existing, overwrite/add by key for any new uploads.
+    const docByKey = {};
+    for (const d of (sub.documents || [])) docByKey[d.key] = d;
+    for (const [key, file] of Object.entries(uploads)) {
+      if (!file || !file.dataUrl) continue;  // no new file for this key → keep existing
+      const saved = saveDataUrl(file.dataUrl, destDir, key);
+      docByKey[key] = { key, docType: file.docType, name: file.name, path: saved };
+    }
+    const cleanPrincipals = (principals || []).map((p, i) => {
+      const copy = { ...p };
+      if (copy.id_file && copy.id_file.dataUrl) {
+        const saved = saveDataUrl(copy.id_file.dataUrl, destDir, `principal_${i}_id`);
+        docByKey[`principal_${i}_id`] = { key: `principal_${i}_id`, docType: 'principal_id', name: copy.id_file.name, path: saved, principal: fullName(copy) };
+        copy.id_file = { name: copy.id_file.name, path: saved };
+      }
+      return copy;
+    });
+    const documents = Object.values(docByKey);
+
+    const summary = deriveSummary(sub.formType, sub.applicantType, data, cleanPrincipals);
+    const screening = compliance.screenMerchant({
+      applicantType: sub.applicantType, data, principals: cleanPrincipals, documents,
+    });
+
+    const updated = await prisma.onboardingSubmission.update({
+      where: { reference },
+      data: {
+        businessName: summary.businessName || sub.businessName,
+        contactEmail: summary.contactEmail || sub.contactEmail,
+        contactPhone: summary.contactPhone || sub.contactPhone,
+        regNumber: summary.regNumber, tin: summary.tin,
+        data, principals: cleanPrincipals, documents,
+        pepFlag: screening.pepFlag, sanctionsHit: screening.sanctionsHit,
+        riskLevel: screening.riskLevel, screeningNotes: screening.screeningNotes,
+        signature: signature || sub.signature,
+        status: 'pending', missingItems: [], reviewNotes: null,
+      },
+    });
+
+    // Merchant goes back to PENDING_KYC; mark the docs they (re)provided as submitted.
+    await prisma.merchant.update({ where: { id: merchantId }, data: { kycStatus: 'PENDING_KYC' } }).catch(() => {});
+    const submitted = submittedDocKeys({ documents, data });
+    for (const k of submitted) {
+      await prisma.$executeRaw`
+        UPDATE kyc_documents SET status='submitted', updated_at=now()
+        WHERE entity_type='merchant' AND entity_id=${merchantId}::uuid AND doc_key=${k}
+          AND status IN ('outstanding','reupload_requested','rejected','failed')`.catch(() => {});
+    }
+    if (screening.exceptions?.length) {
+      try { await compliance.persistExceptions('merchant', merchantId, screening.exceptions); }
+      catch (e) { logger.error({ err: e, reference }, 'persisting exceptions on resubmit failed (non-fatal)'); }
+    }
+
+    await sendEmail({
+      to: process.env.COMPLIANCE_EMAIL || 'compliance@paylodeservices.com',
+      subject: `Resubmitted ${sub.formType} application — ${summary.businessName} ${reference}`,
+      html: `<h2>Application resubmitted</h2><p><strong>${summary.businessName}</strong> (${reference}) has corrected and resubmitted their application. Please review it again in the compliance dashboard.</p>`,
+    }).catch(e => logger.error({ err: e }, 'resubmit notification failed'));
+
+    logAudit(req.user.id, 'ONBOARDING_RESUBMITTED', 'onboarding', reference, null, { reference }, null, req.ip).catch(() => {});
+    ok(res, { reference, status: updated.status }, 'Application resubmitted — our team will review it again');
   } catch (e) { next(e); }
 });
 

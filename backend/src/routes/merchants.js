@@ -384,6 +384,61 @@ router.post('/me/api-keys/rotate', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── Merchant SELF-ACTIVATION (go live) ───────────────────────────────────────
+// After compliance APPROVES (kycStatus=KYC_APPROVED), the merchant activates their
+// own account: accept the go-live terms + confirm the settlement account is correct.
+// Only then do live keys start working (isActive=true, kycStatus=ACTIVE).
+router.post('/me/activate', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account on this login');
+    const m = await prisma.merchant.findUnique({
+      where: { id: merchantId },
+      select: { id:true, kycStatus:true, isActive:true, businessName:true, businessEmail:true,
+                settlementBank:true, settlementAccount:true, settlementAccountName:true },
+    });
+    if (!m) return fail(res, 'No merchant account', 'NO_MERCHANT', 404);
+
+    // Already live → idempotent no-op.
+    if (m.isActive && m.kycStatus === 'ACTIVE') return ok(res, { already: true }, 'Your account is already active');
+
+    // Gate: only an APPROVED application can self-activate.
+    if (m.kycStatus !== 'KYC_APPROVED')
+      return fail(res, 'Your account is not yet approved. You can activate once your application is approved.', 'NOT_APPROVED', 409);
+
+    // Must accept the go-live terms.
+    if (req.body.accept_terms !== true)
+      return fail(res, 'You must accept the go-live terms to activate.', 'TERMS_REQUIRED');
+
+    // Settlement account must be on file (captured at onboarding). Block if missing —
+    // we cannot pay out settlements without it.
+    if (!m.settlementBank || !m.settlementAccount || !m.settlementAccountName)
+      return fail(res, 'Your settlement bank account is missing. Please add it before activating.', 'SETTLEMENT_MISSING');
+
+    const updated = await prisma.merchant.update({
+      where: { id: merchantId },
+      data: { isActive: true, kycStatus: 'ACTIVE', kycTier: 1 },
+      select: { businessName:true, businessEmail:true },
+    });
+    await logAudit(req.user.id, 'MERCHANT_SELF_ACTIVATED', 'merchants', merchantId, { isActive:false, kycStatus:'KYC_APPROVED' }, { isActive:true, kycStatus:'ACTIVE' }, null, req.ip).catch(() => {});
+
+    if (updated.businessEmail) {
+      const login = (process.env.APP_URL || 'https://paylodeservices.com') + '/login.html';
+      getEmailContent('account_activated',
+        { name: updated.businessName, business: updated.businessName, login_url: login },
+        'Your Paylode account is now live',
+        `<h2>Your account is live 🎉</h2><p>Hi ${updated.businessName},</p>` +
+          `<p>Your Paylode account has been <strong>activated</strong>. Your <strong>live</strong> API keys now work — ` +
+          `switch your <code>sk_test</code> keys to <code>sk_live</code> (Dashboard → API Keys) to start accepting real payments.</p>` +
+          `<p>Settlements will be paid to <strong>${m.settlementAccountName}</strong> — ${m.settlementAccount} (${m.settlementBank}).</p>` +
+          `<p><a href="${login}">Sign in to Paylode</a></p>`)
+        .then(c => sendEmail({ to: updated.businessEmail, subject: c.subject, html: c.html }))
+        .catch(() => {});
+    }
+    ok(res, { active: true }, 'Your account is now live');
+  } catch (e) { next(e); }
+});
+
 // ── Merchant self-service profile update ─────────────────────────────────────
 router.put('/me/profile', requireAuth, async (req, res, next) => {
   try {

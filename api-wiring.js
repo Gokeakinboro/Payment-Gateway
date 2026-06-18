@@ -1599,8 +1599,103 @@ async function loadMerchantOverview() {
         </table>
       </div>
     </div>`;
+    renderMyApplicationBanner();   // surface review status / Activate prompt at the top
   } catch(e) {
     el.innerHTML = errorBox('Failed to load merchant data: ' + e.message);
+  }
+}
+
+// ── MY APPLICATION status banner (merchant) ─────────────────────────────────────
+// Surfaces the onboarding lifecycle to the merchant: under review / rejected (with
+// the reviewer's checklist + an Edit & Resubmit button) / approved (Activate). Once
+// the account is ACTIVE there is nothing to show.
+async function renderMyApplicationBanner() {
+  const host = document.getElementById('main-content');
+  if (!host) return;
+  let app, m;
+  try {
+    const [aRes, mRes] = await Promise.all([ apiFetch('/onboarding/my-application'), apiFetch('/merchants/me') ]);
+    app = aRes && aRes.data;
+    m   = mRes && mRes.data;
+  } catch (e) { return; }
+  const kyc = (m && m.kycStatus) || '';
+  if (kyc === 'ACTIVE') return;                 // already live — nothing to surface
+
+  let html = '';
+  if (kyc === 'KYC_APPROVED') {
+    window._activateMerchant = m;
+    html =
+      '<div class="card" style="border:1px solid #bbf7d0;background:#f0fdf4;margin-bottom:16px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
+        '<div><div style="font-weight:700;color:#166534;font-size:15px">🎉 Your application is approved</div>' +
+        '<div style="font-size:13px;color:#166534;margin-top:4px">One step left — activate your account to go live. You\'ll accept the go-live terms and confirm your settlement account, then your live keys start working.</div></div>' +
+        '<button class="btn btn-primary" onclick="openActivateModal()">Activate Account</button>' +
+      '</div></div>';
+  } else if (app && app.status === 'rejected') {
+    const items = (app.missingItems || []).map(function (it) {
+      return '<li>' + _escA(it.label || it.key) + (it.type === 'doc' ? ' <em>(document)</em>' : '') + '</li>';
+    }).join('');
+    html =
+      '<div class="card" style="border:1px solid #f3c2c2;background:#fff4f4;margin-bottom:16px">' +
+        '<div style="font-weight:700;color:#7a2222;font-size:15px">Your application needs corrections</div>' +
+        (app.reviewNotes ? '<div style="font-size:13px;color:#7a2222;margin-top:6px"><strong>Reviewer notes:</strong> ' + _escA(app.reviewNotes) + '</div>' : '') +
+        (items ? '<div style="font-size:13px;color:#7a2222;margin-top:6px"><strong>Please provide / fix:</strong><ul style="margin:6px 0 0 18px">' + items + '</ul></div>' : '') +
+        '<div style="margin-top:10px"><button class="btn btn-primary" onclick="window.location.href=\'/onboarding.html?edit=1\'">Edit &amp; Resubmit Application</button></div>' +
+      '</div>';
+  } else if (app && (app.status === 'pending' || app.status === 'under_review')) {
+    html =
+      '<div class="card" style="border:1px solid #bfdbfe;background:#f8fbff;margin-bottom:16px">' +
+        '<div style="font-weight:700;color:#1e40af;font-size:15px">Your application is under review</div>' +
+        '<div style="font-size:13px;color:#1e40af;margin-top:4px">Our compliance team is reviewing your application — we\'ll email you when there\'s an update. Meanwhile your <strong>test/sandbox</strong> keys work for integration.</div>' +
+      '</div>';
+  } else { return; }
+
+  const div = document.createElement('div');
+  div.id = 'my-app-banner';
+  div.innerHTML = html;
+  host.insertBefore(div, host.firstChild);
+}
+
+// Activate modal: accept go-live terms + confirm the (already captured) settlement
+// account, then POST /merchants/me/activate to go live.
+function openActivateModal() {
+  const m = window._activateMerchant || {};
+  const hasSettlement = m.settlementBank && m.settlementAccount && m.settlementAccountName;
+  const settleHtml = hasSettlement
+    ? '<div class="rev-row"><span class="rev-label">Account name</span><span class="rev-value">' + _escA(m.settlementAccountName) + '</span></div>' +
+      '<div class="rev-row"><span class="rev-label">Account number</span><span class="rev-value">' + _escA(m.settlementAccount) + '</span></div>' +
+      '<div class="rev-row"><span class="rev-label">Bank</span><span class="rev-value">' + _escA(m.settlementBank) + '</span></div>'
+    : '<div class="info-box" style="background:#fff4f4;border-color:#f3c2c2;color:#7a2222;font-size:12px">No settlement account is on file. Please add it (Business Profile → Settlement) before activating — we cannot pay settlements without it.</div>';
+
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Activate your account</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="padding:4px 2px">' +
+      '<p style="font-size:13px;color:var(--gray-600)">Activating makes your account live — your <strong>live</strong> API keys will start working and you can accept real payments.</p>' +
+      '<div class="card" style="margin:10px 0"><div class="card-title" style="font-size:13px;margin-bottom:6px">Settlement account (where your money is paid)</div>' + settleHtml + '</div>' +
+      '<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin:10px 0;cursor:pointer">' +
+        '<input type="checkbox" id="act-terms" style="margin-top:3px">' +
+        '<span>I confirm the settlement account above is correct and I accept the Paylode <a href="/terms.html" target="_blank">go-live terms of service</a>.</span></label>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">' +
+        '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+        (hasSettlement ? '<button class="btn btn-primary" id="act-btn" onclick="activateMyAccount()">Activate &amp; Go Live</button>' : '') +
+      '</div>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function activateMyAccount() {
+  if (!document.getElementById('act-terms').checked) { alert('Please confirm your settlement account and accept the go-live terms.'); return; }
+  const btn = document.getElementById('act-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Activating...'; }
+  const res = await apiFetch('/merchants/me/activate', { method: 'POST', body: JSON.stringify({ accept_terms: true }) });
+  if (res && res.status) {
+    document.getElementById('modal').style.display = 'none';
+    try { const u = getUser(); if (u.merchant) { u.merchant.kycStatus = 'ACTIVE'; u.merchant.isActive = true; localStorage.setItem('paylode_user', JSON.stringify(u)); } } catch (e) {}
+    alert('Your account is now live! Your live (sk_live / pk_live) keys are active.');
+    loadMerchantOverview();
+  } else {
+    if (btn) { btn.disabled = false; btn.textContent = 'Activate & Go Live'; }
+    alert('Activation failed: ' + ((res && res.message) || 'please try again'));
   }
 }
 
@@ -5276,14 +5371,19 @@ async function viewOnboardingApp(ref) {
 
   var sig = a.signature ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Signature</div><img src="' + a.signature + '" style="max-width:260px;border:1px solid var(--gray-200);border-radius:6px">' : '';
 
+  var refJs = _escA(a.reference);
   var actions =
     '<div class="divider"></div>' +
-    '<label class="form-label">Review note</label>' +
-    '<textarea class="form-input" id="onb-note" style="min-height:60px;margin-bottom:10px" placeholder="Optional note recorded with the decision">' + _escA(a.reviewNotes || '') + '</textarea>' +
+    '<label class="form-label">Review note / reviewer comments</label>' +
+    '<textarea class="form-input" id="onb-note" style="min-height:60px;margin-bottom:10px" placeholder="Comments shown to the merchant with the decision (e.g. what to correct)">' + _escA(a.reviewNotes || '') + '</textarea>' +
+    rejectChecklistHtml(a) +
     '<div class="flex" style="gap:8px;flex-wrap:wrap">' +
-      '<button class="btn btn-outline" onclick="reviewOnboardingApp(\'' + _escA(a.reference) + '\',\'under_review\')">Mark Under Review</button>' +
-      '<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="reviewOnboardingApp(\'' + _escA(a.reference) + '\',\'approved\')">Approve</button>' +
-      '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="reviewOnboardingApp(\'' + _escA(a.reference) + '\',\'rejected\')">Reject</button>' +
+      '<button class="btn btn-outline" onclick="reviewOnboardingApp(\'' + refJs + '\',\'under_review\')">Mark Under Review</button>' +
+      '<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="reviewOnboardingApp(\'' + refJs + '\',\'approved\')">Approve</button>' +
+      '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="showRejectChecklist()">Reject…</button>' +
+    '</div>' +
+    '<div id="reject-confirm" style="display:none;margin-top:10px">' +
+      '<button class="btn btn-primary" style="background:var(--red);border-color:var(--red)" onclick="reviewOnboardingApp(\'' + refJs + '\',\'rejected\')">Confirm Rejection &amp; Notify Merchant</button>' +
     '</div>';
 
   showModal(
@@ -5304,12 +5404,47 @@ async function viewOnboardingApp(ref) {
   );
 }
 
+// Rejection checklist — candidate missing items the reviewer ticks. Doc keys match
+// the kyc_documents doc_keys so the backend can flag them for re-upload.
+function rejectChecklistHtml(a) {
+  var docItems = (a.applicantType === 'natural')
+    ? [['id_document','Government-issued ID'],['proof_address','Proof of address'],['bvn','BVN'],['nin','NIN']]
+    : [['cert_incorp','Certificate of Incorporation / Registration'],['memart','MEMART'],['status_report','CAC Status Report (or CO2 + CO7)'],['board_resolution','Board Resolution'],['tin_cert','TIN certificate'],['proof_address','Proof of business address']];
+  var infoItems = [['settlement_account','Settlement bank account'],['business_info','Business details / description'],['contact_info','Valid contact email / phone'],['principal_info','Director / owner details']];
+  function ck(d, type) {
+    return '<label style="display:flex;gap:7px;align-items:center;font-size:13px;padding:3px 0;cursor:pointer">' +
+      '<input type="checkbox" class="rej-item" data-key="' + d[0] + '" data-label="' + _escA(d[1]) + '" data-type="' + type + '"> ' +
+      _escA(d[1]) + (type === 'doc' ? ' <span style="color:var(--gray-400);font-size:11px">(doc)</span>' : '') + '</label>';
+  }
+  return '<div id="reject-checklist" style="display:none;border:1px solid #f3c2c2;background:#fff8f8;border-radius:8px;padding:10px 12px;margin-bottom:10px">' +
+    '<div style="font-weight:600;font-size:13px;color:#7a2222;margin-bottom:6px">Tick what is missing or unacceptable</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">' +
+      docItems.map(function(d){return ck(d,'doc');}).join('') + infoItems.map(function(d){return ck(d,'info');}).join('') +
+    '</div>' +
+    '<div style="font-size:11px;color:var(--gray-500);margin-top:6px">Sent to the merchant as their correction checklist; ticked documents are flagged for re-upload.</div>' +
+  '</div>';
+}
+
+function showRejectChecklist() {
+  var c = document.getElementById('reject-checklist'); if (c) c.style.display = 'block';
+  var b = document.getElementById('reject-confirm'); if (b) b.style.display = 'block';
+}
+
 async function reviewOnboardingApp(ref, status) {
   var note = (document.getElementById('onb-note') || {}).value || '';
+  var missing = [];
+  if (status === 'rejected') {
+    document.querySelectorAll('.rej-item:checked').forEach(function (cb) {
+      missing.push({ key: cb.getAttribute('data-key'), label: cb.getAttribute('data-label'), type: cb.getAttribute('data-type') });
+    });
+    if (!missing.length && !note.trim()) { alert('Add a reviewer note or tick at least one missing item so the merchant knows what to fix.'); return; }
+  }
   var verb = status === 'approved' ? 'approve' : status === 'rejected' ? 'reject' : 'mark under review';
   if (!confirm('Are you sure you want to ' + verb + ' this application?')) return;
+  var body = { status: status, review_notes: note };
+  if (status === 'rejected') body.missing_items = missing;
   var res = await apiFetch('/onboarding/submissions/' + encodeURIComponent(ref), {
-    method: 'PATCH', body: JSON.stringify({ status: status, review_notes: note }),
+    method: 'PATCH', body: JSON.stringify(body),
   });
   if (res && res.status) { document.getElementById('modal').style.display = 'none'; loadOnboardingApps(); }
   else alert('Error: ' + ((res && res.message) || 'Update failed'));

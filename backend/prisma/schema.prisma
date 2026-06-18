@@ -461,6 +461,9 @@ model OnboardingSubmission {
   merchantId     String?  @map("merchant_id") @db.Uuid   // set once approved → provisioned
   reviewedBy     String?  @map("reviewed_by") @db.Uuid
   reviewNotes    String?  @map("review_notes")
+  // Rejection checklist: which required docs / info items the reviewer flagged as
+  // missing or unacceptable. Surfaced to the merchant so they know what to fix.
+  missingItems   Json?    @map("missing_items")          // [{key,label,type:'doc'|'info'}]
   submittedAt    DateTime @default(now()) @map("submitted_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 

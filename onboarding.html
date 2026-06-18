@@ -285,6 +285,8 @@ let uploads = {};          // { fieldKey: {name,type,dataUrl,docType} }
 let sigData = null;
 let tncScrolled = false;
 let ynAnswers = {};
+let editMode = false;     // true when a merchant is editing/resubmitting a rejected app
+let editApp  = null;      // the loaded my-application payload (status/notes/missingItems)
 const DRAFT_KEY = 'paylode_onboarding_draft_v1';
 
 // ── Form definitions ──────────────────────────────────────────────────────────
@@ -489,7 +491,7 @@ function updateStepper() {
   document.getElementById('progress-fill').style.width = Math.max(pct,5) + '%';
   document.getElementById('btn-back').style.visibility = currentStep === 0 ? 'hidden' : 'visible';
   const isLast = currentStep === steps.length - 1;
-  document.getElementById('btn-next').textContent = isLast ? '✓ Submit Application' : 'Continue →';
+  document.getElementById('btn-next').textContent = isLast ? (editMode ? '✓ Resubmit Application' : '✓ Submit Application') : 'Continue →';
   document.getElementById('btn-next').className = isLast ? 'btn btn-lime' : 'btn btn-primary';
 }
 
@@ -1726,10 +1728,39 @@ function prevStep() {
 
 // ── Submit ─────────────────────────────────────────────────────────────────────
 async function submitForm() {
+  // Compliance gate: required documents must be present (cannot be bypassed by a
+  // resumed draft with dropped files, or by landing on the last step).
+  if (!finalValidateDocs()) return;
+
   const btn = document.getElementById('btn-next');
-  btn.textContent = 'Submitting...'; btn.disabled = true;
+  btn.textContent = editMode ? 'Resubmitting...' : 'Submitting...'; btn.disabled = true;
 
   try {
+    // EDIT MODE → resubmit the merchant's own application (authenticated PUT).
+    if (editMode) {
+      const token = authToken();
+      const res = await fetch(`${API}/onboarding/my-application`, {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body:    JSON.stringify({ data: formData, principals, uploads, signature: sigData }),
+      });
+      let result; try { result = await res.json(); } catch (_) { result = null; }
+      if (result && result.status) {
+        clearDraft();
+        document.getElementById('step-content').innerHTML =
+          '<div style="padding:30px;text-align:center"><h2 style="color:var(--green)">Application resubmitted ✓</h2>' +
+          '<p>Thanks — our compliance team will review your corrections and get back to you.</p>' +
+          '<p><a class="btn btn-primary" href="/dashboard.html">Back to dashboard</a></p></div>';
+        document.getElementById('nav-btns').style.display = 'none';
+        var bn = document.getElementById('edit-banner'); if (bn) bn.style.display = 'none';
+        window.scrollTo(0, 0);
+      } else {
+        showAlert((result && result.message) || 'Could not resubmit. Please try again.');
+        btn.textContent = '✓ Resubmit Application'; btn.disabled = false;
+      }
+      return;
+    }
+
     const payload = {
       form_type:      formType,
       applicant_type: applicantType,
@@ -1797,12 +1828,123 @@ function hideAlert() {
 
 
 
+// ── EDIT / RESUBMIT MODE (merchant correcting a rejected application) ─────────
+// Entered via ?edit=1 from the dashboard. Loads the merchant's own submission,
+// prefills the full form, and submits via PUT (resubmit) instead of POST.
+function authToken() { try { return localStorage.getItem('paylode_token'); } catch (e) { return null; } }
+
+async function enterEditMode() {
+  const token = authToken();
+  if (!token) { window.location.href = '/login.html'; return; }
+  let app = null;
+  try {
+    const r = await fetch(API + '/onboarding/my-application', { headers: { Authorization: 'Bearer ' + token } });
+    const j = await r.json();
+    app = j && j.data;
+  } catch (e) {}
+  if (!app) {
+    document.getElementById('type-selector').innerHTML =
+      '<div style="padding:40px;text-align:center"><h2>No application found</h2><p>We could not load an application for your account.</p><p><a href="/dashboard.html">Back to dashboard</a></p></div>';
+    return;
+  }
+  if (!app.editable) {
+    document.getElementById('type-selector').innerHTML =
+      '<div style="padding:40px;text-align:center"><h2>Application locked</h2><p>Your application is <strong>' + (app.status || '') +
+      '</strong> and can no longer be edited.</p><p><a href="/dashboard.html">Back to dashboard</a></p></div>';
+    return;
+  }
+
+  editMode = true; editApp = app;
+  clearDraft();                              // edit mode is server-backed, not a local draft
+  formType      = app.formType || 'merchant';
+  applicantType = app.applicantType || null;
+  formData      = app.data || {};
+  principals    = app.principals || [];
+  ynAnswers     = (app.data && app.data.yn_answers) || {};
+  sigData       = app.signature || null;
+
+  // Rebuild the uploads map from the stored documents so already-submitted files
+  // show as "✓ uploaded" (and pass validation). They carry no data-URL — the server
+  // keeps the existing file unless the merchant replaces it.
+  uploads = {};
+  (app.documents || []).forEach(function (d) {
+    if (!d || !d.key) return;
+    if (d.key.indexOf('principal_') === 0) return;   // principal IDs live on principals[]
+    uploads[d.key] = { name: d.name || 'Uploaded file', existing: true, docType: d.docType };
+  });
+  (principals || []).forEach(function (p) {
+    if (p && p.id_file && p.id_file.path && !p.id_file.dataUrl) p.id_file.existing = true;
+  });
+
+  document.getElementById('type-selector').style.display = 'none';
+  document.getElementById('main-form').style.display = 'block';
+  document.getElementById('form-title').textContent = 'Edit & Resubmit Application';
+  if (formType === 'merchant' && applicantType) {
+    merchantFlow = (applicantType === 'natural') ? MERCHANT_STEPS_NATURAL : MERCHANT_STEPS_ENTITY;
+    buildStepper(merchantFlow);
+    document.getElementById('stepper').style.display = 'flex';
+  } else if (formType === 'aggregator') { buildStepper(AGGREGATOR_STEPS); }
+  else if (formType === 'dd') { buildStepper(DD_STEPS); }
+  // Skip the applicant-type chooser (step 0) in edit mode — the type is fixed.
+  currentStep = (formType === 'merchant' && applicantType) ? 1 : 0;
+  renderStep();
+  renderEditBanner(app);
+  window.scrollTo(0, 0);
+}
+
+function renderEditBanner(app) {
+  var host = document.getElementById('main-form');
+  if (!host || document.getElementById('edit-banner')) return;
+  var items = (app.missingItems || []).map(function (m) {
+    return '<li>' + (m.label || m.key) + (m.type === 'doc' ? ' <em>(document)</em>' : '') + '</li>';
+  }).join('');
+  var b = document.createElement('div');
+  b.id = 'edit-banner';
+  b.style.cssText = 'background:#fff4f4;border:1px solid #f3c2c2;border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:14px;color:#7a2222';
+  b.innerHTML = '<strong>Your application needs corrections.</strong>' +
+    (app.reviewNotes ? '<div style="margin-top:6px"><strong>Reviewer notes:</strong> ' + app.reviewNotes + '</div>' : '') +
+    (items ? '<div style="margin-top:6px"><strong>Please provide / fix:</strong><ul style="margin:6px 0 0 18px">' + items + '</ul></div>' : '') +
+    '<div style="margin-top:8px;color:#555">Make the changes below and click <strong>Resubmit</strong> on the last step. Files you already uploaded are kept unless you replace them.</div>';
+  host.insertBefore(b, host.firstChild);
+}
+
+// State-based final check of the COMPLIANCE-CRITICAL documents — runs off the
+// uploads/principals state (not the DOM), so it cannot be bypassed by resuming a
+// draft whose file blobs were dropped, or by jumping to the last step.
+function finalValidateDocs() {
+  if (formType !== 'merchant') return true;
+  if (applicantType === 'natural') {
+    if (!uploads['np_id_doc'])        { showAlert('Please attach your government-issued ID before submitting.'); return false; }
+    if (!uploads['np_proof_address']) { showAlert('Please attach your proof of address before submitting.'); return false; }
+    return true;
+  }
+  if (applicantType === 'entity') {
+    var type = (formData.entity_details && formData.entity_details.entity_type) || '';
+    var docs = ENTITY_DOCS[type] || [];
+    for (var i = 0; i < docs.length; i++) {
+      var d = docs[i];
+      if (d.k === 'tin_cert') continue;            // TIN is a number, not an upload
+      if (d.req && !uploads['doc_' + d.k]) { showAlert('A required document is missing: ' + d.label + '. Please attach it before submitting.'); return false; }
+    }
+    if ((type === 'llc' || type === 'ulc') && !uploads['doc_status_report'] && !(uploads['doc_form_co2'] && uploads['doc_form_co7'])) {
+      showAlert('Attach the CAC Status Report, or both Form CO2 and Form CO7, before submitting.'); return false;
+    }
+    if (!uploads['entity_proof_address']) { showAlert('Please attach proof of business address before submitting.'); return false; }
+    for (var j = 0; j < principals.length; j++) {
+      if (!principals[j].id_file) { showAlert('Please attach an ID for ' + (principals[j].role || 'each owner') + ' #' + (j + 1) + ' before submitting.'); return false; }
+    }
+    return true;
+  }
+  return true;
+}
+
 // ── Auto-select type from URL param ─────────────────────────────────────────
 (function() {
   var p   = new URLSearchParams(window.location.search);
   var t   = p.get('type');
   var ref = p.get('ref');
   if (ref) try { sessionStorage.setItem('paylode_ref', ref); } catch(e) {}
+  if (p.get('edit') === '1') { enterEditMode(); return; }   // merchant resubmit flow
   if (hasDraft()) {
     document.getElementById('draft-banner').classList.add('show');
   }
