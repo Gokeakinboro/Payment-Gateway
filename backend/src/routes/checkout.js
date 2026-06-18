@@ -12,6 +12,8 @@ const { dispatchWebhook }    = require('../services/webhookService');
 const { computeFeesForTxn, channelToServiceType } = require('../services/feeEngine');
 const isw = require('../services/interswitchService');
 const compliance = require('../services/complianceService');
+const palmpay = require('../services/palmpayService');
+const { finalizePayinSuccess } = require('../services/payinFinalize');
 
 const CHECKOUT_URL = process.env.APP_URL
   ? process.env.APP_URL.replace(/\/$/, '') + '/checkout.html'
@@ -386,6 +388,64 @@ router.post('/:reference/confirm', async (req, res, next) => {
     }
 
     return ok(res, { status: 'PENDING', reference: txn.reference }, 'Payment not yet confirmed');
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/checkout/:reference/charge/palmpay ───────────────────────────
+// Pay with PalmPay wallet. Creates a PalmPay order and returns its checkout/redirect
+// URL; PalmPay redirects the payer back here and fires the /payin webhook, which
+// finalizes the transaction. (Sandbox short-circuits — no real PalmPay call.)
+router.post('/:reference/charge/palmpay', async (req, res, next) => {
+  try {
+    const txn = await prisma.transaction.findUnique({
+      where: { reference: req.params.reference },
+      include: { merchant: { include: { aggregator: true } } },
+    });
+    if (!txn)                     return notFound(res, 'Transaction');
+    if (txn.status !== 'PENDING') return fail(res, 'Transaction already processed', 'ALREADY_PROCESSED');
+
+    // Sandbox: finalize immediately (mirrors the card sandbox path) — no PalmPay call.
+    if (txn.isSandbox) {
+      const r = await finalizePayinSuccess({
+        reference: txn.reference, channel: 'BANK_TRANSFER', processor: 'palmpay_wallet',
+        extraMeta: { method: 'palmpay_wallet', sandbox: true },
+      });
+      return ok(res, {
+        reference: txn.reference, status: 'SUCCESS', channel: 'BANK_TRANSFER',
+        method: 'palmpay_wallet', sandbox: true, finalized: !!r.finalized,
+      }, 'Payment successful (sandbox)');
+    }
+
+    if (!palmpay.isConfigured()) return fail(res, 'PalmPay is not available', 'PALMPAY_UNAVAILABLE', 503);
+
+    const callbackUrl = CHECKOUT_URL + '?ref=' + txn.reference + '&status=callback';
+    let order;
+    try {
+      order = await palmpay.createPayWithPalmPayOrder({
+        orderId:       txn.reference,
+        amountKobo:    Number(txn.amount),
+        callbackUrl,
+        title:         txn.merchant.businessName || 'Payment',
+        description:   txn.metadata?.description || 'Payment',
+        customerEmail: txn.customerEmail,
+      });
+    } catch (e) {
+      return fail(res, 'PalmPay is temporarily unavailable. Please try again.', 'PALMPAY_ERROR', 502);
+    }
+    if (!order.ok || !order.checkoutUrl) {
+      return fail(res, order.reason || 'Could not start PalmPay payment', 'PALMPAY_DECLINED');
+    }
+    await prisma.transaction.update({
+      where: { id: txn.id },
+      data: { channel: 'BANK_TRANSFER', metadata: { ...txn.metadata, method: 'palmpay_wallet', palmpay_order_no: order.orderNo } },
+    });
+    return ok(res, {
+      reference:    txn.reference,
+      status:       'REDIRECT',
+      method:       'palmpay_wallet',
+      checkout_url: order.checkoutUrl,
+      order_no:     order.orderNo,
+    }, 'Redirect to PalmPay to complete payment');
   } catch (e) { next(e); }
 });
 

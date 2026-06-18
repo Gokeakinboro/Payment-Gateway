@@ -507,6 +507,10 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
             <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
             USSD
           </button>
+          <button class="ch-tab" id="tab-palmpay" onclick="switchChannel('palmpay')">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 16V8h5a2 2 0 110 4H8"/></svg>
+            PalmPay
+          </button>
         </div>
 
         <!-- ── CARD PANEL ── -->
@@ -645,6 +649,21 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
             <span class="btn-label">I've made the transfer — check now</span>
             <div class="spinner"></div>
           </button>
+        </div>
+
+        <!-- ── PALMPAY WALLET PANEL ── -->
+        <div class="panel" id="panel-palmpay">
+          <div style="text-align:center;font-size:14px;color:var(--g600);line-height:1.6;margin:6px 0 18px">
+            Pay instantly from your PalmPay wallet. You'll be redirected to PalmPay to authorize, then brought back here automatically.
+          </div>
+          <button class="pay-btn" id="pay-btn-palmpay" onclick="payWithPalmPay()">
+            <div class="spinner"></div>
+            <span class="btn-label">Pay <span id="palmpay-pay-amount">—</span> with PalmPay</span>
+          </button>
+          <div class="pay-btn-sub">
+            <svg class="footer-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            Secured by Paylode · CBN Licensed PSSP
+          </div>
         </div>
 
         <!-- ── USSD PANEL ── -->
@@ -789,7 +808,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('order-desc').textContent   = state.description;
   document.getElementById('order-email').querySelector('span').textContent = state.customerEmail;
   document.getElementById('order-ref').textContent    = 'Ref: ' + state.reference;
-  document.getElementById('card-pay-amount').textContent = state.amountFormatted;
+  document.getElementById('card-pay-amount').textContent = state.amountFormatted; var _ppa=document.getElementById('palmpay-pay-amount'); if(_ppa)_ppa.textContent=state.amountFormatted;
   document.getElementById('transfer-amount-display').textContent = state.amountFormatted;
 
   // USSD amount (short form)
@@ -842,7 +861,7 @@ async function loadTransaction() {
     document.getElementById('order-amount').textContent  = state.amountFormatted;
     document.getElementById('order-desc').textContent    = state.description;
     document.getElementById('order-email').querySelector('span').textContent = state.customerEmail;
-    document.getElementById('card-pay-amount').textContent = state.amountFormatted;
+    document.getElementById('card-pay-amount').textContent = state.amountFormatted; var _ppa=document.getElementById('palmpay-pay-amount'); if(_ppa)_ppa.textContent=state.amountFormatted;
     document.getElementById('transfer-amount-display').textContent = state.amountFormatted;
     document.getElementById('ussd-amt').textContent = (txn.amount / 100).toFixed(2);
     state.ussdAmt = (txn.amount / 100).toFixed(2);
@@ -869,7 +888,7 @@ async function fetchVirtualAccount() {
 // ─── CHANNEL SWITCHING ────────────────────────────────────────────────────────
 function switchChannel(ch) {
   state.channel = ch;
-  ['card','transfer','ussd'].forEach(c => {
+  ['card','transfer','ussd','palmpay'].forEach(c => {
     document.getElementById('tab-' + c).classList.toggle('active', c === ch);
     document.getElementById('panel-' + c).classList.toggle('active', c === ch);
   });
@@ -946,6 +965,32 @@ async function payWithCard() {
       showFailed(data.message || 'Payment failed. Please try again.');
     }
 
+  } catch (e) {
+    setLoading(btn, false);
+    showFailed('Network error. Please check your connection and try again.');
+  }
+}
+
+// ─── PAY WITH PALMPAY WALLET ───────────────────────────────────────────────────
+async function payWithPalmPay() {
+  const btn = document.getElementById('pay-btn-palmpay');
+  setLoading(btn, true);
+  try {
+    const res = await fetch(`${API_URL}/checkout/${state.reference}/charge/palmpay`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({}),
+    });
+    const data = await res.json();
+    // Sandbox finalizes immediately; live returns a PalmPay checkout URL to redirect to.
+    if (data.status && data.data && data.data.status === 'SUCCESS') {
+      setLoading(btn, false); showSuccess('palmpay'); return;
+    }
+    if (data.status && data.data && data.data.status === 'REDIRECT' && data.data.checkout_url) {
+      window.location.href = data.data.checkout_url; return;
+    }
+    setLoading(btn, false);
+    showFailed(data.message || 'Could not start PalmPay payment. Please try again.');
   } catch (e) {
     setLoading(btn, false);
     showFailed('Network error. Please check your connection and try again.');
@@ -1045,7 +1090,7 @@ function showSuccess(channel) {
   const screen = document.getElementById('screen-success');
   screen.classList.add('active');
 
-  const channelLabel = { card:'Card payment', transfer:'Bank transfer', ussd:'USSD payment' }[channel];
+  const channelLabel = { card:'Card payment', transfer:'Bank transfer', ussd:'USSD payment', palmpay:'PalmPay wallet' }[channel];
   document.getElementById('success-sub').textContent =
     `Your ${channelLabel} of ${state.amountFormatted} to ${state.merchantName} was successful.`;
 

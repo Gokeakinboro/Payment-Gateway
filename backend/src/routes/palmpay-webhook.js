@@ -16,6 +16,7 @@ const router = require('express').Router();
 const palmpay = require('../services/palmpayService');
 const { prisma } = require('../utils/db');
 const { logger } = require('../utils/logger');
+const { finalizePayinSuccess, failPayin } = require('../services/payinFinalize');
 
 // PalmPay orderStatus → our leg status. (2 = success; 1/0 = still processing;
 // anything else = failed.) Confirm exact codes against PalmPay's data dictionary.
@@ -77,21 +78,85 @@ async function handlePayout(b, res) {
 }
 
 // ── virtual-account pay-in (collection) ──────────────────────────────────────────
-function handleVaCashin(b, res) {
+// Two cases, matched by virtualAccountNo:
+//   (1) a PENDING checkout txn carrying this VA (dynamic per-checkout VA) → finalize
+//       it as a customer payment (fees + settlement + merchant webhook); OR
+//   (2) a merchant's STATIC VA → wallet top-up: credit full amount to the payout
+//       wallet (no fee — merchant funding own float), idempotent on PalmPay orderNo.
+async function handleVaCashin(b, res) {
   if (!verified(b)) { logger.warn({ orderNo: b.orderNo }, 'PalmPay VA cash-in callback: BAD signature'); return res.status(401).send('invalid signature'); }
   logger.info({ virtualAccountNo: b.virtualAccountNo, orderNo: b.orderNo, orderStatus: b.orderStatus, amount: b.orderAmount, payer: b.payerAccountName }, 'PalmPay VA cash-in');
-  // TODO(keys): resolve the merchant/customer by virtualAccountNo → record the
-  //   incoming transfer as a successful bank_transfer transaction + fire merchant webhook.
-  return res.status(200).send('success');
+  const vaNo = b.virtualAccountNo;
+  const isSuccess = legStatusFor(b.orderStatus) === 'success';
+  if (!vaNo) return res.status(200).send('success');
+  try {
+    // (1) dynamic checkout VA → a PENDING transaction tagged with this VA number
+    const t = await prisma.$queryRaw`
+      SELECT reference FROM transactions
+      WHERE status = 'PENDING' AND metadata->>'palmpay_va_no' = ${vaNo}
+      ORDER BY created_at DESC LIMIT 1`;
+    if (t.length) {
+      if (isSuccess) {
+        await finalizePayinSuccess({
+          reference: t[0].reference, channel: 'BANK_TRANSFER', processor: 'palmpay_va',
+          extraMeta: { method: 'palmpay_va', palmpay_va_no: vaNo, palmpay_order_no: b.orderNo, payer: b.payerAccountName },
+        });
+      }
+      return res.status(200).send('success');
+    }
+
+    // (2) static per-merchant VA → wallet top-up (full credit, no fee)
+    const mva = await prisma.$queryRaw`SELECT merchant_id FROM merchant_virtual_accounts WHERE va_number = ${vaNo} AND status = 'active' LIMIT 1`;
+    if (mva.length && isSuccess) {
+      const merchantId = mva[0].merchant_id;
+      const amt = BigInt(b.orderAmount || 0);
+      const ref = 'PPVA-' + b.orderNo;
+      const seen = await prisma.$queryRaw`SELECT 1 FROM wallet_ledger WHERE reference = ${ref} LIMIT 1`;
+      if (!seen.length && amt > 0n) {
+        await prisma.$transaction(async (tx) => {
+          const w = await tx.$queryRaw`SELECT balance FROM merchant_wallets WHERE merchant_id = ${merchantId}::uuid FOR UPDATE`;
+          const before = w.length ? BigInt(w[0].balance) : 0n;
+          if (w.length) {
+            await tx.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${amt}, last_funded_at = NOW(), updated_at = NOW() WHERE merchant_id = ${merchantId}::uuid`;
+          } else {
+            await tx.$executeRaw`INSERT INTO merchant_wallets (id, merchant_id, balance, last_funded_at, created_at, updated_at) VALUES (gen_random_uuid(), ${merchantId}::uuid, ${amt}, NOW(), NOW(), NOW())`;
+          }
+          await tx.$executeRaw`
+            INSERT INTO wallet_ledger (id, merchant_id, entry_type, amount, balance_before, balance_after, reference, description, created_at)
+            VALUES (gen_random_uuid(), ${merchantId}::uuid, 'CREDIT', ${amt}, ${before}, ${before + amt}, ${ref}, ${'PalmPay VA top-up from ' + (b.payerAccountName || 'payer')}, NOW())`;
+        });
+        logger.info({ merchantId, amount: Number(amt), vaNo, orderNo: b.orderNo }, 'PalmPay VA top-up credited to wallet');
+      }
+    } else if (!mva.length) {
+      logger.warn({ vaNo, orderNo: b.orderNo }, 'PalmPay VA cash-in: no matching checkout txn or merchant VA');
+    }
+    return res.status(200).send('success');
+  } catch (e) {
+    logger.error({ err: e, orderNo: b.orderNo, vaNo }, 'PalmPay VA cash-in processing failed');
+    return res.status(500).send('error');   // PalmPay will retry
+  }
 }
 
 // ── Pay-with-PalmPay (wallet/checkout) result ────────────────────────────────────
-function handlePayin(b, res) {
+// orderId = our transaction reference. On success, finalize the PENDING txn.
+async function handlePayin(b, res) {
   if (!verified(b)) { logger.warn({ orderId: b.orderId }, 'PalmPay pay-in callback: BAD signature'); return res.status(401).send('invalid signature'); }
   logger.info({ orderId: b.orderId, orderNo: b.orderNo, orderStatus: b.orderStatus, amount: b.amount }, 'PalmPay pay-in result');
-  // TODO(keys): find transaction by reference (=orderId); on success mark SUCCESS
-  //   (mirror checkout confirm: set fees/settlement, dispatch merchant webhook).
-  return res.status(200).send('success');
+  const status = legStatusFor(b.orderStatus);
+  try {
+    if (status === 'success') {
+      await finalizePayinSuccess({
+        reference: b.orderId, channel: 'BANK_TRANSFER', processor: 'palmpay_wallet',
+        extraMeta: { method: 'palmpay_wallet', palmpay_order_no: b.orderNo },
+      });
+    } else if (status === 'failed') {
+      await failPayin({ reference: b.orderId, failureReason: b.errorMsg || 'PalmPay payment failed' });
+    }
+    return res.status(200).send('success');
+  } catch (e) {
+    logger.error({ err: e, orderId: b.orderId }, 'PalmPay pay-in processing failed');
+    return res.status(500).send('error');   // PalmPay will retry
+  }
 }
 
 // Subpath routes — payout + payin are targeted here via per-request notifyUrl.
