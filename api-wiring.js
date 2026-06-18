@@ -5272,6 +5272,54 @@ async function loadInviteTracking() {
   } catch (e) { el.innerHTML = errorBox('Failed to load invite tracking: ' + e.message); }
 }
 
+// ── Onboarding lifecycle (cycle) helpers ──────────────────────────────────────
+function _fmtDur(ms) {
+  if (ms == null || ms < 0) return '—';
+  var m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d >= 1) return d + 'd ' + (h % 24) + 'h';
+  if (h >= 1) return h + 'h ' + (m % 60) + 'm';
+  return Math.max(m, 1) + 'm';
+}
+function _onbHist(a) {
+  var h = a && a.statusHistory;
+  if (typeof h === 'string') { try { h = JSON.parse(h); } catch (e) { h = null; } }
+  return Array.isArray(h) ? h : [];
+}
+// Short one-liner for the list: how far the application is + how long it took.
+function _onbCycleSummary(a) {
+  var hist = _onbHist(a);
+  var startAt = (hist.find && (hist.find(function (e) { return e.status === 'submitted'; }) || {}).at) || a.submittedAt;
+  if (!startAt) return '—';
+  var start = new Date(startAt).getTime();
+  var find = function (s) { var e = hist.filter(function (x) { return x.status === s; }).pop(); return e ? new Date(e.at).getTime() : null; };
+  var activated = find('activated'), approved = find('approved');
+  var resubs = hist.filter(function (x) { return x.status === 'resubmitted'; }).length;
+  var rj = resubs ? ' · ' + resubs + '× resubmit' : '';
+  if (activated) return '<span class="badge badge-green">Live</span> in ' + _fmtDur(activated - start) + rj;
+  if (approved)  return '<span class="badge badge-blue">Approved</span> in ' + _fmtDur(approved - start) + rj;
+  return _fmtDur(Date.now() - start) + ' in pipeline' + rj;
+}
+// Full vertical timeline for the detail modal.
+function _onbTimelineHtml(a) {
+  var hist = _onbHist(a);
+  if (!hist.length) return '';
+  var labels = { submitted:'Submitted', under_review:'Under review', rejected:'Rejected', resubmitted:'Resubmitted', approved:'Approved', activated:'Activated (live)' };
+  var colors = { submitted:'#64748b', under_review:'#1e40af', rejected:'#b91c1c', resubmitted:'#9a6700', approved:'#166534', activated:'#0f7b3f' };
+  var start = new Date(hist[0].at).getTime();
+  var rows = hist.map(function (e) {
+    var t = new Date(e.at);
+    var delta = (e.at && hist[0].at && t.getTime() !== start) ? ' <span style="color:var(--gray-400)">(+' + _fmtDur(t.getTime() - start) + ')</span>' : '';
+    return '<div style="display:flex;gap:10px;align-items:flex-start;padding:5px 0">' +
+      '<span style="flex:0 0 9px;height:9px;border-radius:50%;margin-top:5px;background:' + (colors[e.status] || '#64748b') + '"></span>' +
+      '<div style="font-size:12px"><strong>' + (labels[e.status] || e.status) + '</strong>' + delta +
+      '<div style="color:var(--gray-500)">' + t.toLocaleString('en-NG') + (e.note ? ' · ' + _escA(e.note) : '') + '</div></div></div>';
+  }).join('');
+  var last = new Date(hist[hist.length - 1].at).getTime();
+  return '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Onboarding cycle ' +
+    '<span style="font-weight:400;color:var(--gray-500)">· total ' + _fmtDur(last - start) + '</span></div>' +
+    '<div style="border-left:2px solid var(--gray-200);margin-left:4px;padding-left:10px">' + rows + '</div>';
+}
+
 async function loadOnboardingApps() {
   var el = document.getElementById('main-content');
   el.innerHTML = loading();
@@ -5290,9 +5338,10 @@ async function loadOnboardingApps() {
       '<td>' + (a.sanctionsHit ? '<span class="badge badge-red">REVIEW</span>' : '<span class="badge badge-green">Clear</span>') + '</td>' +
       '<td style="font-size:12px">' + (a.submittedAt ? new Date(a.submittedAt).toLocaleDateString('en-NG') : '—') + '</td>' +
       '<td>' + statusBadge(a.status) + '</td>' +
+      '<td style="font-size:12px">' + _onbCycleSummary(a) + '</td>' +
       '<td><button class="btn btn-outline btn-sm" onclick="viewOnboardingApp(\'' + _escA(a.reference) + '\')">Review</button></td>' +
     '</tr>';
-  }).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--gray-400);padding:20px">No applications yet</td></tr>';
+  }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--gray-400);padding:20px">No applications yet</td></tr>';
 
   el.innerHTML =
     '<div class="page-header flex-between"><div>' +
@@ -5300,7 +5349,7 @@ async function loadOnboardingApps() {
       '<div class="page-desc">' + rows.length + ' application' + (rows.length !== 1 ? 's' : '') + ' · KYC/KYB review</div>' +
     '</div></div>' +
     '<div class="card"><div class="table-wrap"><table>' +
-      '<thead><tr><th>Reference</th><th>Type</th><th>Business</th><th>Risk</th><th>PEP</th><th>Sanctions</th><th>Submitted</th><th>Status</th><th></th></tr></thead>' +
+      '<thead><tr><th>Reference</th><th>Type</th><th>Business</th><th>Risk</th><th>PEP</th><th>Sanctions</th><th>Submitted</th><th>Status</th><th>Cycle</th><th></th></tr></thead>' +
       '<tbody>' + body + '</tbody>' +
     '</table></div></div>';
 }
@@ -5396,6 +5445,7 @@ async function viewOnboardingApp(ref) {
     section('Individual', data.np_identity) +
     section('Business', data.np_business) +
     section('Entity', data.entity_details) +
+    _onbTimelineHtml(a) +
     principalsHtml +
     docsHtml +
     screeningHtml +

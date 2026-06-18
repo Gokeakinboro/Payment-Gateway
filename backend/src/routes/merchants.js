@@ -421,6 +421,12 @@ router.post('/me/activate', requireAuth, async (req, res, next) => {
       select: { businessName:true, businessEmail:true },
     });
     await logAudit(req.user.id, 'MERCHANT_SELF_ACTIVATED', 'merchants', merchantId, { isActive:false, kycStatus:'KYC_APPROVED' }, { isActive:true, kycStatus:'ACTIVE' }, null, req.ip).catch(() => {});
+    // Close the onboarding lifecycle timeline: record the 'activated' stage on the
+    // merchant's linked submission so the full cycle (submit→approve→activate) is tracked.
+    await prisma.$executeRaw`
+      UPDATE onboarding_submissions
+      SET status_history = COALESCE(status_history, '[]'::jsonb) || ${JSON.stringify([{ status: 'activated', at: new Date().toISOString(), by: 'merchant', note: null }])}::jsonb
+      WHERE merchant_id = ${merchantId}::uuid`.catch(() => {});
 
     if (updated.businessEmail) {
       const login = (process.env.APP_URL || 'https://paylodeservices.com') + '/login.html';

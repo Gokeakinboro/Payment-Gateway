@@ -72,6 +72,20 @@ function genReference() {
   return 'PLY-' + Date.now().toString(36).toUpperCase() + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
 }
 
+// Append one stage to a submission's lifecycle timeline (atomic jsonb append).
+// `client` may be the prisma client or a transaction client. Best-effort.
+async function pushHistory(client, where, status, by, note) {
+  const entry = JSON.stringify([{ status, at: new Date().toISOString(), by: by || null, note: note || null }]);
+  const sql = where.reference
+    ? client.$executeRaw`UPDATE onboarding_submissions
+        SET status_history = COALESCE(status_history, '[]'::jsonb) || ${entry}::jsonb
+        WHERE reference = ${where.reference}`
+    : client.$executeRaw`UPDATE onboarding_submissions
+        SET status_history = COALESCE(status_history, '[]'::jsonb) || ${entry}::jsonb
+        WHERE merchant_id = ${where.merchantId}::uuid`;
+  return sql.catch(() => {});
+}
+
 // Decode a `data:<mime>;base64,...` URL and write it to disk; return the saved path.
 function saveDataUrl(dataUrl, destDir, baseName) {
   const m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl || '');
@@ -288,6 +302,7 @@ router.post('/submit', async (req, res, next) => {
           screeningNotes: screening.screeningNotes,
           signature: signature || null,
           referredBy: referred_by || null,
+          statusHistory: [{ status: 'submitted', at: new Date().toISOString(), by: 'applicant', note: null }],
         },
       });
     } catch (dbErr) {
@@ -453,6 +468,7 @@ router.get('/submissions', requireAuth, requireCompliance, async (req, res, next
         id: true, reference: true, formType: true, applicantType: true, status: true,
         businessName: true, contactEmail: true, contactPhone: true, regNumber: true, tin: true,
         pepFlag: true, sanctionsHit: true, riskLevel: true, submittedAt: true,
+        statusHistory: true, updatedAt: true,
       },
     });
     ok(res, rows, 'Onboarding submissions');
@@ -614,6 +630,14 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
         },
       });
 
+      // Record the stage on the lifecycle timeline.
+      if (status === 'under_review' || status === 'rejected') {
+        const note = status === 'rejected'
+          ? (review_notes || '') + (missing && missing.length ? ` [missing: ${missing.map(m => m.label).join(', ')}]` : '')
+          : (review_notes || null);
+        await pushHistory(prisma, { reference }, status, req.user?.id || null, note || null);
+      }
+
       // On rejection, reflect it on the merchant account and flag the specific
       // documents the reviewer marked missing, so the dashboard shows what to re-upload.
       if (status === 'rejected' && existing.merchantId) {
@@ -673,6 +697,7 @@ router.patch('/submissions/:reference', requireAuth, requireCompliance, async (r
       // Idempotency keyed on the STATUS transition: only the approver that actually
       // flipped status→'approved' proceeds (concurrent clicks / re-approval = no-op).
       if (claim.count === 0) { outcome = { already: true }; return; }
+      await pushHistory(tx, { reference }, 'approved', req.user?.id || null, review_notes || null);
       // Aggregator self-onboarding (#3): provision an aggregator account on approval.
       if (sub.formType === 'aggregator') {
         outcome = { provAgg: await provisionAggregator(tx, sub) };
@@ -869,6 +894,7 @@ router.put('/my-application', requireAuth, async (req, res, next) => {
       html: `<h2>Application resubmitted</h2><p><strong>${summary.businessName}</strong> (${reference}) has corrected and resubmitted their application. Please review it again in the compliance dashboard.</p>`,
     }).catch(e => logger.error({ err: e }, 'resubmit notification failed'));
 
+    await pushHistory(prisma, { reference }, 'resubmitted', merchantId, 'merchant corrected & resubmitted');
     logAudit(req.user.id, 'ONBOARDING_RESUBMITTED', 'onboarding', reference, null, { reference }, null, req.ip).catch(() => {});
     ok(res, { reference, status: updated.status }, 'Application resubmitted — our team will review it again');
   } catch (e) { next(e); }

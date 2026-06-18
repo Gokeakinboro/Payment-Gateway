@@ -464,6 +464,9 @@ model OnboardingSubmission {
   // Rejection checklist: which required docs / info items the reviewer flagged as
   // missing or unacceptable. Surfaced to the merchant so they know what to fix.
   missingItems   Json?    @map("missing_items")          // [{key,label,type:'doc'|'info'}]
+  // Lifecycle timeline: one entry per stage transition, for tracking the onboarding
+  // cycle from submission → approval → activation (and rejection/resubmit loops).
+  statusHistory  Json?    @map("status_history")         // [{status,at,by,note}]
   submittedAt    DateTime @default(now()) @map("submitted_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
