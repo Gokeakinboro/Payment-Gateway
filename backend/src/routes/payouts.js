@@ -214,14 +214,17 @@ router.post('/batches', requireAuthOrApiKey,
 
       // ── Lookup payout fee rate (platform default or per-merchant override) ─────
       const VAT_RATE = 0.075; // 7.5% Nigerian VAT on service fees
+      // The exact PAYOUT config MUST win over the 'ALL' fallback. 'ALL' sorts before
+      // 'PAYOUT' alphabetically, so orderBy desc puts PAYOUT first (else 'ALL' wrongly
+      // wins and PAYOUT-specific rate/min/cap are ignored — same bug class as cards).
       const [merchantPayoutRate, platformPayoutRate] = await Promise.all([
         prisma.merchantRateConfig.findFirst({
           where: { merchantId, channel: { in: ['PAYOUT', 'ALL'] } },
-          orderBy: { channel: 'asc' },
+          orderBy: { channel: 'desc' },
         }),
         prisma.platformRateConfig.findFirst({
           where: { channel: { in: ['PAYOUT', 'ALL'] } },
-          orderBy: { channel: 'asc' },
+          orderBy: { channel: 'desc' },
         }),
       ]);
       const rateConfig = merchantPayoutRate || platformPayoutRate;
