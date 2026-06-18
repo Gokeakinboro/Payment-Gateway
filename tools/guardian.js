@@ -161,10 +161,10 @@ function saveState(s) { try { fs.mkdirSync(require('path').dirname(STATE_FILE), 
   console.log(`[guardian ${stamp}] host=${HOST} mode=${MODE} — ${checks.filter(c=>c.ok).length}/${checks.length} ok`);
   checks.forEach(c => console.log(line(c)));
 
-  if ((newFails.length || recovered.length) && sendEmail) {
-    const subj = newFails.length
-      ? `🚨 Paylode Guardian: ${newFails.length} check(s) FAILING on ${HOST}`
-      : `✅ Paylode Guardian: recovered on ${HOST}`;
+  // Only email when there is an ACTIVE issue (one or more failing checks). Recoveries
+  // are logged + cleared in state, but never emailed — no "all clear" noise.
+  if (newFails.length && sendEmail) {
+    const subj = `🚨 Paylode Guardian: ${newFails.length} check(s) FAILING on ${HOST}`;
     const html =
       (newFails.length ? '<h3>❌ Failing</h3><ul>' + newFails.map(c => `<li><strong>${c.name}</strong> — ${c.detail}</li>`).join('') + '</ul>' : '') +
       (recovered.length ? '<h3>✅ Recovered</h3><ul>' + recovered.map(c => `<li><strong>${c.name}</strong> — ${c.detail}</li>`).join('') + '</ul>' : '') +
