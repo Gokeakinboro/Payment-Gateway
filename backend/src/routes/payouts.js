@@ -206,6 +206,12 @@ router.post('/batches', requireAuthOrApiKey,
 
       const { description, scheduled_at, items } = req.body;
 
+      // Narration is mandatory on every payout. When the merchant leaves it blank
+      // (dashboard form, XLS/CSV file, or API payload), default it to
+      // "Payment from <business name>" so the beneficiary always sees a meaningful
+      // reference on their bank statement.
+      const defaultNarration = `Payment from ${merchant.businessName}`;
+
       // ── Lookup payout fee rate (platform default or per-merchant override) ─────
       const VAT_RATE = 0.075; // 7.5% Nigerian VAT on service fees
       const [merchantPayoutRate, platformPayoutRate] = await Promise.all([
@@ -296,7 +302,7 @@ router.post('/batches', requireAuthOrApiKey,
                 (${batchId}::uuid, ${merchantId}::uuid, ${item.account_number}, ${item.account_name||null},
                  ${item.bank_code}, ${bank[0]?.bank_name||item.bank_code},
                  ${BigInt(item.amount)}, ${item.fee}, ${item.vat},
-                 ${item.narration||null}, ${itemStatus}, ${scheduledAt}, NOW())`;
+                 ${(item.narration && String(item.narration).trim()) ? item.narration : defaultNarration}, ${itemStatus}, ${scheduledAt}, NOW())`;
           }
           await tx.$executeRaw`
             INSERT INTO wallet_ledger
@@ -340,6 +346,13 @@ router.post('/batches/upload', requireAuth, upload.single('file'), async (req, r
     const merchantId = req.user.merchant?.id;
     if (!merchantId) return fail(res, 'No merchant account');
 
+    // For the preview we resolve the same default narration the batch-create path
+    // applies, so the merchant sees exactly what each beneficiary will receive.
+    const merchant = await prisma.merchant.findUnique({
+      where: { id: merchantId }, select: { businessName: true },
+    });
+    const defaultNarration = `Payment from ${merchant?.businessName || 'merchant'}`;
+
     const ext = req.file.originalname.split('.').pop().toLowerCase();
     let rows = [];
 
@@ -375,7 +388,7 @@ router.post('/batches/upload', requireAuth, upload.single('file'), async (req, r
       const acct = (r.account_number || r.accountnumber || r.account || '').replace(/\D/g,'');
       const bank = r.bank_code || r.bankcode || r.bank || '';
       const amtRaw = parseFloat(r.amount || r.amount_naira || r.amountnaira || 0);
-      const narration = r.narration || r.description || r.reference || '';
+      const narration = (r.narration || r.description || r.reference || '').trim() || defaultNarration;
       const name = r.account_name || r.accountname || r.name || '';
 
       if (acct.length !== 10) { errors.push(`Row ${lineNum}: account_number must be 10 digits`); continue; }

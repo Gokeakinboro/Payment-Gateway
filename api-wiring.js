@@ -3826,7 +3826,7 @@ async function showPayoutUpload() {
             </select>
           </div>
           <div class="form-group" style="margin:0"><label class="form-label">Amount (₦)</label><input class="form-input ben-amount" type="number" placeholder="e.g. 5000"></div>
-          <div class="form-group" style="margin:0"><label class="form-label">Narration</label><input class="form-input ben-narration" placeholder="Optional"></div>
+          <div class="form-group" style="margin:0"><label class="form-label">Narration</label><input class="form-input ben-narration" placeholder="Defaults to 'Payment from ...'"></div>
         </div>
       </div>
       <div class="flex" style="gap:8px;margin-top:8px">
@@ -3838,6 +3838,7 @@ async function showPayoutUpload() {
       <div class="info-box" style="margin-bottom:12px;font-size:12px">
         <strong>Required columns:</strong> Bank Name, Account Number, Amount &nbsp;|&nbsp; <strong>Optional:</strong> Narration.
         You don't need bank codes — pick the bank by name and we attach the right code &amp; verify each account before anything is submitted.
+        Leave Narration blank and we use &ldquo;Payment from &lt;your business name&gt;&rdquo; automatically.
         <button class="btn btn-outline btn-sm" style="margin-left:8px" onclick="downloadPayoutTemplate()">&#8681; Download Template</button>
       </div>
       <div class="warn-box" style="margin-bottom:12px;font-size:12px">
@@ -3900,9 +3901,10 @@ function downloadPayoutTemplate() {
     // Fallback: build a basic template client-side (no dropdown).
     if (typeof XLSX === 'undefined') { alert('Could not load the template — please try again.'); return; }
     var tmpl = [
-      ['Bank Name', 'Account Number', 'Amount (NGN)', 'Narration (Optional)'],
+      ['Bank Name', 'Account Number', 'Amount (NGN)', "Narration (Optional — blank = 'Payment from <your business name>')"],
       ['OPay', '7030000266', 200, 'Salary June'],
       ['GTBank', '0123456789', 15000, 'Vendor payment'],
+      ['Access Bank', '0044556677', 5000, ''],
     ];
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(tmpl), 'Payouts');
