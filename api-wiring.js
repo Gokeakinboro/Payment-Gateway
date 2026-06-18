@@ -5409,7 +5409,7 @@ async function viewOnboardingApp(ref) {
 function rejectChecklistHtml(a) {
   var docItems = (a.applicantType === 'natural')
     ? [['id_document','Government-issued ID'],['proof_address','Proof of address'],['bvn','BVN'],['nin','NIN']]
-    : [['cert_incorp','Certificate of Incorporation / Registration'],['memart','MEMART'],['status_report','CAC Status Report (or CO2 + CO7)'],['board_resolution','Board Resolution'],['tin_cert','TIN certificate'],['proof_address','Proof of business address']];
+    : [['cert_incorp','Certificate of Incorporation / Registration'],['memart','MEMART'],['status_report','CAC Status Report (or CO2 + CO7)'],['board_resolution','Board Resolution'],['tin_cert','TIN certificate'],['proof_address','Proof of business address'],['id_document','Government-issued ID (director / owner)']];
   var infoItems = [['settlement_account','Settlement bank account'],['business_info','Business details / description'],['contact_info','Valid contact email / phone'],['principal_info','Director / owner details']];
   function ck(d, type) {
     return '<label style="display:flex;gap:7px;align-items:center;font-size:13px;padding:3px 0;cursor:pointer">' +
