@@ -3888,7 +3888,7 @@ async function submitManualPayout() {
 // Served as a static file so the dropdown + instructions are preserved; falls
 // back to client-side generation if the static file isn't reachable.
 function downloadPayoutTemplate() {
-  var url = '/paylode_payout_template.xlsx';
+  var url = '/paylode_payout_template.xlsx?v=2';
   fetch(url).then(function (r) {
     if (!r.ok) throw new Error('not found');
     return r.blob();
