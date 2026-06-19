@@ -101,6 +101,20 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
   });
   if (claim.count === 0) return { alreadyDone: true, txn };
 
+  // Payment-link bookkeeping (best-effort): count the payment, and auto-disable a
+  // one-off link now that it has been paid. Reusable links stay active.
+  const linkSlug = txn.metadata && txn.metadata.payment_link_slug;
+  if (linkSlug) {
+    prisma.$executeRawUnsafe(
+      `UPDATE payment_links
+          SET paid_count = paid_count + 1,
+              status = CASE WHEN is_reusable THEN status ELSE 'disabled' END,
+              updated_at = now()
+        WHERE slug = $1`,
+      linkSlug
+    ).catch(() => {});
+  }
+
   if (merchant.webhookUrl) {
     dispatchWebhook(merchant.id, 'payment.success', {
       reference:           txn.reference,

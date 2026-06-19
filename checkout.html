@@ -832,6 +832,12 @@ let state = {
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(window.location.search);
+
+  // Payment-link mode: ?link=<slug> with no ref yet → collect the customer's email
+  // (and amount, for open-amount links), mint a transaction, then continue as ?ref.
+  const linkSlug = params.get('link');
+  if (linkSlug && !params.get('ref') && !params.get('reference')) { initPaymentLink(linkSlug); return; }
+
   state.reference   = params.get('ref')        || params.get('reference') || generateDemoRef();
   state.isSandbox   = params.get('sandbox')    === 'true' || window.location.hostname.includes('sandbox');
   const rawAmount   = parseInt(params.get('amount') || '500000');
@@ -865,6 +871,66 @@ document.addEventListener('DOMContentLoaded', () => {
   // The virtual account is minted lazily (and the countdown started) only when
   // the customer opens the Transfer tab — see switchChannel().
 });
+
+// ─── PAYMENT LINK MODE ────────────────────────────────────────────────────────
+function plEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function initPaymentLink(slug) {
+  let info;
+  try {
+    const res  = await fetch(`${API_URL}/payment-links/public/${encodeURIComponent(slug)}`);
+    const data = await res.json();
+    if (!res.ok || !data.status) { showFailed((data && data.message) || 'This payment link is unavailable.'); return; }
+    info = data.data;
+  } catch (e) { showFailed('Could not load this payment link.'); return; }
+
+  const fixed = info.amount_fixed;
+  const ov = document.createElement('div');
+  ov.id = 'pl-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(26,26,26,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
+  ov.innerHTML =
+    '<div style="background:#fff;max-width:420px;width:100%;border-radius:14px;padding:26px;box-shadow:0 20px 60px rgba(0,0,0,.3);">'
+    + '<div style="font-size:12px;color:#6B1A2B;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">' + plEsc(info.merchant_name || 'Payment') + '</div>'
+    + '<div style="font-size:20px;font-weight:700;color:#1A1A1A;margin:6px 0 2px;">' + plEsc(info.title || 'Payment') + '</div>'
+    + (info.description ? '<div style="font-size:14px;color:#555;margin-bottom:4px;">' + plEsc(info.description) + '</div>' : '')
+    + (fixed ? '<div style="font-size:30px;font-weight:800;color:#1A1A1A;margin:12px 0 6px;">' + formatNaira(info.amount) + '</div>' : '')
+    + '<label style="display:block;font-size:13px;color:#333;margin:16px 0 6px;font-weight:600;">Your email</label>'
+    + '<input id="pl-email" type="email" placeholder="you@example.com" style="width:100%;padding:12px 14px;border:1.5px solid #ddd;border-radius:9px;font-size:15px;box-sizing:border-box;">'
+    + (fixed ? '' :
+        '<label style="display:block;font-size:13px;color:#333;margin:14px 0 6px;font-weight:600;">Amount (₦)</label>'
+      + '<input id="pl-amount" type="number" min="1" step="0.01" placeholder="0.00" style="width:100%;padding:12px 14px;border:1.5px solid #ddd;border-radius:9px;font-size:15px;box-sizing:border-box;">')
+    + '<div id="pl-error" style="color:#c0392b;font-size:13px;margin-top:10px;display:none;"></div>'
+    + '<button id="pl-continue" style="width:100%;margin-top:18px;padding:14px;background:#E8470A;color:#fff;border:none;border-radius:9px;font-size:16px;font-weight:700;cursor:pointer;">Continue to payment</button>'
+    + '<div style="text-align:center;margin-top:14px;font-size:12px;color:#999;">Secured by Paylode</div>'
+    + '</div>';
+  document.body.appendChild(ov);
+  document.getElementById('pl-continue').addEventListener('click', () => submitPaymentLink(slug, fixed));
+  document.getElementById('pl-email').addEventListener('keydown', e => { if (e.key === 'Enter') submitPaymentLink(slug, fixed); });
+}
+
+async function submitPaymentLink(slug, fixed) {
+  const errEl = document.getElementById('pl-error');
+  const btn   = document.getElementById('pl-continue');
+  const showErr = m => { errEl.textContent = m; errEl.style.display = 'block'; };
+  errEl.style.display = 'none';
+  const email = (document.getElementById('pl-email').value || '').trim();
+  if (!email || email.indexOf('@') < 0) return showErr('Please enter a valid email.');
+  const body = { email };
+  if (!fixed) {
+    const v = parseFloat(document.getElementById('pl-amount').value || '');
+    if (!(v > 0)) return showErr('Please enter a valid amount.');
+    body.amount = Math.round(v * 100); // naira → kobo
+  }
+  btn.disabled = true; btn.textContent = 'Please wait…';
+  try {
+    const res  = await fetch(`${API_URL}/payment-links/public/${encodeURIComponent(slug)}/transaction`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.status) { showErr((data && data.message) || 'Could not start payment.'); btn.disabled = false; btn.textContent = 'Continue to payment'; return; }
+    window.location.replace(data.data.redirect_url || (window.location.pathname + '?ref=' + data.data.reference));
+  } catch (e) { showErr('Network error. Please try again.'); btn.disabled = false; btn.textContent = 'Continue to payment'; }
+}
 
 // ─── LOAD TRANSACTION FROM API ────────────────────────────────────────────────
 async function loadTransaction() {

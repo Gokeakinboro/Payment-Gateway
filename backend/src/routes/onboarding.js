@@ -281,6 +281,41 @@ router.post('/submit', async (req, res, next) => {
       applicantType: applicant_type, data, principals: cleanPrincipals, documents,
     });
 
+    // ── Duplicate-identity guard ────────────────────────────────────────────────
+    // One active account per BVN/NIN (natural person) or CAC RC/BN (registered
+    // entity). A match raises a BLOCKING DUPLICATE_IDENTITY exception that prevents
+    // activation at approval until an SA CLEARS it — the SA override (a person may
+    // legitimately own multiple businesses). Non-fatal if the check itself errors.
+    try {
+      const np = data.np_identity || {};
+      const idChecks = [];
+      if (applicant_type === 'entity' && summary.regNumber) idChecks.push(['CAC/RC', String(summary.regNumber).trim()]);
+      if (applicant_type === 'natural') {
+        if (np.bvn) idChecks.push(['BVN', String(np.bvn).trim()]);
+        if (np.nin) idChecks.push(['NIN', String(np.nin).trim()]);
+      }
+      for (const [label, val] of idChecks) {
+        if (!val) continue;
+        const dup = await prisma.$queryRaw`
+          SELECT reference, business_name FROM onboarding_submissions
+          WHERE status <> 'rejected'
+            AND ( reg_number = ${val}
+                  OR data->'np_identity'->>'bvn' = ${val}
+                  OR data->'np_identity'->>'nin' = ${val} )
+          ORDER BY submitted_at ASC LIMIT 1`;
+        if (dup.length) {
+          const m = dup[0];
+          (screening.exceptions = screening.exceptions || []).push({
+            code: 'DUPLICATE_IDENTITY', severity: 'BLOCKING', deferrable: true,
+            description: `${label} already on file for "${m.business_name}" (${m.reference}). One account per ${label} — an SA must clear this to allow a same-owner second business.`,
+            ruleRef: 'KYC — unique BVN/NIN/CAC (SA override)',
+          });
+          (screening.screeningNotes = screening.screeningNotes || []).push(`⚠ Duplicate ${label}: matches ${m.business_name} (${m.reference}).`);
+          break;
+        }
+      }
+    } catch (e) { logger.error({ err: e, reference }, 'duplicate-identity check failed (non-fatal)'); }
+
     let record = null;
     try {
       record = await prisma.onboardingSubmission.create({

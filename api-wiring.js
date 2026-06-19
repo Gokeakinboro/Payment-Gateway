@@ -2396,6 +2396,136 @@ async function rotateApiKey(id, prefix, label) {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  MERCHANT — PAYMENT LINKS (shareable, no-code checkout links)
+// ════════════════════════════════════════════════════════════════════════════
+async function loadMerchPaymentLinks() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var res   = await apiFetch('/payment-links');
+    var links = (res && res.data) ? res.data : [];
+    var _u = getUser(); var _m = (_u && _u.merchant) || {};
+    var kycActive = _m.isActive === true || (_m.kycStatus && String(_m.kycStatus).toUpperCase() === 'ACTIVE');
+    var note = kycActive ? '' :
+      '<div class="warn-box" style="margin-bottom:16px;font-size:12px">&#9888; Your account isn\'t live yet — customers can\'t complete payment on these links until your KYC is approved. You can still create and share them now.</div>';
+
+    var rows = links.length ? links.map(function(l) {
+      var amt = (l.amount === null || l.amount === undefined)
+        ? '<span style="color:var(--gray-400)">Customer enters</span>' : fmtMoney(l.amount, l.currency);
+      var st  = l.status === 'active'
+        ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Disabled</span>';
+      var url = l.url || (window.location.origin + '/checkout.html?link=' + l.slug);
+      var toggleLabel = l.status === 'active' ? 'Disable' : 'Enable';
+      var toggleTo    = l.status === 'active' ? 'disabled' : 'active';
+      var safeUrl = _escA(url).replace(/'/g, "\\'");
+      return '<tr>' +
+        '<td><div style="font-weight:600">' + _escA(l.title) + '</div>' +
+          (l.description ? '<div style="font-size:11px;color:var(--gray-400)">' + _escA(l.description) + '</div>' : '') +
+          (l.reusable ? '' : ' <span class="badge badge-blue" style="font-size:10px">one-off</span>') + '</td>' +
+        '<td>' + amt + '</td>' +
+        '<td>' + st + '</td>' +
+        '<td style="text-align:center">' + (l.paid_count || 0) + '</td>' +
+        '<td><div class="mono" style="font-size:11px;color:var(--gray-500);word-break:break-all;max-width:240px">' + _escA(url) + '</div></td>' +
+        '<td><div class="flex" style="gap:6px;flex-wrap:wrap">' +
+          '<button class="btn btn-outline btn-sm" onclick="plCopy(\'' + safeUrl + '\',this)">Copy</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="plShowQr(\'' + encodeURIComponent(url) + '\')">QR</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="plToggle(\'' + l.id + '\',\'' + toggleTo + '\')">' + toggleLabel + '</button>' +
+          '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="plDelete(\'' + l.id + '\')">Delete</button>' +
+        '</div></td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:30px">No payment links yet. Create one to start collecting payments with a shareable link.</td></tr>';
+
+    el.innerHTML =
+      '<div class="page-header flex-between"><div><div class="page-title">Payment Links</div>' +
+        '<div class="page-desc">Create a shareable link that opens a Paylode checkout — no code required.</div></div>' +
+        '<button class="btn btn-lime" onclick="showCreatePaymentLinkModal()">+ New Payment Link</button>' +
+      '</div>' + note +
+      '<div class="card"><div class="table-wrap"><table>' +
+      '<thead><tr><th>Title</th><th>Amount</th><th>Status</th><th>Paid</th><th>Link</th><th>Actions</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div></div>';
+  } catch (e) {
+    el.innerHTML = errorBox('Failed to load payment links: ' + e.message);
+  }
+}
+
+function showCreatePaymentLinkModal() {
+  showModal(
+    '<div class="modal-header"><div class="modal-title">New Payment Link</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="padding:4px 2px">' +
+      '<div class="form-group"><label class="form-label">Title *</label>' +
+        '<input class="form-input" id="pl-f-title" placeholder="e.g. Premium Plan, Donation, Invoice #1024"></div>' +
+      '<div class="form-group"><label class="form-label">Description (optional)</label>' +
+        '<input class="form-input" id="pl-f-desc" placeholder="Shown to the customer"></div>' +
+      '<div class="form-group"><label class="form-label">Amount (₦) — leave blank to let the customer enter it</label>' +
+        '<input class="form-input" id="pl-f-amount" type="number" min="1" step="0.01" placeholder="e.g. 5000"></div>' +
+      '<div class="form-group"><label style="font-size:13px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="pl-f-reusable" checked> Reusable (uncheck for a one-time link that disables after the first payment)</label></div>' +
+      '<div class="form-group"><label class="form-label">Expires (optional)</label>' +
+        '<input class="form-input" id="pl-f-expires" type="date"></div>' +
+      '<div id="pl-f-error" class="warn-box" style="display:none;margin-top:8px"></div>' +
+      '<button class="btn btn-lime" style="width:100%;margin-top:8px" onclick="submitCreatePaymentLink()">Create Link</button>' +
+    '</div>'
+  );
+}
+
+async function submitCreatePaymentLink() {
+  var errEl = document.getElementById('pl-f-error');
+  var show  = function(m) { errEl.textContent = m; errEl.style.display = 'block'; };
+  errEl.style.display = 'none';
+  var title = (document.getElementById('pl-f-title').value || '').trim();
+  if (!title) return show('A title is required.');
+  var body = { title: title, reusable: document.getElementById('pl-f-reusable').checked };
+  var desc = (document.getElementById('pl-f-desc').value || '').trim();
+  if (desc) body.description = desc;
+  var amtRaw = (document.getElementById('pl-f-amount').value || '').trim();
+  if (amtRaw !== '') {
+    var v = parseFloat(amtRaw);
+    if (!(v > 0)) return show('Enter a valid amount, or leave it blank for a customer-entered amount.');
+    body.amount = Math.round(v * 100); // naira → kobo
+  }
+  var exp = (document.getElementById('pl-f-expires').value || '').trim();
+  if (exp) body.expires_at = exp;
+  var res = await apiFetch('/payment-links', { method: 'POST', body: JSON.stringify(body) });
+  if (!res || !res.status) return show((res && res.message) || 'Could not create the link.');
+  document.getElementById('modal').style.display = 'none';
+  loadMerchPaymentLinks();
+  var url = res.data.url;
+  setTimeout(function() {
+    showModal(
+      '<div class="modal-header"><div class="modal-title">Payment Link Created</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+      '<div style="padding:6px 2px">' +
+        '<div style="font-size:13px;color:var(--gray-500);margin-bottom:8px">Share this link with your customer:</div>' +
+        '<div class="mono" style="background:#f7f7f7;padding:12px;border-radius:8px;word-break:break-all;font-size:13px" id="pl-new-url">' + _escA(url) + '</div>' +
+        '<div style="text-align:center;margin:16px 0"><img alt="QR code" style="width:180px;height:180px" src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(url) + '"></div>' +
+        '<button class="btn btn-lime" style="width:100%" onclick="plCopy(document.getElementById(\'pl-new-url\').textContent,this)">Copy Link</button>' +
+      '</div>'
+    );
+  }, 250);
+}
+
+function plCopy(text, btn) {
+  navigator.clipboard.writeText(text).then(function() {
+    if (btn) { var t = btn.textContent; btn.textContent = 'Copied!'; setTimeout(function() { btn.textContent = t; }, 1500); }
+  }).catch(function() { prompt('Copy this link:', text); });
+}
+function plShowQr(encUrl) {
+  showModal('<div class="modal-header"><div class="modal-title">Payment Link QR</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="text-align:center;padding:16px"><img alt="QR code" style="width:240px;height:240px" src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encUrl + '"></div>');
+}
+async function plToggle(id, to) {
+  var res = await apiFetch('/payment-links/' + id, { method: 'PATCH', body: JSON.stringify({ status: to }) });
+  if (res && res.status) loadMerchPaymentLinks(); else alert('Error: ' + ((res && res.message) || 'Update failed'));
+}
+async function plDelete(id) {
+  if (!confirm('Delete this payment link? This cannot be undone.')) return;
+  var res = await apiFetch('/payment-links/' + id, { method: 'DELETE' });
+  if (res && res.status) loadMerchPaymentLinks(); else alert('Error: ' + ((res && res.message) || 'Delete failed'));
+}
+
 function showGenerateKeyModal() {
   document.getElementById('modal-inner').innerHTML =
     '<div class="modal-header"><div class="modal-title">Generate New API Key</div>' +
@@ -3606,12 +3736,47 @@ async function emailAggRevenueLive() { var b = _buildAggRevenueCsv(); await emai
 // ── NAVIGATE FUNCTION ─────────────────────────────────────────────────────────
 // Use window assignment (not function declaration) to avoid hoisting conflicts
 window.navigate = function(page) {
+  // Record in-app history so both the on-screen "← Back" (goBack) and the
+  // browser/phone Back button return to the PREVIOUS page (not the landing page).
+  if (currentPage && currentPage !== page && String(page).indexOf('hub::') !== 0) {
+    try { __navHistory.push(currentPage); } catch (e) {}
+  }
   currentPage = page;
   renderNav();
   renderPage();
   loadPageData(page);
   closeSidebar();
+  // Push a browser history entry so the device Back button fires popstate (caught
+  // below) instead of unloading the SPA back to the landing page.
+  try { history.pushState({ plPage: page }, ''); } catch (e) {}
 };
+
+// ── Keep the browser/phone Back button INSIDE the dashboard ──────────────────
+// Without this the SPA never adds browser history, so the only entry is the
+// landing page and every Back press exits the dashboard. We arm a history entry
+// and, on Back, navigate in-app (popping __navHistory) and re-arm — so Back walks
+// back through dashboard pages and never drops the user on the landing page.
+(function armBackButtonTrap() {
+  try {
+    history.pushState({ plDash: true }, '');
+    window.addEventListener('popstate', function () {
+      var prev = (typeof __navHistory !== 'undefined' && __navHistory.length) ? __navHistory.pop() : null;
+      if (!prev) {
+        // At the dashboard home — stay put (logout is the way out), don't fall to landing.
+        prev = (typeof ROLE_META !== 'undefined' && ROLE_META[currentRole] && ROLE_META[currentRole].defaultPage)
+          ? ROLE_META[currentRole].defaultPage : currentPage;
+      }
+      if (prev) {
+        currentPage = prev;
+        if (typeof renderNav === 'function')  renderNav();
+        if (typeof renderPage === 'function') renderPage();
+        loadPageData(prev);
+        if (typeof closeSidebar === 'function') closeSidebar();
+      }
+      try { history.pushState({ plDash: true }, ''); } catch (e) {}  // re-arm for the next Back
+    });
+  } catch (e) {}
+})();
 
 function toggleUserMenu(e) {
   e.stopPropagation();
@@ -5070,6 +5235,7 @@ loadPageData = function(page) {
     case 'service_providers':    loadServiceProviders(); break;
     case 'wallets':              loadWallets(); break;
     case 'product_revenue':      loadProductRevenue(); break;
+    case 'merch_payments':       loadMerchPaymentLinks(); break;
     // Staff Accounts: app.js renderUserManagement() (full permission matrix +
     // per-user Permissions modal) already rendered & scheduled loadUsers(); do
     // not overwrite with the simpler role-only table. (#7)

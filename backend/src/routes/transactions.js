@@ -12,6 +12,11 @@ const { dispatchWebhook } = require('../services/webhookService');
 const { checkAmlRules }   = require('../services/amlService');
 const compliance          = require('../services/complianceService');
 
+// Base URL of the hosted, customer-facing checkout page. The page reads ?ref=<reference>
+// and drives the GET /checkout/:reference flow. (Was the non-existent
+// checkout.paylodeservices.com/pay/<ref> subdomain — a dead link.)
+const CHECKOUT_BASE = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '');
+
 const validate = rules => async (req, res, next) => {
   await Promise.all(rules.map(r => r.run(req)));
   const e = validationResult(req);
@@ -160,9 +165,7 @@ router.post('/initialize', requireApiKey,
         netRevenue:    0n,
         aggShare:      0n,
         paylodeMargin: 0n,
-        authUrl:       isSandbox
-          ? `https://sandbox.paylodeservices.com/pay/${ref}`
-          : `https://checkout.paylodeservices.com/pay/${ref}`,
+        authUrl:       `${CHECKOUT_BASE}/checkout.html?ref=${ref}`,
         accessCode:    ref,
         callbackUrl:   callback_url,
         metadata:      Object.assign({}, metadata || {}, {

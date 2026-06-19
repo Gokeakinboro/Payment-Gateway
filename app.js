@@ -63,6 +63,7 @@ var SECTION_ICON = {
   'Dashboard':'◉', 'Users':'▦', 'Operations':'⚙', 'Reports':'▤', 'System Config':'⚙',
   'Developer':'▶', 'Management':'▦', 'Finance':'₦', 'Merchants':'▦', 'Transactions':'↕',
   'Payouts':'⇄', 'Integration':'⚿', 'Account':'⊙', 'System':'⊕', 'SDK':'▶', 'Reference':'!',
+  'Payment Links':'🔗',
 };
 var NAV = {
   superadmin: [
@@ -118,6 +119,7 @@ var NAV = {
   merchant: [
     { section:'Dashboard',    items:[{id:'merch_overview',icon:'◉',label:'Dashboard'}]},
     { section:'Transactions', items:[{id:'merch_transactions',icon:'↕',label:'Transactions'},{id:'merch_settlements',icon:'✓',label:'Settlements'}]},
+    { section:'Payment Links', items:[{id:'merch_payments',icon:'🔗',label:'Payment Links'}]},
     { section:'Payouts',      items:[{id:'payouts',icon:'⇄',label:'Send Payouts'},{id:'payout_logs',icon:'≡',label:'Payout Logs'}]},
     { section:'Integration',  items:[{id:'merch_apikeys',icon:'⚿',label:'API Keys'},{id:'merch_webhooks',icon:'⇀',label:'Webhooks'}]},
     { section:'Developer',    items:DEV_SDK_ITEMS },
@@ -348,6 +350,7 @@ function renderPage() {
     agg_transactions:renderAggTransactions,
     merch_overview:renderMerchOverview, merch_transactions:renderMerchTransactions,
     merch_settlements:renderMerchSettlements, merch_apikeys:renderMerchApiKeys,
+    merch_payments:function(){ return '<div class="page-header"><div class="page-title">Payment Links</div></div><div class="card" style="text-align:center;padding:40px;color:#999">Loading…</div>'; },
     merch_webhooks:renderMerchWebhooks, merch_profile:renderMerchProfile,
     sdk_start:renderSdkStart, sdk_payments:renderSdkPayments,
     sdk_va:renderSdkVirtualAccounts,
