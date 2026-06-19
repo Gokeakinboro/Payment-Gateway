@@ -14,6 +14,7 @@ const isw = require('../services/interswitchService');
 const compliance = require('../services/complianceService');
 const palmpay = require('../services/palmpayService');
 const { finalizePayinSuccess } = require('../services/payinFinalize');
+const { sendCustomerReceipt } = require('../services/receiptEmail');
 
 const CHECKOUT_URL = process.env.APP_URL
   ? process.env.APP_URL.replace(/\/$/, '') + '/checkout.html'
@@ -261,6 +262,7 @@ router.post('/:reference/charge/card', async (req, res, next) => {
         }).catch(() => {});
       }
 
+      sendCustomerReceipt(txn.reference);
       return ok(res, {
         reference:           txn.reference,
         status:              'SUCCESS',
@@ -370,6 +372,7 @@ router.post('/:reference/charge/card', async (req, res, next) => {
         }).catch(() => {});
       }
 
+      sendCustomerReceipt(txn.reference);
       return ok(res, {
         reference:           txn.reference,
         status:              'SUCCESS',
@@ -421,6 +424,7 @@ router.post('/:reference/charge/card/otp', async (req, res, next) => {
           aggShare: fees.aggShare, paylodeMargin: fees.paylodeMargin,
         },
       });
+      sendCustomerReceipt(txn.reference);
       return ok(res, { reference: txn.reference, status: 'SUCCESS', sandbox: true }, 'OTP verified, payment successful');
     }
 
@@ -457,6 +461,7 @@ router.post('/:reference/charge/card/otp', async (req, res, next) => {
         }).catch(() => {});
       }
 
+      sendCustomerReceipt(txn.reference);
       return ok(res, {
         reference: txn.reference, status: 'SUCCESS',
         principal: Number(txn.amount), channel: 'CARD', processor: 'interswitch',
@@ -501,6 +506,7 @@ router.post('/:reference/confirm', async (req, res, next) => {
                       merchant_settlement: Number(fees.merchantSettlement) },
         },
       });
+      sendCustomerReceipt(txn.reference);
       return ok(res, {
         status: 'SUCCESS', reference: txn.reference,
         principal: Number(txn.amount), charge_amount: Number(fees.chargeAmount),

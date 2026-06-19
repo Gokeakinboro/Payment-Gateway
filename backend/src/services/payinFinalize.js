@@ -11,6 +11,7 @@
 const { prisma } = require('../utils/db');
 const { dispatchWebhook } = require('./webhookService');
 const { computeFeesForPayin, resolvePayinRail, resolvePayinRateConfig } = require('./feeEngine');
+const { sendCustomerReceipt } = require('./receiptEmail');
 
 // Finalize by transaction reference. Returns:
 //   { finalized:true, fees }          — we flipped PENDING→SUCCESS this call
@@ -114,6 +115,9 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
       linkSlug
     ).catch(() => {});
   }
+
+  // Email the customer their receipt (best-effort, non-blocking).
+  sendCustomerReceipt(txn.reference);
 
   if (merchant.webhookUrl) {
     dispatchWebhook(merchant.id, 'payment.success', {

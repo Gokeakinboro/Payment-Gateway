@@ -512,18 +512,18 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
 
         <!-- CHANNEL TABS -->
         <div class="channel-tabs">
-          <button class="ch-tab active" id="tab-card" onclick="switchChannel('card')">
-            <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-            Card
-          </button>
-          <button class="ch-tab" id="tab-transfer" onclick="switchChannel('transfer')">
+          <button class="ch-tab active" id="tab-transfer" onclick="switchChannel('transfer')">
             <svg viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
             Transfer
+          </button>
+          <button class="ch-tab" id="tab-card" onclick="switchChannel('card')">
+            <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+            Card
           </button>
         </div>
 
         <!-- ── CARD PANEL ── -->
-        <div class="panel active" id="panel-card">
+        <div class="panel" id="panel-card">
           <div class="field">
             <label>Card number</label>
             <div class="card-input-wrap">
@@ -598,7 +598,7 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
         </div>
 
         <!-- ── TRANSFER PANEL (sub-methods: PalmPay wallet / bank transfer VA) ── -->
-        <div class="panel" id="panel-transfer">
+        <div class="panel active" id="panel-transfer">
 
           <!-- Sub-method chooser -->
           <div id="transfer-choose">
@@ -820,7 +820,7 @@ let state = {
   customerEmail: '',
   description: '',
   isSandbox: false,
-  channel: 'card',
+  channel: 'transfer',
   selectedUssdCode: '*737#',
   timerInterval: null,
   pollInterval: null,
