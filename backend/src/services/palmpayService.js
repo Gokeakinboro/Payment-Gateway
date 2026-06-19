@@ -222,6 +222,24 @@ async function queryBankTransferOrder({ orderId, orderNo }) {
     orderId: orderId || undefined, orderNo: orderNo || undefined,
   });
 }
+// POST /api/v2/payment/merchant/refund — refund a collection. Omitting payee* makes
+// PalmPay return the funds to the ORIGINAL payer. originOrderId = the merchant order
+// number of the original createorder (we use the txn reference); orderId = a NEW unique
+// ref for the refund itself. amount in kobo (partial supported). Result via /refund.
+async function refundOrder({ orderId, originOrderId, amountKobo, notifyUrl, remark }) {
+  const r = await call('/api/v2/payment/merchant/refund', {
+    appId: APP_ID,
+    orderId,
+    originOrderId,
+    amount: Number(amountKobo),
+    notifyUrl: notifyUrl || ((process.env.PALMPAY_NOTIFY_URL || '').replace(/\/$/, '') + '/refund'),
+    remark: remark || 'Reversal',
+  });
+  return {
+    ok: r.respCode === '00000000', code: r.respCode, reason: r.respMsg,
+    orderNo: r.data && r.data.orderNo, orderStatus: r.data && r.data.orderStatus, raw: r,
+  };
+}
 
 module.exports = {
   isConfigured, call, buildSignString, signParams, verifyParams, verifyCallback,
@@ -233,5 +251,7 @@ module.exports = {
   createPayWithPalmPayOrder, queryPayInResult,
   // pay-in: Pay with Bank Transfer (dynamic one-time VA)
   createBankTransferOrder, queryBankTransferOrder,
+  // pay-in reversal
+  refundOrder,
   BASE_URL,
 };

@@ -97,10 +97,15 @@ async function handleVaCashin(b, res) {
       ORDER BY created_at DESC LIMIT 1`;
     if (t.length) {
       if (isSuccess) {
-        await finalizePayinSuccess({
+        const r = await finalizePayinSuccess({
           reference: t[0].reference, channel: 'BANK_TRANSFER', processor: 'palmpay_va',
           extraMeta: { method: 'palmpay_va', palmpay_va_no: vaNo, palmpay_order_no: b.orderNo, payer: b.payerAccountName },
+          paidAmount: (b.orderAmount != null ? b.orderAmount : null),   // enforce exact amount
         });
+        if (r && r.amountMismatch) {
+          logger.warn({ vaNo, orderNo: b.orderNo, expected: r.expected, paid: r.paid }, 'PalmPay VA cash-in AMOUNT MISMATCH — not credited, auto-reversing');
+          await autoReverse(t[0].reference, r.paid);
+        }
       }
       return res.status(200).send('success');
     }
@@ -145,10 +150,15 @@ async function handlePayin(b, res) {
   const status = legStatusFor(b.orderStatus);
   try {
     if (status === 'success') {
-      await finalizePayinSuccess({
+      const r = await finalizePayinSuccess({
         reference: b.orderId, channel: 'BANK_TRANSFER', processor: 'palmpay_wallet',
         extraMeta: { method: 'palmpay_wallet', palmpay_order_no: b.orderNo },
+        paidAmount: (b.amount != null ? b.amount : null),   // enforce exact amount
       });
+      if (r && r.amountMismatch) {
+        logger.warn({ orderId: b.orderId, expected: r.expected, paid: r.paid }, 'PalmPay pay-in AMOUNT MISMATCH — not credited, auto-reversing');
+        await autoReverse(b.orderId, r.paid);
+      }
     } else if (status === 'failed') {
       await failPayin({ reference: b.orderId, failureReason: b.errorMsg || 'PalmPay payment failed' });
     }
@@ -159,6 +169,40 @@ async function handlePayin(b, res) {
   }
 }
 
+// Auto-reverse a wrong-amount collection back to the ORIGINAL payer via PalmPay
+// refund. Records the reversal on the txn. Runs once per txn: the mismatch path
+// flips the txn to FAILED, so PalmPay webhook retries won't re-trigger a refund.
+async function autoReverse(reference, paidAmountKobo) {
+  const refRef = 'RFD-' + reference + '-' + Date.now().toString(36).toUpperCase();
+  try {
+    const rf = await palmpay.refundOrder({ orderId: refRef, originOrderId: reference, amountKobo: paidAmountKobo, remark: 'Auto-reversal: wrong amount paid' });
+    const meta = { ref: refRef, ok: rf.ok, code: rf.code, orderNo: rf.orderNo || null, amount: Number(paidAmountKobo), at: new Date().toISOString(), status: rf.ok ? 'pending' : 'failed' };
+    await prisma.$executeRaw`
+      UPDATE transactions SET metadata = jsonb_set(COALESCE(metadata,'{}'::jsonb), '{reversal}', ${JSON.stringify(meta)}::jsonb)
+      WHERE reference = ${reference}`;
+    logger.info({ reference, refRef, ok: rf.ok, code: rf.code, orderNo: rf.orderNo }, rf.ok ? 'Auto-reversal initiated' : 'Auto-reversal REJECTED by PalmPay — manual refund needed');
+    return rf;
+  } catch (e) {
+    logger.error({ err: e, reference, refRef }, 'Auto-reversal FAILED — manual refund needed');
+    return { ok: false };
+  }
+}
+
+// ── refund result (refund-result-notify) ─────────────────────────────────────────
+// b.orderId here = our refund ref (RFD-…). Roll the final status onto the original txn.
+async function handleRefund(b, res) {
+  if (!verified(b)) { logger.warn({ orderId: b.orderId }, 'PalmPay refund callback: BAD signature'); return res.status(401).send('invalid signature'); }
+  logger.info({ orderId: b.orderId, orderNo: b.orderNo, orderStatus: b.orderStatus, amount: b.amount }, 'PalmPay refund result');
+  const status = legStatusFor(b.orderStatus); // 2 = success
+  const mapped = status === 'success' ? 'completed' : status === 'failed' ? 'failed' : 'pending';
+  try {
+    await prisma.$executeRaw`
+      UPDATE transactions SET metadata = jsonb_set(COALESCE(metadata,'{}'::jsonb), '{reversal,status}', to_jsonb(${mapped}::text))
+      WHERE metadata->'reversal'->>'ref' = ${b.orderId}`;
+  } catch (e) { logger.error({ err: e, orderId: b.orderId }, 'refund callback update failed'); }
+  return res.status(200).send('success');
+}
+
 // Subpath routes — payout + payin are targeted here via per-request notifyUrl.
 router.post('/payout', async (req, res) => {
   try { return await handlePayout(req.body || {}, res); }
@@ -166,12 +210,14 @@ router.post('/payout', async (req, res) => {
 });
 router.post('/va-cashin', (req, res) => handleVaCashin(req.body || {}, res));
 router.post('/payin', (req, res) => handlePayin(req.body || {}, res));
+router.post('/refund', (req, res) => handleRefund(req.body || {}, res));
 
 // Base route — VA cash-in arrives here (no per-request notifyUrl); also a
 // catch-all that routes by payload shape so no PalmPay callback ever 404s.
 router.post('/', async (req, res) => {
   const b = req.body || {};
   try {
+    if (String(b.orderId || '').startsWith('RFD-')) return handleRefund(b, res);
     if (b.virtualAccountNo) return handleVaCashin(b, res);
     const legs = await prisma.$queryRaw`SELECT id FROM rail_disbursements WHERE rail_order_id = ${b.orderId} LIMIT 1`;
     if (legs.length) return handlePayout(b, res);

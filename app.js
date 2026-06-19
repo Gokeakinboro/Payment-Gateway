@@ -276,7 +276,19 @@ function renderSectionHub(sectionName) {
 }
 
 function switchRole(role) { currentRole = role; currentPage = ROLE_META[role].defaultPage; renderNav(); renderPage(); closeSidebar(); }
-function navigate(page)   { currentPage = page; renderNav(); renderPage(); closeSidebar(); }
+var __navHistory = [];
+function navigate(page)   {
+  if (currentPage && currentPage !== page && String(page).indexOf('hub::') !== 0) __navHistory.push(currentPage);
+  currentPage = page; renderNav(); renderPage(); closeSidebar();
+}
+// Go back to the PREVIOUS page (not always the dashboard). Falls back to the role's
+// default page when there's no history to pop.
+function goBack() {
+  var prev = __navHistory.pop();
+  if (!prev) prev = (ROLE_META[currentRole] && ROLE_META[currentRole].defaultPage) || 'overview';
+  currentPage = prev; renderNav(); renderPage(); closeSidebar();
+}
+window.goBack = goBack;
 
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');

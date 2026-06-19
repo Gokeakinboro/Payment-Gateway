@@ -16,7 +16,7 @@ const { computeFeesForPayin, resolvePayinRail, resolvePayinRateConfig } = requir
 //   { finalized:true, fees }          — we flipped PENDING→SUCCESS this call
 //   { alreadyDone:true }              — already SUCCESS (idempotent no-op)
 //   { notFound:true } | { notPending:true }
-async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', processor = 'palmpay', extraMeta = {} }) {
+async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', processor = 'palmpay', extraMeta = {}, paidAmount = null }) {
   const txn = await prisma.transaction.findUnique({
     where: { reference },
     include: { merchant: { include: { aggregator: true } } },
@@ -59,6 +59,23 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
   } else {
     const cfg = await resolvePayinRateConfig(prisma, merchant, railId);
     fees = computeFeesForPayin(BigInt(txn.amount), cfg);
+  }
+
+  // EXACT-AMOUNT ENFORCEMENT — a VA / collection must be paid for the EXACT gross we
+  // minted. If the rail reports a different collected amount (under- or over-payment),
+  // do NOT credit the merchant: mark it for reversal so the payer is refunded.
+  if (paidAmount != null && BigInt(paidAmount) !== BigInt(fees.chargeAmount)) {
+    await prisma.transaction.updateMany({
+      where: { id: txn.id, status: 'PENDING' },
+      data: {
+        status: 'FAILED',
+        failureReason: `Amount mismatch — expected ₦${(Number(fees.chargeAmount)/100).toFixed(2)}, received ₦${(Number(paidAmount)/100).toFixed(2)}. Wrong-amount transfer; to be reversed.`,
+        metadata: { ...(txn.metadata || {}), ...extraMeta, processor,
+          amount_mismatch: true, expected_amount: Number(fees.chargeAmount), paid_amount: Number(paidAmount),
+          reversal_required: true },
+      },
+    });
+    return { amountMismatch: true, expected: Number(fees.chargeAmount), paid: Number(paidAmount) };
   }
 
   // Atomic claim: only the worker that flips PENDING→SUCCESS proceeds to notify.

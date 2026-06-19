@@ -202,7 +202,7 @@ async function loadPayoutsLedger(page=1, filters={}) {
     el.innerHTML = `
     <div class="page-header flex-between">
       <div style="display:flex;align-items:center;gap:12px">
-        <button class="btn btn-outline btn-sm" onclick="navigate('${backPage}')" style="font-size:12px">&#8592; Back</button>
+        <button class="btn btn-outline btn-sm" onclick="goBack()" style="font-size:12px">&#8592; Back</button>
         <div>
           <div class="page-title">All Transactions</div>
           <div class="page-desc">${fmtNum(meta.total)} payout item(s)</div>
@@ -267,7 +267,7 @@ async function loadTransactions(page=1, filters={}) {
     el.innerHTML = `
     <div class="page-header flex-between">
       <div style="display:flex;align-items:center;gap:12px">
-        <button class="btn btn-outline btn-sm" onclick="navigate('${backPage}')" style="font-size:12px">&#8592; Back</button>
+        <button class="btn btn-outline btn-sm" onclick="goBack()" style="font-size:12px">&#8592; Back</button>
         <div>
           <div class="page-title">All Transactions</div>
           <div class="page-desc">${fmtNum(meta.total)} total transactions</div>
@@ -3776,9 +3776,13 @@ function forceFirstTimePasswordChange() {
         '<input id="fp-cur" type="password" placeholder="Temporary password" style="' + ip + '">' +
         '<input id="fp-new" type="password" placeholder="New password (min 8 characters)" style="' + ip + '">' +
         '<input id="fp-confirm" type="password" placeholder="Confirm new password" style="' + ip + '">' +
+        '<label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:#64748b;margin:-2px 0 14px;cursor:pointer"><input type="checkbox" id="fp-show" onclick="togglePwFields(this.checked)" style="cursor:pointer"> Show passwords</label>' +
         '<button id="fp-btn" style="width:100%;padding:12px;background:#1a2744;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer" onclick="submitFirstTimePassword()">Update password &amp; continue</button>' +
         '<div style="text-align:center;margin-top:12px"><a href="#" onclick="localStorage.clear();location.href=\'/login.html\';return false" style="font-size:12px;color:#64748b">Sign out</a></div>' +
       '</div></div>';
+}
+function togglePwFields(show) {
+  ['fp-cur','fp-new','fp-confirm'].forEach(function(id){ var e = document.getElementById(id); if (e) e.type = show ? 'text' : 'password'; });
 }
 async function submitFirstTimePassword() {
   var cur = document.getElementById('fp-cur').value, nw = document.getElementById('fp-new').value, cf = document.getElementById('fp-confirm').value;
