@@ -188,6 +188,41 @@ async function queryPayInResult(orderId) {
   return call('/api/v2/payment/merchant/queryStatus', { orderId });
 }
 
+// ── PAY-IN: Pay with Bank Transfer (dynamic one-time VA) ──────────────────────
+// POST /api/v2/payment/merchant/createorder  (productType 'bank_transfer')
+//   Mints a ONE-TIME, time-bound virtual account tied to THIS order. The customer
+//   transfers the exact amount to payerVirtualAccNo; when funds land PalmPay fires
+//   the payment-result-notify (→ our /payin webhook, keyed by orderId = our txn
+//   reference, exactly like the wallet flow). amount in kobo, MIN 10000 (₦100).
+//   orderExpireTime: seconds, default 1800 (30 min), range 1800–86400.
+async function createBankTransferOrder({ orderId, amountKobo, notifyUrl, callbackUrl, title, description, customerMobile, expireSeconds }) {
+  const r = await call('/api/v2/payment/merchant/createorder', {
+    orderId, amount: Number(amountKobo), currency: 'NGN', productType: 'bank_transfer',
+    notifyUrl: notifyUrl || ((process.env.PALMPAY_NOTIFY_URL||'').replace(/\/$/, '') + '/payin'),
+    callBackUrl: callbackUrl || undefined,
+    title: title || 'Payment', description: description || 'Pay with bank transfer',
+    userMobileNo: customerMobile || undefined,
+    orderExpireTime: expireSeconds || undefined,
+  });
+  const d = r.data || {};
+  return {
+    ok: r.respCode === '00000000', code: r.respCode, reason: r.respMsg,
+    orderNo: d.orderNo,
+    virtualAccountNo: d.payerVirtualAccNo,
+    bankName: d.payerBankName,
+    accountName: d.payerAccountName,
+    orderStatus: d.orderStatus,
+    raw: r,
+  };
+}
+// POST /api/v2/payment/merchant/order/queryStatus — bank-transfer order status
+// (lets the "I've paid" button poll PalmPay instead of waiting only on the webhook).
+async function queryBankTransferOrder({ orderId, orderNo }) {
+  return call('/api/v2/payment/merchant/order/queryStatus', {
+    orderId: orderId || undefined, orderNo: orderNo || undefined,
+  });
+}
+
 module.exports = {
   isConfigured, call, buildSignString, signParams, verifyParams, verifyCallback,
   // payouts (rail)
@@ -196,5 +231,7 @@ module.exports = {
   createVirtualAccount, queryVirtualAccount,
   // pay-in: Pay with PalmPay (checkout)
   createPayWithPalmPayOrder, queryPayInResult,
+  // pay-in: Pay with Bank Transfer (dynamic one-time VA)
+  createBankTransferOrder, queryBankTransferOrder,
   BASE_URL,
 };

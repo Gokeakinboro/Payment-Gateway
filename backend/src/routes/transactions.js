@@ -327,12 +327,19 @@ router.post('/:ref/refund', requireAuth,
 // → only the merchant's own fee; OUR rail cost, margin, net revenue and the
 // aggregator's share are internal and MUST NOT be exposed to merchants.
 function formatTxn(t, internal = false) {
+  // The amount the merchant RECEIVES = gross collected − our fee. For payer-funded
+  // collections (fee_paid_by=customer) the merchant pays no fee → receives the full
+  // face, and we show their fee as 0 (the customer paid it).
+  const customerPaidFee  = t.metadata?.fee_paid_by === 'customer';
+  const settlementAmount = Number(t.amount) - Number(t.merchantFee);
   return {
     id:             t.id,
     reference:      t.reference,
     status:         t.status,
     amount:         Number(t.amount),
     amount_naira:   koboToNaira(t.amount),
+    settlement_amount: settlementAmount,                 // what the merchant receives
+    settlement_naira:  koboToNaira(settlementAmount),
     currency:       t.currency,
     channel:        t.channel,
     customer_email: t.customerEmail,
@@ -343,7 +350,7 @@ function formatTxn(t, internal = false) {
       agg_share:       Number(t.aggShare),
       paylode_margin:  Number(t.paylodeMargin),
     } : {
-      merchant_fee:    Number(t.merchantFee),
+      merchant_fee:    customerPaidFee ? 0 : Number(t.merchantFee),
     },
     metadata:          t.metadata,
     failure_reason:    t.failureReason,

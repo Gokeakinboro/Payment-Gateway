@@ -189,13 +189,14 @@ router.get('/revenue', requireAuth, requireCompliance, async (req, res, next) =>
         t.channel::text,
         COUNT(*)::int                   AS txn_count,
         SUM(t.amount)::bigint           AS volume,
-        SUM(t.merchant_fee)::bigint     AS gross_revenue,
-        SUM(t.rail_cost)::bigint        AS rail_costs,
+        SUM(t.merchant_fee - COALESCE(t.vat_output,0))::bigint AS gross_revenue,
+        SUM(t.rail_cost - COALESCE(t.vat_input,0))::bigint     AS rail_costs,
         SUM(t.net_revenue)::bigint      AS net_after_rails,
         SUM(t.agg_share)::bigint        AS agg_payouts,
         SUM(t.paylode_margin)::bigint   AS paylode_margin,
+        SUM(COALESCE(t.vat_output,0) - COALESCE(t.vat_input,0))::bigint AS net_vat,
         ROUND(
-          SUM(t.paylode_margin) * 100.0 / NULLIF(SUM(t.merchant_fee),0), 2
+          SUM(t.paylode_margin) * 100.0 / NULLIF(SUM(t.merchant_fee - COALESCE(t.vat_output,0)),0), 2
         )                               AS margin_pct
       FROM transactions t
       JOIN merchants m ON t.merchant_id = m.id
@@ -222,24 +223,26 @@ router.get('/revenue', requireAuth, requireCompliance, async (req, res, next) =>
         net_after_rails:  Number(r.net_after_rails) / 100,
         agg_payouts:      Number(r.agg_payouts) / 100,
         paylode_margin:   Number(r.paylode_margin) / 100,
+        net_vat:          Number(r.net_vat || 0) / 100,
         margin_pct:       Number(r.margin_pct || 0),
         // legacy naira keys
         volume_naira:     koboToNaira(r.volume),
       };
     };
-    // Payouts: gross = fee+VAT we charge merchant; rail cost = rail fee+VAT we
-    // pay the rail; margin = gross − rail cost. Correlated subquery sums rail
-    // cost per item to avoid double-counting retry legs.
+    // Payouts: gross revenue = our fee (EX-VAT); rail cost = rail fee (EX-VAT) summed
+    // per item via correlated subquery (avoids double-counting retry legs); margin =
+    // gross − rail; net VAT = our output VAT − rail input VAT. Consistent w/ txn rows.
     const payoutRows = await prisma.$queryRaw`
       SELECT DATE_TRUNC(${groupBy}, pi.created_at) AS period, 'NGN' AS currency, m.kyc_tier,
              'PAYOUT'::text AS channel, COUNT(*)::int AS txn_count,
              SUM(pi.amount)::bigint AS volume,
-             SUM(pi.item_fee + COALESCE(pi.item_vat,0))::bigint AS gross_revenue,
-             SUM(COALESCE((SELECT SUM(rd.rail_fee + COALESCE(rd.rail_vat,0)) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0))::bigint AS rail_costs,
-             (SUM(pi.item_fee + COALESCE(pi.item_vat,0)) - SUM(COALESCE((SELECT SUM(rd.rail_fee + COALESCE(rd.rail_vat,0)) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0)))::bigint AS net_after_rails,
+             SUM(pi.item_fee)::bigint AS gross_revenue,
+             SUM(COALESCE((SELECT SUM(rd.rail_fee) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0))::bigint AS rail_costs,
+             (SUM(pi.item_fee) - SUM(COALESCE((SELECT SUM(rd.rail_fee) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0)))::bigint AS net_after_rails,
              0::bigint AS agg_payouts,
-             (SUM(pi.item_fee + COALESCE(pi.item_vat,0)) - SUM(COALESCE((SELECT SUM(rd.rail_fee + COALESCE(rd.rail_vat,0)) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0)))::bigint AS paylode_margin,
-             ROUND( (SUM(pi.item_fee + COALESCE(pi.item_vat,0)) - SUM(COALESCE((SELECT SUM(rd.rail_fee + COALESCE(rd.rail_vat,0)) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0))) * 100.0 / NULLIF(SUM(pi.item_fee + COALESCE(pi.item_vat,0)),0), 2) AS margin_pct
+             (SUM(pi.item_fee) - SUM(COALESCE((SELECT SUM(rd.rail_fee) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0)))::bigint AS paylode_margin,
+             (SUM(COALESCE(pi.item_vat,0)) - SUM(COALESCE((SELECT SUM(rd.rail_vat) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0)))::bigint AS net_vat,
+             ROUND( (SUM(pi.item_fee) - SUM(COALESCE((SELECT SUM(rd.rail_fee) FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status='success'),0))) * 100.0 / NULLIF(SUM(pi.item_fee),0), 2) AS margin_pct
       FROM payout_items pi
       JOIN payout_batches pb ON pi.batch_id = pb.id
       JOIN merchants m       ON pi.merchant_id = m.id
@@ -716,8 +719,8 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
         t.channel::text                         AS channel,
         COUNT(*)::int                           AS txn_count,
         SUM(t.amount)::bigint                    AS volume,
-        SUM(t.merchant_fee)::bigint             AS fee_revenue,
-        SUM(t.rail_cost)::bigint                AS rail_cost,
+        SUM(t.merchant_fee - COALESCE(t.vat_output,0))::bigint AS fee_revenue,
+        SUM(t.rail_cost - COALESCE(t.vat_input,0))::bigint     AS rail_cost,
         SUM(t.paylode_margin)::bigint           AS paylode_margin
       FROM transactions t
       LEFT JOIN payment_rails pr ON t.rail_id = pr.id
@@ -736,8 +739,8 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
         t.currency                              AS currency,
         COUNT(*)::int                           AS txn_count,
         SUM(t.amount)::bigint                    AS volume,
-        SUM(t.merchant_fee)::bigint             AS fee_revenue,
-        SUM(t.rail_cost)::bigint                AS rail_cost,
+        SUM(t.merchant_fee - COALESCE(t.vat_output,0))::bigint AS fee_revenue,
+        SUM(t.rail_cost - COALESCE(t.vat_input,0))::bigint     AS rail_cost,
         SUM(t.paylode_margin)::bigint           AS paylode_margin
       FROM transactions t
       LEFT JOIN payment_rails pr ON t.rail_id = pr.id

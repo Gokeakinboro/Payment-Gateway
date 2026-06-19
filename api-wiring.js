@@ -303,18 +303,19 @@ async function loadTransactions(page=1, filters={}) {
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Reference</th><th>Merchant</th><th>Amount</th><th>Fee</th><th>Channel</th><th>Currency</th><th>Status</th><th>Date</th></tr></thead>
+          <thead><tr><th>Reference</th><th>Merchant</th><th>Amount</th><th>Fee</th><th>Settled</th><th>Channel</th><th>Currency</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
             ${txns.length ? txns.map(t => `<tr ${t.currency==='USD'?'style="background:#f8fbff"':''}>
               <td class="mono" style="font-size:11px">${t.reference}</td>
               <td>${t.merchant?.businessName||'—'}</td>
-              <td style="font-weight:600;white-space:nowrap">${fmtMoney(t.amount, t.currency)}</td>
+              <td style="font-weight:600;white-space:nowrap" title="Gross collected">${fmtMoney(t.amount, t.currency)}</td>
               <td class="mono" style="font-size:12px">${fmtMoney(t.fees?.merchant_fee||0, t.currency)}</td>
+              <td class="mono text-lime" style="font-size:12px;font-weight:600" title="Amount the merchant receives">${fmtMoney(t.settlement_amount != null ? t.settlement_amount : (Number(t.amount) - (t.fees?.merchant_fee||0)), t.currency)}</td>
               <td><span class="tag">${t.channel}${t.currency==='USD'?' · Intl':''}</span></td>
               <td>${ccyChip(t.currency)}</td>
               <td>${statusBadge(t.status)}</td>
               <td style="font-size:12px;color:var(--gray-400)">${new Date(t.created_at).toLocaleDateString('en-NG')}</td>
-            </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:20px">No transactions found</td></tr>'}
+            </tr>`).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--gray-400);padding:20px">No transactions found</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -1385,10 +1386,10 @@ async function loadRevenueReport() {
         <div class="card-header"><div class="card-title">${title}</div>${ccy==='USD'?intlBadge():ccyChip('NGN')}</div>
         ${rows.length ? rows.slice(0,12).map(r => `
         <div class="rev-row">
-          <span class="rev-label">${(r.period||'').slice(0,10)||'—'} · ${r.product||r.channel}</span>
+          <span class="rev-label">${(r.period||'').slice(0,10)||'—'} · ${r.product||r.channel} <span style="color:var(--gray-400)">(${fmtNum(r.txn_count)})</span></span>
           <div style="text-align:right">
-            <div style="font-weight:600;font-size:13px">${fmtMajor(r.gross_revenue, ccy)}</div>
-            <div style="font-size:11px;color:var(--gray-400)">Margin: ${fmtMajor(r.paylode_margin, ccy)}</div>
+            <div style="font-weight:600;font-size:13px">Gross ${fmtMajor(r.gross_revenue, ccy)}</div>
+            <div style="font-size:11px;color:var(--gray-400)">Rail ${fmtMajor(r.rail_costs, ccy)} · Margin ${fmtMajor(r.paylode_margin, ccy)} · Net VAT ${fmtMajor(r.net_vat, ccy)}</div>
           </div>
         </div>`).join('') : `<div style="color:var(--gray-400);padding:24px;text-align:center">No ${ccy==='USD'?'international (USD)':'local (NGN)'} revenue this period.</div>`}
       </div>`;
@@ -1403,12 +1404,13 @@ async function loadRevenueReport() {
     </div>
     <div class="info-box" style="margin-bottom:16px;font-size:12px">This page <strong>reports</strong> earned revenue. Set rates in <strong>Merchant Pricing</strong>. International card revenue is shown in <strong>USD</strong>, separate from local NGN revenue.</div>
 
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span><span style="font-size:12px;color:var(--gray-400)">Gross Revenue − Rail Costs = Margin · VAT shown net (output − input)</span></div>
     <div class="stats-grid">
+      <div class="stat-card"><div class="stat-label">Volume (gross collected)</div><div class="stat-value">${fmtMajor(sum(rowsNGN,'volume_major'),'NGN')}</div></div>
       <div class="stat-card"><div class="stat-label">Gross Revenue</div><div class="stat-value">${fmtMajor(sum(rowsNGN,'gross_revenue'),'NGN')}</div></div>
+      <div class="stat-card"><div class="stat-label">Rail Costs</div><div class="stat-value text-red">${fmtMajor(sum(rowsNGN,'rail_costs'),'NGN')}</div></div>
       <div class="stat-card"><div class="stat-label">Paylode Margin</div><div class="stat-value text-lime">${fmtMajor(sum(rowsNGN,'paylode_margin'),'NGN')}</div></div>
-      <div class="stat-card"><div class="stat-label">Volume</div><div class="stat-value">${fmtMajor(sum(rowsNGN,'volume_major'),'NGN')}</div></div>
-      <div class="stat-card"><div class="stat-label">Aggregator Payouts Due</div><div class="stat-value">${fmtMajor(aggRows.reduce((s,a)=>s+(Number(a.agg_payout_due)||0),0),'NGN')}</div></div>
+      <div class="stat-card"><div class="stat-label">Net VAT Payable</div><div class="stat-value">${fmtMajor(sum(rowsNGN,'net_vat'),'NGN')}</div></div>
     </div>
 
     <div class="section-gap" style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-blue">🌍 International (USD)</span><span style="font-size:12px;color:var(--gray-400)">International card revenue — settled in US Dollars</span></div>

@@ -267,6 +267,23 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
   display: flex; align-items: center; justify-content: center; gap: 4px;
 }
 
+/* ── TRANSFER SUB-METHOD CHOOSER ── */
+.submethod-card {
+  display:flex; align-items:center; gap:14px; width:100%; text-align:left;
+  background:#fff; border:1px solid var(--g200,#e5e7eb); border-radius:14px;
+  padding:16px; margin-bottom:12px; cursor:pointer; transition:.15s;
+}
+.submethod-card:hover { border-color:var(--g600,#6d28d9); box-shadow:0 2px 10px rgba(0,0,0,.06); }
+.submethod-ic { width:42px; height:42px; flex:0 0 42px; border-radius:11px;
+  display:flex; align-items:center; justify-content:center; background:var(--g50,#f4f1fb); }
+.submethod-ic svg { width:20px; height:20px; stroke:var(--g600,#6d28d9); fill:none; stroke-width:2; }
+.submethod-body { flex:1; }
+.submethod-title { font-size:15px; font-weight:600; color:#111827; }
+.submethod-sub { font-size:12.5px; color:var(--g500,#6b7280); margin-top:2px; }
+.submethod-arrow { width:18px; height:18px; flex:0 0 18px; stroke:#9ca3af; fill:none; stroke-width:2; }
+.link-back { background:none; border:none; color:var(--g600,#6d28d9); font-size:13px;
+  font-weight:600; cursor:pointer; padding:0 0 14px; }
+
 /* ── BANK TRANSFER PANEL ── */
 .transfer-steps { display: flex; flex-direction: column; gap: 12px; }
 .transfer-step {
@@ -503,14 +520,6 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
             <svg viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
             Transfer
           </button>
-          <button class="ch-tab" id="tab-ussd" onclick="switchChannel('ussd')">
-            <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-            USSD
-          </button>
-          <button class="ch-tab" id="tab-palmpay" onclick="switchChannel('palmpay')">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 16V8h5a2 2 0 110 4H8"/></svg>
-            PalmPay
-          </button>
         </div>
 
         <!-- ── CARD PANEL ── -->
@@ -588,14 +597,55 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
           </button>
         </div>
 
-        <!-- ── TRANSFER PANEL ── -->
+        <!-- ── TRANSFER PANEL (sub-methods: PalmPay wallet / bank transfer VA) ── -->
         <div class="panel" id="panel-transfer">
+
+          <!-- Sub-method chooser -->
+          <div id="transfer-choose">
+            <div style="font-size:13px;color:var(--g500);margin-bottom:14px">Choose how you'd like to pay</div>
+            <button class="submethod-card" onclick="selectTransferMethod('va')">
+              <div class="submethod-ic"><svg viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg></div>
+              <div class="submethod-body">
+                <div class="submethod-title">Pay with Transfer</div>
+                <div class="submethod-sub">Transfer to a one-time account from any bank</div>
+              </div>
+              <svg class="submethod-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <button class="submethod-card" onclick="selectTransferMethod('wallet')">
+              <div class="submethod-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 16V8h5a2 2 0 110 4H8"/></svg></div>
+              <div class="submethod-body">
+                <div class="submethod-title">Pay with PalmPay Wallet</div>
+                <div class="submethod-sub">Authorize instantly from your PalmPay app</div>
+              </div>
+              <svg class="submethod-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+
+          <!-- Sub-view: PalmPay wallet -->
+          <div id="transfer-wallet" style="display:none">
+            <button class="link-back" onclick="backToTransferChoose()">← Back</button>
+            <div style="text-align:center;font-size:14px;color:var(--g600);line-height:1.6;margin:6px 0 18px">
+              Pay instantly from your PalmPay wallet. You'll be redirected to PalmPay to authorize, then brought back here automatically.
+            </div>
+            <button class="pay-btn" id="pay-btn-palmpay" onclick="payWithPalmPay()">
+              <div class="spinner"></div>
+              <span class="btn-label">Pay <span id="palmpay-pay-amount">—</span> with PalmPay</span>
+            </button>
+            <div class="pay-btn-sub">
+              <svg class="footer-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+              Secured by Paylode · CBN Licensed PSSP
+            </div>
+          </div>
+
+          <!-- Sub-view: bank transfer (dynamic VA) -->
+          <div id="transfer-va" style="display:none">
+            <button class="link-back" onclick="backToTransferChoose()">← Back</button>
           <div class="transfer-steps">
             <div class="transfer-step">
               <div class="step-num">1</div>
               <div class="step-body">
                 <div class="step-title">Transfer the exact amount</div>
-                <div class="step-sub">Use your banking app, USSD, or internet banking to transfer to this account</div>
+                <div class="step-sub">Use your banking app or internet banking to transfer to this account</div>
                 <div class="account-box" id="transfer-account">
                   <div class="acct-row">
                     <div>
@@ -607,20 +657,20 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
                   <div class="acct-row">
                     <div>
                       <div class="acct-label">Account number</div>
-                      <div class="acct-value" id="virtual-account">8021234567</div>
+                      <div class="acct-value" id="virtual-account">—</div>
                     </div>
                     <button class="copy-btn" onclick="copyText('virtual-account', this)">Copy</button>
                   </div>
                   <div class="acct-row">
                     <div>
                       <div class="acct-label">Bank</div>
-                      <div class="acct-value" id="virtual-bank">Wema Bank (ALAT)</div>
+                      <div class="acct-value" id="virtual-bank">—</div>
                     </div>
                   </div>
                   <div class="acct-row" style="margin-bottom:0">
                     <div>
                       <div class="acct-label">Account name</div>
-                      <div class="acct-value" id="virtual-name">PAYLODE/BOLT-NGR</div>
+                      <div class="acct-value" id="virtual-name">—</div>
                     </div>
                   </div>
                 </div>
@@ -633,7 +683,7 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
                 <div class="step-sub">This page updates automatically once your transfer is received. Usually within 1–2 minutes.</div>
                 <div class="timer-wrap">
                   <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                  <div class="timer-text">Session expires in <span class="timer-count" id="timer">29:47</span></div>
+                  <div class="timer-text">Session expires in <span class="timer-count" id="timer">15:00</span></div>
                 </div>
               </div>
             </div>
@@ -649,21 +699,8 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
             <span class="btn-label">I've made the transfer — check now</span>
             <div class="spinner"></div>
           </button>
-        </div>
-
-        <!-- ── PALMPAY WALLET PANEL ── -->
-        <div class="panel" id="panel-palmpay">
-          <div style="text-align:center;font-size:14px;color:var(--g600);line-height:1.6;margin:6px 0 18px">
-            Pay instantly from your PalmPay wallet. You'll be redirected to PalmPay to authorize, then brought back here automatically.
-          </div>
-          <button class="pay-btn" id="pay-btn-palmpay" onclick="payWithPalmPay()">
-            <div class="spinner"></div>
-            <span class="btn-label">Pay <span id="palmpay-pay-amount">—</span> with PalmPay</span>
-          </button>
-          <div class="pay-btn-sub">
-            <svg class="footer-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-            Secured by Paylode · CBN Licensed PSSP
-          </div>
+          <div id="transfer-note" style="text-align:center;font-size:12.5px;color:var(--g500);margin-top:10px;min-height:16px"></div>
+          </div><!-- /transfer-va -->
         </div>
 
         <!-- ── USSD PANEL ── -->
@@ -787,7 +824,9 @@ let state = {
   selectedUssdCode: '*737#',
   timerInterval: null,
   pollInterval: null,
-  timerSeconds: 30 * 60,
+  timerSeconds: 15 * 60,
+  vaLoaded: false,
+  vaExpiresAt: null,
 };
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
@@ -823,11 +862,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Fetch real transaction data from API (overrides URL params if ref is valid)
   loadTransaction();
 
-  // Virtual account (in production, fetch from API)
-  fetchVirtualAccount();
-
-  // Start countdown timer for transfer
-  startTimer();
+  // The virtual account is minted lazily (and the countdown started) only when
+  // the customer opens the Transfer tab — see switchChannel().
 });
 
 // ─── LOAD TRANSACTION FROM API ────────────────────────────────────────────────
@@ -850,8 +886,11 @@ async function loadTransaction() {
     }
 
     // Populate UI with real data
-    state.amount          = txn.amount;
-    state.amountFormatted = formatNaira(txn.amount);
+    // Show the gross the customer actually pays (face + our fee + VAT) everywhere.
+    const payAmount       = txn.amount_to_pay != null ? txn.amount_to_pay : txn.amount;
+    state.amount          = txn.amount;            // face / principal
+    state.amountToPay     = payAmount;
+    state.amountFormatted = formatNaira(payAmount);
     state.merchantName    = txn.merchant_name || state.merchantName;
     state.customerEmail   = txn.customer_email || state.customerEmail;
     state.description     = txn.description || state.description;
@@ -872,27 +911,67 @@ async function loadTransaction() {
 }
 
 // ─── VIRTUAL ACCOUNT (Transfer) ───────────────────────────────────────────────
+// Mints (or fetches the cached) one-time PalmPay virtual account for this order.
+// On any failure we show "Unavailable" — NEVER a stale/placeholder number, so a
+// customer can never transfer real money to the wrong account.
 async function fetchVirtualAccount() {
-  if (state.isSandbox) return; // demo values already set
+  const acctEl = document.getElementById('virtual-account');
+  const bankEl = document.getElementById('virtual-bank');
+  const nameEl = document.getElementById('virtual-name');
+  acctEl.textContent = 'Loading…'; bankEl.textContent = '—'; nameEl.textContent = '—';
   try {
-    const res = await fetch(`${API_URL}/transactions/${state.reference}/virtual-account`);
-    if (res.ok) {
-      const data = await res.json();
-      document.getElementById('virtual-account').textContent = data.data.account_number;
-      document.getElementById('virtual-bank').textContent    = data.data.bank_name;
-      document.getElementById('virtual-name').textContent    = data.data.account_name;
+    const res  = await fetch(`${API_URL}/checkout/${state.reference}/virtual-account`);
+    const data = await res.json();
+    if (res.ok && data.status && data.data && data.data.account_number) {
+      acctEl.textContent = data.data.account_number;
+      bankEl.textContent = data.data.bank_name || '—';
+      nameEl.textContent = data.data.account_name || '—';
+      // Amount to transfer = the gross (face + our fee + VAT) returned by the API.
+      if (data.data.amount != null)
+        document.getElementById('transfer-amount-display').textContent = formatNaira(data.data.amount);
+      state.vaLoaded   = true;
+      state.vaExpiresAt = data.data.expires_at || null;
+      startTimer(state.vaExpiresAt);
+      startTransferPolling();   // auto-confirm once the payment lands
+      return;
     }
-  } catch (e) { /* use demo values */ }
+    throw new Error((data && data.message) || 'VA unavailable');
+  } catch (e) {
+    acctEl.textContent = 'Unavailable'; bankEl.textContent = '—'; nameEl.textContent = '—';
+  }
 }
 
 // ─── CHANNEL SWITCHING ────────────────────────────────────────────────────────
 function switchChannel(ch) {
   state.channel = ch;
-  ['card','transfer','ussd','palmpay'].forEach(c => {
-    document.getElementById('tab-' + c).classList.toggle('active', c === ch);
-    document.getElementById('panel-' + c).classList.toggle('active', c === ch);
+  ['card','transfer'].forEach(c => {
+    const t = document.getElementById('tab-' + c);
+    const p = document.getElementById('panel-' + c);
+    if (t) t.classList.toggle('active', c === ch);
+    if (p) p.classList.toggle('active', c === ch);
   });
-  if (ch === 'transfer') startTimer();
+  if (ch === 'transfer') backToTransferChoose();   // always land on the sub-method chooser
+  else stopPolling();
+}
+
+// Transfer sub-methods: PalmPay wallet vs bank transfer (dynamic VA). Extensible —
+// add OPay wallet etc. as another .submethod-card + a case here.
+function selectTransferMethod(method) {
+  document.getElementById('transfer-choose').style.display = 'none';
+  document.getElementById('transfer-wallet').style.display = method === 'wallet' ? 'block' : 'none';
+  document.getElementById('transfer-va').style.display     = method === 'va'     ? 'block' : 'none';
+  if (method === 'va') {
+    if (!state.vaLoaded) fetchVirtualAccount();    // mints + starts the timer + poll
+    else { startTimer(state.vaExpiresAt); startTransferPolling(); }
+  } else {
+    stopPolling();
+  }
+}
+function backToTransferChoose() {
+  stopPolling();
+  document.getElementById('transfer-choose').style.display = 'block';
+  document.getElementById('transfer-wallet').style.display = 'none';
+  document.getElementById('transfer-va').style.display     = 'none';
 }
 
 // ─── CARD FORMATTING ─────────────────────────────────────────────────────────
@@ -1036,22 +1115,40 @@ function cancelOtp() {
 }
 
 // ─── CHECK TRANSFER STATUS ────────────────────────────────────────────────────
-async function checkTransferStatus() {
-  const btn = document.querySelector('#panel-transfer .pay-btn');
-  setLoading(btn, true);
+// Background poll — the page confirms itself within seconds of the transfer
+// landing (PalmPay's webhook finalizes server-side; this just reflects it).
+function startTransferPolling() {
+  clearInterval(state.pollInterval);
+  state.pollInterval = setInterval(async () => {
+    try {
+      const res  = await fetch(`${API_URL}/checkout/${state.reference}/confirm`, { method: 'POST' });
+      const data = await res.json();
+      if (data.status && (data.data?.status === 'SUCCESS' || data.data?.already_processed)) {
+        showSuccess('transfer');   // showSuccess() calls stopPolling()
+      }
+    } catch { /* keep polling */ }
+  }, 5000);
+}
 
+// Manual "I've made the transfer" — a transient "not yet" is NOT a failure, so we
+// show an inline notice and keep waiting (the poll will flip it to success).
+async function checkTransferStatus() {
+  const btn  = document.querySelector('#transfer-va .pay-btn');
+  const note = document.getElementById('transfer-note');
+  setLoading(btn, true);
+  if (note) note.textContent = '';
   try {
     const res  = await fetch(`${API_URL}/checkout/${state.reference}/confirm`, { method: 'POST' });
     const data = await res.json();
     setLoading(btn, false);
     if (data.status && (data.data?.status === 'SUCCESS' || data.data?.already_processed)) {
       showSuccess('transfer');
-    } else {
-      showFailed('Transfer not yet confirmed. Please wait a moment and try again.');
+    } else if (note) {
+      note.textContent = 'Not received yet — we’ll confirm automatically the moment it lands.';
     }
   } catch {
     setLoading(btn, false);
-    showFailed('Could not check status. Please try again.');
+    if (note) note.textContent = 'Couldn’t check just now — we’re still watching for your transfer.';
   }
 }
 
@@ -1142,9 +1239,17 @@ async function notifyCallback(success) {
 }
 
 // ─── COUNTDOWN TIMER ─────────────────────────────────────────────────────────
-function startTimer() {
+function startTimer(expiresAt) {
   clearInterval(state.timerInterval);
-  state.timerSeconds = 30 * 60;
+  const MAX = 15 * 60;
+  // A freshly-fetched VA should never start already-expired. If the window has
+  // lapsed (clock skew / stale cache), fall back to the full 15 min rather than 0.
+  let secs = MAX;
+  if (expiresAt) {
+    const remaining = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000);
+    if (remaining > 0) secs = Math.min(remaining, MAX);
+  }
+  state.timerSeconds = secs;
   state.timerInterval = setInterval(() => {
     state.timerSeconds--;
     const m = Math.floor(state.timerSeconds / 60).toString().padStart(2,'0');

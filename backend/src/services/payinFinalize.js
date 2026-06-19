@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const { prisma } = require('../utils/db');
 const { dispatchWebhook } = require('./webhookService');
-const { computeFeesForTxn } = require('./feeEngine');
+const { computeFeesForPayin, resolvePayinRail, resolvePayinRateConfig } = require('./feeEngine');
 
 // Finalize by transaction reference. Returns:
 //   { finalized:true, fees }          — we flipped PENDING→SUCCESS this call
@@ -26,7 +26,40 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
   if (txn.status !== 'PENDING') return { notPending: true, txn };
 
   const merchant = txn.merchant;
-  const fees = computeFeesForTxn(BigInt(txn.amount), merchant, null, channel);
+
+  // Rail that processed this collection: prefer the one stamped at mint, else pick the
+  // cheapest LIVE collection rail (config-driven; scales to multiple pay-in rails).
+  let railId = txn.railId || null;
+  if (!railId) {
+    const rail = await resolvePayinRail(prisma);
+    railId = (rail && rail.id) || null;
+  }
+
+  // Pay-in pricing — PAYER-FUNDED (customer pays the gross; merchant settles the full
+  // face). Prefer the breakdown computed + stored when the VA was minted, so what we
+  // RECORD exactly matches what the customer was CHARGED (even if a rate is later
+  // edited). Otherwise resolve from config for the resolved rail (DB — nothing hardcoded).
+  let fees;
+  const stored = txn.metadata && txn.metadata.payin;
+  if (stored && stored.charge != null) {
+    fees = {
+      principal:          BigInt(stored.principal),
+      chargeAmount:       BigInt(stored.charge),
+      merchantSettlement: BigInt(stored.principal),
+      feeRaw:             BigInt(stored.feeRaw || 0),
+      feePlusVat:         BigInt(stored.fee),
+      vatOnFee:           BigInt(stored.vatOnFee || 0),
+      railRaw:            BigInt(stored.railRaw || 0),
+      railPlusVat:        BigInt(stored.railPlusVat || 0),
+      netPool:            BigInt(stored.netPool || 0),
+      aggShare:           BigInt(stored.aggShare || 0),
+      paylodeMargin:      BigInt(stored.paylodeMargin || 0),
+      feePaidBy:          'customer',
+    };
+  } else {
+    const cfg = await resolvePayinRateConfig(prisma, merchant, railId);
+    fees = computeFeesForPayin(BigInt(txn.amount), cfg);
+  }
 
   // Atomic claim: only the worker that flips PENDING→SUCCESS proceeds to notify.
   const claim = await prisma.transaction.updateMany({
@@ -34,6 +67,8 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
     data: {
       status:        'SUCCESS',
       paidAt:        new Date(),
+      railId:        railId,
+      amount:        fees.chargeAmount,    // gross the customer actually transferred
       netRevenue:    fees.netPool,
       merchantFee:   fees.feePlusVat,
       railCost:      fees.railPlusVat,
