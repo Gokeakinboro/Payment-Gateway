@@ -885,21 +885,26 @@ document.addEventListener('DOMContentLoaded', () => {
 function plEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 async function initPaymentLink(slug) {
+  // Cover the page IMMEDIATELY (before the network fetch) so the underlying payment
+  // fields never flash while we load the link — the email modal always shows first.
+  const ov = document.createElement('div');
+  ov.id = 'pl-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(26,26,26,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
+  ov.innerHTML = '<div style="background:#fff;max-width:420px;width:100%;border-radius:14px;padding:26px;text-align:center;color:#888;font-size:14px;">Loading…</div>';
+  document.body.appendChild(ov);
+
   let info;
   try {
     const res  = await fetch(`${API_URL}/payment-links/public/${encodeURIComponent(slug)}`);
     const data = await res.json();
-    if (!res.ok || !data.status) { showFailed((data && data.message) || 'This payment link is unavailable.'); return; }
+    if (!res.ok || !data.status) { ov.remove(); showFailed((data && data.message) || 'This payment link is unavailable.'); return; }
     info = data.data;
-  } catch (e) { showFailed('Could not load this payment link.'); return; }
+  } catch (e) { ov.remove(); showFailed('Could not load this payment link.'); return; }
 
   const fixed = info.amount_fixed;
   // The merchant may bake the customer's email into the link (?email=...). Prefill
-  // it, but keep it OPTIONAL and editable — the customer can change it or skip it.
+  // it, but keep it OPTIONAL and editable — the customer can fill it or skip it.
   const prefillEmail = (new URLSearchParams(window.location.search).get('email') || '').trim();
-  const ov = document.createElement('div');
-  ov.id = 'pl-overlay';
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(26,26,26,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
   ov.innerHTML =
     '<div style="background:#fff;max-width:420px;width:100%;border-radius:14px;padding:26px;box-shadow:0 20px 60px rgba(0,0,0,.3);">'
     + '<div style="font-size:12px;color:#6B1A2B;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">' + plEsc(info.merchant_name || 'Payment') + '</div>'
@@ -913,10 +918,11 @@ async function initPaymentLink(slug) {
       + '<input id="pl-amount" type="number" min="1" step="0.01" placeholder="0.00" style="width:100%;padding:12px 14px;border:1.5px solid #ddd;border-radius:9px;font-size:15px;box-sizing:border-box;">')
     + '<div id="pl-error" style="color:#c0392b;font-size:13px;margin-top:10px;display:none;"></div>'
     + '<button id="pl-continue" style="width:100%;margin-top:18px;padding:14px;background:#E8470A;color:#fff;border:none;border-radius:9px;font-size:16px;font-weight:700;cursor:pointer;">Continue to payment</button>'
+    + '<button id="pl-skip" style="width:100%;margin-top:8px;padding:10px;background:transparent;color:#666;border:none;font-size:13px;cursor:pointer;text-decoration:underline;">Skip — continue without email</button>'
     + '<div style="text-align:center;margin-top:14px;font-size:12px;color:#999;">Secured by Paylode</div>'
     + '</div>';
-  document.body.appendChild(ov);
   document.getElementById('pl-continue').addEventListener('click', () => submitPaymentLink(slug, fixed));
+  document.getElementById('pl-skip').addEventListener('click', () => { const e = document.getElementById('pl-email'); if (e) e.value = ''; submitPaymentLink(slug, fixed); });
   document.getElementById('pl-email').addEventListener('keydown', e => { if (e.key === 'Enter') submitPaymentLink(slug, fixed); });
 }
 
