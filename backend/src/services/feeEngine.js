@@ -212,24 +212,28 @@ function computeFeesForTxn(amount, merchant, rateConfig = null, channel = 'CARD'
   const vatOnFee   = feeRaw * vat / BASE;
   const feePlusVat = feeRaw + vatOnFee;
 
-  // Rail cost (+ VAT) — Paylode's cost to move the money
+  // Rail cost (+ VAT) — Paylode's cost to move the money. The VAT the rail charges
+  // us is INPUT VAT (recoverable), netted off the output VAT we charge on our fee.
   let railRaw = principal * BigInt(Math.round(railRate * 1_000_000)) / BASE;
   if (rCap > 0n && railRaw > rCap) railRaw = rCap;
-  const railPlusVat = railRaw + (railRaw * vat / BASE);
+  const vatOnRail   = railRaw * vat / BASE;   // input VAT (rail's VAT to us)
+  const railPlusVat = railRaw + vatOnRail;
 
   // Payer-funded amounts
   const chargeAmount       = principal + feePlusVat; // what the customer pays
   const merchantSettlement = principal;              // merchant gets the full principal
 
-  // Paylode revenue = our fee − rail cost (ex-VAT; VAT on our fee is remitted)
+  // Paylode revenue = our fee − rail cost (ex-VAT).
   const netPool       = feeRaw - railRaw;
   const aggShare      = netPool > 0n ? netPool * BigInt(Math.round(aggSplitPct * 1_000_000)) / BASE : 0n;
   const paylodeMargin = netPool - aggShare;
+  // VAT we actually remit to FIRS = output VAT (on our fee) − input VAT (rail's VAT).
+  const netVat = vatOnFee - vatOnRail;
 
   return {
     principal, chargeAmount, merchantSettlement,
     feeRaw, feePlusVat, vatOnFee,
-    railRaw, railPlusVat,
+    railRaw, railPlusVat, vatOnRail, netVat,
     netPool, aggShare, paylodeMargin,
     feePaidBy: 'customer',
   };
