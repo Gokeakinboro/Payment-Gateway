@@ -5,6 +5,7 @@
 const { prisma } = require('../utils/db');
 const { logger } = require('../utils/logger');
 const palmpay = require('./palmpayService');
+const { checkRailBalanceAndAlert } = require('./railHealth');
 
 // Map a rail to an adapter that reports OUR balance with it, or null if the rail
 // has no balance API yet. Add new rails here as they're integrated.
@@ -33,7 +34,12 @@ async function syncAllFloats() {
   for (const rail of rails) {
     try {
       const k = await syncRailFloat(rail);
-      if (k !== null) logger.info({ rail: rail.name, floatKobo: k.toString() }, 'rail float synced');
+      if (k !== null) {
+        logger.info({ rail: rail.name, floatKobo: k.toString() }, 'rail float synced');
+        // Proactive low-balance watch: alert SA (debounced) when our balance with
+        // the rail is low — reuse the just-synced value, no extra API call.
+        await checkRailBalanceAndAlert(rail, async () => k);
+      }
     } catch (e) {
       logger.error({ err: e, rail: rail.name }, 'rail float sync failed');
     }

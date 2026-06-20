@@ -7,7 +7,7 @@ const { prisma }  = require('../utils/db');
 const { requireAuth, requireApiKey, requireSuperAdmin, requireCompliance } = require('../middleware/auth');
 const { ok, fail, notFound, created, koboToNaira, generateRef } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
-const { notifyRailIncident } = require('../services/railHealth');
+const { notifyRailIncident, recordRailResult, checkRailBalanceAndAlert } = require('../services/railHealth');
 const { BANKS, resolveBank } = require('../data/nibssBanks');
 const { syncRailFloat } = require('../services/railFloat');
 
@@ -811,10 +811,12 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='success', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), settled_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
         await prisma.$executeRaw`UPDATE payout_items SET status='success', provider_ref=${r.providerRef || null}, processed_at=NOW() WHERE id=${leg.item_id}::uuid`;
         nOk++;
+        await recordRailResult(rail, { ok: true });   // accepted+settled → reset the rail's fail streak
       } else if (r.ok && (os === '' || os === '1' || os === '0')) {   // ACCEPTED, in flight
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='sent', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
         await prisma.$executeRaw`UPDATE payout_items SET status='processing', provider_ref=${r.providerRef || null} WHERE id=${leg.item_id}::uuid`;
         nPending++;
+        await recordRailResult(rail, { ok: true });   // accepted by the rail → not a failure
       } else {                                        // hard reject / terminal failure → refund
         const reason = r.ok ? `Rail returned orderStatus ${os}` : (r.reason || 'failed');
         const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
@@ -824,6 +826,10 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
         await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)} WHERE id=${leg.item_id}::uuid`;
         nFail++;
+        // Track the rail's failure streak → SA is emailed (debounced) at the
+        // threshold, or immediately if the rail signals a low/insufficient balance.
+        await recordRailResult(rail, { ok: false, reason, isLowBalance: /insufficient|balance|fund|limit/i.test(String(reason)) },
+          { railId: leg.rail_id, railName: rail && rail.name, merchant: batch.merchant_id });
       }
     }
     // Batch is terminal only once nothing is still in flight; pending → 'processing'.
