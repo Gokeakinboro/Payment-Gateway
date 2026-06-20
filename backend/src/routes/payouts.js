@@ -785,7 +785,7 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
              pi.item_fee, pi.item_vat
       FROM rail_disbursements rd JOIN payout_items pi ON rd.payout_item_id = pi.id
       WHERE rd.batch_id = ${batchId}::uuid AND rd.status = 'pending'`;
-    let nOk = 0, nFail = 0;
+    let nOk = 0, nFail = 0, nPending = 0;
     for (const leg of legs) {
       const rail = railById[leg.rail_id];
       const adapter = railAdapter(rail && rail.name);
@@ -798,23 +798,38 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
         });
       } catch (e) { r = { ok: false, reason: e.message }; }
 
-      if (r.ok) {
-        const railFee = (r.raw && r.raw.data && r.raw.data.fee && r.raw.data.fee.fee) || Number(leg.rail_cost);
-        const sess = (r.raw && r.raw.data && r.raw.data.sessionId) || null;
+      // The rail's create response only means ACCEPTED (respCode ok), not SETTLED.
+      // The authoritative settle result arrives via the payout webhook (orderStatus).
+      // So: orderStatus 2 = settled now; 1/0/absent = accepted & in flight → leave
+      // the money debited and mark the leg 'sent' to await the webhook; a hard reject
+      // (r.ok false) or a terminal failure code → refund float + wallet immediately.
+      const os = r.ok ? String(r.orderStatus == null ? '' : r.orderStatus) : null;
+      const railFee = (r.raw && r.raw.data && r.raw.data.fee && r.raw.data.fee.fee) || Number(leg.rail_cost);
+      const sess = (r.raw && r.raw.data && r.raw.data.sessionId) || null;
+
+      if (r.ok && os === '2') {                       // terminal SUCCESS now
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='success', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), settled_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
-        await prisma.$executeRaw`UPDATE payout_items SET status='success' WHERE id=${leg.item_id}::uuid`;
+        await prisma.$executeRaw`UPDATE payout_items SET status='success', provider_ref=${r.providerRef || null}, processed_at=NOW() WHERE id=${leg.item_id}::uuid`;
         nOk++;
-      } else {
+      } else if (r.ok && (os === '' || os === '1' || os === '0')) {   // ACCEPTED, in flight
+        await prisma.$executeRaw`UPDATE rail_disbursements SET status='sent', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
+        await prisma.$executeRaw`UPDATE payout_items SET status='processing', provider_ref=${r.providerRef || null} WHERE id=${leg.item_id}::uuid`;
+        nPending++;
+      } else {                                        // hard reject / terminal failure → refund
+        const reason = r.ok ? `Rail returned orderStatus ${os}` : (r.reason || 'failed');
         const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
         const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
         await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
         await prisma.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW() WHERE merchant_id=${batch.merchant_id}::uuid`;
-        await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(r.reason || 'failed').slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
-        await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(r.reason || 'failed').slice(0, 280)} WHERE id=${leg.item_id}::uuid`;
+        await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
+        await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)} WHERE id=${leg.item_id}::uuid`;
         nFail++;
       }
     }
-    const finalStatus = nFail === 0 ? 'completed' : (nOk > 0 ? 'partially_failed' : 'failed');
+    // Batch is terminal only once nothing is still in flight; pending → 'processing'.
+    const finalStatus = nPending > 0 ? 'processing'
+      : nFail === 0 ? 'completed'
+      : (nOk > 0 ? 'partially_failed' : 'failed');
     await prisma.$executeRaw`
       UPDATE payout_batches pb SET
         status          = ${finalStatus},
@@ -824,9 +839,9 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
       WHERE pb.id = ${batchId}::uuid`;
 
     await logAudit(req.user.id, 'PAYOUT_BATCH_DISBURSED', 'payout_batches', batchId, {},
-      { rails_used: used.length, disbursed: nOk, failed: nFail, status: finalStatus }, null, req.ip);
-    ok(res, { batch_id: batchId, status: finalStatus, disbursed: nOk, failed: nFail },
-      `Payout ${finalStatus} — ${nOk} sent${nFail ? `, ${nFail} failed (refunded)` : ''}`);
+      { rails_used: used.length, settled: nOk, pending: nPending, failed: nFail, status: finalStatus }, null, req.ip);
+    ok(res, { batch_id: batchId, status: finalStatus, settled: nOk, pending: nPending, failed: nFail },
+      `Payout ${finalStatus} — ${nOk} settled${nPending ? `, ${nPending} processing` : ''}${nFail ? `, ${nFail} failed (refunded)` : ''}`);
   } catch (e) {
     if (e && e._client) return fail(res, e.message);
     next(e);

@@ -36,44 +36,77 @@ function verified(body) {
   return palmpay.verifyCallback(body);
 }
 
+// Roll a batch up: item counts + terminal status once nothing is still in flight.
+async function rollupBatch(batchId) {
+  await prisma.$executeRaw`
+    UPDATE payout_batches pb SET
+      processed_items = (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'success'),
+      failed_items    = (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'failed'),
+      status = CASE
+        WHEN (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status IN ('queued','processing')) > 0 THEN 'processing'
+        WHEN (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'failed') = 0 THEN 'completed'
+        WHEN (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'success') = 0 THEN 'failed'
+        ELSE 'partially_failed' END,
+      updated_at = NOW()
+    WHERE pb.id = ${batchId}::uuid`;
+}
+
 // ── payout result ──────────────────────────────────────────────────────────────
-// Matches the leg by rail_order_id (=orderId we sent), records the rail's order
-// number + NIBSS sessionId (recon key), and rolls the result up to the item/batch.
+// The AUTHORITATIVE settle confirmation. Matches the leg by rail_order_id (=orderId
+// we sent), records the rail's order number + NIBSS sessionId (recon keys), and on
+// a terminal result transitions the in-flight leg and rolls up the item/batch. On a
+// FAILURE it refunds the merchant wallet + rail float (the disburse step only debits
+// + sends; settlement success/failure is decided here). All transitions are GUARDED
+// to `status IN ('pending','sent')` so a retried callback can't double-refund or
+// overturn a leg the disburse step already settled.
 async function handlePayout(b, res) {
   if (!verified(b)) { logger.warn({ orderId: b.orderId }, 'PalmPay payout callback: BAD signature'); return res.status(401).send('invalid signature'); }
   logger.info({ orderId: b.orderId, orderNo: b.orderNo, orderStatus: b.orderStatus, sessionId: b.sessionId }, 'PalmPay payout result');
-  const legs = await prisma.$queryRaw`SELECT id, payout_item_id, batch_id FROM rail_disbursements WHERE rail_order_id = ${b.orderId}`;
+  const legs = await prisma.$queryRaw`
+    SELECT rd.id, rd.payout_item_id, rd.batch_id, rd.rail_id, rd.merchant_id, rd.status,
+           rd.amount, rd.rail_cost, rd.rail_vat, pi.item_fee, pi.item_vat
+    FROM rail_disbursements rd JOIN payout_items pi ON rd.payout_item_id = pi.id
+    WHERE rd.rail_order_id = ${b.orderId}`;
   if (!legs.length) { logger.warn({ orderId: b.orderId }, 'PalmPay payout callback: no matching leg'); return res.status(200).send('success'); }
   const leg = legs[0];
   const status = legStatusFor(b.orderStatus);
-  const settledAt = (status === 'success' || status === 'failed') ? new Date() : null;
-  // Update the ledger leg (always capture orderNo + sessionId; set status if terminal).
+
+  // Always capture the recon keys (order number + sessionId) and any error message.
   await prisma.$executeRaw`
     UPDATE rail_disbursements
-    SET rail_order_no = ${b.orderNo || null}, rail_session_id = ${b.sessionId || null},
-        error_msg = ${b.errorMsg || null},
-        status = COALESCE(${status}, status),
-        settled_at = COALESCE(${settledAt}, settled_at), updated_at = NOW()
+    SET rail_order_no = COALESCE(${b.orderNo || null}, rail_order_no),
+        rail_session_id = COALESCE(${b.sessionId || null}, rail_session_id),
+        error_msg = COALESCE(${b.errorMsg || null}, error_msg), updated_at = NOW()
     WHERE id = ${leg.id}::uuid`;
-  if (status) {
-    const itemStatus = status === 'success' ? 'success' : 'failed';
+
+  if (status === 'success') {
     await prisma.$executeRaw`
-      UPDATE payout_items SET status = ${itemStatus}, failure_reason = ${status === 'failed' ? (b.errorMsg || 'Rail reported failure') : null},
-        provider_ref = ${b.orderNo || null}, processed_at = NOW()
-      WHERE id = ${leg.payout_item_id}::uuid`;
-    // Roll the batch up: counts + terminal status when every item is done.
+      UPDATE rail_disbursements SET status='success', settled_at=NOW(), updated_at=NOW()
+      WHERE id=${leg.id}::uuid AND status IN ('pending','sent')`;
     await prisma.$executeRaw`
-      UPDATE payout_batches pb SET
-        processed_items = (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'success'),
-        failed_items    = (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'failed'),
-        status = CASE
-          WHEN (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status IN ('queued','processing')) > 0 THEN pb.status
-          WHEN (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'failed') = 0 THEN 'completed'
-          WHEN (SELECT COUNT(*) FROM payout_items WHERE batch_id = pb.id AND status = 'success') = 0 THEN 'failed'
-          ELSE 'partially_failed' END,
-        updated_at = NOW()
-      WHERE pb.id = ${leg.batch_id}::uuid`;
+      UPDATE payout_items SET status='success', provider_ref=${b.orderNo || null}, processed_at=NOW()
+      WHERE id=${leg.payout_item_id}::uuid AND status IN ('queued','processing')`;
+    await rollupBatch(leg.batch_id);
+  } else if (status === 'failed') {
+    // Guarded transition → refund EXACTLY ONCE, only from an in-flight state.
+    const flipped = await prisma.$queryRaw`
+      UPDATE rail_disbursements SET status='failed', settled_at=NOW(), updated_at=NOW()
+      WHERE id=${leg.id}::uuid AND status IN ('pending','sent') RETURNING id`;
+    if (flipped.length) {
+      const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
+      const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
+      await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
+      await prisma.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW() WHERE merchant_id=${leg.merchant_id}::uuid`;
+      logger.warn({ orderId: b.orderId, merchant: leg.merchant_id, floatBack: String(floatBack), merchBack: String(merchBack) },
+        'PalmPay payout FAILED via webhook — refunded rail float + merchant wallet');
+    }
+    await prisma.$executeRaw`
+      UPDATE payout_items SET status='failed', failure_reason=${b.errorMsg || 'Rail reported failure'},
+        provider_ref=${b.orderNo || null}, processed_at=NOW()
+      WHERE id=${leg.payout_item_id}::uuid AND status IN ('queued','processing')`;
+    await rollupBatch(leg.batch_id);
   }
+  // status null → still processing: recon keys recorded above, no state change.
   return res.status(200).send('success');
 }
 
