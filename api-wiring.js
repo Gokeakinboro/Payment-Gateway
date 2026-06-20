@@ -2513,7 +2513,8 @@ function plUploadRecipientsXls(input) {
   reader.readAsArrayBuffer(f);
 }
 function plDownloadSampleXls() {
-  var aoa = [['email'], ['customer1@example.com'], ['customer2@example.com']];
+  // Header only — NO example recipients (so nothing placeholder can be sent by mistake).
+  var aoa = [['email']];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Recipients');
   XLSX.writeFile(wb, 'paylode_recipients_sample.xlsx');
