@@ -18,9 +18,16 @@ const { prisma }   = require('../utils/db');
 const { requireAuth, requireMerchant } = require('../middleware/auth');
 const { ok, fail, notFound, created, generateRef, koboToNaira } = require('../utils/helpers');
 const compliance = require('../services/complianceService');
+const { sendEmail } = require('../services/emailService');
 
 const CHECKOUT_BASE = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '');
 const linkUrl = slug => `${CHECKOUT_BASE}/checkout.html?link=${slug}`;
+
+// Email format checker (the "valid email" gate for recipients).
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isValidEmail = e => EMAIL_RE.test(String(e || '').trim());
+const escapeHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // Shape a DB row (amount selected as ::text) into the API representation.
 function formatLink(r) {
@@ -38,12 +45,15 @@ function formatLink(r) {
     expires_at:  r.expires_at,
     paid_count:  r.paid_count,
     created_at:  r.created_at,
+    recipient_email: r.recipient_email || null,
+    batch_id:        r.batch_id || null,
     url:         linkUrl(r.slug),
   };
 }
 
 const SELECT_COLS = `id::text, slug, title, description, amount::text AS amount, currency,
-                     is_reusable, status, expires_at, paid_count, created_at`;
+                     is_reusable, status, expires_at, paid_count, created_at,
+                     recipient_email, batch_id::text AS batch_id`;
 
 // NGN single-transaction cap by KYC tier (kobo) — mirrors transactions.initialize.
 function singleTxnLimitKobo(tier) {
@@ -89,6 +99,96 @@ router.post('/', requireAuth, requireMerchant, async (req, res, next) => {
       m.id, slug, title, description, amount === null ? null : BigInt(amount), currency, reusable, expiresAt
     );
     return created(res, formatLink(rows[0]), 'Payment link created');
+  } catch (e) { next(e); }
+});
+
+// ── Merchant: create per-recipient links (single or bulk) + auto-email ───────
+// body: { title, description?, amount?, currency?, expires_at?, recipients:[email,…] }
+// Each VALID, de-duplicated recipient gets a UNIQUE one-time link (grouped by a
+// shared batch_id) and is emailed it. Invalid-format emails are skipped + reported.
+router.post('/batch', requireAuth, requireMerchant, async (req, res, next) => {
+  try {
+    const m = req.user.merchant;
+    if (!m) return fail(res, 'Only merchants can create payment links', 'NOT_A_MERCHANT', 403);
+
+    const title = String(req.body.title || '').trim();
+    if (!title) return fail(res, 'A title (what the customer is paying for) is required');
+    if (title.length > 140) return fail(res, 'Title is too long (max 140 characters)');
+    const description = req.body.description ? String(req.body.description).trim().slice(0, 500) : null;
+    const currency    = req.body.currency === 'USD' ? 'USD' : 'NGN';
+
+    let amount = null;
+    const raw = req.body.amount;
+    if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
+      amount = parseInt(raw, 10);
+      if (!Number.isInteger(amount) || amount < 100)
+        return fail(res, 'amount must be a whole number in kobo (≥ 100), or omitted for a customer-entered amount');
+    }
+
+    let expiresAt = null;
+    if (req.body.expires_at) {
+      const d = new Date(req.body.expires_at);
+      if (isNaN(d.getTime())) return fail(res, 'expires_at is not a valid date');
+      if (d.getTime() <= Date.now()) return fail(res, 'expires_at must be in the future');
+      expiresAt = d;
+    }
+
+    // Validate + dedupe recipient emails (case-insensitive).
+    const rawList = Array.isArray(req.body.recipients) ? req.body.recipients : [];
+    const seen = new Set(); const valid = []; const invalid = [];
+    for (const r of rawList) {
+      const e = String(r || '').trim().toLowerCase();
+      if (!e || seen.has(e)) continue;
+      seen.add(e);
+      (isValidEmail(e) ? valid : invalid).push(e);
+    }
+    if (!valid.length)
+      return fail(res, invalid.length ? 'No valid recipient emails — check the addresses.' : 'At least one recipient email is required.');
+    if (valid.length > 1000) return fail(res, 'Too many recipients in one batch (max 1000).');
+
+    const merchant = await prisma.merchant.findUnique({ where: { id: m.id }, select: { businessName: true } });
+    const bizName  = (merchant && merchant.businessName) || 'A merchant';
+    const batchId  = crypto.randomUUID();
+
+    // Create a unique one-time link per recipient.
+    const links = [];
+    for (const email of valid) {
+      const slug = crypto.randomBytes(8).toString('base64url');
+      await prisma.$queryRawUnsafe(
+        `INSERT INTO payment_links (merchant_id, slug, title, description, amount, currency, is_reusable, expires_at, recipient_email, batch_id)
+         VALUES ($1::uuid,$2,$3,$4,$5,$6,false,$7,$8,$9::uuid)`,
+        m.id, slug, title, description, amount === null ? null : BigInt(amount), currency, expiresAt, email, batchId
+      );
+      links.push({ email, slug, url: linkUrl(slug) });
+    }
+
+    // Auto-email each recipient their link (best-effort; the ?email param prefills checkout).
+    const amtLabel = amount === null ? 'Enter amount at checkout'
+      : `${currency === 'USD' ? '$' : '₦'}${(amount / 100).toLocaleString()}`;
+    let emailed = 0; const emailFailed = [];
+    for (const l of links) {
+      const payUrl = `${l.url}&email=${encodeURIComponent(l.email)}`;
+      const html = `<div style="font-family:system-ui,Arial,sans-serif;max-width:480px;color:#222">
+        <p><strong>${escapeHtml(bizName)}</strong> has sent you a payment request.</p>
+        <p style="font-size:16px;margin:14px 0"><strong>${escapeHtml(title)}</strong><br>Amount: ${escapeHtml(amtLabel)}</p>
+        <p><a href="${payUrl}" style="background:#16a34a;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;display:inline-block">Pay securely</a></p>
+        <p style="font-size:12px;color:#666;margin-top:14px">Or open this link:<br>${escapeHtml(payUrl)}${expiresAt ? `<br>Expires ${escapeHtml(expiresAt.toDateString())}` : ''}</p>
+        <p style="font-size:11px;color:#999;margin-top:18px">Powered by Paylode</p></div>`;
+      try {
+        await sendEmail({
+          to: l.email,
+          subject: `Payment request from ${bizName}: ${title}`.slice(0, 160),
+          html, text: `${bizName} requests payment for "${title}" (${amtLabel}). Pay: ${payUrl}`,
+        });
+        emailed++;
+      } catch (e) { emailFailed.push(l.email); }
+    }
+
+    return created(res, {
+      batch_id: batchId, title, amount, currency,
+      created: links.length, emailed, email_failed: emailFailed, invalid_emails: invalid,
+      links: links.map(l => ({ email: l.email, url: l.url })),
+    }, `Created ${links.length} link(s), emailed ${emailed}.${invalid.length ? ` ${invalid.length} invalid email(s) skipped.` : ''}`);
   } catch (e) { next(e); }
 });
 

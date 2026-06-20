@@ -2423,6 +2423,7 @@ async function loadMerchPaymentLinks() {
       return '<tr>' +
         '<td><div style="font-weight:600">' + _escA(l.title) + '</div>' +
           (l.description ? '<div style="font-size:11px;color:var(--gray-400)">' + _escA(l.description) + '</div>' : '') +
+          (l.recipient_email ? '<div style="font-size:11px;color:var(--gray-500)">To: ' + _escA(l.recipient_email) + '</div>' : '') +
           (l.reusable ? '' : ' <span class="badge badge-blue" style="font-size:10px">one-off</span>') + '</td>' +
         '<td>' + amt + '</td>' +
         '<td>' + st + '</td>' +
@@ -2461,13 +2462,61 @@ function showCreatePaymentLinkModal() {
         '<input class="form-input" id="pl-f-desc" placeholder="Shown to the customer"></div>' +
       '<div class="form-group"><label class="form-label">Amount (₦) — leave blank to let the customer enter it</label>' +
         '<input class="form-input" id="pl-f-amount" type="number" min="1" step="0.01" placeholder="e.g. 5000"></div>' +
-      '<div class="form-group"><label style="font-size:13px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="pl-f-reusable" checked> Reusable (uncheck for a one-time link that disables after the first payment)</label></div>' +
+      '<div class="form-group"><label style="font-size:13px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="pl-f-reusable" checked> Reusable (uncheck for a one-time link). Ignored when you add recipients below — those are always one-off.</label></div>' +
       '<div class="form-group"><label class="form-label">Expires (optional)</label>' +
         '<input class="form-input" id="pl-f-expires" type="date"></div>' +
+      '<div class="form-group"><label class="form-label">Recipients (optional) — leave blank for a plain shareable link</label>' +
+        '<textarea class="form-input" id="pl-f-recipients" rows="3" placeholder="Emails separated by comma or new line. Each gets a UNIQUE link, emailed to them." oninput="plRecipientPreview()"></textarea></div>' +
+      '<div class="flex" style="gap:8px;align-items:center;margin:-4px 0 8px;flex-wrap:wrap">' +
+        '<input type="file" id="pl-f-xls" accept=".xlsx,.xls,.csv" style="display:none" onchange="plUploadRecipientsXls(this)">' +
+        '<button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById(\'pl-f-xls\').click()">Upload XLS / CSV</button>' +
+        '<button type="button" class="btn btn-outline btn-sm" onclick="plDownloadSampleXls()">Sample file</button>' +
+        '<span id="pl-f-recipreview" style="font-size:11px;color:var(--gray-500)"></span>' +
+      '</div>' +
       '<div id="pl-f-error" class="warn-box" style="display:none;margin-top:8px"></div>' +
       '<button class="btn btn-lime" style="width:100%;margin-top:8px" onclick="submitCreatePaymentLink()">Create Link</button>' +
     '</div>'
   );
+}
+
+// Recipient helpers — single or bulk emails, validated client-side.
+function plParseEmails(str) {
+  return (str || '').split(/[\s,;]+/).map(function(s){ return s.trim().toLowerCase(); }).filter(Boolean)
+    .filter(function(e, i, a){ return a.indexOf(e) === i; });
+}
+function plEmailOk(e){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
+function plRecipientPreview() {
+  var ta = document.getElementById('pl-f-recipients'); if (!ta) return;
+  var list = plParseEmails(ta.value);
+  var bad  = list.filter(function(e){ return !plEmailOk(e); });
+  var el = document.getElementById('pl-f-recipreview');
+  if (el) el.innerHTML = list.length
+    ? (list.length - bad.length) + ' valid' + (bad.length ? ', <span style="color:var(--red)">' + bad.length + ' invalid</span>' : '')
+    : '';
+}
+function plUploadRecipientsXls(input) {
+  var f = input.files && input.files[0]; if (!f) return;
+  var reader = new FileReader();
+  reader.onload = function(e){
+    try {
+      var wb   = XLSX.read(e.target.result, { type:'array' });
+      var ws   = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'', raw:true });
+      var found = [];
+      rows.forEach(function(r){ (r||[]).forEach(function(c){ var s = String(c||'').trim(); if (s.indexOf('@') > 0) found.push(s); }); });
+      var ta = document.getElementById('pl-f-recipients');
+      ta.value = plParseEmails((ta.value ? ta.value + '\n' : '') + found.join('\n')).join('\n');
+      plRecipientPreview();
+    } catch (err) { alert('Could not read that file: ' + err.message); }
+    input.value = '';
+  };
+  reader.readAsArrayBuffer(f);
+}
+function plDownloadSampleXls() {
+  var aoa = [['email'], ['customer1@example.com'], ['customer2@example.com']];
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Recipients');
+  XLSX.writeFile(wb, 'paylode_recipients_sample.xlsx');
 }
 
 async function submitCreatePaymentLink() {
@@ -2487,6 +2536,34 @@ async function submitCreatePaymentLink() {
   }
   var exp = (document.getElementById('pl-f-expires').value || '').trim();
   if (exp) body.expires_at = exp;
+
+  // Recipient mode: one unique link per email, auto-emailed.
+  var recEl = document.getElementById('pl-f-recipients');
+  var recips = recEl ? plParseEmails(recEl.value) : [];
+  if (recips.length) {
+    var bad = recips.filter(function(e){ return !plEmailOk(e); });
+    if (bad.length && !confirm(bad.length + ' email(s) look invalid and will be skipped:\n' + bad.slice(0,10).join(', ') + (bad.length>10?' …':'') + '\n\nContinue?')) return;
+    body.recipients = recips;
+    var bres = await apiFetch('/payment-links/batch', { method: 'POST', body: JSON.stringify(body) });
+    if (!bres || !bres.status) return show((bres && bres.message) || 'Could not create the links.');
+    document.getElementById('modal').style.display = 'none';
+    loadMerchPaymentLinks();
+    var d = bres.data || {};
+    setTimeout(function() {
+      showModal(
+        '<div class="modal-header"><div class="modal-title">Payment Requests Sent</div>' +
+        '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+        '<div style="padding:6px 2px;font-size:13px">' +
+          '<p><strong>' + (d.created||0) + '</strong> unique link(s) created · <strong>' + (d.emailed||0) + '</strong> emailed.</p>' +
+          ((d.invalid_emails && d.invalid_emails.length) ? '<p style="color:var(--red)">Skipped ' + d.invalid_emails.length + ' invalid: ' + _escA(d.invalid_emails.slice(0,20).join(', ')) + '</p>' : '') +
+          ((d.email_failed && d.email_failed.length) ? '<p style="color:#b45309">Could not email ' + d.email_failed.length + ': ' + _escA(d.email_failed.slice(0,20).join(', ')) + '</p>' : '') +
+          '<p style="color:var(--gray-500)">Each recipient got their own one-time link. Track payment status in the list (To: shows the recipient).</p>' +
+        '</div>'
+      );
+    }, 250);
+    return;
+  }
+
   var res = await apiFetch('/payment-links', { method: 'POST', body: JSON.stringify(body) });
   if (!res || !res.status) return show((res && res.message) || 'Could not create the link.');
   document.getElementById('modal').style.display = 'none';
