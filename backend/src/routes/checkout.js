@@ -94,6 +94,16 @@ router.get('/:reference', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Build the customer-facing VA account name. PalmPay returns the licensed entity
+// with an amount tag, e.g. "Paylode Services Limited(Pay NGN 101.07)". We strip that
+// trailing tag and clarify WHO the money is for, so the payer sees they're paying
+// the merchant via Paylode: "Paylode Services Limited (Collected on behalf of <Merchant>)".
+function displayAccountName(rawName, merchantName) {
+  let base = String(rawName || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+  if (!base || /^palmpay$/i.test(base)) base = 'Paylode Services Limited';
+  return merchantName ? `${base} (Collected on behalf of ${merchantName})` : base;
+}
+
 // ── GET /api/v1/checkout/:reference/virtual-account ─────────────────────────
 // Mints (or returns the cached) one-time PalmPay virtual account for a bank-transfer
 // pay-in. The customer transfers to it; PalmPay fires the /payin webhook (keyed by
@@ -117,7 +127,7 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
       const displayExp = new Date(Math.min(Date.now() + 15 * 60 * 1000, new Date(orderExpAt).getTime())).toISOString();
       return ok(res, {
         account_number: cachedVa,
-        account_name:   txn.metadata.palmpay_va_name || 'PalmPay',
+        account_name:   displayAccountName(txn.metadata.palmpay_va_name, txn.merchant.businessName),
         bank_name:      txn.metadata.palmpay_va_bank || 'PalmPay',
         amount:         Number(txn.metadata?.payin?.charge ?? txn.amount),
         reference:      txn.reference,
@@ -195,7 +205,7 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
 
     return ok(res, {
       account_number: order.virtualAccountNo,
-      account_name:   order.accountName || 'PalmPay',
+      account_name:   displayAccountName(order.accountName, txn.merchant.businessName),
       bank_name:      order.bankName || 'PalmPay',
       amount:         chargeKobo,
       reference:      txn.reference,
