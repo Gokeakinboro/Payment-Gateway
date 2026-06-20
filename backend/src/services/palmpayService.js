@@ -129,11 +129,11 @@ async function sendPayout(item) {
   });
 }
 // Query a payout's result — the backstop for legs stuck 'sent' when the payout
-// webhook never lands. PalmPay returned OPEN_GW_000022 ("interface not found") for
-// the previously-hardcoded path, and the correct path must be confirmed against the
-// PalmPay portal, so it's ENV-DRIVEN (PALMPAY_PAYOUT_QUERY_PATH) — set the confirmed
-// path in .env to fix it with no code deploy. Returns a parsed, adapter-shaped result.
-const PAYOUT_QUERY_PATH = process.env.PALMPAY_PAYOUT_QUERY_PATH || '/api/v2/merchant/payment/queryStatus';
+// webhook never lands. Path confirmed from the PalmPay portal 2026-06-20
+// (en-us/pay-outs/query-merchant-payout-result): POST /api/v2/merchant/payment/
+// queryPayStatus, body { orderId | orderNo } (≥1), response orderStatus (2=success).
+// Still ENV-overridable (PALMPAY_PAYOUT_QUERY_PATH) in case PalmPay changes it.
+const PAYOUT_QUERY_PATH = process.env.PALMPAY_PAYOUT_QUERY_PATH || '/api/v2/merchant/payment/queryPayStatus';
 async function queryPayoutResult({ orderId, orderNo } = {}) {
   const r = await call(PAYOUT_QUERY_PATH, orderNo ? { orderId, orderNo } : { orderId });
   return {
