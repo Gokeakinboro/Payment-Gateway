@@ -10,7 +10,7 @@ const { prisma }  = require('../utils/db');
 const { ok, fail, notFound } = require('../utils/helpers');
 const { dispatchWebhook }    = require('../services/webhookService');
 const { computeFeesForTxn, channelToServiceType, computeFeesForPayin, resolvePayinRail, resolvePayinRateConfig } = require('../services/feeEngine');
-const isw = require('../services/interswitchService');
+const { resolveCardProcessor } = require('../services/cardRouter');
 const compliance = require('../services/complianceService');
 const palmpay = require('../services/palmpayService');
 const { finalizePayinSuccess } = require('../services/payinFinalize');
@@ -162,7 +162,8 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
         orderId:       txn.reference,
         amountKobo:    chargeKobo,           // customer transfers the gross
         callbackUrl:   CHECKOUT_URL + '?ref=' + encodeURIComponent(txn.reference),
-        title:         'Payment',
+        // Show the MERCHANT's name on the order so the payer sees who they're paying.
+        title:         (txn.merchant.businessName || 'Payment').slice(0, 80),
         description:   txn.metadata?.description || 'Pay with bank transfer',
         customerMobile: txn.metadata?.customer_phone || undefined,
         expireSeconds: 1800,
@@ -305,12 +306,23 @@ router.post('/:reference/charge/card', async (req, res, next) => {
       }
     }
 
-    // ── LIVE MODE — Interswitch ─────────────────────────────────────────────────
+    // ── LIVE MODE — card processor resolved from the CARD product's configured rail
+    // (NOT hardcoded). Defaults to Interswitch when no rail is set; a configured rail
+    // with no card adapter yet (e.g. MPGS) is reported cleanly instead of charging. ──
+    const cardProduct = txn.currency === 'USD' ? 'CARD_INTL' : 'CARD_LOCAL';
+    const proc = await resolveCardProcessor(prisma, cardProduct);
+    if (!proc.adapter) {
+      await prisma.transaction.update({
+        where: { id: txn.id },
+        data:  { status: 'FAILED', failureReason: `No card processor available for rail "${proc.railName}"` },
+      });
+      return fail(res, 'Card payments are temporarily unavailable.', 'NO_CARD_PROCESSOR', 503);
+    }
     const redirectUrl = CHECKOUT_URL + '?ref=' + txn.reference + '&status=callback';
 
     let iswResp;
     try {
-      iswResp = await isw.initializePurchase({
+      iswResp = await proc.adapter.initializePurchase({
         reference:     txn.reference,
         amount:        Number(txn.amount),
         customerEmail: txn.customerEmail,
@@ -323,7 +335,7 @@ router.post('/:reference/charge/card', async (req, res, next) => {
     } catch (iswErr) {
       await prisma.transaction.update({
         where: { id: txn.id },
-        data:  { status: 'FAILED', failureReason: 'Interswitch connection error: ' + iswErr.message },
+        data:  { status: 'FAILED', failureReason: proc.name + ' connection error: ' + iswErr.message },
       });
       return fail(res, 'Payment processor unavailable. Please try again.', 'PROCESSOR_ERROR', 502);
     }
@@ -376,7 +388,7 @@ router.post('/:reference/charge/card', async (req, res, next) => {
           charge_amount:       Number(fees.chargeAmount),
           merchant_settlement: Number(fees.merchantSettlement),
           fee:                 Number(fees.feePlusVat),
-          processor:           'interswitch',
+          processor:           proc.name,
           purchased_code:      iswResp.purchasedCode,
         }).catch(() => {});
       }
@@ -391,7 +403,7 @@ router.post('/:reference/charge/card', async (req, res, next) => {
         fee:                 Number(fees.feePlusVat),
         fee_paid_by:         fees.feePaidBy,
         channel:             'CARD',
-        processor:           'interswitch',
+        processor:           proc.name,
       }, 'Payment successful');
     }
 
@@ -437,9 +449,14 @@ router.post('/:reference/charge/card/otp', async (req, res, next) => {
       return ok(res, { reference: txn.reference, status: 'SUCCESS', sandbox: true }, 'OTP verified, payment successful');
     }
 
+    // Stay on the same processor that started the charge (resolved from config).
+    const otpProduct = txn.currency === 'USD' ? 'CARD_INTL' : 'CARD_LOCAL';
+    const otpProc = await resolveCardProcessor(prisma, otpProduct);
+    if (!otpProc.adapter) return fail(res, 'Card payments are temporarily unavailable.', 'NO_CARD_PROCESSOR', 503);
+
     let iswResp;
     try {
-      iswResp = await isw.submitOtp({ reference: txn.reference, otp });
+      iswResp = await otpProc.adapter.submitOtp({ reference: txn.reference, otp });
     } catch (iswErr) {
       return fail(res, 'OTP verification failed. Please try again.', 'OTP_ERROR', 502);
     }
@@ -466,14 +483,14 @@ router.post('/:reference/charge/card/otp', async (req, res, next) => {
       if (txn.merchant.webhookUrl) {
         dispatchWebhook(txn.merchant.id, 'payment.success', {
           reference: txn.reference, status: 'SUCCESS', channel: 'CARD',
-          principal: Number(txn.amount), processor: 'interswitch',
+          principal: Number(txn.amount), processor: otpProc.name,
         }).catch(() => {});
       }
 
       sendCustomerReceipt(txn.reference);
       return ok(res, {
         reference: txn.reference, status: 'SUCCESS',
-        principal: Number(txn.amount), channel: 'CARD', processor: 'interswitch',
+        principal: Number(txn.amount), channel: 'CARD', processor: otpProc.name,
       }, 'OTP verified, payment successful');
     }
 
