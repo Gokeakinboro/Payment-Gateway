@@ -4695,7 +4695,7 @@ async function managePayoutRails() {
   const rows = rails.map(r => { window.__railCfg[r.id] = r; return `<tr style="border-bottom:1px solid var(--gray-100)">
     <td style="padding:8px">${r.name}<div style="font-size:10px;color:var(--gray-400)">${r.sponsor_bank||'no sponsor set'}</div></td>
     <td style="padding:8px;font-weight:600;color:${r.float_balance>0?'var(--green)':'var(--gray-400)'}">${fmtNaira(r.float_balance||0)}<div style="font-size:10px;color:var(--gray-400);font-weight:400">${r.float_synced_at?('synced '+new Date(r.float_synced_at).toLocaleString()):'never synced'}</div></td>
-    <td style="padding:8px">${r.payout_flat_cost?fmtNaira(r.payout_flat_cost):'<span style="color:var(--gray-400)">—</span>'}<div style="font-size:10px;color:var(--gray-400)">per transfer</div></td>
+    <td style="padding:8px">${r.payout_flat_cost?fmtNaira(r.payout_flat_cost):'<span style="color:var(--gray-400)">—</span>'}<div style="font-size:10px;color:var(--gray-400)">other-bank / transfer</div>${r.payout_flat_cost_onus?('<div style="font-size:11px">'+fmtNaira(r.payout_flat_cost_onus)+'<span style="font-size:10px;color:var(--gray-400)"> on-us</span></div>'):''}</td>
     <td style="padding:8px;font-size:12px">${r.daily_value_cap!=null?(fmtNaira(r.used_today||0)+' / '+fmtNaira(r.daily_value_cap)):'<span style="color:var(--gray-400)">no cap</span>'}${r.tps_limit?'<div style="font-size:10px;color:var(--gray-400)">'+r.tps_limit+' TPS</div>':''}</td>
     <td style="padding:8px"><span class="badge ${r.status==='LIVE'?'badge-green':'badge-gray'}">${r.status}</span> ${r.payoutEnabled?'<span class="badge badge-green">on</span>':'<span class="badge badge-gray">off</span>'}</td>
     <td style="padding:8px;white-space:nowrap">
@@ -4720,9 +4720,10 @@ function editRailConfig(id) {
      <button class="modal-close" onclick="managePayoutRails()">&#10005;</button></div>
      <div class="form-group"><label class="form-label">Sponsor bank / switch</label><input class="form-input" id="rc-sponsor" value="${r.sponsor_bank||''}" placeholder="e.g. Wema (sponsor)"></div>
      <div class="form-grid">
-       <div class="form-group"><label class="form-label">Flat cost per transfer (₦)</label><input class="form-input" id="rc-cost" type="number" min="0" step="0.01" value="${r.payout_flat_cost!=null?(r.payout_flat_cost/100):''}" placeholder="e.g. 10"></div>
-       <div class="form-group"><label class="form-label">Daily value cap (₦, blank = none)</label><input class="form-input" id="rc-cap" type="number" min="0" value="${r.daily_value_cap!=null?(r.daily_value_cap/100):''}" placeholder="e.g. 50000000"></div>
+       <div class="form-group"><label class="form-label">Cost per transfer — other banks (₦)</label><input class="form-input" id="rc-cost" type="number" min="0" step="0.01" value="${r.payout_flat_cost!=null?(r.payout_flat_cost/100):''}" placeholder="e.g. 12"></div>
+       <div class="form-group"><label class="form-label">Cost per transfer — on-us / ${r.name} (₦)</label><input class="form-input" id="rc-cost-onus" type="number" min="0" step="0.01" value="${r.payout_flat_cost_onus!=null?(r.payout_flat_cost_onus/100):''}" placeholder="e.g. 5"></div>
      </div>
+     <div class="form-group"><label class="form-label">Daily value cap (₦, blank = none)</label><input class="form-input" id="rc-cap" type="number" min="0" value="${r.daily_value_cap!=null?(r.daily_value_cap/100):''}" placeholder="e.g. 50000000"></div>
      <div class="form-group"><label class="form-label">TPS limit (sends/sec, blank = none)</label><input class="form-input" id="rc-tps" type="number" min="0" value="${r.tps_limit!=null?r.tps_limit:''}" placeholder="from the bank/switch"></div>
      <div class="flex-between" style="margin-top:8px">
        <button class="btn btn-outline" onclick="managePayoutRails()">Back</button>
@@ -4731,11 +4732,13 @@ function editRailConfig(id) {
 }
 async function saveRailConfig(id) {
   const cost = document.getElementById('rc-cost').value;
+  const costOnus = document.getElementById('rc-cost-onus').value;
   const cap  = document.getElementById('rc-cap').value;
   const tps  = document.getElementById('rc-tps').value;
   const sponsor = document.getElementById('rc-sponsor').value.trim();
   const body = {
-    payout_flat_cost: cost === '' ? 0 : Math.round(parseFloat(cost) * 100),
+    payout_flat_cost:      cost === ''     ? 0 : Math.round(parseFloat(cost) * 100),
+    payout_flat_cost_onus: costOnus === '' ? 0 : Math.round(parseFloat(costOnus) * 100),
     daily_value_cap:  cap === '' ? null : Math.round(parseFloat(cap) * 100),
     tps_limit:        tps === '' ? null : parseInt(tps, 10),
     sponsor_bank:     sponsor || null,

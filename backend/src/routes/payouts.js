@@ -13,6 +13,15 @@ const { syncRailFloat } = require('../services/railFloat');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
+// ── "On-us" payout destinations ──────────────────────────────────────────────
+// A payout to one of these banks settles inside our own rail network (currently
+// PalmPay, NIBSS code 100033), so it is cheaper for the rail to move and we price
+// it lower for the merchant. On-us payouts resolve the PAYOUT_ONUS fee config;
+// everything else uses the standard PAYOUT config. Identifier only — the actual
+// FEE amounts live in editable rate config, never hardcoded.
+const ON_US_BANK_CODES = new Set(['100033']);  // PalmPay
+const isOnUsBank = (code) => ON_US_BANK_CODES.has(String(code || '').trim());
+
 // ── Dual-auth middleware: accepts JWT Bearer token OR sk_live_/sk_test_ API key ──
 function requireAuthOrApiKey(req, res, next) {
   const auth = req.headers.authorization || '';
@@ -213,32 +222,48 @@ router.post('/batches', requireAuthOrApiKey,
       const defaultNarration = `Payment from ${merchant.businessName}`;
 
       // ── Lookup payout fee rate (platform default or per-merchant override) ─────
+      // Payout pricing is tiered by destination: PAYOUT_ONUS for on-us (PalmPay)
+      // beneficiaries, PAYOUT for every other bank. Each tier resolves its own
+      // editable rate config (per-merchant override wins over the platform default),
+      // and each falls back to the standard PAYOUT config if the on-us tier isn't
+      // configured (so behaviour is unchanged until PAYOUT_ONUS is seeded).
       const VAT_RATE = 0.075; // 7.5% Nigerian VAT on service fees
-      // The exact PAYOUT config MUST win over the 'ALL' fallback. 'ALL' sorts before
-      // 'PAYOUT' alphabetically, so orderBy desc puts PAYOUT first (else 'ALL' wrongly
-      // wins and PAYOUT-specific rate/min/cap are ignored — same bug class as cards).
-      const [merchantPayoutRate, platformPayoutRate] = await Promise.all([
-        prisma.merchantRateConfig.findFirst({
-          where: { merchantId, channel: { in: ['PAYOUT', 'ALL'] } },
-          orderBy: { channel: 'desc' },
-        }),
-        prisma.platformRateConfig.findFirst({
-          where: { channel: { in: ['PAYOUT', 'ALL'] } },
-          orderBy: { channel: 'desc' },
-        }),
-      ]);
-      const rateConfig = merchantPayoutRate || platformPayoutRate;
-      const feeRate    = rateConfig ? Number(rateConfig.rate)      : 0;
-      const flatFee    = rateConfig ? BigInt(rateConfig.flatFee)   : 0n;
-      const feeCap     = rateConfig ? BigInt(rateConfig.cap)       : 0n;
-      const feeMin     = rateConfig ? BigInt(rateConfig.minCharge) : 0n;
+      // The exact channel MUST win over the 'ALL' fallback. 'ALL' sorts before the
+      // PAYOUT* channels alphabetically, so orderBy desc puts the specific channel
+      // first (else 'ALL' wrongly wins — same bug class as cards).
+      const resolveRate = async (channel) => {
+        const [m, p] = await Promise.all([
+          prisma.merchantRateConfig.findFirst({
+            where: { merchantId, channel: { in: [channel, 'ALL'] } },
+            orderBy: { channel: 'desc' },
+          }),
+          prisma.platformRateConfig.findFirst({
+            where: { channel: { in: [channel, 'ALL'] } },
+            orderBy: { channel: 'desc' },
+          }),
+        ]);
+        return m || p;
+      };
+      const payoutRate = await resolveRate('PAYOUT');
+      // On-us tier: prefer a PAYOUT_ONUS config, else fall back to the standard one.
+      const onUsRate = (await resolveRate('PAYOUT_ONUS')) || payoutRate;
+      const toRate = (cfg) => ({
+        rate:    cfg ? Number(cfg.rate)      : 0,
+        flatFee: cfg ? BigInt(cfg.flatFee)   : 0n,
+        cap:     cfg ? BigInt(cfg.cap)       : 0n,
+        min:     cfg ? BigInt(cfg.minCharge) : 0n,
+      });
+      const rateOther = toRate(payoutRate);
+      const rateOnUs  = toRate(onUsRate);
+      const feeRate   = rateOther.rate;   // batch-level rate (other-bank reference)
 
-      // ── Per-item fee + VAT calculation ─────────────────────────────────────────
+      // ── Per-item fee + VAT calculation (tier picked by destination) ─────────────
       const itemsWithFees = items.map(item => {
         const amt = BigInt(item.amount);
-        let fee   = amt * BigInt(Math.round(feeRate * 1_000_000)) / 1_000_000n + flatFee;
-        if (feeMin > 0n && fee < feeMin) fee = feeMin;
-        if (feeCap > 0n && fee > feeCap) fee = feeCap;
+        const r   = isOnUsBank(item.bank_code) ? rateOnUs : rateOther;
+        let fee   = amt * BigInt(Math.round(r.rate * 1_000_000)) / 1_000_000n + r.flatFee;
+        if (r.min > 0n && fee < r.min) fee = r.min;
+        if (r.cap > 0n && fee > r.cap) fee = r.cap;
         const vat   = fee * BigInt(Math.round(VAT_RATE * 1_000_000)) / 1_000_000n;
         const total = amt + fee + vat;  // what gets deducted from wallet for this item
         return { ...item, fee, vat, total };
@@ -554,7 +579,7 @@ router.get('/admin/payout-rails', requireAuth, requireSuperAdmin, async (req, re
   try {
     const rails = await prisma.paymentRail.findMany({
       select: { id: true, name: true, status: true, payoutEnabled: true, floatBalance: true, floatSyncedAt: true,
-                payoutFlatCost: true, dailyValueCap: true, tpsLimit: true, sponsorBank: true },
+                payoutFlatCost: true, payoutFlatCostOnUs: true, dailyValueCap: true, tpsLimit: true, sponsorBank: true },
       orderBy: { name: 'asc' },
     });
     // today's value already routed through each rail (for cap headroom display)
@@ -568,6 +593,7 @@ router.get('/admin/payout-rails', requireAuth, requireSuperAdmin, async (req, re
       id: r.id, name: r.name, status: r.status, payoutEnabled: r.payoutEnabled,
       float_balance: Number(r.floatBalance), float_naira: koboToNaira(r.floatBalance), float_synced_at: r.floatSyncedAt,
       payout_flat_cost: Number(r.payoutFlatCost), payout_flat_cost_naira: koboToNaira(r.payoutFlatCost),
+      payout_flat_cost_onus: Number(r.payoutFlatCostOnUs), payout_flat_cost_onus_naira: koboToNaira(r.payoutFlatCostOnUs),
       daily_value_cap: r.dailyValueCap != null ? Number(r.dailyValueCap) : null,
       daily_value_cap_naira: r.dailyValueCap != null ? koboToNaira(r.dailyValueCap) : null,
       used_today: Number(usedBy[r.id] || 0n), used_today_naira: koboToNaira(usedBy[r.id] || 0n),
@@ -593,12 +619,13 @@ router.post('/admin/rails/:id/sync-float', requireAuth, requireSuperAdmin, async
 // ── PUT /api/v1/payouts/admin/payout-rails/:id — SA toggles payout-enable/status ─
 router.put('/admin/payout-rails/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
-    const { payout_enabled, status, payout_flat_cost, daily_value_cap, tps_limit, sponsor_bank } = req.body;
+    const { payout_enabled, status, payout_flat_cost, payout_flat_cost_onus, daily_value_cap, tps_limit, sponsor_bank } = req.body;
     const data = {};
     if (payout_enabled !== undefined) data.payoutEnabled = !!payout_enabled;
     if (status !== undefined)         data.status = status;
     // Config (kobo for money fields). daily_value_cap = null clears the cap.
     if (payout_flat_cost !== undefined) data.payoutFlatCost = BigInt(Math.max(0, Math.round(Number(payout_flat_cost))));
+    if (payout_flat_cost_onus !== undefined) data.payoutFlatCostOnUs = BigInt(Math.max(0, Math.round(Number(payout_flat_cost_onus))));
     if (daily_value_cap !== undefined)  data.dailyValueCap  = (daily_value_cap === null || daily_value_cap === '') ? null : BigInt(Math.max(0, Math.round(Number(daily_value_cap))));
     if (tps_limit !== undefined)        data.tpsLimit       = (tps_limit === null || tps_limit === '') ? null : parseInt(tps_limit, 10);
     if (sponsor_bank !== undefined)     data.sponsorBank    = sponsor_bank || null;
@@ -687,14 +714,14 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
       const amt = BigInt(it.amount);
       let bucket = targets.find(t => t.remaining >= amt) ||
                    targets.slice().sort((x, y) => (y.remaining > x.remaining ? 1 : -1))[0]; // overflow → most room
-      bucket.items.push({ id: it.id, amount: amt }); bucket.remaining -= amt; bucket.sum += amt;
+      bucket.items.push({ id: it.id, amount: amt, bank_code: it.bank_code }); bucket.remaining -= amt; bucket.sum += amt;
     }
     const used = targets.filter(t => t.sum > 0n);
 
     // Rail config for the allocated rails (cost + cap + payout flag).
     const rails = await prisma.paymentRail.findMany({
       where: { id: { in: used.map(t => t.rail_id) } },
-      select: { id: true, name: true, payoutEnabled: true, payoutFlatCost: true, dailyValueCap: true },
+      select: { id: true, name: true, payoutEnabled: true, payoutFlatCost: true, payoutFlatCostOnUs: true, dailyValueCap: true },
     });
     const railById = Object.fromEntries(rails.map(r => [r.id, r]));
     for (const t of used) {
@@ -714,11 +741,17 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
             throw Object.assign(new Error(`${r.name} would exceed its daily cap (${koboToNaira(r.dailyValueCap).toLocaleString('en-NG')}).`), { _client: true });
         }
         // The rail takes its fee + VAT from OUR float too, so the float must cover
-        // beneficiary amounts PLUS (rail flat cost + 7.5% VAT) × number of transfers.
-        const railVatUnit  = (r.payoutFlatCost * 75n) / 1000n;            // 7.5% VAT on the flat cost
-        const railCostUnit = r.payoutFlatCost + railVatUnit;             // VAT-inclusive cost per transfer
-        const railCostTotal = railCostUnit * BigInt(t.items.length);
-        const floatNeeded   = t.sum + railCostTotal;                     // beneficiary total + rail charges
+        // beneficiary amounts PLUS (rail flat cost + 7.5% VAT) per transfer. The rail
+        // cost is destination-tiered: on-us (PalmPay) transfers cost less than
+        // other-bank transfers, so it's computed PER ITEM by the beneficiary's bank.
+        const costForItem = (bankCode) => isOnUsBank(bankCode) ? r.payoutFlatCostOnUs : r.payoutFlatCost;
+        const itemLegs = t.items.map(it => {
+          const base = BigInt(costForItem(it.bank_code));
+          const vat  = (base * 75n) / 1000n;                 // 7.5% VAT on the flat cost
+          return { ...it, railCost: base, railVat: vat };
+        });
+        const railChargesTotal = itemLegs.reduce((s, l) => s + l.railCost + l.railVat, 0n);
+        const floatNeeded      = t.sum + railChargesTotal;   // beneficiary total + rail charges
         // GUARDED float debit — never send more than our balance with the rail.
         const dec = await tx.$queryRaw`
           UPDATE payment_rails SET float_balance = float_balance - ${floatNeeded}, updated_at = NOW()
@@ -726,14 +759,14 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
         if (!dec.length) throw Object.assign(new Error(
           `${r.name} lacks enough float for ₦${koboToNaira(floatNeeded).toLocaleString('en-NG')} (payout ₦${koboToNaira(t.sum).toLocaleString('en-NG')} + rail fees).`), { _client: true });
         // Write a ledger leg per item (rail_cost = base, rail_vat = VAT on it) + tag the item.
-        for (const it of t.items) {
+        for (const it of itemLegs) {
           const orderId = `${batch.batch_ref}-${it.id.slice(0, 8)}`;   // unique, ≤32 chars
           await tx.$executeRaw`
             INSERT INTO rail_disbursements
               (payout_item_id, batch_id, merchant_id, rail_id, amount, rail_cost, rail_vat, status, rail_order_id, created_at, updated_at)
             VALUES
               (${it.id}::uuid, ${batchId}::uuid, ${batch.merchant_id}::uuid, ${t.rail_id}::uuid,
-               ${it.amount}, ${r.payoutFlatCost}, ${railVatUnit}, 'pending', ${orderId}, NOW(), NOW())`;
+               ${it.amount}, ${it.railCost}, ${it.railVat}, 'pending', ${orderId}, NOW(), NOW())`;
           await tx.$executeRaw`UPDATE payout_items SET rail_id = ${t.rail_id}::uuid, status = 'processing' WHERE id = ${it.id}::uuid`;
         }
       }

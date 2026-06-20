@@ -235,7 +235,8 @@ model PaymentRail {
   floatSyncedAt DateTime?  @map("float_synced_at")
   // Payout routing config (internal). Cost is flat per transfer; caps protect the
   // sponsor bank from overload. tpsLimit + dailyValueCap drive the router.
-  payoutFlatCost BigInt    @default(0) @map("payout_flat_cost")  // our cost/transfer (kobo)
+  payoutFlatCost BigInt    @default(0) @map("payout_flat_cost")  // our cost/transfer to OTHER banks (kobo)
+  payoutFlatCostOnUs BigInt @default(0) @map("payout_flat_cost_onus") // our cost/transfer to ON-US (PalmPay) accounts (kobo)
   dailyValueCap  BigInt?   @map("daily_value_cap")               // max kobo/day; null = none
   tpsLimit       Int?      @map("tps_limit")                     // max sends/sec; null = none
   sponsorBank    String?   @map("sponsor_bank")                  // settlement bank/switch
