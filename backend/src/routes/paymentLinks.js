@@ -195,8 +195,10 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
     if (link.expires_at && new Date(link.expires_at) < new Date())
       return fail(res, 'This payment link has expired', 'LINK_EXPIRED', 410);
 
+    // Email is OPTIONAL (a link is shared to many; each payer fills their own, or
+    // skips it). Validate only when provided. Used for the receipt + customer screening.
     const email = String(req.body.email || '').trim().toLowerCase();
-    if (!email || !email.includes('@')) return fail(res, 'A valid email is required');
+    if (email && !email.includes('@')) return fail(res, 'Enter a valid email or leave it blank');
 
     // Amount: fixed from the link, or customer-entered for open-amount links.
     let amount;
@@ -217,7 +219,7 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
 
     // Compliance gate (Mastercard Rules) — block a compliance-blocked / MATCH-listed
     // merchant or a sanctioned customer before a transaction is created.
-    const gate = compliance.screenTransaction(merchant, { customerEmail: email });
+    const gate = compliance.screenTransaction(merchant, { customerEmail: email || undefined });
     if (gate.decision === 'REJECT') return fail(res, gate.message, gate.reasonCode, 403);
 
     // KYC single-transaction limit (NGN).

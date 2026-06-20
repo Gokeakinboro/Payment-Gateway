@@ -894,6 +894,9 @@ async function initPaymentLink(slug) {
   } catch (e) { showFailed('Could not load this payment link.'); return; }
 
   const fixed = info.amount_fixed;
+  // The merchant may bake the customer's email into the link (?email=...). Prefill
+  // it, but keep it OPTIONAL and editable — the customer can change it or skip it.
+  const prefillEmail = (new URLSearchParams(window.location.search).get('email') || '').trim();
   const ov = document.createElement('div');
   ov.id = 'pl-overlay';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(26,26,26,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
@@ -903,8 +906,8 @@ async function initPaymentLink(slug) {
     + '<div style="font-size:20px;font-weight:700;color:#1A1A1A;margin:6px 0 2px;">' + plEsc(info.title || 'Payment') + '</div>'
     + (info.description ? '<div style="font-size:14px;color:#555;margin-bottom:4px;">' + plEsc(info.description) + '</div>' : '')
     + (fixed ? '<div style="font-size:30px;font-weight:800;color:#1A1A1A;margin:12px 0 6px;">' + formatNaira(info.amount) + '</div>' : '')
-    + '<label style="display:block;font-size:13px;color:#333;margin:16px 0 6px;font-weight:600;">Your email</label>'
-    + '<input id="pl-email" type="email" placeholder="you@example.com" style="width:100%;padding:12px 14px;border:1.5px solid #ddd;border-radius:9px;font-size:15px;box-sizing:border-box;">'
+    + '<label style="display:block;font-size:13px;color:#333;margin:16px 0 6px;font-weight:600;">Your email <span style="font-weight:400;color:#999;">(optional — for your receipt)</span></label>'
+    + '<input id="pl-email" type="email" value="' + plEsc(prefillEmail) + '" placeholder="you@example.com" style="width:100%;padding:12px 14px;border:1.5px solid #ddd;border-radius:9px;font-size:15px;box-sizing:border-box;">'
     + (fixed ? '' :
         '<label style="display:block;font-size:13px;color:#333;margin:14px 0 6px;font-weight:600;">Amount (₦)</label>'
       + '<input id="pl-amount" type="number" min="1" step="0.01" placeholder="0.00" style="width:100%;padding:12px 14px;border:1.5px solid #ddd;border-radius:9px;font-size:15px;box-sizing:border-box;">')
@@ -923,8 +926,9 @@ async function submitPaymentLink(slug, fixed) {
   const showErr = m => { errEl.textContent = m; errEl.style.display = 'block'; };
   errEl.style.display = 'none';
   const email = (document.getElementById('pl-email').value || '').trim();
-  if (!email || email.indexOf('@') < 0) return showErr('Please enter a valid email.');
-  const body = { email };
+  if (email && email.indexOf('@') < 0) return showErr('Please enter a valid email, or leave it blank.');
+  const body = {};
+  if (email) body.email = email;   // optional — customer may skip it
   if (!fixed) {
     const v = parseFloat(document.getElementById('pl-amount').value || '');
     if (!(v > 0)) return showErr('Please enter a valid amount.');
@@ -974,14 +978,16 @@ async function loadTransaction() {
     state.amountToPay     = payAmount;
     state.amountFormatted = formatNaira(payAmount);
     state.merchantName    = txn.merchant_name || state.merchantName;
-    state.customerEmail   = txn.customer_email || state.customerEmail;
+    // Use the txn's email authoritatively — '' means the payer skipped it (don't
+    // fall back to the demo placeholder).
+    state.customerEmail   = txn.customer_email != null ? txn.customer_email : state.customerEmail;
     state.description     = txn.description || state.description;
     state.isSandbox       = txn.is_sandbox || false;
 
     document.getElementById('merchant-name').querySelector('span').textContent = state.merchantName;
     document.getElementById('order-amount').textContent  = state.amountFormatted;
     document.getElementById('order-desc').textContent    = state.description;
-    document.getElementById('order-email').querySelector('span').textContent = state.customerEmail;
+    document.getElementById('order-email').querySelector('span').textContent = state.customerEmail || '—';
     document.getElementById('card-pay-amount').textContent = state.amountFormatted; var _ppa=document.getElementById('palmpay-pay-amount'); if(_ppa)_ppa.textContent=state.amountFormatted;
     document.getElementById('transfer-amount-display').textContent = state.amountFormatted;
     document.getElementById('ussd-amt').textContent = (txn.amount / 100).toFixed(2);
