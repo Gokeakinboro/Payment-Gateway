@@ -177,6 +177,16 @@ async function start() {
       setTimeout(run, 15000);          // once shortly after boot
       setInterval(run, POLL_MS);       // then on a schedule
       logger.info(`  Rail-float poll every ${Math.round(POLL_MS / 60000)} min (worker 0)`);
+
+      // Stuck-'sent' payout reconciliation — backstop for payout legs whose rail
+      // webhook never landed. Queries the rail's payout-result API and settles/refunds
+      // via the same shared logic as the webhook. Worker 0 only.
+      const { reconcileSentPayouts } = require('./services/payoutSettle');
+      const RECON_MS = Number(process.env.PAYOUT_RECON_MS || 3 * 60 * 1000); // 3 min
+      const recon = () => reconcileSentPayouts().catch(e => logger.error({ err: e }, 'payout reconciliation failed'));
+      setTimeout(recon, 25000);        // once shortly after boot
+      setInterval(recon, RECON_MS);    // then on a schedule
+      logger.info(`  Stuck-sent payout reconciliation every ${Math.round(RECON_MS / 60000)} min (worker 0)`);
     }
   } catch (err) {
     logger.error('Failed to start server:', err);
