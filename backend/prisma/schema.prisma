@@ -497,7 +497,7 @@ model EmailTemplate {
 
 model AuditLog {
   id          BigInt   @id @default(autoincrement())  // sequential, never uuid
-  actorId     String   @map("actor_id") @db.Uuid
+  actorId     String?  @map("actor_id") @db.Uuid   // null = system-initiated event (no human actor)
   action      String   // KYC_APPROVED | RATE_CHANGED | MERCHANT_SUSPENDED etc.
   entityType  String   @map("entity_type")
   entityId    String   @map("entity_id")
@@ -507,7 +507,7 @@ model AuditLog {
   ipAddress   String?  @map("ip_address")
   createdAt   DateTime @default(now()) @map("created_at")
 
-  actor User @relation(fields: [actorId], references: [id])
+  actor User? @relation(fields: [actorId], references: [id])
 
   @@index([actorId])
   @@index([entityType, entityId])
@@ -603,8 +603,11 @@ model MerchantWallet {
   merchant  Merchant       @relation(fields: [merchantId], references: [id])
   rail      PaymentRail?   @relation(fields: [railId], references: [id])
 
-  // Single balance per merchant — rails are internal; funding is NOT per rail.
-  @@unique([merchantId])
+  // Per-rail payout balance: one row per (merchant, rail). Payouts are pre-funded
+  // PER RAIL (the merchant deposits into the rail we tell them to fund), so a
+  // merchant can only pay out through a rail up to what they funded there. railId
+  // is nullable only for legacy rows (backfilled onto the live rail by migration).
+  @@unique([merchantId, railId])
   @@map("merchant_wallets")
 }
 
@@ -612,7 +615,7 @@ model WalletLedger {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   merchantId    String   @map("merchant_id") @db.Uuid
   railId        String?  @map("rail_id") @db.Uuid
-  entryType     String   @map("entry_type")   // CREDIT | DEBIT | FEE | VAT | REFUND | PAYOUT
+  entryType     String   @map("entry_type")   // CREDIT | DEBIT | FEE | VAT | REFUND | PAYOUT | REBALANCE
   amount        BigInt
   balanceBefore BigInt   @map("balance_before")
   balanceAfter  BigInt   @map("balance_after")
@@ -624,6 +627,28 @@ model WalletLedger {
   @@index([merchantId])
   @@index([reference])
   @@map("wallet_ledger")
+}
+
+// Treasury-transfer obligation: when SA rebalances a merchant's pre-funded payout
+// balance from one rail to another, the per-rail wallet move applies immediately and
+// this row tracks the matching PHYSICAL inter-bank transfer ops must execute.
+model RailRebalance {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId String    @map("merchant_id") @db.Uuid
+  fromRailId String    @map("from_rail_id") @db.Uuid
+  toRailId   String    @map("to_rail_id") @db.Uuid
+  amount     BigInt
+  status     String    @default("pending")   // pending | settled | cancelled
+  reference  String?
+  note       String?
+  createdBy  String?   @map("created_by") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at")
+  settledAt  DateTime? @map("settled_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@index([merchantId])
+  @@index([status])
+  @@map("rail_rebalances")
 }
 
 // ─── PAYOUT BATCHES ───────────────────────────────────────────────────────────

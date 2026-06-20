@@ -78,7 +78,9 @@ async function applyPayoutResult({ orderId, orderNo, sessionId, orderStatus, err
       const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
       const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
       await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
-      await prisma.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW() WHERE merchant_id=${leg.merchant_id}::uuid`;
+      // Refund the SAME (merchant, rail) wallet the payout was drawn from (per-rail
+      // pre-funding — the leg carries rail_id, so the money returns to its rail).
+      await prisma.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW() WHERE merchant_id=${leg.merchant_id}::uuid AND rail_id=${leg.rail_id}::uuid`;
       logger.warn({ orderId, source, merchant: leg.merchant_id, floatBack: String(floatBack), merchBack: String(merchBack) },
         `payout FAILED (${source}) — refunded rail float + merchant wallet`);
     }

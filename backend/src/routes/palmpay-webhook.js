@@ -17,6 +17,7 @@ const palmpay = require('../services/palmpayService');
 const { prisma } = require('../utils/db');
 const { logger } = require('../utils/logger');
 const { finalizePayinSuccess, failPayin } = require('../services/payinFinalize');
+const { dispatchWebhook } = require('../services/webhookService');
 
 const { applyPayoutResult, legStatusFor } = require('../services/payoutSettle');
 
@@ -76,27 +77,53 @@ async function handleVaCashin(b, res) {
       return res.status(200).send('success');
     }
 
-    // (2) static per-merchant VA → wallet top-up (full credit, no fee)
+    // (2) static per-merchant VA → a COLLECTION. Collections are remitted to the
+    // MERCHANT'S OWN bank via the settlement run; they must NEVER touch the payout
+    // wallet (which is funded only by the merchant depositing into OUR rail bank
+    // accounts). So we record it as a SUCCESS transaction (config-driven fee) and let
+    // settlement remit the balance to the merchant's bank — no wallet credit.
     const mva = await prisma.$queryRaw`SELECT merchant_id FROM merchant_virtual_accounts WHERE va_number = ${vaNo} AND status = 'active' LIMIT 1`;
     if (mva.length && isSuccess) {
       const merchantId = mva[0].merchant_id;
-      const amt = BigInt(b.orderAmount || 0);
-      const ref = 'PPVA-' + b.orderNo;
-      const seen = await prisma.$queryRaw`SELECT 1 FROM wallet_ledger WHERE reference = ${ref} LIMIT 1`;
-      if (!seen.length && amt > 0n) {
-        await prisma.$transaction(async (tx) => {
-          const w = await tx.$queryRaw`SELECT balance FROM merchant_wallets WHERE merchant_id = ${merchantId}::uuid FOR UPDATE`;
-          const before = w.length ? BigInt(w[0].balance) : 0n;
-          if (w.length) {
-            await tx.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${amt}, last_funded_at = NOW(), updated_at = NOW() WHERE merchant_id = ${merchantId}::uuid`;
-          } else {
-            await tx.$executeRaw`INSERT INTO merchant_wallets (id, merchant_id, balance, last_funded_at, created_at, updated_at) VALUES (gen_random_uuid(), ${merchantId}::uuid, ${amt}, NOW(), NOW(), NOW())`;
-          }
-          await tx.$executeRaw`
-            INSERT INTO wallet_ledger (id, merchant_id, entry_type, amount, balance_before, balance_after, reference, description, created_at)
-            VALUES (gen_random_uuid(), ${merchantId}::uuid, 'CREDIT', ${amt}, ${before}, ${before + amt}, ${ref}, ${'PalmPay VA top-up from ' + (b.payerAccountName || 'payer')}, NOW())`;
-        });
-        logger.info({ merchantId, amount: Number(amt), vaNo, orderNo: b.orderNo }, 'PalmPay VA top-up credited to wallet');
+      const face = BigInt(b.orderAmount || 0);
+      const ref  = 'TXN-PPVA-' + b.orderNo;                 // idempotent on PalmPay orderNo
+      const seen = await prisma.$queryRaw`SELECT 1 FROM transactions WHERE reference = ${ref} LIMIT 1`;
+      if (!seen.length && face > 0n) {
+        const merchant = await prisma.merchant.findUnique({ where: { id: merchantId } });
+        // Merchant-funded collection fee (the payer sent a fixed amount, so we deduct
+        // our fee and settle the balance). Rate is config-driven (VIRTUAL_ACCOUNT).
+        const rateRow = (await prisma.merchantRateConfig.findFirst({ where: { merchantId, channel: { in: ['VIRTUAL_ACCOUNT', 'ALL'] } }, orderBy: { channel: 'desc' } }))
+                     || (await prisma.platformRateConfig.findFirst({ where: { channel: { in: ['VIRTUAL_ACCOUNT', 'ALL'] } }, orderBy: { channel: 'desc' } }));
+        const rate = rateRow ? Number(rateRow.rate) : 0;
+        const cap  = rateRow ? BigInt(rateRow.cap || 0) : 0n;
+        const flat = rateRow ? BigInt(rateRow.flatFee || 0) : 0n;
+        let feeRaw = face * BigInt(Math.round(rate * 1_000_000)) / 1_000_000n + flat;
+        if (cap > 0n && feeRaw > cap) feeRaw = cap;
+        const vatOnFee    = feeRaw * 75n / 1000n;
+        const merchantFee = feeRaw + vatOnFee;
+        const settlement  = face - merchantFee;             // remitted to the merchant's bank
+        const railRow = await prisma.$queryRaw`SELECT id FROM payment_rails WHERE name = 'PalmPay' LIMIT 1`;
+        const railId  = railRow.length ? railRow[0].id : null;
+        await prisma.transaction.create({ data: {
+          reference: ref, merchantId,
+          customerEmail: 'palmpay-va@collections.local',
+          amount: face, currency: 'NGN', status: 'SUCCESS', channel: 'BANK_TRANSFER',
+          railId, merchantFee, netRevenue: feeRaw, vatOutput: vatOnFee, paidAt: new Date(),
+          metadata: {
+            method: 'palmpay_static_va', palmpay_va_no: vaNo, palmpay_order_no: b.orderNo,
+            payer: b.payerAccountName || null, fee_paid_by: 'merchant',
+            merchant_settlement: Number(settlement), description: 'Static VA collection',
+          },
+        }});
+        if (merchant && merchant.webhookUrl) {
+          dispatchWebhook(merchantId, 'payment.success', {
+            reference: ref, status: 'SUCCESS', channel: 'BANK_TRANSFER',
+            amount: Number(face), merchant_settlement: Number(settlement), fee: Number(merchantFee),
+            processor: 'palmpay_static_va',
+          }).catch(() => {});
+        }
+        logger.info({ merchantId, face: Number(face), settlement: Number(settlement), vaNo, orderNo: b.orderNo },
+          'PalmPay static-VA COLLECTION recorded → settles to merchant bank (NOT payout wallet)');
       }
     } else if (!mva.length) {
       logger.warn({ vaNo, orderNo: b.orderNo }, 'PalmPay VA cash-in: no matching checkout txn or merchant VA');
