@@ -53,7 +53,14 @@ router.get('/:reference', async (req, res, next) => {
     });
     if (!txn) return notFound(res, 'Transaction');
     if (txn.status !== 'PENDING') {
-      return ok(res, { status: txn.status, reference: txn.reference, already_processed: true });
+      // Include the settled amount so a re-opened success/failed receipt shows the
+      // real figure (txn.amount is the gross the customer paid after finalize).
+      return ok(res, {
+        status: txn.status, reference: txn.reference, already_processed: true,
+        amount: Number(txn.amount), amount_to_pay: Number(txn.amount),
+        currency: txn.currency, merchant_name: txn.merchant.businessName,
+        description: txn.metadata?.description || 'Payment',
+      });
     }
 
     // The headline amount = what the customer actually pays for a collection = face +

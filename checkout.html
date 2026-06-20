@@ -838,11 +838,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const linkSlug = params.get('link');
   if (linkSlug && !params.get('ref') && !params.get('reference')) { initPaymentLink(linkSlug); return; }
 
+  const hasRefParam = !!(params.get('ref') || params.get('reference'));
   state.reference   = params.get('ref')        || params.get('reference') || generateDemoRef();
   state.isSandbox   = params.get('sandbox')    === 'true' || window.location.hostname.includes('sandbox');
-  const rawAmount   = parseInt(params.get('amount') || '500000');
-  state.amount      = rawAmount;
-  state.amountFormatted = formatNaira(rawAmount);
+  // NEVER fabricate a payable amount. Use the URL `amount` only if explicitly
+  // passed; for a real transaction without one (e.g. a payment-link ?ref), show a
+  // neutral placeholder and let loadTransaction() fill the authoritative
+  // amount_to_pay from the API. The ₦5,000 sample is kept ONLY for the param-less
+  // demo/preview — otherwise the order summary could flash a wrong figure before
+  // the API responds.
+  const amtParam    = params.get('amount');
+  const rawAmount   = (amtParam != null && amtParam !== '') ? parseInt(amtParam)
+                       : (!hasRefParam ? 500000 : null);   // demo sample only; real txn waits for API
+  state.amount      = rawAmount != null ? rawAmount : 0;
+  state.amountFormatted = rawAmount != null ? formatNaira(rawAmount) : '—';
   state.merchantName    = decodeURIComponent(params.get('merchant') || 'Demo Merchant');
   state.customerEmail   = decodeURIComponent(params.get('email')    || 'customer@example.com');
   state.description     = decodeURIComponent(params.get('desc')     || 'Payment');
@@ -857,7 +866,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('transfer-amount-display').textContent = state.amountFormatted;
 
   // USSD amount (short form)
-  const naira = rawAmount / 100;
+  const naira = (rawAmount != null ? rawAmount : 0) / 100;
   document.getElementById('ussd-amt').textContent = naira;
   state.ussdAmt = naira;
 
@@ -943,8 +952,15 @@ async function loadTransaction() {
 
     const txn = data.data;
 
-    // Already processed — show result immediately
+    // Already processed — show result immediately (with the real settled amount).
     if (txn.already_processed) {
+      const paid = txn.amount_to_pay != null ? txn.amount_to_pay : txn.amount;
+      if (paid != null) {
+        state.amount          = txn.amount != null ? txn.amount : state.amount;
+        state.amountFormatted = formatNaira(paid);
+        state.merchantName    = txn.merchant_name || state.merchantName;
+        state.description     = txn.description   || state.description;
+      }
       if (txn.status === 'SUCCESS') showSuccess('card');
       else if (txn.status === 'FAILED' || txn.status === 'REVERSED')
         showFailed('This transaction has already been processed.');
