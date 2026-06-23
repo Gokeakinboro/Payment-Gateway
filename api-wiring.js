@@ -464,6 +464,7 @@ async function viewMerchant(id) {
       '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Close</button>' +
       '<div class="flex" style="gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
         (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')">&#128196; KYC Documents</button>' : '') +
+        (canReview ? '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\';resendSandbox(\'' + id + '\',\'' + nameEsc + '\')">&#128231; Resend Sandbox</button>' : '') +
         (canReview ? (m.isActive
           ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';suspendMerchant(\'' + id + '\',\'' + nameEsc + '\')">Suspend</button>'
           : '<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="document.getElementById(\'modal\').style.display=\'none\';activateMerchant(\'' + id + '\',\'' + nameEsc + '\')">Activate</button>') : '') +
@@ -703,6 +704,21 @@ async function closeMerchant(id, name) {
   var res = await apiFetch('/merchants/' + id + '/close', { method: 'PUT', body: JSON.stringify({ reason: reason }) });
   if (res && res.status) { alert(name + ' has been closed.'); loadMerchants(); }
   else alert('Error: ' + ((res && res.message) || 'Close failed'));
+}
+
+// SA/admin/compliance: (re)send sandbox credentials to an existing merchant.
+// Resets the login to a fresh temp password and (re)issues any missing sk_test/pk_test keys.
+async function resendSandbox(id, name) {
+  if (!confirm('Email sandbox credentials to ' + name + '?\n\nThis resets their dashboard password to a new temporary one and (re)issues any missing sandbox keys.')) return;
+  var res = await apiFetch('/merchants/' + id + '/resend-sandbox', { method: 'POST', body: JSON.stringify({}) });
+  if (!res || !res.status) { alert('Error: ' + ((res && res.message) || 'Resend failed')); return; }
+  var d = res.data || {};
+  var msg = d.credentials_emailed ? ('Sandbox credentials emailed to ' + d.email + '.') : ('Email not sent (SMTP off / failed) — copy these and share securely:');
+  if (d.temp_password) msg += '\n\nTemporary password: ' + d.temp_password;
+  if (d.keys && d.keys.sk_test) msg += '\nsk_test: ' + d.keys.sk_test;
+  if (d.keys && d.keys.pk_test) msg += '\npk_test: ' + d.keys.pk_test;
+  if (d.keys && (d.keys.sk_test || d.keys.pk_test)) msg += '\n\n(API keys are shown ONCE.)';
+  alert(msg);
 }
 
 // Permanently delete a merchant (SA only). Backend refuses if the account has any

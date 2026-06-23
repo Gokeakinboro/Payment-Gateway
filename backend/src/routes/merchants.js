@@ -1,11 +1,18 @@
 'use strict';
 const router = require('express').Router();
+const bcrypt = require('bcryptjs');
 const { prisma } = require('../utils/db');
 const { requireAuth, requireSuperAdmin, requireCompliance, requireAdmin, requireAdminOrCompliance, requirePermission } = require('../middleware/auth');
 const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../utils/helpers');
 const { logAudit } = require('../services/auditService');
 const { hasPermission } = require('../config/permissions');
 const { sendEmail, getEmailContent } = require('../services/emailService');
+const { logger } = require('../utils/logger');
+
+// Local temp-password generator (mirrors auth.js genTempPassword).
+function genTempPassword() {
+  return Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!';
+}
 
 // Field-level gate (#8): only viewers with view_merchant_contact (SUPER_ADMIN by
 // default) may see merchant contact details. Strips PII from list/detail payloads.
@@ -692,6 +699,83 @@ router.post('/:id/api-keys/rotate', requireAuth, async (req, res, next) => {
     const newKey = generateApiKey(prefix);
     await prisma.apiKey.create({ data:{ merchantId, keyHash:hashApiKey(newKey), keyPrefix:prefix, label:req.body.label||'Rotated Key', isSandbox:prefix.includes('test') } });
     ok(res, { key:newKey, prefix, message:'Key rotated. Save this — it will not be shown again.' });
+  } catch (e) { next(e); }
+});
+
+// ── Admin/Compliance: (re)send sandbox credentials to an existing merchant ───
+// For merchants created before sandbox-at-signup, or who lost dashboard/API access.
+// Ensures sandbox keys exist (mints any missing; rotate=true forces fresh ones),
+// optionally resets the login to a temp password, then emails it all to the merchant.
+// Only freshly-issued key values can be revealed — stored keys are hashes.
+router.post('/:id/resend-sandbox', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
+  try {
+    const resetPassword = req.body.reset_password !== false; // default: reset so login always works
+    const rotate        = req.body.rotate === true;          // default: keep existing keys intact
+
+    const merchant = await prisma.merchant.findUnique({
+      where: { id: req.params.id },
+      include: { user: { select: { id:true, email:true, firstName:true } } },
+    });
+    if (!merchant) return notFound(res, 'Merchant');
+    const email = merchant.user?.email || merchant.businessEmail;
+    if (!email) return fail(res, 'Merchant has no email on file', 'NO_EMAIL');
+
+    // Ensure sandbox keys exist; reveal only values we issue here.
+    const issued = {}; // prefix -> full key (shown once)
+    for (const prefix of ['sk_test', 'pk_test']) {
+      const existing = await prisma.apiKey.findFirst({ where: { merchantId: merchant.id, keyPrefix: prefix, isActive: true } });
+      if (existing && !rotate) continue;
+      if (existing && rotate) await prisma.apiKey.updateMany({ where: { merchantId: merchant.id, keyPrefix: prefix }, data: { isActive: false } });
+      const full = generateApiKey(prefix);
+      await prisma.apiKey.create({ data: { merchantId: merchant.id, keyHash: hashApiKey(full), keyPrefix: prefix, label: rotate ? 'Re-issued by admin' : 'Issued by admin', isSandbox: true } });
+      issued[prefix] = full;
+    }
+
+    // Optionally reset the login to a fresh temp password (forces change on next sign-in).
+    let tempPassword = null;
+    if (resetPassword && merchant.user?.id) {
+      tempPassword = genTempPassword();
+      await prisma.user.update({ where: { id: merchant.user.id }, data: { passwordHash: await bcrypt.hash(tempPassword, 10), mustChangePassword: true } });
+    }
+
+    await logAudit(req.user.id, 'MERCHANT_SANDBOX_RESENT', 'merchants', merchant.id, null,
+      { reset_password: resetPassword, rotated: rotate, keys_issued: Object.keys(issued) }, req.body.notes || null, req.ip).catch(() => {});
+
+    const loginUrl = (process.env.APP_URL || 'https://paylodeservices.com') + '/login.html';
+    const keyRows = Object.entries(issued).map(([k, v]) => `<tr><td><strong>${k}</strong></td><td><code>${v}</code></td></tr>`).join('');
+    const fallbackHtml =
+      `<h2>Your Paylode sandbox access</h2>` +
+      `<p>Hi ${merchant.businessName}, here are your test / sandbox credentials so you can integrate and test in our sandbox.</p>` +
+      `<table cellpadding="6" style="border-collapse:collapse">` +
+        `<tr><td><strong>Dashboard</strong></td><td><a href="${loginUrl}">${loginUrl}</a></td></tr>` +
+        `<tr><td><strong>Email</strong></td><td>${email}</td></tr>` +
+        (tempPassword ? `<tr><td><strong>Temporary password</strong></td><td><code>${tempPassword}</code></td></tr>` : '') +
+        keyRows +
+      `</table>` +
+      (tempPassword ? `<p style="color:#b00"><strong>You'll be asked to set a new password on first sign-in.</strong></p>` : '') +
+      (keyRows ? `<p><small>API keys are shown once — store them securely.</small></p>`
+               : `<p>Your existing test keys are in <strong>Dashboard → API Keys</strong> — use “rotate” there to reveal a fresh one.</p>`) +
+      `<p>Use your <code>sk_test</code> / <code>pk_test</code> keys in sandbox. Your live keys activate automatically once your KYC is approved.</p>`;
+
+    // When we minted keys, send the full content directly so the keys are guaranteed
+    // to reach the merchant; otherwise let an SA-customized template win.
+    const content = keyRows
+      ? { subject: 'Your Paylode sandbox access', html: fallbackHtml }
+      : await getEmailContent('sandbox_welcome',
+          { business: merchant.businessName, email, temp_password: tempPassword || '', login_url: loginUrl },
+          'Your Paylode sandbox access', fallbackHtml);
+
+    const result = await sendEmail({ to: email, subject: content.subject, html: content.html })
+      .catch(e => { logger.error({ err: e }, 'resend-sandbox email failed'); return { error: true }; });
+
+    ok(res, {
+      merchant_id: merchant.id,
+      email,
+      credentials_emailed: !(result && (result.error || result.skipped)),
+      temp_password: tempPassword || undefined,
+      keys: issued,
+      note: 'Shown once. If the email was skipped (SMTP off) or failed, share these securely with the merchant.',
+    }, 'Sandbox credentials sent');
   } catch (e) { next(e); }
 });
 
