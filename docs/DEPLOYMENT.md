@@ -59,9 +59,18 @@ PAYLODE_HOST='45.141.122.223' PAYLODE_SSH_PASS='…' python tools/deploy.py --fr
 static files). **Bump the cache-bust query** (`?v=NN` on `app.js` / `api-wiring.js` in
 `dashboard.html`) for any frontend JS change so browsers and the Cloudflare edge pick it up.
 
-> A push to `main` triggers the GitHub Action, which deploys **frontend only** (it
-> `git checkout`s the static files from `origin/main` to the web root). It does **not**
-> pull backend source — backend always goes through `deploy.py`.
+> **A push to `main` auto-deploys the frontend to users.** The GitHub Action
+> (`.github/workflows/deploy.yml`) deploys **frontend only** to **both** boxes:
+> - **45 (live web)** — files are `scp`'d straight from the runner to `/var/www/paylode`
+>   (45 has no git checkout), then nginx is reloaded. This is what users hit.
+> - **176 (fallback origin)** — `git checkout`s the static files from `origin/main` to its
+>   web root (runs even if the 45 step fails, so the failover never goes stale).
+>
+> It does **not** pull backend source — backend always goes through `deploy.py`.
+> Secrets used: `WEB_HOST` (45), `SERVER_HOST` (176), `SERVER_USER`, `SERVER_SSH_KEY`
+> (a dedicated `github-actions-deploy-paylode` ed25519 key trusted on both boxes),
+> `DEPLOY_PATH`. So the manual `--frontend` deploy above is now only a fallback —
+> a normal push reaches the live site on its own.
 
 ## Rollback
 
