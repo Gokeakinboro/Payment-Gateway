@@ -4,6 +4,13 @@ on:
   push:
     branches: [ main ]
 
+# Frontend only. Backend ships via the gated tools/deploy.py.
+#
+# Topology: Cloudflare serves users from the LIVE web box (45, secrets.WEB_HOST),
+# which is a static /var/www/paylode with NO git checkout — so we push the files
+# from the runner via scp. The processing box (176, secrets.SERVER_HOST) HAS the
+# repo at DEPLOY_PATH and is kept current as a Cloudflare failover origin.
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -11,7 +18,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy to Contabo via SSH
+      # 1) LIVE web server (45) — this is what users actually hit.
+      - name: Copy frontend to live web (45)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.WEB_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
+          source: "app.js,api-wiring.js,dashboard.html,onboarding.html,login.html,index.html,checkout.html,sandbox.html"
+          target: "/var/www/paylode/"
+
+      - name: Reload nginx on live web (45)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.WEB_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
+          script: nginx -s reload || systemctl reload nginx || true
+
+      # 2) Fallback origin (176) — has the git checkout; keep it current too.
+      #    Runs even if the 45 step failed, so the fallback never goes stale.
+      - name: Deploy frontend to fallback origin (176)
+        if: ${{ always() }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -30,4 +60,4 @@ jobs:
             cp app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html sandbox.html /var/www/paylode/
             pm2 reload paylode-api || true
             nginx -s reload
-            echo "Frontend deployed from main at $(date)"
+            echo "Frontend deployed to 176 from main at $(date)"
