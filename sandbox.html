@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Developer Sandbox | Paylode Services Limited</title>
+<meta name="description" content="Test your Paylode payment integration with sandbox credentials, test cards, and code examples. No real money involved.">
+<meta name="robots" content="noindex">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#0f1829;color:#fff;min-height:100vh}
+a{color:#7dc534;text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Topbar */
+.topbar{background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.08);padding:0 40px;height:64px;display:flex;align-items:center;justify-content:space-between}
+.logo{display:flex;align-items:center;gap:12px;text-decoration:none}
+.logo-box{width:40px;height:40px;background:#7dc534;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#1a2744;font-size:18px}
+.logo-name{font-size:18px;font-weight:700;color:#fff}
+.topbar-right{display:flex;align-items:center;gap:16px}
+.badge-sandbox{background:rgba(125,197,52,.15);border:1px solid rgba(125,197,52,.3);color:#9ed44f;font-size:12px;font-weight:600;padding:4px 12px;border-radius:20px;letter-spacing:.5px}
+.btn-back{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer;text-decoration:none;transition:all .15s}
+.btn-back:hover{background:rgba(255,255,255,.14);text-decoration:none}
+
+/* Hero */
+.hero{padding:60px 40px 40px;max-width:900px;margin:0 auto}
+.hero-tag{display:inline-flex;align-items:center;gap:6px;background:rgba(125,197,52,.1);border:1px solid rgba(125,197,52,.2);border-radius:20px;padding:6px 16px;font-size:12px;color:#9ed44f;margin-bottom:20px}
+.hero h1{font-size:36px;font-weight:700;line-height:1.2;margin-bottom:12px}
+.hero h1 span{color:#7dc534}
+.hero p{font-size:16px;color:rgba(255,255,255,.55);line-height:1.7;max-width:620px}
+
+/* Main layout */
+.content{max-width:900px;margin:0 auto;padding:0 40px 80px}
+
+/* Section */
+.section{margin-bottom:48px}
+.section-title{font-size:20px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap-10px}
+.section-title::before{content:'';display:inline-block;width:4px;height:20px;background:#7dc534;border-radius:2px;margin-right:10px;flex-shrink:0}
+
+/* Warning banner */
+.warning{background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.25);border-radius:12px;padding:16px 20px;margin-bottom:32px;display:flex;gap:12px;align-items:flex-start}
+.warning svg{flex-shrink:0;margin-top:2px}
+.warning-text{font-size:14px;color:rgba(255,255,255,.7);line-height:1.6}
+.warning-text strong{color:#fbbf24}
+
+/* Credential card */
+.cred-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.cred-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:20px}
+.cred-label{font-size:11px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.cred-value{font-family:'JetBrains Mono',monospace;font-size:13px;color:#fff;word-break:break-all;line-height:1.5}
+.cred-value.green{color:#7dc534}
+.copy-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(125,197,52,.1);border:1px solid rgba(125,197,52,.2);color:#9ed44f;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;margin-top:10px;border:none;font-family:'DM Sans',sans-serif;transition:all .15s}
+.copy-btn:hover{background:rgba(125,197,52,.2)}
+.copy-btn.copied{color:#fff;background:rgba(125,197,52,.3)}
+
+/* Test cards */
+.card-table{width:100%;border-collapse:collapse;font-size:14px}
+.card-table th{text-align:left;padding:10px 16px;font-size:11px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid rgba(255,255,255,.08)}
+.card-table td{padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.05);color:rgba(255,255,255,.8)}
+.card-table td:first-child{font-family:'JetBrains Mono',monospace;font-size:13px;color:#fff}
+.result-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
+.result-success{background:rgba(34,197,94,.15);color:#4ade80}
+.result-fail{background:rgba(239,68,68,.12);color:#f87171}
+.result-otp{background:rgba(234,179,8,.12);color:#fbbf24}
+
+/* Code block */
+.tabs{display:flex;gap:4px;margin-bottom:0;border-bottom:1px solid rgba(255,255,255,.08)}
+.tab{padding:10px 18px;font-size:13px;font-weight:500;color:rgba(255,255,255,.4);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+.tab.active{color:#7dc534;border-bottom-color:#7dc534}
+.tab-content{display:none}
+.tab-content.active{display:block}
+.code-wrap{background:#0a1020;border:1px solid rgba(255,255,255,.08);border-top:none;border-radius:0 0 12px 12px;overflow:hidden}
+.tabs-wrap{background:#0a1020;border:1px solid rgba(255,255,255,.08);border-radius:12px 12px 0 0}
+pre{padding:24px;font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.7;color:#e2e8f0;overflow-x:auto;white-space:pre}
+.kw{color:#7dc534}.str{color:#fbbf24}.cm{color:rgba(255,255,255,.3);font-style:italic}.fn{color:#60a5fa}.num{color:#f97316}
+
+/* Steps */
+.steps{display:flex;flex-direction:column;gap:0}
+.step{display:flex;gap:20px;padding-bottom:32px;position:relative}
+.step:not(:last-child)::before{content:'';position:absolute;left:19px;top:40px;bottom:0;width:1px;background:rgba(255,255,255,.08)}
+.step-num{width:40px;height:40px;background:rgba(125,197,52,.15);border:1px solid rgba(125,197,52,.3);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#7dc534;font-weight:700;font-size:15px;flex-shrink:0}
+.step-body{padding-top:8px}
+.step-title{font-weight:600;font-size:15px;margin-bottom:6px}
+.step-desc{font-size:14px;color:rgba(255,255,255,.55);line-height:1.6}
+
+/* Response example */
+.resp-box{background:#0a1020;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:20px;margin-top:12px}
+
+/* Footer note */
+.footer-note{background:rgba(125,197,52,.06);border:1px solid rgba(125,197,52,.15);border-radius:12px;padding:20px 24px;display:flex;gap:16px;align-items:flex-start;margin-top:48px}
+.footer-note-body{font-size:14px;color:rgba(255,255,255,.6);line-height:1.7}
+.footer-note-body strong{color:#fff}
+.footer-note-body a{color:#7dc534}
+
+@media(max-width:640px){
+  .topbar{padding:0 16px}
+  .hero{padding:40px 16px 24px}
+  .content{padding:0 16px 60px}
+  .cred-grid{grid-template-columns:1fr}
+  .hero h1{font-size:26px}
+  pre{font-size:12px;padding:16px}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="/" class="logo">
+    <div class="logo-box">P</div>
+    <div>
+      <div class="logo-name">Paylode</div>
+    </div>
+  </a>
+  <div class="topbar-right">
+    <span class="badge-sandbox">SANDBOX</span>
+    <a href="/" class="btn-back">&#8592; Back to site</a>
+  </div>
+</div>
+
+<div class="hero">
+  <div class="hero-tag">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+    Developer Sandbox
+  </div>
+  <h1>Test your integration with <span>no real money</span></h1>
+  <p>Use the credentials below to build and test your Paylode integration. Sandbox transactions are completely isolated — no real payments are processed.</p>
+</div>
+
+<div class="content">
+
+  <div class="warning">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <div class="warning-text"><strong>These are shared test credentials.</strong> Do not use them in production. Your live keys are available in your merchant dashboard after KYC approval. Never commit API keys to source code — use environment variables.</div>
+  </div>
+
+  <!-- Credentials -->
+  <div class="section">
+    <div class="section-title">Sandbox Credentials</div>
+    <div class="cred-grid">
+      <div class="cred-card">
+        <div class="cred-label">Secret Key (sk_test)</div>
+        <div class="cred-value green" id="sk_test">sk_test_b816ad4a088a9fe9245387ff0b05cd3b18e507ae342425f5</div>
+        <button class="copy-btn" onclick="copyVal('sk_test',this)">&#x2398; Copy</button>
+      </div>
+      <div class="cred-card">
+        <div class="cred-label">Public Key (pk_test)</div>
+        <div class="cred-value" id="pk_test">pk_test_30ce4d587ef509a13469668ebc7b1f56baaab14fc0b64a31</div>
+        <button class="copy-btn" onclick="copyVal('pk_test',this)">&#x2398; Copy</button>
+      </div>
+      <div class="cred-card">
+        <div class="cred-label">Webhook Secret</div>
+        <div class="cred-value" id="wh_secret">4be9052281099e0ff5457f729b7df1d713e4166aca2c43580e9a47c594370046</div>
+        <button class="copy-btn" onclick="copyVal('wh_secret',this)">&#x2398; Copy</button>
+      </div>
+      <div class="cred-card">
+        <div class="cred-label">Dashboard Login</div>
+        <div class="cred-value" style="font-size:12px;line-height:1.8">
+          sandbox@paylodeservices.com<br>
+          <span style="color:rgba(255,255,255,.4)">Password:</span> SandboxTest2026!
+        </div>
+      </div>
+    </div>
+    <p style="font-size:13px;color:rgba(255,255,255,.35);margin-top:8px">API base URL: <span style="font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,.5)">https://paylodeservices.com/api/v1</span></p>
+  </div>
+
+  <!-- Test Cards -->
+  <div class="section">
+    <div class="section-title">Test Card Numbers</div>
+    <p style="font-size:14px;color:rgba(255,255,255,.45);margin-bottom:16px">Use any future expiry date, any 3-digit CVV, and any cardholder name.</p>
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden">
+      <table class="card-table">
+        <thead>
+          <tr>
+            <th>Card Number</th>
+            <th>Result</th>
+            <th>Use case</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>4084 0841 1111 1111</td>
+            <td><span class="result-badge result-success">&#x2713; Success</span></td>
+            <td>Payment completes immediately</td>
+          </tr>
+          <tr>
+            <td>4084 0841 1111 1112</td>
+            <td><span class="result-badge result-fail">&#x2717; Declined</span></td>
+            <td>Insufficient funds / card declined</td>
+          </tr>
+          <tr>
+            <td>4084 0841 1111 1113</td>
+            <td><span class="result-badge result-fail">&#x2717; Failed</span></td>
+            <td>Generic card failure</td>
+          </tr>
+          <tr>
+            <td>4084 0800 0000 0409</td>
+            <td><span class="result-badge result-otp">&#x25CF; OTP</span></td>
+            <td>Triggers OTP screen (enter any 6 digits)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Integration steps -->
+  <div class="section">
+    <div class="section-title">How to integrate</div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <div class="step-title">Install the SDK</div>
+          <div class="step-desc">Choose your language. All SDKs work identically — swap sk_test for sk_live when going live.</div>
+          <pre style="margin-top:12px;background:#0a1020;border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:14px;font-family:'JetBrains Mono',monospace;font-size:13px;color:#e2e8f0"><span class="cm"># Node.js</span>
+npm install paylode-node
+
+<span class="cm"># Python</span>
+pip install paylode-python
+
+<span class="cm"># PHP</span>
+composer require paylode/paylode-php</pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <div class="step-title">Initialize a payment</div>
+          <div class="step-desc">Create a transaction and redirect your customer to the authorization URL.</div>
+          <div style="margin-top:12px">
+            <div class="tabs-wrap">
+              <div class="tabs" id="tabs1">
+                <div class="tab active" onclick="switchTab('tabs1','node')">Node.js</div>
+                <div class="tab" onclick="switchTab('tabs1','python')">Python</div>
+                <div class="tab" onclick="switchTab('tabs1','php')">PHP</div>
+                <div class="tab" onclick="switchTab('tabs1','curl')">cURL</div>
+              </div>
+            </div>
+            <div class="code-wrap">
+              <div class="tab-content active" id="tabs1-node">
+<pre><span class="kw">const</span> Paylode = <span class="fn">require</span>(<span class="str">'paylode-node'</span>);
+<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">Paylode</span>(<span class="str">'sk_test_b816ad4a088a9fe9245387ff0b05cd3b18e507ae342425f5'</span>);
+
+<span class="kw">const</span> txn = <span class="kw">await</span> client.transaction.<span class="fn">initialize</span>({
+  email:        <span class="str">'customer@example.com'</span>,
+  amount:       <span class="num">500000</span>,        <span class="cm">// &#x20A6;5,000 in kobo</span>
+  callback_url: <span class="str">'https://yoursite.com/payment/verify'</span>,
+  metadata:     { order_id: <span class="str">'ORD-001'</span> },
+});
+
+<span class="cm">// Redirect customer to payment page</span>
+res.<span class="fn">redirect</span>(txn.data.authorization_url);</pre>
+              </div>
+              <div class="tab-content" id="tabs1-python">
+<pre><span class="kw">from</span> paylode <span class="kw">import</span> Paylode
+
+client = <span class="fn">Paylode</span>(<span class="str">'sk_test_b816ad4a088a9fe9245387ff0b05cd3b18e507ae342425f5'</span>)
+
+txn = client.transaction.<span class="fn">initialize</span>(
+  email=<span class="str">'customer@example.com'</span>,
+  amount=<span class="num">500000</span>,              <span class="cm"># &#x20A6;5,000 in kobo</span>
+  callback_url=<span class="str">'https://yoursite.com/payment/verify'</span>,
+  metadata={<span class="str">'order_id'</span>: <span class="str">'ORD-001'</span>},
+)
+
+<span class="cm"># Redirect customer</span>
+<span class="fn">redirect</span>(txn[<span class="str">'data'</span>][<span class="str">'authorization_url'</span>])</pre>
+              </div>
+              <div class="tab-content" id="tabs1-php">
+<pre><span class="fn">require</span> <span class="str">'vendor/autoload.php'</span>;
+<span class="kw">use</span> Paylode\Paylode;
+
+<span class="kw">$client</span> = <span class="kw">new</span> <span class="fn">Paylode</span>(<span class="str">'sk_test_b816ad4a088a9fe9245387ff0b05cd3b18e507ae342425f5'</span>);
+
+<span class="kw">$txn</span> = <span class="kw">$client</span>->transaction-><span class="fn">initialize</span>([
+  <span class="str">'email'</span>        => <span class="str">'customer@example.com'</span>,
+  <span class="str">'amount'</span>       => <span class="num">500000</span>,
+  <span class="str">'callback_url'</span> => <span class="str">'https://yoursite.com/payment/verify'</span>,
+]);
+
+<span class="fn">header</span>(<span class="str">'Location: '</span> . <span class="kw">$txn</span>[<span class="str">'data'</span>][<span class="str">'authorization_url'</span>]);</pre>
+              </div>
+              <div class="tab-content" id="tabs1-curl">
+<pre>curl -X POST https://paylodeservices.com/api/v1/transactions/initialize \
+  -H <span class="str">"Authorization: Bearer sk_test_b816ad4a088a9fe9245387ff0b05cd3b18e507ae342425f5"</span> \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{
+    "email": "customer@example.com",
+    "amount": 500000,
+    "callback_url": "https://yoursite.com/payment/verify",
+    "metadata": { "order_id": "ORD-001" }
+  }'</span></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <div class="step-title">Verify the payment server-side</div>
+          <div class="step-desc">When the customer returns to your callback URL, always verify server-side. Never trust the frontend.</div>
+          <div style="margin-top:12px">
+            <div class="tabs-wrap">
+              <div class="tabs" id="tabs2">
+                <div class="tab active" onclick="switchTab('tabs2','node')">Node.js</div>
+                <div class="tab" onclick="switchTab('tabs2','python')">Python</div>
+                <div class="tab" onclick="switchTab('tabs2','curl')">cURL</div>
+              </div>
+            </div>
+            <div class="code-wrap">
+              <div class="tab-content active" id="tabs2-node">
+<pre><span class="cm">// GET /payment/verify?reference=TXN-xxxx</span>
+<span class="kw">const</span> result = <span class="kw">await</span> client.transaction.<span class="fn">verify</span>(req.query.reference);
+
+<span class="kw">if</span> (result.data.status === <span class="str">'SUCCESS'</span>) {
+  <span class="kw">const</span> orderId = result.data.metadata.order_id;
+  <span class="kw">await</span> <span class="fn">fulfillOrder</span>(orderId);
+  res.<span class="fn">redirect</span>(<span class="str">'/order/complete'</span>);
+} <span class="kw">else</span> {
+  res.<span class="fn">redirect</span>(<span class="str">'/order/failed'</span>);
+}</pre>
+              </div>
+              <div class="tab-content" id="tabs2-python">
+<pre>result = client.transaction.<span class="fn">verify</span>(reference)
+
+<span class="kw">if</span> result[<span class="str">'data'</span>][<span class="str">'status'</span>] == <span class="str">'SUCCESS'</span>:
+    order_id = result[<span class="str">'data'</span>][<span class="str">'metadata'</span>][<span class="str">'order_id'</span>]
+    <span class="fn">fulfill_order</span>(order_id)
+    <span class="kw">return</span> <span class="fn">redirect</span>(<span class="str">'/order/complete'</span>)
+<span class="kw">else</span>:
+    <span class="kw">return</span> <span class="fn">redirect</span>(<span class="str">'/order/failed'</span>)</pre>
+              </div>
+              <div class="tab-content" id="tabs2-curl">
+<pre>curl https://paylodeservices.com/api/v1/transactions/verify/TXN-xxxx \
+  -H <span class="str">"Authorization: Bearer sk_test_b816ad4a088a9fe9245387ff0b05cd3b18e507ae342425f5"</span></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <div class="step-title">Handle webhooks</div>
+          <div class="step-desc">Webhooks are the reliable way to track payment status in real time. Always verify the signature.</div>
+          <div style="margin-top:12px">
+            <div class="tabs-wrap">
+              <div class="tabs" id="tabs3">
+                <div class="tab active" onclick="switchTab('tabs3','node')">Node.js (Express)</div>
+              </div>
+            </div>
+            <div class="code-wrap">
+              <div class="tab-content active" id="tabs3-node">
+<pre>app.<span class="fn">post</span>(<span class="str">'/webhook/paylode'</span>,
+  express.<span class="fn">raw</span>({ type: <span class="str">'application/json'</span> }),
+  (req, res) => {
+    <span class="kw">const</span> sig    = req.headers[<span class="str">'x-paylode-signature'</span>];
+    <span class="kw">const</span> secret = process.env.PAYLODE_WEBHOOK_SECRET;
+
+    <span class="kw">if</span> (!Paylode.webhooks.<span class="fn">verify</span>(req.body, sig, secret)) {
+      <span class="kw">return</span> res.<span class="fn">sendStatus</span>(<span class="num">401</span>);
+    }
+
+    <span class="kw">const</span> event = <span class="fn">JSON</span>.parse(req.body);
+
+    <span class="kw">switch</span> (event.event) {
+      <span class="kw">case</span> <span class="str">'payment.success'</span>:
+        <span class="fn">fulfillOrder</span>(event.data.metadata.order_id);
+        <span class="kw">break</span>;
+      <span class="kw">case</span> <span class="str">'payment.failed'</span>:
+        <span class="fn">notifyCustomer</span>(event.data.customer.email);
+        <span class="kw">break</span>;
+    }
+
+    res.<span class="fn">sendStatus</span>(<span class="num">200</span>);
+  }
+);</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <div class="step-title">Go live</div>
+          <div class="step-desc">Replace your test key with your live key. That's it — no other code changes needed. <a href="/onboarding">Complete KYC onboarding</a> to get your live keys.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Webhook events -->
+  <div class="section">
+    <div class="section-title">Webhook Events</div>
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden">
+      <table class="card-table">
+        <thead><tr><th>Event</th><th>When it fires</th></tr></thead>
+        <tbody>
+          <tr><td>payment.success</td><td>Payment completed successfully</td></tr>
+          <tr><td>payment.failed</td><td>Payment was declined or failed</td></tr>
+          <tr><td>refund.processed</td><td>A refund was issued to the customer</td></tr>
+          <tr><td>chargeback.raised</td><td>Customer raised a chargeback with their bank</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+
+  <!-- Payouts -->
+  <div class="section">
+    <div class="section-title">Payout Test Scenarios</div>
+    <p style="font-size:14px;color:rgba(255,255,255,.45);margin-bottom:20px">
+      Payouts use JWT authentication (login first, then use the token). Wallet balance must be funded by a Paylode admin before batches can be submitted.
+    </p>
+
+    <!-- Auth step -->
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:20px;margin-bottom:20px">
+      <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:10px">Step 1 &mdash; Get an auth token</p>
+      <pre style="background:#0a1020;border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#e2e8f0;overflow-x:auto">curl -X POST https://paylodeservices.com/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"sandbox@paylodeservices.com","password":"SandboxTest2026!"}'
+
+<span style="color:rgba(255,255,255,.3)"># Response → {"token": "eyJ..."}</span></pre>
+    </div>
+
+    <!-- Test scenarios table -->
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden;margin-bottom:20px">
+      <table class="card-table">
+        <thead><tr><th>Scenario</th><th>How to trigger</th><th>Expected result</th></tr></thead>
+        <tbody>
+          <tr>
+            <td style="font-family:'JetBrains Mono',monospace;font-size:12px">Single payout</td>
+            <td>POST /payouts/batches — 1 item</td>
+            <td><span class="result-badge result-success">processing</span> status returned</td>
+          </tr>
+          <tr>
+            <td style="font-family:'JetBrains Mono',monospace;font-size:12px">Batch payout</td>
+            <td>POST /payouts/batches — multiple items</td>
+            <td>Batch created, wallet debited, all items queued</td>
+          </tr>
+          <tr>
+            <td style="font-family:'JetBrains Mono',monospace;font-size:12px">Scheduled payout</td>
+            <td>Add <code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px">scheduled_at</code> (future ISO date)</td>
+            <td><span class="result-badge result-otp">scheduled</span> status, not yet processed</td>
+          </tr>
+          <tr>
+            <td style="font-family:'JetBrains Mono',monospace;font-size:12px">Insufficient balance</td>
+            <td>Amount exceeds wallet balance</td>
+            <td><span class="result-badge result-fail">INSUFFICIENT_BALANCE</span> error 400</td>
+          </tr>
+          <tr>
+            <td style="font-family:'JetBrains Mono',monospace;font-size:12px">Invalid account</td>
+            <td>account_number not 10 digits</td>
+            <td>Validation error 400</td>
+          </tr>
+          <tr>
+            <td style="font-family:'JetBrains Mono',monospace;font-size:12px">CSV bulk upload</td>
+            <td>POST /payouts/batches/upload (multipart)</td>
+            <td>Batch created from CSV file</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Code examples -->
+    <div class="tabs-wrap">
+      <div class="tabs" id="tabs4">
+        <div class="tab active" onclick="switchTab('tabs4','single')">Single Payout</div>
+        <div class="tab" onclick="switchTab('tabs4','batch')">Batch Payout</div>
+        <div class="tab" onclick="switchTab('tabs4','sched')">Scheduled</div>
+        <div class="tab" onclick="switchTab('tabs4','csv')">CSV Format</div>
+      </div>
+    </div>
+    <div class="code-wrap">
+      <div class="tab-content active" id="tabs4-single">
+<pre>curl -X POST https://paylodeservices.com/api/v1/payouts/batches \
+  -H "Authorization: Bearer &lt;YOUR_JWT_TOKEN&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Vendor payment - June",
+    "items": [
+      {
+        "account_number": "0123456789",
+        "bank_code": "<span class='bc'>058</span>",
+        "amount": 500000,
+        "account_name": "Ada Okonkwo",
+        "narration": "Payment for services"
+      }
+    ]
+  }'
+
+<span style="color:rgba(255,255,255,.3)"># Response</span>
+{
+  "status": true,
+  "data": {
+    "batch_id": "...",
+    "batch_ref": "PAY-XXXXXX",
+    "total_amount": "5000.00",
+    "total_items": 1,
+    "status": "processing",
+    "wallet_balance_after": "45000.00"
+  }
+}</pre>
+      </div>
+      <div class="tab-content" id="tabs4-batch">
+<pre>curl -X POST https://paylodeservices.com/api/v1/payouts/batches \
+  -H "Authorization: Bearer &lt;YOUR_JWT_TOKEN&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Staff salaries - June 2026",
+    "items": [
+      {
+        "account_number": "0123456789",
+        "bank_code": "<span class='bc'>058</span>",
+        "amount": 20000000,
+        "account_name": "Emeka Obi",
+        "narration": "June salary"
+      },
+      {
+        "account_number": "9876543210",
+        "bank_code": "<span class='bc'>057</span>",
+        "amount": 18000000,
+        "account_name": "Fatima Musa",
+        "narration": "June salary"
+      },
+      {
+        "account_number": "5556667771",
+        "bank_code": "<span class='bc'>044</span>",
+        "amount": 15000000,
+        "account_name": "Chidi Nwosu",
+        "narration": "June salary"
+      }
+    ]
+  }'</pre>
+      </div>
+      <div class="tab-content" id="tabs4-sched">
+<pre>curl -X POST https://paylodeservices.com/api/v1/payouts/batches \
+  -H "Authorization: Bearer &lt;YOUR_JWT_TOKEN&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "End of month settlement",
+    "scheduled_at": "2026-06-30T09:00:00.000Z",
+    "items": [
+      {
+        "account_number": "0123456789",
+        "bank_code": "<span class='bc'>011</span>",
+        "amount": 5000000,
+        "narration": "June settlement"
+      }
+    ]
+  }'
+
+<span style="color:rgba(255,255,255,.3)"># Returns status: "scheduled" (not processed yet)</span></pre>
+      </div>
+      <div class="tab-content" id="tabs4-csv">
+<pre><span style="color:rgba(255,255,255,.3)"># CSV format (account_number, bank_code, amount_naira, narration, account_name)</span>
+0123456789,058,5000,June salary,Emeka Obi
+9876543210,057,4500,June salary,Fatima Musa
+5556667771,044,3800,Vendor payment,Chidi Nwosu
+
+<span style="color:rgba(255,255,255,.3)"># Upload via multipart form</span>
+curl -X POST https://paylodeservices.com/api/v1/payouts/batches/upload \
+  -H "Authorization: Bearer &lt;YOUR_JWT_TOKEN&gt;" \
+  -F "file=@payouts.csv" \
+  -F "description=June payroll"</pre>
+      </div>
+    </div>
+
+    <!-- Bank picker -->
+    <div style="margin-top:20px">
+      <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:10px">Select a bank to populate the examples</p>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+        <select id="bank-picker" onchange="onBankPick()" style="background:#0a1020;border:1px solid rgba(255,255,255,.15);color:#fff;padding:10px 14px;border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif;min-width:260px;cursor:pointer">
+          <option value="">Loading banks...</option>
+        </select>
+        <span id="bank-code-preview" style="font-family:'JetBrains Mono',monospace;font-size:13px;color:#7dc534;display:none"></span>
+      </div>
+      <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden">
+        <table class="card-table" id="bank-table">
+          <thead><tr><th>Bank code</th><th>Bank name</th><th>Type</th></tr></thead>
+          <tbody id="bank-table-body">
+            <tr><td colspan="3" style="text-align:center;color:rgba(255,255,255,.3);padding:20px">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Webhook for payouts -->
+    <div style="background:rgba(125,197,52,.06);border:1px solid rgba(125,197,52,.15);border-radius:12px;padding:16px 20px;margin-top:20px">
+      <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:6px">Payout webhook events</p>
+      <p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px">Listen for these events on your webhook endpoint:</p>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#9ed44f;line-height:2">
+        payout.completed &nbsp;&mdash; item successfully sent to beneficiary<br>
+        payout.failed &nbsp;&mdash; item failed (wrong account, bank error)<br>
+        payout.batch.completed &nbsp;&mdash; all items in a batch processed
+      </div>
+    </div>
+  </div>
+
+  <!-- Test-now callout -->
+  <div class="section">
+    <div style="background:rgba(125,197,52,.06);border:1px solid rgba(125,197,52,.15);border-radius:12px;padding:16px 20px">
+      <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:6px">Test now, verify later</p>
+      <p style="font-size:13px;color:rgba(255,255,255,.5)">Your <strong>test</strong> keys (<code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px">sk_test_…</code> / <code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px">pk_test_…</code>) work immediately — you can integrate and test every product below <strong>before</strong> your merchant KYC is approved. <strong>Live</strong> keys (<code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px">sk_live_…</code>) only start working once KYC is verified. Sandbox transactions never move real money.</p>
+    </div>
+  </div>
+
+  <!-- Bank Transfer / Virtual Accounts -->
+  <div class="section">
+    <div class="section-title">Bank Transfer (Virtual Accounts)</div>
+    <p style="font-size:14px;color:rgba(255,255,255,.45);margin-bottom:20px">
+      Initialize with the <code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px">bank_transfer</code> channel. Paylode returns a one-time virtual account; the customer transfers to it and the payment auto-confirms. In sandbox the account and the inbound transfer are simulated — no real funds move.
+    </p>
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:20px;margin-bottom:20px">
+      <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:10px">Initialize a bank-transfer charge</p>
+<pre style="background:#0a1020;border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#e2e8f0;overflow-x:auto">curl -X POST https://paylodeservices.com/api/v1/transactions/initialize \
+  -H <span class="str">"Authorization: Bearer sk_test_b816ad4a088a9fe9245387ff0b05cd3b18e507ae342425f5"</span> \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{
+    "email": "customer@example.com",
+    "amount": 500000,
+    "currency": "NGN",
+    "channels": ["bank_transfer"]
+  }'</span>
+<span style="color:rgba(255,255,255,.3)"># Response → data.authorization_url (hosted page shows the virtual account number + amount)
+# data.product → "VIRTUAL_ACCOUNT"</span></pre>
+    </div>
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden">
+      <table class="card-table">
+        <thead><tr><th>Scenario</th><th>How to trigger</th><th>Expected result</th></tr></thead>
+        <tbody>
+          <tr><td style="font-family:'JetBrains Mono',monospace;font-size:12px">Successful transfer</td><td>Open authorization_url → "I've sent the money"</td><td><span class="result-badge result-success">success</span> + <code>payment.success</code> webhook</td></tr>
+          <tr><td style="font-family:'JetBrains Mono',monospace;font-size:12px">Virtual account expiry</td><td>Wait past the on-screen timer</td><td>Session expires, no charge</td></tr>
+          <tr><td style="font-family:'JetBrains Mono',monospace;font-size:12px">Verify</td><td>GET /transactions/verify/&lt;reference&gt;</td><td>Returns final status — always verify server-side</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- USSD -->
+  <div class="section">
+    <div class="section-title">USSD</div>
+    <p style="font-size:14px;color:rgba(255,255,255,.45);margin-bottom:20px">
+      Initialize with the <code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px">ussd</code> channel. Paylode returns a USSD string the customer dials on their phone to authorise. Sandbox simulates the dial/approve step.
+    </p>
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:20px;margin-bottom:20px">
+<pre style="background:#0a1020;border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#e2e8f0;overflow-x:auto">curl -X POST https://paylodeservices.com/api/v1/transactions/initialize \
+  -H <span class="str">"Authorization: Bearer sk_test_b816ad4a088a9fe9245387ff0b05cd3b18e507ae342425f5"</span> \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{
+    "email": "customer@example.com",
+    "amount": 500000,
+    "currency": "NGN",
+    "channels": ["ussd"]
+  }'</span>
+<span style="color:rgba(255,255,255,.3)"># Response → data.authorization_url (hosted page shows the *USSD code to dial)
+# data.product → "USSD"</span></pre>
+    </div>
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden">
+      <table class="card-table">
+        <thead><tr><th>Scenario</th><th>How to trigger</th><th>Expected result</th></tr></thead>
+        <tbody>
+          <tr><td style="font-family:'JetBrains Mono',monospace;font-size:12px">Approved</td><td>Open authorization_url → "Simulate approval"</td><td><span class="result-badge result-success">success</span> + <code>payment.success</code></td></tr>
+          <tr><td style="font-family:'JetBrains Mono',monospace;font-size:12px">Timed out</td><td>Do not approve within the window</td><td><span class="result-badge result-fail">failed</span> — session expired</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- International (USD) cards -->
+  <div class="section">
+    <div class="section-title">International Cards (USD)</div>
+    <p style="font-size:14px;color:rgba(255,255,255,.45);margin-bottom:20px">
+      Pass <code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px">currency:"USD"</code> with the <code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px">card</code> channel. Amount is in <strong>cents</strong>. The transaction is routed as an international card (CARD_INTL), billed and settled entirely in USD. Optionally pass <code>card_scheme</code> or <code>card_bin</code> so the right scheme rate applies.
+    </p>
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:20px;margin-bottom:20px">
+<pre style="background:#0a1020;border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#e2e8f0;overflow-x:auto">curl -X POST https://paylodeservices.com/api/v1/transactions/initialize \
+  -H <span class="str">"Authorization: Bearer sk_test_b816ad4a088a9fe9245387ff0b05cd3b18e507ae342425f5"</span> \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{
+    "email": "customer@example.com",
+    "amount": 50000,
+    "currency": "USD",
+    "channels": ["card"],
+    "card_scheme": "VISA"
+  }'</span>
+<span style="color:rgba(255,255,255,.3)"># amount 50000 = $500.00 (cents) · data.product → "CARD_INTL" (or CARD_INTL_VISA)
+# data.fee_preview.display → "$17.50" · settled in a separate USD batch</span></pre>
+    </div>
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden">
+      <table class="card-table">
+        <thead><tr><th>Field</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td style="font-family:'JetBrains Mono',monospace;font-size:12px">amount</td><td>In cents ($1 = 100). NGN amounts are in kobo.</td></tr>
+          <tr><td style="font-family:'JetBrains Mono',monospace;font-size:12px">card_scheme</td><td>Optional: VISA | MASTERCARD | AMEX | DINERS (rate applied if admin configured one, else flat CARD_INTL).</td></tr>
+          <tr><td style="font-family:'JetBrains Mono',monospace;font-size:12px">card_bin</td><td>Optional: first 6 digits — scheme auto-detected if card_scheme omitted.</td></tr>
+          <tr><td style="font-family:'JetBrains Mono',monospace;font-size:12px">Test card</td><td>Use the test cards above; charge succeeds/declines the same way, reported in USD.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Settlements -->
+  <div class="section">
+    <div class="section-title">Settlements</div>
+    <p style="font-size:14px;color:rgba(255,255,255,.45);margin-bottom:20px">
+      Successful charges are grouped into settlement batches (NGN and USD settled separately). Authenticate with a JWT (login first), then fetch your settlements. Sandbox simulates a T+1 cycle so you can see how payouts to your bank account are reported.
+    </p>
+    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:20px;margin-bottom:20px">
+<pre style="background:#0a1020;border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#e2e8f0;overflow-x:auto"><span style="color:rgba(255,255,255,.3)"># 1) Get a token</span>
+curl -X POST https://paylodeservices.com/api/v1/auth/login \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{"email":"sandbox@paylodeservices.com","password":"SandboxTest2026!"}'</span>
+
+<span style="color:rgba(255,255,255,.3)"># 2) List settlement batches</span>
+curl https://paylodeservices.com/api/v1/settlements \
+  -H <span class="str">"Authorization: Bearer &lt;YOUR_JWT_TOKEN&gt;"</span>
+
+<span style="color:rgba(255,255,255,.3)"># 3) Your statement (per-currency summary)</span>
+curl https://paylodeservices.com/api/v1/reports/merchant-statement \
+  -H <span class="str">"Authorization: Bearer &lt;YOUR_JWT_TOKEN&gt;"</span></pre>
+    </div>
+    <div style="background:rgba(125,197,52,.06);border:1px solid rgba(125,197,52,.15);border-radius:12px;padding:16px 20px">
+      <p style="font-size:13px;color:rgba(255,255,255,.5)">Fees are deducted before settlement. NGN and USD are always reported side by side and never summed. The statement shows <code>summary_by_currency</code> so you can reconcile each balance separately.</p>
+    </div>
+  </div>
+
+  <!-- Need help -->
+  <div class="footer-note">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7dc534" stroke-width="1.5" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <div class="footer-note-body">
+      <strong>Need help with your integration?</strong><br>
+      Chat with our AI developer assistant at <a href="/developer-chat/">paylodeservices.com/developer-chat</a> — it answers questions about the API, SDKs, webhooks, and KYC requirements in real time. For business and commercial enquiries, email <a href="mailto:sales@paylodeservices.com">sales@paylodeservices.com</a>.
+    </div>
+  </div>
+
+</div>
+
+<script>
+function copyVal(id, btn) {
+  const val = document.getElementById(id).textContent.trim();
+  navigator.clipboard.writeText(val).then(() => {
+    btn.textContent = '✓ Copied';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+function switchTab(groupId, tabId) {
+  const group = document.getElementById(groupId);
+  group.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  group.querySelectorAll('.tab').forEach(t => {
+    if (t.textContent.toLowerCase().includes(tabId) || (tabId === 'curl' && t.textContent === 'cURL')) {
+      t.classList.add('active');
+    }
+  });
+  const wrap = group.closest('.step-body') || group.parentElement.parentElement;
+  wrap.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  const target = document.getElementById(groupId + '-' + tabId);
+  if (target) target.classList.add('active');
+}
+
+// Bank picker
+async function loadBanks() {
+  try {
+    const token = await getSandboxToken();
+    const r = await fetch('/api/v1/payouts/banks', {
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    const data = await r.json();
+    const banks = data.data || [];
+    const sel = document.getElementById('bank-picker');
+    const tbody = document.getElementById('bank-table-body');
+    if (!banks.length) {
+      sel.innerHTML = '<option value="">No banks available yet</option>';
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:rgba(255,255,255,.3);padding:20px">Bank list not yet configured</td></tr>';
+      return;
+    }
+    sel.innerHTML = '<option value="">-- Choose a bank --</option>' +
+      banks.map(b => `<option value="${b.bank_code}" data-name="${b.bank_name}">${b.bank_name} (${b.bank_code})</option>`).join('');
+    tbody.innerHTML = banks.map(b =>
+      `<tr><td>${b.bank_code}</td><td>${b.bank_name}</td><td style="color:rgba(255,255,255,.4);font-size:12px">${b.bank_type || 'commercial'}</td></tr>`
+    ).join('');
+  } catch {
+    const sel = document.getElementById('bank-picker');
+    sel.innerHTML = FALLBACK_BANKS.map(b => `<option value="${b.code}" data-name="${b.name}">${b.name} (${b.code})</option>`).join('');
+    const tbody = document.getElementById('bank-table-body');
+    tbody.innerHTML = FALLBACK_BANKS.map(b =>
+      `<tr><td>${b.code}</td><td>${b.name}</td><td style="color:rgba(255,255,255,.4);font-size:12px">${b.type}</td></tr>`
+    ).join('');
+  }
+}
+
+const FALLBACK_BANKS = [
+  {code:'057',name:'Zenith Bank',type:'commercial'},
+  {code:'058',name:'Guaranty Trust Bank',type:'commercial'},
+  {code:'044',name:'Access Bank',type:'commercial'},
+  {code:'033',name:'United Bank for Africa',type:'commercial'},
+  {code:'011',name:'First Bank of Nigeria',type:'commercial'},
+  {code:'070',name:'Fidelity Bank',type:'commercial'},
+  {code:'214',name:'FCMB',type:'commercial'},
+  {code:'232',name:'Sterling Bank',type:'commercial'},
+  {code:'035',name:'Wema Bank',type:'commercial'},
+  {code:'999992',name:'PalmPay',type:'mobile'},
+  {code:'999991',name:'Moniepoint',type:'mobile'},
+  {code:'120001',name:'OPay',type:'mobile'},
+  {code:'090405',name:'Kuda Bank',type:'digital'},
+];
+
+async function getSandboxToken() {
+  const r = await fetch('/api/v1/auth/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({email:'sandbox@paylodeservices.com', password:'SandboxTest2026!'})
+  });
+  const d = await r.json();
+  return d.token || '';
+}
+
+function onBankPick() {
+  const sel = document.getElementById('bank-picker');
+  const code = sel.value;
+  const name = sel.selectedOptions[0]?.dataset?.name || '';
+  if (!code) return;
+  const preview = document.getElementById('bank-code-preview');
+  preview.textContent = code + ' — ' + name;
+  preview.style.display = 'inline';
+  document.querySelectorAll('.bc').forEach(el => el.textContent = code);
+}
+
+loadBanks();
+
+</script>
+</body>
+</html>

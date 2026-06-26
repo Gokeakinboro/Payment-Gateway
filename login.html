@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<script>/* Already signed in? Skip the login form (fixes browser Back landing on login). */
+(function(){try{var t=localStorage.getItem('paylode_token');if(t){var p=JSON.parse(atob(t.split('.')[1]));if(!p.exp||p.exp*1000>Date.now()){window.location.replace('/dashboard.html');}}}catch(e){}})();</script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paylode — Sign In</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#0f1829;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.wrap{width:100%;max-width:420px}
+.back{display:inline-flex;align-items:center;gap:6px;color:rgba(255,255,255,.4);font-size:13px;margin-bottom:24px;cursor:pointer;text-decoration:none;transition:color .15s}
+.back:hover{color:rgba(255,255,255,.8)}
+.card{background:#fff;border-radius:16px;padding:32px;box-shadow:0 24px 60px rgba(0,0,0,.4)}
+.role-header{display:flex;align-items:center;gap:14px;margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid #f1f5f9}
+.role-icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}
+.role-name{font-size:16px;font-weight:700;color:#1a2744}
+.role-desc{font-size:12px;color:#64748b;margin-top:2px}
+.err{background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;font-size:13px;color:#991b1b;margin-bottom:16px;display:none}
+.field{margin-bottom:16px}
+label{display:block;font-size:11px;font-weight:600;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:.3px}
+input{width:100%;padding:11px 13px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif;color:#1e293b;outline:none;transition:border-color .15s}
+input:focus{border-color:#1a2744;box-shadow:0 0 0 3px rgba(26,39,68,.08)}
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:42px}
+.eye{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#94a3b8;padding:4px;display:flex;align-items:center;justify-content:center}
+.eye:hover{color:#475569}
+.btn{width:100%;padding:13px;background:#1a2744;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px;transition:background .15s}
+.btn:hover{background:#253360}
+.btn:disabled{opacity:.7;cursor:not-allowed}
+.footer-note{text-align:center;margin-top:16px;font-size:12px;color:#94a3b8}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/index.html?switch=1">← Back to portal selection</a>
+
+  <!-- Step 1: Password login -->
+  <div id="login-step">
+  <div class="card">
+    <div class="role-header" id="role-header">
+      <div class="role-icon" id="role-icon">🏛</div>
+      <div>
+        <div class="role-name" id="role-name">Super Admin</div>
+        <div class="role-desc" id="role-desc">Full platform access</div>
+      </div>
+    </div>
+    <div class="err" id="err"></div>
+    <div class="field">
+      <label>Email address</label>
+      <input type="email" id="em" placeholder="Enter your email address" autocomplete="email">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <div class="pw-wrap">
+        <input type="password" id="pw" placeholder="Enter your password" autocomplete="current-password">
+        <button type="button" class="eye" onclick="togglePw()" title="Show/hide password">
+          <svg id="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+    <button class="btn" id="btn" onclick="doLogin()">Sign In</button>
+    <div style="text-align:center;margin-top:12px"><button type="button" onclick="showForgot()" style="background:none;border:none;color:#64748b;font-size:12px;cursor:pointer;font-family:inherit;text-decoration:underline">Forgot password?</button></div>
+    <div class="footer-note">Paylode Services Limited &nbsp;·&nbsp; CBN Licensed PSSP</div>
+  </div>
+  </div><!-- /login-step -->
+
+  <!-- Step 3: Forgot password -->
+  <div id="forgot-step" style="display:none">
+  <div class="card">
+    <div style="text-align:center;margin-bottom:20px">
+      <div style="width:56px;height:56px;background:#e8edf5;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:12px">🔑</div>
+      <div style="font-size:17px;font-weight:700;color:#1a2744">Reset your password</div>
+      <div style="font-size:12px;color:#64748b;margin-top:6px">Enter your account email — we'll send a temporary password to set a new one.</div>
+    </div>
+    <div class="err" id="forgot-err"></div>
+    <div id="forgot-msg" style="display:none;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:12px"></div>
+    <div class="field"><label>Email</label><input type="email" id="forgot-em" placeholder="you@business.com" autocomplete="email"></div>
+    <button class="btn" id="forgot-btn" onclick="submitForgot()">Send temporary password</button>
+    <div style="text-align:center;margin-top:14px">
+      <button type="button" onclick="showLoginStep()" style="background:none;border:none;color:#94a3b8;font-size:12px;cursor:pointer;font-family:inherit">← Back to login</button>
+    </div>
+  </div>
+  </div><!-- /forgot-step -->
+
+  <!-- Step 2: 2FA verification -->
+  <div id="twofa-step" style="display:none">
+  <div class="card">
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="width:56px;height:56px;background:#e8edf5;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:12px">🔐</div>
+      <div style="font-size:17px;font-weight:700;color:#1a2744">Two-Factor Authentication</div>
+      <div id="twofa-hint" style="font-size:12px;color:#64748b;margin-top:6px"></div>
+    </div>
+    <div class="err" id="twofa-err"></div>
+    <div class="field">
+      <label>Authenticator Code</label>
+      <input type="text" id="twofa-code" placeholder="000 000" maxlength="7" autocomplete="one-time-code"
+        style="font-size:24px;letter-spacing:6px;text-align:center;font-family:monospace">
+    </div>
+    <button class="btn" id="twofa-btn" onclick="do2FA()">Verify</button>
+    <div style="text-align:center;margin-top:14px">
+      <button onclick="back2Login()" style="background:none;border:none;color:#94a3b8;font-size:12px;cursor:pointer;font-family:inherit">← Back to login</button>
+    </div>
+  </div>
+  </div><!-- /twofa-step -->
+
+</div>
+
+<script>
+const ROLES = {
+  superadmin:  { icon:'🏛', name:'Super Admin',        desc:'Full platform access',           bg:'#e8edf5' },
+  compliance:  { icon:'⚖',  name:'Compliance Officer', desc:'KYC & AML monitoring',            bg:'#fef3c7' },
+  aggregator:  { icon:'🔗', name:'Aggregator',          desc:'Portfolio management',            bg:'#dbeafe' },
+  merchant:    { icon:'🏪', name:'Merchant',             desc:'Transactions & API keys',        bg:'#d1fae5' },
+};
+
+// Set role display from stored selection
+const role = localStorage.getItem('paylode_selected_role') || 'superadmin';
+const r    = ROLES[role] || ROLES.superadmin;
+document.getElementById('role-icon').textContent    = r.icon;
+document.getElementById('role-icon').style.background = r.bg;
+document.getElementById('role-name').textContent    = r.name;
+document.getElementById('role-desc').textContent    = r.desc;
+
+var _2faTempToken = null;
+
+async function doLogin() {
+  const email = document.getElementById('em').value.trim();
+  const pass  = document.getElementById('pw').value;
+  const err   = document.getElementById('err');
+  const btn   = document.getElementById('btn');
+  if (!email || !pass) { err.textContent='Please enter your email and password'; err.style.display='block'; return; }
+  btn.textContent='Signing in...'; btn.disabled=true; err.style.display='none';
+  try {
+    const res  = await fetch('/api/v1/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ email, password:pass }) });
+    const data = await res.json();
+    if (data.status && data.data && data.data.twofa_required) {
+      _2faTempToken = data.data.temp_token;
+      show2FAStep(data.data.user_email);
+    } else if (data.status && data.data && data.data.token) {
+      localStorage.setItem('paylode_token', data.data.token);
+      localStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
+      window.location.replace('/dashboard.html');
+    } else {
+      err.textContent=data.message||'Invalid email or password'; err.style.display='block';
+      btn.textContent='Sign In'; btn.disabled=false;
+    }
+  } catch(e) {
+    err.textContent='Cannot connect to server. Please try again.'; err.style.display='block';
+    btn.textContent='Sign In'; btn.disabled=false;
+  }
+}
+
+function show2FAStep(email) {
+  document.getElementById('login-step').style.display = 'none';
+  document.getElementById('twofa-step').style.display = 'block';
+  document.getElementById('twofa-hint').textContent   = 'Enter the 6-digit code from your authenticator app for ' + email;
+  setTimeout(function(){ var el=document.getElementById('twofa-code'); if(el) el.focus(); }, 100);
+}
+
+async function do2FA() {
+  const code = document.getElementById('twofa-code').value.replace(/\s/g,'');
+  const err  = document.getElementById('twofa-err');
+  const btn  = document.getElementById('twofa-btn');
+  if (code.length !== 6) { err.textContent='Enter your 6-digit code'; err.style.display='block'; return; }
+  btn.textContent='Verifying...'; btn.disabled=true; err.style.display='none';
+  try {
+    const res  = await fetch('/api/v1/auth/2fa/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ temp_token:_2faTempToken, code }) });
+    const data = await res.json();
+    if (data.status && data.data && data.data.token) {
+      localStorage.setItem('paylode_token', data.data.token);
+      localStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
+      window.location.replace('/dashboard.html');
+    } else {
+      err.textContent=data.message||'Invalid code'; err.style.display='block';
+      btn.textContent='Verify'; btn.disabled=false;
+    }
+  } catch(e) {
+    err.textContent='Cannot connect. Please try again.'; err.style.display='block';
+    btn.textContent='Verify'; btn.disabled=false;
+  }
+}
+
+function back2Login() {
+  _2faTempToken=null;
+  document.getElementById('twofa-step').style.display='none';
+  document.getElementById('login-step').style.display='block';
+  document.getElementById('btn').textContent='Sign In';
+  document.getElementById('btn').disabled=false;
+}
+
+function showForgot() {
+  document.getElementById('login-step').style.display='none';
+  document.getElementById('twofa-step').style.display='none';
+  document.getElementById('forgot-step').style.display='block';
+  var e=document.getElementById('forgot-em'); if(e) e.focus();
+}
+function showLoginStep() {
+  document.getElementById('forgot-step').style.display='none';
+  document.getElementById('twofa-step').style.display='none';
+  document.getElementById('login-step').style.display='block';
+}
+async function submitForgot() {
+  var em  = document.getElementById('forgot-em').value.trim();
+  var err = document.getElementById('forgot-err');
+  var msg = document.getElementById('forgot-msg');
+  var btn = document.getElementById('forgot-btn');
+  err.style.display='none'; msg.style.display='none';
+  if (!em || em.indexOf('@') < 0) { err.textContent='Please enter a valid email'; err.style.display='block'; return; }
+  btn.textContent='Sending...'; btn.disabled=true;
+  try {
+    const res  = await fetch('/api/v1/auth/forgot-password', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ email: em }) });
+    const data = await res.json();
+    msg.textContent = (data && data.message) || 'If that email is registered, a temporary password has been sent. Check your inbox (and spam).';
+    msg.style.display='block';
+  } catch(e) { err.textContent='Cannot connect. Please try again.'; err.style.display='block'; }
+  btn.textContent='Send temporary password'; btn.disabled=false;
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key==='Enter') {
+    if (document.getElementById('twofa-step').style.display!=='none') do2FA();
+    else doLogin();
+  }
+});
+
+function togglePw() {
+  var inp = document.getElementById('pw');
+  var svg = document.getElementById('eye-icon');
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    svg.innerHTML = '<line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" stroke-width="2"/><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" stroke="currentColor" stroke-width="2" fill="none"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" stroke="currentColor" stroke-width="2" fill="none"/>';
+  } else {
+    inp.type = 'password';
+    svg.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" fill="none"/>';
+  }
+}
+</script>
+</body>
+</html>

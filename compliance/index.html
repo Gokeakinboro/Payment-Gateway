@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paylode — Compliance Officer Dashboard</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#1a2744;--navy-l:#253360;--lime:#7dc534;--lime-l:#9ed44f;--lime-d:#5fa01f;
+  --white:#fff;--g50:#f8fafc;--g100:#f1f5f9;--g200:#e2e8f0;--g300:#cbd5e1;
+  --g400:#94a3b8;--g500:#64748b;--g600:#475569;--g700:#334155;--g800:#1e293b;
+  --green:#10b981;--red:#ef4444;--amber:#f59e0b;--blue:#3b82f6;--purple:#8b5cf6;
+  --font:'DM Sans',sans-serif;--mono:'DM Mono',monospace;
+}
+body{font-family:var(--font);background:var(--g50);color:var(--g800);font-size:14px;line-height:1.5}
+.app{display:flex;height:100vh;overflow:hidden}
+.sidebar{width:220px;background:var(--navy);display:flex;flex-direction:column;flex-shrink:0}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.topbar{background:var(--white);border-bottom:1px solid var(--g200);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.content{flex:1;overflow-y:auto;padding:24px}
+.logo-wrap{padding:18px 16px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:8px}
+.logo-box{width:34px;height:34px;background:var(--lime);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--navy);font-size:15px}
+.logo-text{color:#fff;font-weight:700;font-size:15px}
+.logo-sub{color:rgba(255,255,255,.4);font-size:10px;letter-spacing:1.5px;text-transform:uppercase}
+.role-pill{margin:10px 14px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:7px 10px}
+.role-pill .rl{color:#fca5a5;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase}
+.role-pill .rn{color:#fff;font-size:13px;font-weight:500;margin-top:1px}
+.nav-sec{padding:6px 0}
+.nav-lbl{padding:6px 14px 3px;color:rgba(255,255,255,.3);font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase}
+.nav-item{display:flex;align-items:center;gap:9px;padding:8px 14px;color:rgba(255,255,255,.6);cursor:pointer;transition:all .15s;font-size:13px;border-left:2px solid transparent}
+.nav-item:hover{color:#fff;background:rgba(255,255,255,.06)}
+.nav-item.active{color:#fff;background:rgba(125,197,52,.12);border-left-color:var(--lime);font-weight:500}
+.nav-icon{font-size:15px;width:18px;text-align:center;opacity:.8}
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.b-green{background:#d1fae5;color:#065f46}.b-red{background:#fee2e2;color:#991b1b}
+.b-amber{background:#fef3c7;color:#92400e}.b-blue{background:#dbeafe;color:#1e40af}
+.b-purple{background:#ede9fe;color:#5b21b6}.b-gray{background:var(--g100);color:var(--g600)}
+.b-lime{background:#ecfccb;color:#3f6212}
+.card{background:var(--white);border:1px solid var(--g200);border-radius:12px;padding:20px}
+.card-sm{padding:14px 16px}
+.card-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.card-title{font-weight:600;font-size:14px;color:var(--g700)}
+.stat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px}
+.stat{background:var(--white);border:1px solid var(--g200);border-radius:12px;padding:16px 18px}
+.stat-lbl{font-size:11px;color:var(--g500);font-weight:500;margin-bottom:5px;display:flex;align-items:center;gap:5px}
+.stat-val{font-size:22px;font-weight:700;color:var(--g800);letter-spacing:-.5px}
+.stat-sub{font-size:11px;color:var(--g400);margin-top:3px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{padding:9px 12px;text-align:left;font-weight:600;font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--g100);background:var(--g50)}
+tbody td{padding:12px 12px;border-bottom:1px solid var(--g100);color:var(--g700)}
+tbody tr:hover{background:var(--g50)}
+tbody tr:last-child td{border-bottom:none}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:500;cursor:pointer;border:none;font-family:var(--font);transition:all .15s}
+.btn-navy{background:var(--navy);color:#fff}.btn-navy:hover{background:var(--navy-l)}
+.btn-lime{background:var(--lime);color:var(--navy)}.btn-lime:hover{background:var(--lime-l)}
+.btn-red{background:#fee2e2;color:var(--red);border:1px solid #fecaca}
+.btn-green{background:#d1fae5;color:#065f46;border:1px solid #a7f3d0}
+.btn-outline{background:transparent;color:var(--g600);border:1px solid var(--g300)}.btn-outline:hover{background:var(--g50)}
+.btn-sm{padding:4px 10px;font-size:11px}
+.form-input{width:100%;padding:8px 11px;border:1px solid var(--g300);border-radius:8px;font-size:13px;font-family:var(--font);color:var(--g800);background:#fff;outline:none}
+.form-input:focus{border-color:var(--navy)}
+.form-label{display:block;font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px}
+.form-group{margin-bottom:14px}
+.form-select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:30px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.flex{display:flex;align-items:center;gap:8px}
+.flex-between{display:flex;align-items:center;justify-content:space-between}
+.mono{font-family:var(--mono);font-size:12px}
+.divider{height:1px;background:var(--g100);margin:14px 0}
+.info-box{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:12px;color:#1e40af;margin-bottom:12px}
+.warn-box{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400e;margin-bottom:12px}
+.suc-box{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;font-size:12px;color:#166534;margin-bottom:12px}
+.tag{display:inline-flex;background:var(--g100);color:var(--g600);padding:2px 7px;border-radius:4px;font-size:11px;font-weight:500}
+.avatar{width:30px;height:30px;background:var(--navy);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:12px}
+.page-title{font-size:19px;font-weight:700;color:var(--g900)}
+.page-desc{font-size:12px;color:var(--g500);margin-top:3px}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:999;padding:20px}
+.modal{background:#fff;border-radius:14px;padding:24px;width:100%;max-width:580px;max-height:85vh;overflow-y:auto}
+.modal-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.modal-title{font-size:15px;font-weight:700}
+.modal-close{width:26px;height:26px;border-radius:6px;background:var(--g100);border:none;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center}
+.doc-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--g200);border-radius:8px;margin-bottom:8px}
+.doc-icon{width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.doc-name{font-size:13px;font-weight:500}
+.doc-note{font-size:11px;color:var(--g400);margin-top:1px}
+.status-timeline{display:flex;flex-direction:column;gap:0}
+.tl-item{display:flex;gap:12px;padding-bottom:16px;position:relative}
+.tl-item:last-child{padding-bottom:0}
+.tl-item:not(:last-child)::before{content:'';position:absolute;left:11px;top:24px;bottom:0;width:1px;background:var(--g200)}
+.tl-dot{width:23px;height:23px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;z-index:1}
+.tl-done{background:#d1fae5;color:#065f46}
+.tl-active{background:#dbeafe;color:#1e40af}
+.tl-pending{background:var(--g100);color:var(--g500)}
+.tl-rejected{background:#fee2e2;color:#991b1b}
+.tl-title{font-size:13px;font-weight:600;margin-bottom:2px}
+.tl-sub{font-size:12px;color:var(--g500)}
+.notif-dot{width:7px;height:7px;background:var(--red);border-radius:50%;position:absolute;top:-2px;right:-2px}
+.priority-high{border-left:3px solid var(--red)!important}
+.priority-med{border-left:3px solid var(--amber)!important}
+.priority-low{border-left:3px solid var(--green)!important}
+.search-bar{display:flex;align-items:center;gap:8px;background:var(--g100);border:1px solid var(--g200);border-radius:8px;padding:0 12px;height:36px;flex:1;max-width:320px}
+.search-bar input{border:none;background:transparent;font-size:13px;font-family:var(--font);color:var(--g700);outline:none;width:100%}
+</style>
+</head>
+<body>
+<div class="app">
+<div class="sidebar">
+  <div class="logo-wrap">
+    <div class="logo-box">P</div>
+    <div><div class="logo-text">Paylode</div><div class="logo-sub">Compliance</div></div>
+  </div>
+  <div class="role-pill">
+    <div class="rl">🔒 Compliance Officer</div>
+    <div class="rn">Amaka Obi — CCO</div>
+  </div>
+  <div class="nav-sec">
+    <div class="nav-lbl">KYC Review</div>
+    <div class="nav-item active" onclick="go('queue')"><span class="nav-icon">📋</span>Review Queue <span class="badge b-red" style="margin-left:auto;font-size:10px">7</span></div>
+    <div class="nav-item" onclick="go('approved')"><span class="nav-icon">✅</span>Approved Merchants</div>
+    <div class="nav-item" onclick="go('rejected')"><span class="nav-icon">❌</span>Rejected / Issues</div>
+  </div>
+  <div class="nav-sec">
+    <div class="nav-lbl">Monitoring</div>
+    <div class="nav-item" onclick="go('aml')"><span class="nav-icon">⚠</span>AML Flags <span class="badge b-amber" style="margin-left:auto;font-size:10px">3</span></div>
+    <div class="nav-item" onclick="go('pep')"><span class="nav-icon">🔍</span>PEP / Sanctions</div>
+    <div class="nav-item" onclick="go('txn_monitor')"><span class="nav-icon">📊</span>Transaction Monitor</div>
+  </div>
+  <div class="nav-sec">
+    <div class="nav-lbl">Reporting</div>
+    <div class="nav-item" onclick="go('cbn_reports')"><span class="nav-icon">🏛</span>CBN Reports</div>
+    <div class="nav-item" onclick="go('audit_log')"><span class="nav-icon">📜</span>Audit Log</div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="topbar">
+    <div class="flex" style="gap:12px">
+      <span class="page-title" id="topbar-title">KYC Review Queue</span>
+      <span class="badge b-red">7 pending</span>
+    </div>
+    <div class="flex" style="gap:10px">
+      <div class="search-bar"><span style="font-size:14px;color:var(--g400)">🔍</span><input placeholder="Search merchant, RC, BVN..."></div>
+      <div style="position:relative"><div class="avatar">AO</div><div class="notif-dot"></div></div>
+    </div>
+  </div>
+  <div class="content" id="main-content"></div>
+</div>
+</div>
+
+<div id="modal" class="modal-overlay" style="display:none" onclick="closeModal(event)">
+  <div class="modal" id="modal-inner"></div>
+</div>
+
+<script>
+const KYC_QUEUE = [
+  {id:'KYC-2025-0041',merchant:'Zenith Supermarket Ltd',rc:'RC 1847291',type:'Business',tier:2,submitted:'2025-05-26 08:14',status:'pending',priority:'high',bvn:'✓',cac:'✓',id_doc:'✓',address:'⚠ Unclear',bank_stmt:'✓',selfie:'✓',risk:'Medium',aml:'Pass',pep:'Clear',aggregator:'FinConnect Nigeria',contact:'Emeka Nwosu',email:'emeka@zenithsm.com'},
+  {id:'KYC-2025-0040',merchant:'QuickRide NG',rc:'N/A',type:'Individual',tier:1,submitted:'2025-05-26 07:52',status:'pending',priority:'low',bvn:'✓',cac:'N/A',id_doc:'✓',address:'✓',bank_stmt:'N/A',selfie:'✓',risk:'Low',aml:'Pass',pep:'Clear',aggregator:null,contact:'Fatima Aliyu',email:'fatima@quickride.ng'},
+  {id:'KYC-2025-0039',merchant:'MedCare Pharmacy Ltd',rc:'RC 2019044',type:'Business',tier:2,submitted:'2025-05-25 16:30',status:'pending',priority:'high',bvn:'✓',cac:'✓',id_doc:'✓',address:'✓',bank_stmt:'⚠ Only 1 month',selfie:'✓',risk:'Low',aml:'Pass',pep:'Clear',aggregator:'PayBridge Solutions',contact:'Dr. Chinwe Okafor',email:'chinwe@medcareph.com'},
+  {id:'KYC-2025-0038',merchant:'Eko Property Solutions',rc:'RC 1122334',type:'Business',tier:3,submitted:'2025-05-25 14:10',status:'in_review',priority:'high',bvn:'✓',cac:'✓',id_doc:'✓',address:'✓',bank_stmt:'✓',selfie:'✓',risk:'High',aml:'⚠ Flag — large cash deposits',pep:'Clear',aggregator:null,contact:'Babatunde Adeyemi',email:'btunde@ekoproperty.com'},
+  {id:'KYC-2025-0037',merchant:'FoodBox Lagos',rc:'N/A',type:'Individual',tier:1,submitted:'2025-05-25 11:05',status:'pending',priority:'low',bvn:'✓',cac:'N/A',id_doc:'✓',address:'✓',bank_stmt:'N/A',selfie:'✓',risk:'Low',aml:'Pass',pep:'Clear',aggregator:'FinConnect Nigeria',contact:'Ifeoma Eze',email:'ifeoma@foodbox.ng'},
+  {id:'KYC-2025-0036',merchant:'Skyline Construction Ltd',rc:'RC 0091234',type:'Business',tier:3,submitted:'2025-05-24 09:20',status:'in_review',priority:'high',bvn:'⚠ Name mismatch',cac:'✓',id_doc:'✓',address:'✓',bank_stmt:'✓',selfie:'✓',risk:'High',aml:'⚠ PEP — director flag',pep:'⚠ Director listed on watch list',aggregator:null,contact:'Chukwuemeka Obi',email:'chuka@skylinecon.com'},
+  {id:'KYC-2025-0035',merchant:'TechForce Nigeria',rc:'RC 1765432',type:'Business',tier:2,submitted:'2025-05-24 08:00',status:'pending',priority:'med',bvn:'✓',cac:'✓',id_doc:'✓',address:'✓',bank_stmt:'✓',selfie:'✓',risk:'Low',aml:'Pass',pep:'Clear',aggregator:'PayBridge Solutions',contact:'Toluwani Adesanya',email:'tolu@techforce.ng'},
+];
+
+const APPROVED = [
+  {id:'KYC-2025-0034',merchant:'Bolt Nigeria',rc:'RC 1240881',tier:2,approved:'2025-05-23',approvedBy:'Amaka Obi',vol:'₦91M MTD'},
+  {id:'KYC-2025-0033',merchant:'Shoprite Nigeria',rc:'RC 0093412',tier:2,approved:'2025-05-22',approvedBy:'Amaka Obi',vol:'₦48M MTD'},
+  {id:'KYC-2025-0032',merchant:'Jumia Foods',rc:'RC 1184920',tier:2,approved:'2025-05-21',approvedBy:'Amaka Obi',vol:'₦32M MTD'},
+];
+
+const AML_FLAGS = [
+  {id:'AML-2025-018',merchant:'Eko Property Solutions',ref:'TXN-20250526-EKO-441',amount:'₦4,800,000',trigger:'Single txn >80% of daily limit',risk:'High',assigned:'Amaka Obi',created:'2025-05-26 09:00'},
+  {id:'AML-2025-017',merchant:'Skyline Construction Ltd',ref:'Multiple',amount:'₦12,200,000',trigger:'Velocity — 14 txns in 2 hours',risk:'Critical',assigned:'Pending',created:'2025-05-25 18:42'},
+  {id:'AML-2025-016',merchant:'QuickRide NG',ref:'TXN-20250524-QR-021',amount:'₦48,000',trigger:'New merchant — first txn >80% single limit',risk:'Low',assigned:'Amaka Obi',created:'2025-05-24 14:11'},
+];
+
+function go(page) {
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  event.target.closest('.nav-item').classList.add('active');
+  const titles = {queue:'KYC Review Queue',approved:'Approved Merchants',rejected:'Rejected / Issues',aml:'AML Flags',pep:'PEP / Sanctions Screening',txn_monitor:'Transaction Monitoring',cbn_reports:'CBN Reports',audit_log:'Audit Log'};
+  document.getElementById('topbar-title').textContent = titles[page] || page;
+  const pages = {queue:renderQueue,approved:renderApproved,rejected:renderRejected,aml:renderAML,pep:renderPEP,txn_monitor:renderTxnMonitor,cbn_reports:renderCBN,audit_log:renderAudit};
+  document.getElementById('main-content').innerHTML = (pages[page] || renderQueue)();
+}
+
+function pBadge(p){return p==='high'?`<span class="badge b-red">High</span>`:p==='med'?`<span class="badge b-amber">Medium</span>`:`<span class="badge b-gray">Low</span>`;}
+function sBadge(s){return s==='pending'?`<span class="badge b-amber">Pending</span>`:s==='in_review'?`<span class="badge b-blue">In Review</span>`:s==='approved'?`<span class="badge b-green">Approved</span>`:`<span class="badge b-red">Rejected</span>`;}
+function chk(v){return v.startsWith('✓')?`<span style="color:var(--green)">✓</span>`:v.startsWith('⚠')?`<span style="color:var(--amber)" title="${v}">⚠</span>`:v==='N/A'?`<span style="color:var(--g300)">—</span>`:`<span style="color:var(--red)">✗</span>`;}
+
+function renderQueue(){return `
+  <div class="flex-between" style="margin-bottom:20px">
+    <div><div class="page-title">KYC Review Queue</div><div class="page-desc">Merchants awaiting compliance review and account activation</div></div>
+    <div class="flex" style="gap:8px">
+      <select class="form-input form-select" style="width:140px;font-size:12px;padding:6px 28px 6px 10px">
+        <option>All Tiers</option><option>Tier 1</option><option>Tier 2</option><option>Tier 3</option>
+      </select>
+      <button class="btn btn-outline" style="font-size:12px">⬇ Export</button>
+    </div>
+  </div>
+  <div class="stat-grid">
+    <div class="stat"><div class="stat-lbl"><span style="width:6px;height:6px;border-radius:50%;background:var(--amber);display:inline-block"></span>Pending review</div><div class="stat-val">5</div></div>
+    <div class="stat"><div class="stat-lbl"><span style="width:6px;height:6px;border-radius:50%;background:var(--blue);display:inline-block"></span>In review</div><div class="stat-val">2</div></div>
+    <div class="stat"><div class="stat-lbl"><span style="width:6px;height:6px;border-radius:50%;background:var(--red);display:inline-block"></span>High priority</div><div class="stat-val">4</div></div>
+    <div class="stat"><div class="stat-lbl"><span style="width:6px;height:6px;border-radius:50%;background:var(--purple);display:inline-block"></span>AML flagged</div><div class="stat-val">2</div></div>
+    <div class="stat"><div class="stat-lbl"><span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span>Approved today</div><div class="stat-val">3</div></div>
+  </div>
+  <div class="card">
+    <div class="table-wrap" style="overflow-x:auto">
+      <table>
+        <thead><tr><th>ID</th><th>Merchant</th><th>Tier</th><th>Priority</th><th>BVN</th><th>CAC</th><th>ID</th><th>Address</th><th>AML</th><th>PEP</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>${KYC_QUEUE.map(m=>`
+          <tr>
+            <td class="mono" style="font-size:11px">${m.id}</td>
+            <td><strong style="font-size:13px">${m.merchant}</strong><div style="font-size:11px;color:var(--g400)">${m.type} · ${m.rc}</div></td>
+            <td><span class="badge b-blue">Tier ${m.tier}</span></td>
+            <td>${pBadge(m.priority)}</td>
+            <td>${chk(m.bvn)}</td><td>${chk(m.cac)}</td><td>${chk(m.id_doc)}</td><td>${chk(m.address)}</td>
+            <td>${chk(m.aml)}</td><td>${chk(m.pep)}</td>
+            <td>${sBadge(m.status)}</td>
+            <td><button class="btn btn-navy btn-sm" onclick="openReview('${m.id}')">Review →</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;}
+
+function renderApproved(){return `
+  <div style="margin-bottom:20px"><div class="page-title">Approved Merchants</div><div class="page-desc">Accounts activated — live and processing</div></div>
+  <div class="card">
+    <table><thead><tr><th>KYC ID</th><th>Merchant</th><th>RC No.</th><th>Tier</th><th>Approved</th><th>Approved By</th><th>MTD Volume</th></tr></thead>
+    <tbody>${APPROVED.map(a=>`<tr>
+      <td class="mono" style="font-size:11px">${a.id}</td><td><strong>${a.merchant}</strong></td>
+      <td class="mono">${a.rc}</td><td><span class="badge b-blue">Tier ${a.tier}</span></td>
+      <td style="font-size:12px">${a.approved}</td><td style="font-size:12px">${a.approvedBy}</td>
+      <td class="mono">${a.vol}</td>
+    </tr>`).join('')}</tbody></table>
+  </div>`;}
+
+function renderRejected(){return `
+  <div style="margin-bottom:20px"><div class="page-title">Rejected / Issues</div><div class="page-desc">Merchants with incomplete KYC or failed checks</div></div>
+  <div class="warn-box">1 merchant has a PEP match requiring CCO escalation. See KYC-2025-0036 (Skyline Construction).</div>
+  <div class="card">
+    <table><thead><tr><th>KYC ID</th><th>Merchant</th><th>Tier</th><th>Issue</th><th>Rejected</th><th>Resubmissions</th><th>Actions</th></tr></thead>
+    <tbody>
+      <tr><td class="mono" style="font-size:11px">KYC-2025-0030</td><td><strong>Sunrise Laundry</strong></td><td><span class="badge b-blue">Tier 2</span></td><td><span class="badge b-red">BVN_MISMATCH</span></td><td style="font-size:12px">2025-05-20</td><td>1 pending</td><td><button class="btn btn-outline btn-sm">View</button></td></tr>
+      <tr><td class="mono" style="font-size:11px">KYC-2025-0028</td><td><strong>Skyline Construction Ltd</strong></td><td><span class="badge b-blue">Tier 3</span></td><td><span class="badge b-red">PEP_FLAG — CCO Hold</span></td><td style="font-size:12px">2025-05-19</td><td>0</td><td><button class="btn btn-red btn-sm">Escalate</button></td></tr>
+    </tbody></table>
+  </div>`;}
+
+function renderAML(){return `
+  <div style="margin-bottom:20px"><div class="page-title">AML Flags</div><div class="page-desc">Transactions and patterns triggering AML monitoring rules</div></div>
+  <div class="g3" style="margin-bottom:20px">
+    <div class="stat"><div class="stat-lbl">Open flags</div><div class="stat-val" style="color:var(--red)">3</div></div>
+    <div class="stat"><div class="stat-lbl">Critical</div><div class="stat-val" style="color:var(--red)">1</div></div>
+    <div class="stat"><div class="stat-lbl">Closed this month</div><div class="stat-val">14</div></div>
+  </div>
+  <div class="card">
+    <table><thead><tr><th>Flag ID</th><th>Merchant</th><th>Amount</th><th>Trigger</th><th>Risk</th><th>Assigned</th><th>Actions</th></tr></thead>
+    <tbody>${AML_FLAGS.map(f=>`<tr>
+      <td class="mono" style="font-size:11px">${f.id}</td><td><strong>${f.merchant}</strong><div style="font-size:11px;color:var(--g400)">${f.created}</div></td>
+      <td class="mono">${f.amount}</td>
+      <td style="font-size:12px;max-width:180px">${f.trigger}</td>
+      <td>${f.risk==='Critical'?`<span class="badge b-red">Critical</span>`:f.risk==='High'?`<span class="badge b-amber">High</span>`:`<span class="badge b-gray">Low</span>`}</td>
+      <td style="font-size:12px">${f.assigned}</td>
+      <td><button class="btn btn-navy btn-sm">Investigate</button></td>
+    </tr>`).join('')}</tbody></table>
+  </div>`;}
+
+function renderPEP(){return `
+  <div style="margin-bottom:20px"><div class="page-title">PEP / Sanctions Screening</div></div>
+  <div class="warn-box">1 active PEP match on KYC-2025-0036. Account is on hold pending CCO decision.</div>
+  <div class="card">
+    <div class="card-hd"><div class="card-title">Screening Results (last 30 days)</div></div>
+    <table><thead><tr><th>Merchant</th><th>Person Screened</th><th>Match Type</th><th>Source</th><th>Decision</th></tr></thead>
+    <tbody>
+      <tr><td>Skyline Construction</td><td>Chukwuemeka Obi</td><td><span class="badge b-red">PEP Match</span></td><td>World-Check</td><td><span class="badge b-amber">Pending CCO</span></td></tr>
+      <tr><td>Bolt Nigeria</td><td>All directors</td><td><span class="badge b-green">Clear</span></td><td>World-Check</td><td><span class="badge b-green">Approved</span></td></tr>
+      <tr><td>Zenith Supermarket</td><td>Emeka Nwosu</td><td><span class="badge b-green">Clear</span></td><td>World-Check</td><td><span class="badge b-amber">Pending</span></td></tr>
+    </tbody></table>
+  </div>`;}
+
+function renderTxnMonitor(){return `
+  <div style="margin-bottom:20px"><div class="page-title">Transaction Monitoring</div><div class="page-desc">Real-time monitoring against AML rule engine</div></div>
+  <div class="g4" style="margin-bottom:20px">
+    <div class="stat"><div class="stat-lbl">Txns today</div><div class="stat-val">23,841</div></div>
+    <div class="stat"><div class="stat-lbl">Flagged</div><div class="stat-val" style="color:var(--amber)">3</div></div>
+    <div class="stat"><div class="stat-lbl">Blocked</div><div class="stat-val" style="color:var(--red)">1</div></div>
+    <div class="stat"><div class="stat-lbl">CTR pending</div><div class="stat-val">2</div></div>
+  </div>
+  <div class="card">
+    <div class="card-hd"><div class="card-title">Active Monitoring Rules</div><button class="btn btn-outline" style="font-size:11px">+ Add Rule</button></div>
+    ${[
+      ['Single txn >₦5M (Tier 3)','Auto-flag for review','Active'],
+      ['Daily velocity: >20 txns in 2 hrs','Auto-block + flag','Active'],
+      ['New merchant first txn >80% single limit','Auto-flag','Active'],
+      ['Cash pattern: multiple round-number txns','Flag for investigation','Active'],
+      ['Cross-border txn (non-NGN)','Require CCO approval','Active'],
+    ].map(([r,a,s])=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--g100)">
+        <div><div style="font-size:13px;font-weight:500">${r}</div><div style="font-size:11px;color:var(--g400)">${a}</div></div>
+        <span class="badge b-green">${s}</span>
+      </div>`).join('')}
+  </div>`;}
+
+function renderCBN(){return `
+  <div style="margin-bottom:20px"><div class="page-title">CBN Reports</div><div class="page-desc">Regulatory reporting obligations — CBN PSSP requirements</div></div>
+  <div class="g3" style="margin-bottom:20px">
+    <div class="stat"><div class="stat-lbl">Due this month</div><div class="stat-val" style="color:var(--amber)">2</div></div>
+    <div class="stat"><div class="stat-lbl">Submitted YTD</div><div class="stat-val">8</div></div>
+    <div class="stat"><div class="stat-lbl">License expiry</div><div class="stat-val" style="font-size:16px">Mar 2027</div></div>
+  </div>
+  <div class="card">
+    <table><thead><tr><th>Report</th><th>Period</th><th>Due Date</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>
+      ${[
+        ['Monthly Merchant Activity Report','May 2025','5 Jun 2025','pending'],
+        ['Suspicious Transaction Report (STR)','May 2025','30 May 2025','pending'],
+        ['Quarterly Return (Q1 2025)','Jan-Mar 2025','30 Apr 2025','completed'],
+        ['Annual PSSP Report 2024','FY 2024','31 Mar 2025','completed'],
+      ].map(([r,p,d,s])=>`<tr><td><strong>${r}</strong></td><td style="font-size:12px">${p}</td><td style="font-size:12px">${d}</td><td>${sBadge(s==='pending'?'pending':'approved')}</td><td><button class="btn btn-outline btn-sm">${s==='pending'?'Prepare':'Download'}</button></td></tr>`).join('')}
+    </tbody></table>
+  </div>`;}
+
+function renderAudit(){return `
+  <div style="margin-bottom:20px"><div class="page-title">Audit Log</div><div class="page-desc">Complete record of all compliance decisions</div></div>
+  <div class="card">
+    <table><thead><tr><th>Timestamp</th><th>Officer</th><th>Action</th><th>Merchant</th><th>Notes</th></tr></thead>
+    <tbody>
+      ${[
+        ['2025-05-26 11:32','Amaka Obi','KYC_APPROVED','Bolt Nigeria','All docs verified. BVN matched. CAC active.'],
+        ['2025-05-26 10:15','Amaka Obi','AML_ESCALATED','Eko Property Solutions','Large txn pattern flagged. Sent to CCO.'],
+        ['2025-05-25 16:40','Amaka Obi','KYC_REJECTED','Sunrise Laundry','BVN name mismatch. Requested resubmission.'],
+        ['2025-05-25 14:55','Amaka Obi','KYC_IN_REVIEW','Skyline Construction','PEP flag on director. Held for CCO review.'],
+        ['2025-05-24 09:10','Amaka Obi','KYC_APPROVED','Shoprite Nigeria','Enhanced due diligence complete. Tier 2 activated.'],
+      ].map(([t,o,a,m,n])=>`<tr>
+        <td class="mono" style="font-size:11px">${t}</td>
+        <td style="font-size:12px">${o}</td>
+        <td><span class="mono" style="font-size:11px;color:${a.includes('APPROVED')?'var(--green)':a.includes('REJECTED')?'var(--red)':'var(--amber)'}">${a}</span></td>
+        <td style="font-size:12px"><strong>${m}</strong></td>
+        <td style="font-size:12px;color:var(--g500);max-width:220px">${n}</td>
+      </tr>`).join('')}
+    </tbody></table>
+  </div>`;}
+
+// ── REVIEW MODAL ──────────────────────────────────────
+function openReview(id) {
+  const m = KYC_QUEUE.find(x=>x.id===id);
+  if (!m) return;
+  document.getElementById('modal-inner').innerHTML = `
+    <div class="modal-hd">
+      <div class="modal-title">KYC Review — ${m.merchant}</div>
+      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">✕</button>
+    </div>
+    <div class="flex" style="gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <span class="badge b-blue">Tier ${m.tier}</span>${pBadge(m.priority)}${sBadge(m.status)}
+      ${m.aggregator?`<span class="badge b-purple">Via: ${m.aggregator}</span>`:''}
+      <span class="badge b-${m.risk==='High'||m.risk==='Critical'?'red':'gray'}">Risk: ${m.risk}</span>
+    </div>
+    <div class="g2" style="margin-bottom:14px">
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--g500);margin-bottom:6px">BUSINESS DETAILS</div>
+        ${[['Merchant',m.merchant],['RC Number',m.rc],['Type',m.type],['Contact',m.contact],['Email',m.email],['Submitted',m.submitted]].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--g100);font-size:12px"><span style="color:var(--g500)">${k}</span><span style="font-weight:500">${v}</span></div>`).join('')}
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--g500);margin-bottom:6px">DOCUMENT CHECKS</div>
+        ${[['BVN Verification',m.bvn],['CAC Status',m.cac],['Government ID',m.id_doc],['Proof of Address',m.address],['Bank Statement',m.bank_stmt],['Selfie / Liveness',m.selfie],['AML Score',m.aml],['PEP / Sanctions',m.pep]].map(([k,v])=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px dashed var(--g100);font-size:12px">
+            <span style="color:var(--g500)">${k}</span>
+            <span style="font-weight:500;color:${v.startsWith('✓')||v==='Pass'||v==='Clear'?'var(--green)':v.startsWith('⚠')?'var(--amber)':v==='N/A'?'var(--g300)':'var(--red)'}">${v}</span>
+          </div>`).join('')}
+      </div>
+    </div>
+    ${m.aml.startsWith('⚠')||m.pep.startsWith('⚠')||m.bvn.startsWith('⚠')||m.address.startsWith('⚠')?`<div class="warn-box">⚠ This application has flags requiring attention before approval. Review carefully.</div>`:''}
+    <div class="form-group">
+      <label class="form-label">Compliance Notes (required for rejection)</label>
+      <textarea class="form-input" rows="3" placeholder="Document your decision rationale here. This is recorded in the audit log."></textarea>
+    </div>
+    ${m.tier===2||m.tier===3?`
+    <div class="form-group">
+      <label class="form-label">Assign KYC Tier</label>
+      <select class="form-input form-select"><option value="2" ${m.tier===2?'selected':''}>Tier 2 — Business</option><option value="3" ${m.tier===3?'selected':''}>Tier 3 — Enterprise</option><option value="1">Downgrade to Tier 1</option></select>
+    </div>`:''}
+    <div class="divider"></div>
+    <div class="flex-between">
+      <button class="btn btn-red" onclick="rejectKYC('${m.id}')">✗ Reject KYC</button>
+      <div class="flex" style="gap:8px">
+        <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Close</button>
+        <button class="btn btn-green" onclick="requestInfo('${m.id}')">📋 Request More Info</button>
+        <button class="btn btn-lime" onclick="approveKYC('${m.id}')">✓ Approve & Activate</button>
+      </div>
+    </div>`;
+  document.getElementById('modal').style.display = 'flex';
+}
+
+function approveKYC(id) {
+  const m = KYC_QUEUE.find(x=>x.id===id);
+  document.getElementById('modal').style.display='none';
+  document.getElementById('modal-inner').innerHTML = `
+    <div class="modal-hd"><div class="modal-title">✓ Account Activated</div><button class="modal-close" onclick="document.getElementById('modal').style.display='none'">✕</button></div>
+    <div class="suc-box">KYC approved for <strong>${m.merchant}</strong>. Account is now live.</div>
+    <div style="font-size:13px;display:flex;flex-direction:column;gap:8px">
+      <div>✓ API keys generated (test + live)</div>
+      <div>✓ Webhook secret issued</div>
+      <div>✓ Payment channels activated for Tier ${m.tier}</div>
+      <div>✓ Transaction limits applied per KYC tier</div>
+      <div>✓ Welcome email sent to ${m.email}</div>
+      <div>✓ Decision recorded in audit log</div>
+    </div>
+    <div class="divider"></div>
+    <button class="btn btn-navy" onclick="document.getElementById('modal').style.display='none'">Close</button>`;
+  document.getElementById('modal').style.display='flex';
+}
+
+function rejectKYC(id) {
+  const m = KYC_QUEUE.find(x=>x.id===id);
+  document.getElementById('modal-inner').innerHTML = `
+    <div class="modal-hd"><div class="modal-title">Reject KYC — ${m.merchant}</div><button class="modal-close" onclick="document.getElementById('modal').style.display='none'">✕</button></div>
+    <div class="warn-box">Merchant will be notified by email with the rejection reason and instructions to resubmit.</div>
+    <div class="form-group"><label class="form-label">Rejection Reason Code</label>
+      <select class="form-input form-select">
+        <option>DOC_EXPIRED — Document past validity date</option>
+        <option>BVN_MISMATCH — BVN name does not match submitted name</option>
+        <option>CAC_INACTIVE — Company CAC status is not active</option>
+        <option>DOC_UNCLEAR — Document image is unreadable</option>
+        <option>MISSING_DOC — Required document not submitted</option>
+        <option>PEP_FLAG — PEP or sanctions match — CCO review required</option>
+        <option>AML_FAIL — Failed AML risk assessment</option>
+        <option>BANK_STMT_INSUFFICIENT — Insufficient bank statement period</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Detailed Notes to Merchant</label>
+      <textarea class="form-input" rows="3" placeholder="What exactly needs to be corrected and resubmitted..."></textarea>
+    </div>
+    <div class="flex-between">
+      <button class="btn btn-outline" onclick="openReview('${id}')">← Back</button>
+      <button class="btn btn-red" onclick="document.getElementById('modal').style.display='none';alert('Rejection sent. Merchant notified.')">Send Rejection</button>
+    </div>`;
+}
+
+function requestInfo(id) {
+  alert('Request for additional information sent to merchant.');
+  document.getElementById('modal').style.display='none';
+}
+
+function closeModal(e){ if(e.target.id==='modal') document.getElementById('modal').style.display='none'; }
+
+// Init
+document.getElementById('main-content').innerHTML = renderQueue();
+</script>
+</body>
+</html>

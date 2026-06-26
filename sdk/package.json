@@ -1,0 +1,20 @@
+{
+  "name": "paylode-node",
+  "version": "1.0.0",
+  "description": "Official Node.js SDK for Paylode Services Limited — CBN Licensed PSSP",
+  "main": "src/paylode.js",
+  "types": "src/paylode.d.ts",
+  "scripts": {
+    "test": "node test/paylode.test.js"
+  },
+  "keywords": ["paylode", "payments", "nigeria", "fintech", "cbn", "pssp"],
+  "author": "Paylode Services Limited <dev@paylodeservices.com>",
+  "license": "MIT",
+  "homepage": "https://docs.paylodeservices.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gokeakinboro/Payment-Gateway.git"
+  },
+  "engines": { "node": ">=14.0.0" },
+  "dependencies": {}
+}

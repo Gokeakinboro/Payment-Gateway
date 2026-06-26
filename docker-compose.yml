@@ -1,0 +1,91 @@
+version: '3.9'
+
+# Paylode Services — Local Development
+# Run: docker compose up -d
+# API: http://localhost:3000
+# DB Admin: http://localhost:8080 (Adminer)
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: paylode_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       paylode_db
+      POSTGRES_USER:     paylode
+      POSTGRES_PASSWORD: paylode_dev_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paylode -d paylode_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: paylode_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+  # ── API Server ──────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: paylode_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL:   postgresql://paylode:paylode_dev_pass@postgres:5432/paylode_db
+      REDIS_URL:      redis://redis:6379
+      PORT:           3000
+      NODE_ENV:       development
+      JWT_SECRET:     dev_jwt_secret_change_in_production_64chars
+      REFRESH_TOKEN_SECRET: dev_refresh_secret_change_in_production
+      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      APP_URL:        http://localhost:3001
+      API_URL:        http://localhost:3000
+      CBN_LICENSE_NO: CBN/PAY/2024/001847
+      COMPLIANCE_EMAIL: compliance@paylodeservices.com
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run dev
+
+  # ── DB Admin UI ─────────────────────────────────────────────────────────────
+  adminer:
+    image: adminer:4
+    container_name: paylode_adminer
+    restart: unless-stopped
+    depends_on: [postgres]
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+
+  # ── Mailhog (catches emails in dev) ─────────────────────────────────────────
+  mailhog:
+    image: mailhog/mailhog
+    container_name: paylode_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+
+volumes:
+  postgres_data:
