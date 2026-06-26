@@ -57,7 +57,7 @@ router.post('/invite', requireAuth, requireSuperAdmin,
   validate([
     body('email').isEmail().withMessage('Valid email required'),
     body('name').notEmpty().withMessage('Name required'),
-    body('role').isIn(['ADMIN', 'COMPLIANCE_OFFICER', 'AUDIT', 'MERCHANT', 'AGGREGATOR'])
+    body('role').isIn(['SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER', 'AUDIT', 'MERCHANT', 'AGGREGATOR'])
       .withMessage('Invalid role'),
   ]),
   async (req, res, next) => {
@@ -98,7 +98,7 @@ router.post('/', requireAuth, requireSuperAdmin,
     body('email').isEmail().withMessage('Valid email required'),
     body('firstName').notEmpty().withMessage('First name required'),
     body('lastName').notEmpty().withMessage('Last name required'),
-    body('role').isIn(['ADMIN', 'COMPLIANCE_OFFICER', 'AUDIT', 'MERCHANT', 'AGGREGATOR'])
+    body('role').isIn(['SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER', 'AUDIT', 'MERCHANT', 'AGGREGATOR'])
       .withMessage('Invalid role'),
   ]),
   async (req, res, next) => {
@@ -183,6 +183,33 @@ router.patch('/:id/permissions', requireAuth, requireSuperAdmin, async (req, res
     await logAudit(req.user.id, 'USER_PERMISSIONS_UPDATED', 'users', req.params.id,
       { permissions: target.permissions }, { permissions }, null, req.ip);
     ok(res, updated, 'Permissions updated');
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/v1/users/:id/role — upgrade/downgrade a user to another role (SA only)
+router.patch('/:id/role', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const newRole = req.body.role;
+    const ROLES = ['SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER', 'AUDIT', 'MERCHANT', 'AGGREGATOR'];
+    if (!ROLES.includes(newRole)) return fail(res, 'Invalid role');
+    const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (!target) return fail(res, 'User not found', 'NOT_FOUND', 404);
+    if (target.id === req.user.id) return fail(res, 'You cannot change your own role');
+    if (target.role === newRole) return fail(res, 'User already has this role');
+    // Never strand the platform without a Super Admin.
+    if (target.role === 'SUPER_ADMIN' && newRole !== 'SUPER_ADMIN') {
+      const saCount = await prisma.user.count({ where: { role: 'SUPER_ADMIN' } });
+      if (saCount <= 1) return fail(res, 'Cannot change the role of the last Super Admin');
+    }
+    // Role change resets permissions to the new role's defaults.
+    const updated = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { role: newRole, permissions: defaultsForRole(newRole) },
+      select: { id: true, email: true, firstName: true, lastName: true, role: true, permissions: true, isActive: true },
+    });
+    await logAudit(req.user.id, 'USER_ROLE_CHANGED', 'users', req.params.id,
+      { role: target.role }, { role: newRole }, null, req.ip);
+    ok(res, updated, 'Role updated to ' + newRole.replace(/_/g, ' ') + '. Permissions reset to the new role defaults.');
   } catch (e) { next(e); }
 });
 

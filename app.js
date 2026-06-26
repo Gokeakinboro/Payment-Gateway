@@ -190,6 +190,7 @@ function _grant(ids, withEdit){
   return out;
 }
 var PERM_ROLE_DEFAULTS = {
+  SUPER_ADMIN: _grant(FUNCTIONALITIES.map(function(f){ return f.id; }), true),
   ADMIN: _grant(['dashboard','revenue'],false)
     .concat(_grant(['transactions','merchants','aggregators','onboarding','compliance','doc_referrals','settlements','payouts','wallets','chargebacks','reports','rails','webhooks'],true))
     .concat(_grant(['staff'],false)),
@@ -1719,14 +1720,21 @@ async function loadUsers() {
   __usersData = res.data || [];
   var roleBadge = { SUPER_ADMIN:'badge-red', ADMIN:'badge-blue', COMPLIANCE_OFFICER:'badge-amber',
                     AUDIT:'badge-gray', MERCHANT:'badge-green', AGGREGATOR:'badge-lime' };
+  var me = getUser() || {};
   var rows = __usersData.map(function(u) {
     var rb = roleBadge[u.role] || 'badge-gray';
     var lastLogin = u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : 'Never';
+    // You can change anyone's role except your own (backend also blocks self + last SA).
+    var isSelf = (u.id && u.id === me.id) || (u.email && me.email && u.email.toLowerCase() === (me.email||'').toLowerCase());
+    var roleBtn = !isSelf
+      ? '<button class="btn btn-outline btn-sm" onclick="showChangeRoleModal(\'' + u.id + '\')" style="margin-right:4px">Role</button>'
+      : '';
     var actions = u.role !== 'SUPER_ADMIN'
-      ? '<button class="btn btn-outline btn-sm" onclick="showEditPermissionsModal(\'' + u.id + '\')" style="margin-right:4px">Permissions</button>' +
+      ? roleBtn +
+        '<button class="btn btn-outline btn-sm" onclick="showEditPermissionsModal(\'' + u.id + '\')" style="margin-right:4px">Permissions</button>' +
         '<button class="btn btn-outline btn-sm" onclick="toggleUserActive(\'' + u.id + '\',' + u.isActive + ')" style="margin-right:4px">' + (u.isActive ? 'Suspend' : 'Activate') + '</button>' +
         '<button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="deleteUser(\'' + u.id + '\',\'' + (u.email||'').replace(/'/g,'') + '\')">Delete</button>'
-      : '<span style="font-size:11px;color:var(--gray-400)">Protected</span>';
+      : (roleBtn + '<span style="font-size:11px;color:var(--gray-400)">Protected</span>');
     return '<tr>' +
       '<td style="font-weight:500">' + u.firstName + ' ' + u.lastName + '</td>' +
       '<td class="mono" style="font-size:11px">' + u.email + '</td>' +
@@ -1790,7 +1798,7 @@ function onRoleChange() {
 }
 
 function showCreateUserModal() {
-  var opts = ['ADMIN','COMPLIANCE_OFFICER','AUDIT','MERCHANT','AGGREGATOR'].map(function(r) {
+  var opts = ['SUPER_ADMIN','ADMIN','COMPLIANCE_OFFICER','AUDIT','MERCHANT','AGGREGATOR'].map(function(r) {
     return '<option value="' + r + '">' + r.replace(/_/g,' ') + '</option>';
   }).join('');
   showModal(
@@ -1833,6 +1841,44 @@ async function createUser() {
   })});
   if (msg) msg.innerHTML = res && res.status
     ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; User created. A first-time password has been emailed to ' + email + '.</div>'
+    : '<div class="warn-box">&#9888; ' + (res && res.message || 'Error') + '</div>';
+  if (res && res.status) setTimeout(function() {
+    document.getElementById('modal').style.display = 'none';
+    loadUsers();
+  }, 900);
+}
+
+function showChangeRoleModal(userId) {
+  var u = __usersData.find(function(x) { return x.id === userId; });
+  if (!u) return;
+  var roles = ['SUPER_ADMIN','ADMIN','COMPLIANCE_OFFICER','AUDIT','MERCHANT','AGGREGATOR'];
+  var opts = roles.map(function(r) {
+    return '<option value="' + r + '"' + (u.role === r ? ' selected' : '') + '>' + r.replace(/_/g,' ') + '</option>';
+  }).join('');
+  showModal(
+    '<div class="modal-header"><div class="modal-title">Change Role</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="font-size:13px;color:var(--gray-500);margin-bottom:12px">' + u.firstName + ' ' + u.lastName +
+      ' &nbsp;&middot;&nbsp; <span class="mono" style="font-size:11px">' + u.email + '</span><br>' +
+      'Current role: <strong>' + u.role.replace(/_/g,' ') + '</strong></div>' +
+    '<div class="form-group"><label class="form-label">New Role *</label>' +
+    '<select class="form-input form-select" id="cr-role">' + opts + '</select></div>' +
+    '<div class="warn-box" style="font-size:12px">Changing the role <strong>resets this user\'s permissions</strong> to the new role\'s defaults. Super Admin has full, unrestricted access.</div>' +
+    '<div class="flex-between" style="margin-top:8px">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" onclick="changeUserRole(\'' + u.id + '\')">Update Role</button></div>' +
+    '<div id="cr-msg" style="margin-top:8px"></div>'
+  );
+}
+
+async function changeUserRole(userId) {
+  var role = document.getElementById('cr-role').value;
+  var msg  = document.getElementById('cr-msg');
+  var res  = await apiFetch('/users/' + userId + '/role', {
+    method:'PATCH', body:JSON.stringify({ role: role }),
+  });
+  if (msg) msg.innerHTML = res && res.status
+    ? '<div class="info-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; ' + (res.message || 'Role updated.') + '</div>'
     : '<div class="warn-box">&#9888; ' + (res && res.message || 'Error') + '</div>';
   if (res && res.status) setTimeout(function() {
     document.getElementById('modal').style.display = 'none';
