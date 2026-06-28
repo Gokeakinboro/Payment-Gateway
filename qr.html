@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pay — Paylode</title>
+<style>
+  :root { --g:#16a34a; --ink:#1a1a1a; --muted:#6b7280; --line:#e5e7eb; }
+  * { box-sizing:border-box; }
+  body { font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif; background:#f6f7f9; color:var(--ink); margin:0; padding:24px; }
+  .card { max-width:460px; margin:32px auto; background:#fff; border:1px solid var(--line); border-radius:16px; overflow:hidden; }
+  .head { padding:22px 24px; border-bottom:1px solid var(--line); text-align:center; }
+  .head img { max-height:48px; max-width:150px; }
+  .head h1 { font-size:17px; margin:8px 0 0; }
+  .body { padding:24px; }
+  .amount { font-size:30px; font-weight:700; text-align:center; margin:8px 0 4px; }
+  .muted { color:var(--muted); font-size:13px; text-align:center; }
+  label { display:block; font-size:13px; margin:14px 0 4px; color:var(--muted); }
+  input { width:100%; padding:12px; border:1px solid var(--line); border-radius:10px; font-size:16px; }
+  button { width:100%; margin-top:18px; background:var(--g); color:#fff; border:0; padding:13px; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; }
+  .err { color:#b91c1c; font-size:13px; margin-top:10px; text-align:center; }
+  .foot { text-align:center; font-size:11px; color:#9ca3af; padding:14px; }
+</style>
+</head>
+<body>
+  <div class="card" id="card"><div class="body" id="loading">Loading…</div></div>
+  <div class="foot">Powered by Paylode</div>
+<script>
+const API = window.location.origin + '/api/v1/invoicing/public';
+const token = new URLSearchParams(location.search).get('c');
+const VAT = 0.075;
+const ngn = (k) => '₦' + (Number(k)/100).toLocaleString('en-NG', {minimumFractionDigits:2});
+let DATA = null;
+
+async function load() {
+  if (!token) return show('<div class="body err">Invalid QR code.</div>');
+  let r;
+  try { r = await (await fetch(`${API}/qr/${token}`)).json(); } catch(e){ return show('<div class="body err">Could not load. Try again.</div>'); }
+  if (!r.status) return show(`<div class="body err">${r.message||'QR code not found.'}</div>`);
+  DATA = r.data; const m = DATA.merchant || {};
+  const isOpen = DATA.type === 'open';
+  show(`
+    <div class="head">${m.logo_url?`<img src="${m.logo_url}" alt="">`:''}<h1>${esc(m.name||'Make a payment')}</h1>
+      ${DATA.label?`<div class="muted" style="margin-top:4px">${esc(DATA.label)}</div>`:''}</div>
+    <div class="body">
+      ${isOpen ? `<label>Amount (₦)</label><input id="amt" type="number" min="1" placeholder="0.00" oninput="recalc()">`
+               : `<div class="amount" id="amount">${ngn(total(DATA.amount))}</div><div class="muted">${DATA.charge_vat?'Incl. 7.5% VAT':'Amount to pay'}</div>`}
+      ${isOpen ? `<div class="muted" id="vatline" style="margin-top:6px"></div>`:''}
+      <label>Note (optional)</label><input id="note" type="text" placeholder="What is this for?">
+      <label>Your email (optional, for a receipt)</label><input id="email" type="email" placeholder="you@example.com">
+      <button id="pay" onclick="pay()">Pay</button>
+      <div class="err" id="err"></div>
+    </div>`);
+  recalc();
+}
+function total(face){ return DATA && DATA.charge_vat ? Math.round(face*(1+VAT)) : face; }
+function recalc(){
+  if (!DATA || DATA.type!=='open') return;
+  const v = parseFloat((document.getElementById('amt')||{}).value)||0;
+  const face = Math.round(v*100);
+  document.getElementById('vatline').textContent = DATA.charge_vat && face>0 ? `Total incl. 7.5% VAT: ${ngn(total(face))}` : '';
+  document.getElementById('pay').textContent = face>0 ? `Pay ${ngn(total(face))}` : 'Pay';
+}
+async function pay(){
+  const btn=document.getElementById('pay'); btn.disabled=true; btn.textContent='Starting…';
+  const body={ email:(document.getElementById('email')||{}).value||'', note:(document.getElementById('note')||{}).value||'' };
+  if (DATA.type==='open'){ const v=parseFloat((document.getElementById('amt')||{}).value); if(!v||v<1){return failPay('Enter an amount.');} body.amount=Math.round(v*100); }
+  let r;
+  try { r = await (await fetch(`${API}/qr/${token}/pay`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json(); }
+  catch(e){ return failPay('Network error. Try again.'); }
+  if(!r.status) return failPay(r.message||'Could not start payment.');
+  location.href = r.data.redirect_url;
+}
+function failPay(msg){ const b=document.getElementById('pay'); b.disabled=false; b.textContent='Try again'; document.getElementById('err').textContent=msg; }
+function show(html){ document.getElementById('card').innerHTML=html; }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+load();
+</script>
+</body>
+</html>

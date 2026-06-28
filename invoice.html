@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice — Paylode</title>
+<style>
+  :root { --g:#16a34a; --ink:#1a1a1a; --muted:#6b7280; --line:#e5e7eb; }
+  * { box-sizing:border-box; }
+  body { font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif; background:#f6f7f9; color:var(--ink); margin:0; padding:24px; }
+  .card { max-width:520px; margin:24px auto; background:#fff; border:1px solid var(--line); border-radius:16px; overflow:hidden; }
+  .head { padding:20px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+  .head img { max-height:44px; max-width:140px; }
+  .head h1 { font-size:16px; margin:0; }
+  .body { padding:24px; }
+  .row { display:flex; justify-content:space-between; padding:6px 0; font-size:14px; }
+  .row.total { font-weight:700; border-top:1px solid var(--line); margin-top:8px; padding-top:12px; font-size:16px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .num { font-weight:700; font-size:15px; margin:4px 0 14px; }
+  label { display:block; font-size:13px; margin:14px 0 4px; color:var(--muted); }
+  input { width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px; font-size:15px; }
+  button { width:100%; margin-top:18px; background:var(--g); color:#fff; border:0; padding:13px; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .paid { background:#dcfce7; color:#15803d; } .due { background:#fef3c7; color:#92400e; }
+  .err { color:#b91c1c; font-size:13px; margin-top:10px; }
+  .foot { text-align:center; font-size:11px; color:#9ca3af; padding:14px; }
+</style>
+</head>
+<body>
+  <div class="card" id="card"><div class="body" id="loading">Loading invoice…</div></div>
+  <div class="foot">Powered by Paylode</div>
+<script>
+const API = window.location.origin + '/api/v1/invoicing/public';
+const token = new URLSearchParams(location.search).get('t');
+const ngn = (k) => '₦' + (Number(k)/100).toLocaleString('en-NG', {minimumFractionDigits:2});
+
+async function load() {
+  if (!token) return show('<div class="body err">Invalid invoice link.</div>');
+  let r;
+  try { r = await (await fetch(`${API}/invoice/${token}`)).json(); } catch(e) { return show('<div class="body err">Could not load invoice.</div>'); }
+  if (!r.status) return show(`<div class="body err">${r.message||'Invoice not found.'}</div>`);
+  const d = r.data, m = d.merchant || {};
+  const balance = d.balance;
+  const isPaid = d.status === 'paid' || balance <= 0;
+  const partField = (d.allow_part_payment && !isPaid)
+    ? `<label>Amount to pay (₦) — full balance is ${ngn(balance)}</label><input id="amt" type="number" min="1" placeholder="${(balance/100).toFixed(2)}">` : '';
+  show(`
+    <div class="head">
+      ${m.logo_url ? `<img src="${m.logo_url}" alt="">` : ''}
+      <h1>${esc(m.name||'Invoice')}</h1>
+    </div>
+    <div class="body">
+      <div class="num">Invoice ${esc(d.invoice_number)} <span class="badge ${isPaid?'paid':'due'}">${isPaid?'Paid':'Due'}</span></div>
+      ${d.description ? `<div class="muted" style="margin-bottom:10px">${esc(d.description)}</div>` : ''}
+      <div class="row"><span>Amount</span><span>${ngn(d.amount)}</span></div>
+      ${d.vat_amount>0?`<div class="row"><span>VAT</span><span>${ngn(d.vat_amount)}</span></div>`:''}
+      ${d.amount_paid>0?`<div class="row"><span>Paid so far</span><span>-${ngn(d.amount_paid)}</span></div>`:''}
+      <div class="row total"><span>${isPaid?'Total':'Balance due'}</span><span>${ngn(isPaid?d.total_amount:balance)}</span></div>
+      ${d.due_at?`<div class="muted" style="margin-top:8px">Due by ${new Date(d.due_at).toDateString()}</div>`:''}
+      ${isPaid ? '<div class="muted" style="margin-top:18px">This invoice has been paid in full. Thank you.</div>' : `
+        ${partField}
+        <label>Your email (optional, for a receipt)</label>
+        <input id="email" type="email" placeholder="you@example.com">
+        <button id="pay" onclick="pay()">Pay ${ngn(balance)}</button>
+        <div class="err" id="err"></div>`}
+    </div>`);
+}
+async function pay() {
+  const btn = document.getElementById('pay'); btn.disabled = true; btn.textContent = 'Starting…';
+  const body = { email: (document.getElementById('email')||{}).value || '' };
+  const amt = document.getElementById('amt'); if (amt && amt.value) body.amount = Math.round(parseFloat(amt.value)*100);
+  let r;
+  try { r = await (await fetch(`${API}/invoice/${token}/pay`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json(); }
+  catch(e) { return failPay('Network error. Try again.'); }
+  if (!r.status) return failPay(r.message || 'Could not start payment.');
+  location.href = r.data.redirect_url;
+}
+function failPay(msg){ const b=document.getElementById('pay'); b.disabled=false; b.textContent='Try again'; document.getElementById('err').textContent=msg; }
+function show(html){ document.getElementById('card').innerHTML = html; }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice & Collect — Paylode</title>
+<style>
+  :root { --g:#16a34a; --p:#6d28d9; --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --bg:#f6f7f9; }
+  * { box-sizing:border-box; }
+  body { font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif; margin:0; background:var(--bg); color:var(--ink); }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:14px 22px; display:flex; align-items:center; justify-content:space-between; }
+  header h1 { font-size:17px; margin:0; }
+  header a { font-size:13px; color:var(--p); text-decoration:none; }
+  .tabs { display:flex; gap:4px; flex-wrap:wrap; padding:12px 22px 0; background:#fff; border-bottom:1px solid var(--line); }
+  .tab { padding:9px 14px; border:0; background:none; font-size:14px; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; }
+  .tab.active { color:var(--ink); border-bottom-color:var(--p); font-weight:600; }
+  main { max-width:1000px; margin:22px auto; padding:0 22px; }
+  .panel { display:none; } .panel.active { display:block; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:16px; }
+  h2 { font-size:15px; margin:0 0 12px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input,select,textarea { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; font-size:14px; font-family:inherit; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  button.btn { background:var(--g); color:#fff; border:0; padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; margin-top:12px; }
+  button.btn.sec { background:#fff; color:var(--ink); border:1px solid var(--line); }
+  button.mini { font-size:12px; padding:5px 9px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; margin-right:4px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; }
+  .badge { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+  .b-paid{background:#dcfce7;color:#15803d}.b-sent{background:#dbeafe;color:#1d4ed8}.b-draft{background:#f3f4f6;color:#374151}
+  .b-part{background:#fef9c3;color:#854d0e}.b-over{background:#fee2e2;color:#b91c1c}.b-cancel{background:#f3f4f6;color:#9ca3af}
+  .msg { font-size:13px; margin-top:10px; }
+  .msg.ok{color:#15803d}.msg.err{color:#b91c1c}
+  .muted{color:var(--muted);font-size:13px}
+  .right{ text-align:right }
+</style>
+</head>
+<body>
+<header>
+  <h1>Invoice &amp; Collect</h1>
+  <a href="dashboard.html">← Back to dashboard</a>
+</header>
+<div class="tabs" id="tabs"></div>
+<main id="main"></main>
+
+<script>
+const API = window.location.origin + '/api/v1/invoicing';
+const TOKEN = localStorage.getItem('paylode_token');
+const ngn = (k) => '₦' + (Number(k)/100).toLocaleString('en-NG',{minimumFractionDigits:2});
+const esc = (s) => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const el = (id) => document.getElementById(id);
+
+async function api(path, opts={}) {
+  const headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  const res = await fetch(API + path, Object.assign({}, opts, { headers }));
+  if (res.status === 401) { location.href = 'login.html'; return {status:false,message:'Session expired'}; }
+  const ct = res.headers.get('content-type')||'';
+  if (ct.includes('application/json')) return res.json();
+  return res;
+}
+
+const TABS = [
+  ['invoices','Invoices'], ['qr','QR Codes'], ['contacts','Contacts'], ['lists','Lists'],
+  ['format','Invoice Format'], ['departments','Departments'], ['reports','Reports'],
+];
+let active = 'invoices';
+function renderTabs(){
+  el('tabs').innerHTML = TABS.map(([k,l])=>`<button class="tab ${k===active?'active':''}" onclick="go('${k}')">${l}</button>`).join('');
+}
+function go(k){ active=k; renderTabs(); render(); }
+function render(){ ({invoices:tInvoices,qr:tQr,contacts:tContacts,lists:tLists,format:tFormat,departments:tDepartments,reports:tReports}[active])(); }
+
+// ── INVOICES ─────────────────────────────────────────────
+async function tInvoices(){
+  el('main').innerHTML = `
+   <div class="card"><h2>Create invoice</h2>
+     <div class="grid3">
+       <div><label>Amount (₦)</label><input id="i_amt" type="number" min="1"></div>
+       <div><label>Currency</label><select id="i_cur"><option>NGN</option><option>USD</option></select></div>
+       <div><label>Department (optional)</label><select id="i_dept"><option value="">—</option></select></div>
+     </div>
+     <label>Description</label><input id="i_desc" placeholder="What is this invoice for?">
+     <div class="grid3">
+       <div><label>Recipient email</label><input id="i_email" type="email" placeholder="single recipient"></div>
+       <div><label>Recipient name</label><input id="i_name"></div>
+       <div><label>Or send to</label><select id="i_target"><option value="">This recipient</option><option value="all">All contacts</option></select></div>
+     </div>
+     <div class="grid3">
+       <div><label>Schedule send (optional)</label><input id="i_sched" type="datetime-local"></div>
+       <div><label>Due date (optional)</label><input id="i_due" type="date"></div>
+       <div><label>Reminders</label><div style="display:flex;gap:6px"><input id="i_rint" type="number" min="1" placeholder="every N days"><input id="i_rcnt" type="number" min="0" placeholder="count"></div></div>
+     </div>
+     <div style="display:flex;gap:18px;margin-top:10px">
+       <label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="i_vat" style="width:auto"> Charge VAT (7.5%)</label>
+       <label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="i_part" style="width:auto"> Allow part payment</label>
+     </div>
+     <button class="btn" onclick="createInvoice()">Create &amp; send</button>
+     <div class="msg" id="i_msg"></div>
+   </div>
+   <div class="card"><h2>Invoices</h2><div id="i_list" class="muted">Loading…</div></div>`;
+  // departments dropdown
+  const d = await api('/departments'); if (d.status) el('i_dept').innerHTML = '<option value="">—</option>' + d.data.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
+  loadInvoices();
+}
+async function loadInvoices(){
+  const r = await api('/invoices');
+  if (!r.status) { el('i_list').innerHTML = `<span class="msg err">${r.message}</span>`; return; }
+  if (!r.data.length) { el('i_list').innerHTML = '<span class="muted">No invoices yet.</span>'; return; }
+  el('i_list').innerHTML = `<table><tr><th>Number</th><th>Recipient</th><th class="right">Total</th><th class="right">Paid</th><th>Status</th><th></th></tr>` +
+    r.data.map(i=>`<tr><td>${esc(i.invoice_number)}</td><td>${esc(i.recipient_email||'—')}</td><td class="right">${ngn(i.total_amount)}</td><td class="right">${ngn(i.amount_paid)}</td><td>${badge(i.status,i.is_overdue)}</td>
+      <td class="right"><button class="mini" onclick="resend('${i.id}')">Resend</button>${i.status!=='paid'?`<button class="mini" onclick="cancelInv('${i.id}')">Cancel</button>`:''}</td></tr>`).join('') + `</table>`;
+}
+function badge(s,over){ const m={paid:'b-paid',sent:'b-sent',viewed:'b-sent',draft:'b-draft',part_paid:'b-part',cancelled:'b-cancel'}; const cls=over&&s!=='paid'?'b-over':(m[s]||'b-draft'); return `<span class="badge ${cls}">${over&&s!=='paid'?'overdue':s}</span>`; }
+async function createInvoice(){
+  const amt = parseFloat(el('i_amt').value); if(!amt||amt<1) return setMsg('i_msg','Enter an amount.','err');
+  const body = { amount: Math.round(amt*100), currency: el('i_cur').value, description: el('i_desc').value,
+    charge_vat: el('i_vat').checked, allow_part_payment: el('i_part').checked,
+    department_id: el('i_dept').value || undefined,
+    scheduled_at: el('i_sched').value || undefined, due_at: el('i_due').value || undefined,
+    reminder_interval_days: el('i_rint').value || undefined, reminder_count: el('i_rcnt').value || undefined,
+    recipients: el('i_target').value==='all' ? { all_contacts:true } : { email: el('i_email').value, name: el('i_name').value } };
+  const r = await api('/invoices', { method:'POST', body: JSON.stringify(body) });
+  setMsg('i_msg', r.message, r.status?'ok':'err');
+  if (r.status){ el('i_amt').value=el('i_desc').value=el('i_email').value=el('i_name').value=''; loadInvoices(); }
+}
+async function resend(id){ const r=await api(`/invoices/${id}/send`,{method:'POST'}); setMsg('i_msg',r.message,r.status?'ok':'err'); }
+async function cancelInv(id){ if(!confirm('Cancel this invoice?'))return; const r=await api(`/invoices/${id}/cancel`,{method:'POST'}); if(r.status) loadInvoices(); }
+
+// ── QR ─────────────────────────────────────────────
+async function tQr(){
+  el('main').innerHTML = `
+   <div class="card"><h2>Create QR code</h2>
+     <div class="grid3">
+       <div><label>Type</label><select id="q_type" onchange="el('q_amtw').style.display=this.value==='fixed'?'block':'none'"><option value="fixed">Fixed amount</option><option value="open">Open amount</option></select></div>
+       <div id="q_amtw"><label>Amount (₦)</label><input id="q_amt" type="number" min="1"></div>
+       <div><label>Department (optional)</label><select id="q_dept"><option value="">—</option></select></div>
+     </div>
+     <label>Label</label><input id="q_label" placeholder="e.g. Bar, Front Desk, Event Gate">
+     <label style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="q_vat" style="width:auto"> Charge VAT (7.5%)</label>
+     <button class="btn" onclick="createQr()">Generate QR</button><div class="msg" id="q_msg"></div>
+   </div>
+   <div class="card"><h2>QR codes</h2><div id="q_list" class="muted">Loading…</div></div>`;
+  const d = await api('/departments'); if (d.status) el('q_dept').innerHTML='<option value="">—</option>'+d.data.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
+  loadQr();
+}
+async function loadQr(){
+  const r = await api('/qr'); if(!r.status){el('q_list').innerHTML=`<span class="msg err">${r.message}</span>`;return;}
+  if(!r.data.length){el('q_list').innerHTML='<span class="muted">No QR codes yet.</span>';return;}
+  el('q_list').innerHTML = `<table><tr><th>Label</th><th>Type</th><th class="right">Amount</th><th>Active</th><th>Link</th><th></th></tr>`+
+    r.data.map(q=>`<tr><td>${esc(q.label||q.reference)}</td><td>${q.type}</td><td class="right">${q.amount===null?'—':ngn(q.amount)}</td><td>${q.is_active?'Yes':'No'}</td>
+      <td><a href="${q.pay_url}" target="_blank">open</a></td>
+      <td class="right"><a class="mini" href="${q.image_png}">PNG</a><a class="mini" href="${q.image_svg}">SVG</a>
+        <button class="mini" onclick="copyShare('${q.pay_url}')">Copy link</button>
+        <button class="mini" onclick="toggleQr('${q.id}',${!q.is_active})">${q.is_active?'Disable':'Enable'}</button></td></tr>`).join('')+`</table>`;
+}
+async function createQr(){
+  const body={ type:el('q_type').value, label:el('q_label').value, charge_vat:el('q_vat').checked, department_id:el('q_dept').value||undefined };
+  if(body.type==='fixed'){ const a=parseFloat(el('q_amt').value); if(!a||a<1)return setMsg('q_msg','Enter an amount.','err'); body.amount=Math.round(a*100); }
+  const r=await api('/qr',{method:'POST',body:JSON.stringify(body)}); setMsg('q_msg',r.message,r.status?'ok':'err'); if(r.status) loadQr();
+}
+async function toggleQr(id,act){ const r=await api(`/qr/${id}`,{method:'PATCH',body:JSON.stringify({is_active:act})}); if(r.status) loadQr(); }
+function copyShare(u){ navigator.clipboard.writeText(u).then(()=>alert('Payment link copied:\n'+u)); }
+
+// ── CONTACTS ─────────────────────────────────────────────
+async function tContacts(){
+  el('main').innerHTML=`
+   <div class="card"><h2>Add contact</h2>
+     <div class="grid3"><div><label>Name</label><input id="c_name"></div><div><label>Email</label><input id="c_email" type="email"></div><div><label>Phone</label><input id="c_phone"></div></div>
+     <label>Tags (comma-separated)</label><input id="c_tags" placeholder="Tier 1, Block A">
+     <button class="btn" onclick="addContact()">Add</button>
+     <button class="btn sec" onclick="el('c_imp').style.display='block'">Bulk import (CSV paste)</button>
+     <div id="c_imp" style="display:none;margin-top:12px"><label>Paste rows: name,email,phone (one per line)</label><textarea id="c_csv" rows="5"></textarea><button class="btn" onclick="importContacts()">Import</button></div>
+     <div class="msg" id="c_msg"></div>
+   </div>
+   <div class="card"><h2>Contacts</h2><div id="c_list" class="muted">Loading…</div></div>`;
+  loadContacts();
+}
+async function loadContacts(){
+  const r=await api('/contacts'); if(!r.status){el('c_list').innerHTML=`<span class="msg err">${r.message}</span>`;return;}
+  if(!r.data.length){el('c_list').innerHTML='<span class="muted">No contacts yet.</span>';return;}
+  el('c_list').innerHTML=`<table><tr><th>Name</th><th>Email</th><th>Phone</th><th>Tags</th><th></th></tr>`+
+    r.data.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.email||'—')}</td><td>${esc(c.phone||'—')}</td><td>${(c.tags||[]).map(esc).join(', ')}</td><td class="right"><button class="mini" onclick="delContact('${c.id}')">Delete</button></td></tr>`).join('')+`</table>`;
+}
+async function addContact(){
+  const body={ name:el('c_name').value, email:el('c_email').value, phone:el('c_phone').value, tags:el('c_tags').value.split(',').map(t=>t.trim()).filter(Boolean) };
+  const r=await api('/contacts',{method:'POST',body:JSON.stringify(body)}); setMsg('c_msg',r.message,r.status?'ok':'err'); if(r.status){el('c_name').value=el('c_email').value=el('c_phone').value=el('c_tags').value='';loadContacts();}
+}
+async function importContacts(){
+  const rows=el('c_csv').value.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{const[name,email,phone]=l.split(',').map(s=>(s||'').trim());return{name,email,phone};});
+  if(!rows.length)return setMsg('c_msg','Nothing to import.','err');
+  const r=await api('/contacts/import',{method:'POST',body:JSON.stringify({rows})}); setMsg('c_msg',r.message,r.status?'ok':'err'); if(r.status){el('c_csv').value='';loadContacts();}
+}
+async function delContact(id){ if(!confirm('Delete contact?'))return; const r=await api(`/contacts/${id}`,{method:'DELETE'}); if(r.status) loadContacts(); }
+
+// ── LISTS ─────────────────────────────────────────────
+async function tLists(){
+  el('main').innerHTML=`<div class="card"><h2>Create list</h2><label>Name</label><input id="l_name"><button class="btn" onclick="addList()">Create</button><div class="msg" id="l_msg"></div></div>
+   <div class="card"><h2>Lists</h2><div id="l_list" class="muted">Loading…</div></div>`;
+  loadLists();
+}
+async function loadLists(){
+  const r=await api('/lists'); if(!r.status){el('l_list').innerHTML=`<span class="msg err">${r.message}</span>`;return;}
+  if(!r.data.length){el('l_list').innerHTML='<span class="muted">No lists yet.</span>';return;}
+  el('l_list').innerHTML=`<table><tr><th>Name</th><th>Members</th><th></th></tr>`+r.data.map(l=>`<tr><td>${esc(l.name)}</td><td>${l.member_count}</td><td class="right"><button class="mini" onclick="delList('${l.id}')">Delete</button></td></tr>`).join('')+`</table>`;
+}
+async function addList(){ const r=await api('/lists',{method:'POST',body:JSON.stringify({name:el('l_name').value})}); setMsg('l_msg',r.message,r.status?'ok':'err'); if(r.status){el('l_name').value='';loadLists();} }
+async function delList(id){ if(!confirm('Delete list?'))return; const r=await api(`/lists/${id}`,{method:'DELETE'}); if(r.status) loadLists(); }
+
+// ── FORMAT ─────────────────────────────────────────────
+async function tFormat(){
+  el('main').innerHTML=`<div class="card"><h2>Invoice format &amp; VAT default</h2>
+     <div class="grid2"><div><label>Logo URL</label><input id="f_logo"></div><div><label>Layout</label><select id="f_layout"><option>classic</option><option>modern</option><option>minimal</option><option>receipt</option></select></div></div>
+     <label>Business address</label><input id="f_addr">
+     <div class="grid2"><div><label>Business email</label><input id="f_email"></div><div><label>Business phone</label><input id="f_phone"></div></div>
+     <div style="display:flex;gap:18px;margin-top:10px">
+       <label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="f_vat" style="width:auto"> Charge VAT by default</label>
+       <label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="f_part" style="width:auto"> Allow part payment by default</label>
+     </div>
+     <button class="btn" onclick="saveFormat()">Save</button><div class="msg" id="f_msg"></div></div>`;
+  const r=await api('/formats'); if(r.status){const d=r.data;el('f_logo').value=d.logo_url||'';el('f_layout').value=d.layout||'classic';el('f_addr').value=d.address||'';el('f_email').value=d.business_email||'';el('f_phone').value=d.business_phone||'';el('f_vat').checked=!!d.charge_vat_default;el('f_part').checked=!!d.allow_part_payment_default;}
+}
+async function saveFormat(){
+  const body={ logo_url:el('f_logo').value, layout:el('f_layout').value, address:el('f_addr').value, business_email:el('f_email').value, business_phone:el('f_phone').value, charge_vat_default:el('f_vat').checked, allow_part_payment_default:el('f_part').checked };
+  const r=await api('/formats',{method:'PUT',body:JSON.stringify(body)}); setMsg('f_msg',r.message,r.status?'ok':'err');
+}
+
+// ── DEPARTMENTS ─────────────────────────────────────────────
+async function tDepartments(){
+  el('main').innerHTML=`<div class="card"><h2>Create department</h2><label>Name</label><input id="d_name" placeholder="e.g. Bar"><button class="btn" onclick="addDept()">Create</button><div class="msg" id="d_msg"></div></div>
+   <div class="card"><h2>Departments &amp; users</h2><div id="d_list" class="muted">Loading…</div></div>`;
+  loadDepts();
+}
+async function loadDepts(){
+  const r=await api('/departments'); if(!r.status){el('d_list').innerHTML=`<span class="msg err">${r.message}</span>`;return;}
+  if(!r.data.length){el('d_list').innerHTML='<span class="muted">No departments yet.</span>';return;}
+  el('d_list').innerHTML = r.data.map(d=>`<div style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px">
+     <div style="display:flex;justify-content:space-between"><strong>${esc(d.name)}</strong><span class="muted">${d.user_count} user(s)</span></div>
+     <div class="grid3" style="margin-top:8px"><input id="u_name_${d.id}" placeholder="User name"><input id="u_email_${d.id}" placeholder="Email"><input id="u_phone_${d.id}" placeholder="Phone"></div>
+     <button class="mini" style="margin-top:8px" onclick="addUser('${d.id}')">Add user</button>
+     <button class="mini" onclick="loadUsers('${d.id}')">View users</button>
+     <span class="msg" id="d_umsg_${d.id}"></span>
+     <div id="d_users_${d.id}" style="margin-top:8px"></div></div>`).join('');
+}
+async function addDept(){ const r=await api('/departments',{method:'POST',body:JSON.stringify({name:el('d_name').value})}); setMsg('d_msg',r.message,r.status?'ok':'err'); if(r.status){el('d_name').value='';loadDepts();} }
+async function addUser(id){
+  const body={ name:el('u_name_'+id).value, email:el('u_email_'+id).value, phone:el('u_phone_'+id).value };
+  const r=await api(`/departments/${id}/users`,{method:'POST',body:JSON.stringify(body)});
+  setMsg('d_umsg_'+id, r.status?`${r.message} (temp password: ${r.data.temp_password})`:r.message, r.status?'ok':'err');
+  if(r.status) loadUsers(id);
+}
+async function loadUsers(id){
+  const r=await api(`/departments/${id}/users`); if(!r.status)return;
+  el('d_users_'+id).innerHTML = r.data.length ? `<table><tr><th>Name</th><th>Email</th><th>Status</th></tr>`+r.data.map(u=>`<tr><td>${esc(u.name||'')}</td><td>${esc(u.email||'')}</td><td>${u.onboarding_status}</td></tr>`).join('')+`</table>` : '<span class="muted">No users.</span>';
+}
+
+// ── REPORTS ─────────────────────────────────────────────
+async function tReports(){
+  el('main').innerHTML=`<div class="card"><h2>Summary</h2><div id="r_sum" class="muted">Loading…</div></div>
+   <div class="card"><h2>Collections</h2><button class="btn sec" onclick="downloadCsv()">Download CSV</button><div id="r_tx" class="muted" style="margin-top:12px">Loading…</div></div>`;
+  const s=await api('/reports/summary');
+  if(s.status){ const d=s.data; el('r_sum').innerHTML=`<table><tr><th>Status</th><th class="right">Count</th><th class="right">Total</th></tr>`+
+     Object.entries(d.by_status).map(([k,v])=>`<tr><td>${k}</td><td class="right">${v.count}</td><td class="right">${ngn(v.total)}</td></tr>`).join('')+
+     `<tr><td><strong>Overdue</strong></td><td class="right">${d.overdue}</td><td></td></tr><tr><td><strong>Collected</strong></td><td></td><td class="right"><strong>${ngn(d.total_collected)}</strong></td></tr></table>`; }
+  const t=await api('/reports/transactions');
+  if(t.status){ el('r_tx').innerHTML = t.data.length ? `<table><tr><th>Date</th><th>Type</th><th>Ref</th><th>Payer</th><th class="right">Amount</th></tr>`+
+     t.data.slice(0,200).map(x=>`<tr><td>${new Date(x.paid_at).toLocaleString()}</td><td>${x.kind}</td><td>${esc(x.ref||'')}</td><td>${esc(x.payer||'—')}</td><td class="right">${ngn(x.amount)}</td></tr>`).join('')+`</table>` : '<span class="muted">No collections yet.</span>'; }
+}
+
+async function downloadCsv(){
+  const res = await fetch(API+'/reports/transactions?format=csv', { headers: TOKEN?{'Authorization':'Bearer '+TOKEN}:{} });
+  if (!res.ok) return alert('Could not download CSV.');
+  const blob = await res.blob(); const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'collections.csv'; a.click(); URL.revokeObjectURL(url);
+}
+function setMsg(id,msg,cls){ const e=el(id); if(e){e.textContent=msg||'';e.className='msg '+(cls||'');} }
+if (!TOKEN) location.href='login.html'; else { renderTabs(); render(); }
+</script>
+</body>
+</html>
