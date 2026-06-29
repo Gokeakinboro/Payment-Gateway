@@ -902,20 +902,27 @@ async function initPaymentLink(slug) {
   } catch (e) { ov.remove(); showFailed('Could not load this payment link.'); return; }
 
   const fixed = info.amount_fixed;
+  const vat   = !!info.charge_vat;   // merchant charges 7.5% VAT on top
   // The merchant may bake the customer's email into the link (?email=...). Prefill
   // it, but keep it OPTIONAL and editable — the customer can fill it or skip it.
   const prefillEmail = (new URLSearchParams(window.location.search).get('email') || '').trim();
+  // Fixed-amount display: with VAT, show the total prominently + a base/VAT breakdown.
+  const fixedAmountBlock = !fixed ? '' : (vat
+    ? '<div style="font-size:30px;font-weight:800;color:#1A1A1A;margin:12px 0 2px;">' + formatNaira(info.total_amount) + '</div>'
+      + '<div style="font-size:12px;color:#666;margin-bottom:6px;">' + formatNaira(info.amount) + ' + 7.5% VAT ' + formatNaira(info.vat_amount) + '</div>'
+    : '<div style="font-size:30px;font-weight:800;color:#1A1A1A;margin:12px 0 6px;">' + formatNaira(info.amount) + '</div>');
   ov.innerHTML =
     '<div style="background:#fff;max-width:420px;width:100%;border-radius:14px;padding:26px;box-shadow:0 20px 60px rgba(0,0,0,.3);">'
     + '<div style="font-size:12px;color:#6B1A2B;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">' + plEsc(info.merchant_name || 'Payment') + '</div>'
     + '<div style="font-size:20px;font-weight:700;color:#1A1A1A;margin:6px 0 2px;">' + plEsc(info.title || 'Payment') + '</div>'
     + (info.description ? '<div style="font-size:14px;color:#555;margin-bottom:4px;">' + plEsc(info.description) + '</div>' : '')
-    + (fixed ? '<div style="font-size:30px;font-weight:800;color:#1A1A1A;margin:12px 0 6px;">' + formatNaira(info.amount) + '</div>' : '')
+    + fixedAmountBlock
     + '<label style="display:block;font-size:13px;color:#333;margin:16px 0 6px;font-weight:600;">Your email <span style="font-weight:400;color:#999;">(optional — for your receipt)</span></label>'
     + '<input id="pl-email" type="email" value="' + plEsc(prefillEmail) + '" placeholder="you@example.com" style="width:100%;padding:12px 14px;border:1.5px solid #ddd;border-radius:9px;font-size:15px;box-sizing:border-box;">'
     + (fixed ? '' :
         '<label style="display:block;font-size:13px;color:#333;margin:14px 0 6px;font-weight:600;">Amount (₦)</label>'
-      + '<input id="pl-amount" type="number" min="1" step="0.01" placeholder="0.00" style="width:100%;padding:12px 14px;border:1.5px solid #ddd;border-radius:9px;font-size:15px;box-sizing:border-box;">')
+      + '<input id="pl-amount" type="number" min="1" step="0.01" placeholder="0.00" style="width:100%;padding:12px 14px;border:1.5px solid #ddd;border-radius:9px;font-size:15px;box-sizing:border-box;">'
+      + (vat ? '<div id="pl-vat-note" style="font-size:12px;color:#666;margin-top:6px;">+ 7.5% VAT will be added at payment.</div>' : ''))
     + '<div id="pl-error" style="color:#c0392b;font-size:13px;margin-top:10px;display:none;"></div>'
     + '<button id="pl-continue" style="width:100%;margin-top:18px;padding:14px;background:#E8470A;color:#fff;border:none;border-radius:9px;font-size:16px;font-weight:700;cursor:pointer;">Continue to payment</button>'
     + '<button id="pl-skip" style="width:100%;margin-top:8px;padding:10px;background:transparent;color:#666;border:none;font-size:13px;cursor:pointer;text-decoration:underline;">Skip — continue without email</button>'
@@ -924,6 +931,18 @@ async function initPaymentLink(slug) {
   document.getElementById('pl-continue').addEventListener('click', () => submitPaymentLink(slug, fixed));
   document.getElementById('pl-skip').addEventListener('click', () => { const e = document.getElementById('pl-email'); if (e) e.value = ''; submitPaymentLink(slug, fixed); });
   document.getElementById('pl-email').addEventListener('keydown', e => { if (e.key === 'Enter') submitPaymentLink(slug, fixed); });
+  // Live "+ VAT" preview for open-amount links.
+  if (!fixed && vat) {
+    const amtEl = document.getElementById('pl-amount');
+    const noteEl = document.getElementById('pl-vat-note');
+    amtEl.addEventListener('input', () => {
+      const v = parseFloat(amtEl.value || '');
+      if (v > 0) {
+        const base = Math.round(v * 100), tax = Math.trunc(base * 75 / 1000);
+        noteEl.innerHTML = '+ 7.5% VAT ' + formatNaira(tax) + ' → Total <strong>' + formatNaira(base + tax) + '</strong>';
+      } else { noteEl.textContent = '+ 7.5% VAT will be added at payment.'; }
+    });
+  }
 }
 
 async function submitPaymentLink(slug, fixed) {

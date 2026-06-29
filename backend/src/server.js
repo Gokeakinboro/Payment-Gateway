@@ -147,6 +147,7 @@ app.use('/api/v1/deferrals', require('./routes/deferrals'));
 app.use('/api/v1/documents', require('./routes/documents'));
 app.use('/api/v1/support', require('./routes/support'));
 app.use('/api/v1/payment-links', require('./routes/paymentLinks'));
+app.use('/api/v1/invoicing', require('./modules/invoicing'));
 
 // ── 404 handler ───────────────────────────────────────────────────────────
 app.use((req, res) => {

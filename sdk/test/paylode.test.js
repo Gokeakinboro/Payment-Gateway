@@ -129,6 +129,50 @@ test('nairaToKobo converts correctly', () => {
   assert(Paylode.utils.nairaToKobo(50000) === 5000000);
 });
 
+// ── Invoicing validation (no network) ──
+console.log('\n  Invoicing validation');
+test('exposes the full invoicing resource surface', () => {
+  const p = new Paylode('sk_test_xxx');
+  ['invoices','qr','contacts','lists','products','format','departments','reports']
+    .forEach((r) => assert(p.invoicing[r], `missing invoicing.${r}`));
+});
+test('invoices.create throws MISSING_FIELD without amount', () => {
+  const p = new Paylode('sk_test_xxx');
+  assertThrows(() => p.invoicing.invoices.create({ recipients: { email: 'a@b.com' } }), 'MISSING_FIELD');
+});
+test('invoices.create throws INVALID_AMOUNT below 100 kobo', () => {
+  const p = new Paylode('sk_test_xxx');
+  assertThrows(() => p.invoicing.invoices.create({ amount: 50, recipients: { email: 'a@b.com' } }), 'INVALID_AMOUNT');
+});
+test('invoices.create throws MISSING_FIELD without recipients', () => {
+  const p = new Paylode('sk_test_xxx');
+  assertThrows(() => p.invoicing.invoices.create({ amount: 100000 }), 'MISSING_FIELD');
+});
+test('invoices.fetch throws MISSING_FIELD without id', () => {
+  const p = new Paylode('sk_test_xxx');
+  assertThrows(() => p.invoicing.invoices.fetch(), 'MISSING_FIELD');
+});
+test('qr.create throws INVALID_AMOUNT for fixed QR with no amount', () => {
+  const p = new Paylode('sk_test_xxx');
+  assertThrows(() => p.invoicing.qr.create({ type: 'fixed' }), 'INVALID_AMOUNT');
+});
+test('contacts.create throws MISSING_FIELD without name', () => {
+  const p = new Paylode('sk_test_xxx');
+  assertThrows(() => p.invoicing.contacts.create({ email: 'a@b.com' }), 'MISSING_FIELD');
+});
+test('contacts.create throws MISSING_FIELD without email or phone', () => {
+  const p = new Paylode('sk_test_xxx');
+  assertThrows(() => p.invoicing.contacts.create({ name: 'Acme' }), 'MISSING_FIELD');
+});
+test('contacts.import throws MISSING_FIELD on empty rows', () => {
+  const p = new Paylode('sk_test_xxx');
+  assertThrows(() => p.invoicing.contacts.import([]), 'MISSING_FIELD');
+});
+test('departments.addUser throws MISSING_FIELD without email', () => {
+  const p = new Paylode('sk_test_xxx');
+  assertThrows(() => p.invoicing.departments.addUser('dep-1', { name: 'Jane' }), 'MISSING_FIELD');
+});
+
 // ── Summary ──
 console.log(`\n  ${passed + failed} tests: ${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

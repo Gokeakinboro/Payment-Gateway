@@ -116,6 +116,14 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
     ).catch(() => {});
   }
 
+  // Invoice & Collect bookkeeping (best-effort): record the payment against its
+  // invoice / QR code and update status. Idempotent (unique on transaction_id).
+  if (txn.metadata && (txn.metadata.source === 'invoice' || txn.metadata.source === 'qr')) {
+    require('../modules/invoicing/services/invoicingPay')
+      .recordForTransaction({ ...txn, status: 'SUCCESS', amount: fees.chargeAmount })
+      .catch(() => {});
+  }
+
   // Email the customer their receipt (best-effort, non-blocking).
   sendCustomerReceipt(txn.reference);
 
