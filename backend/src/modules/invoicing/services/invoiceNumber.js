@@ -3,6 +3,12 @@
 // Globally unique because it carries the (unique) merchant code as a prefix.
 const { prisma } = require('../../../utils/db');
 
+// Pure formatter — kept separate so it is unit-testable without a DB.
+function formatInvoiceNumber(seq, merchantCode) {
+  const prefix = (merchantCode || 'PYL').toUpperCase();
+  return `${prefix}-INV-${String(seq).padStart(6, '0')}`;
+}
+
 async function nextInvoiceNumber(merchantId, merchantCode) {
   const rows = await prisma.$queryRawUnsafe(
     `INSERT INTO inv_invoice_counters (merchant_id, last_seq)
@@ -13,8 +19,7 @@ async function nextInvoiceNumber(merchantId, merchantCode) {
     merchantId
   );
   const seq = parseInt(rows[0].seq, 10);
-  const prefix = (merchantCode || 'PYL').toUpperCase();
-  return `${prefix}-INV-${String(seq).padStart(6, '0')}`;
+  return formatInvoiceNumber(seq, merchantCode);
 }
 
-module.exports = { nextInvoiceNumber };
+module.exports = { nextInvoiceNumber, formatInvoiceNumber };
