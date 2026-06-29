@@ -29,6 +29,11 @@ const isValidEmail = e => EMAIL_RE.test(String(e || '').trim());
 const escapeHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// Merchant-charged VAT (7.5%) added on top of the face amount — the merchant
+// charging VAT to their customer, distinct from the gateway processing-fee VAT.
+// 7.5% = 75/1000; BigInt math keeps it exact in kobo.
+const merchantVat = (kobo) => (BigInt(kobo) * 75n) / 1000n;
+
 // Shape a DB row (amount selected as ::text) into the API representation.
 function formatLink(r) {
   const amt = r.amount === null || r.amount === undefined ? null : Number(r.amount);
@@ -40,6 +45,7 @@ function formatLink(r) {
     amount:      amt,                                   // kobo, or null = customer-entered
     amount_major: amt === null ? null : amt / 100,
     currency:    r.currency,
+    charge_vat:  !!r.charge_vat,
     reusable:    r.is_reusable,
     status:      r.status,
     expires_at:  r.expires_at,
@@ -52,7 +58,7 @@ function formatLink(r) {
 }
 
 const SELECT_COLS = `id::text, slug, title, description, amount::text AS amount, currency,
-                     is_reusable, status, expires_at, paid_count, created_at,
+                     charge_vat, is_reusable, status, expires_at, paid_count, created_at,
                      recipient_email, batch_id::text AS batch_id`;
 
 // NGN single-transaction cap by KYC tier (kobo) — mirrors transactions.initialize.
@@ -73,6 +79,7 @@ router.post('/', requireAuth, requireMerchant, async (req, res, next) => {
     const description = req.body.description ? String(req.body.description).trim().slice(0, 500) : null;
     const currency    = req.body.currency === 'USD' ? 'USD' : 'NGN';
     const reusable    = req.body.reusable === undefined ? true : !!req.body.reusable;
+    const chargeVat   = !!req.body.charge_vat;
 
     // Amount is optional — omit it for a customer-entered ("open") amount.
     let amount = null;
@@ -93,10 +100,10 @@ router.post('/', requireAuth, requireMerchant, async (req, res, next) => {
 
     const slug = crypto.randomBytes(8).toString('base64url'); // ~11 url-safe chars
     const rows = await prisma.$queryRawUnsafe(
-      `INSERT INTO payment_links (merchant_id, slug, title, description, amount, currency, is_reusable, expires_at)
-       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO payment_links (merchant_id, slug, title, description, amount, currency, is_reusable, expires_at, charge_vat)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING ${SELECT_COLS}`,
-      m.id, slug, title, description, amount === null ? null : BigInt(amount), currency, reusable, expiresAt
+      m.id, slug, title, description, amount === null ? null : BigInt(amount), currency, reusable, expiresAt, chargeVat
     );
     return created(res, formatLink(rows[0]), 'Payment link created');
   } catch (e) { next(e); }
@@ -116,6 +123,7 @@ router.post('/batch', requireAuth, requireMerchant, async (req, res, next) => {
     if (title.length > 140) return fail(res, 'Title is too long (max 140 characters)');
     const description = req.body.description ? String(req.body.description).trim().slice(0, 500) : null;
     const currency    = req.body.currency === 'USD' ? 'USD' : 'NGN';
+    const chargeVat   = !!req.body.charge_vat;
 
     let amount = null;
     const raw = req.body.amount;
@@ -155,9 +163,9 @@ router.post('/batch', requireAuth, requireMerchant, async (req, res, next) => {
     for (const email of valid) {
       const slug = crypto.randomBytes(8).toString('base64url');
       await prisma.$queryRawUnsafe(
-        `INSERT INTO payment_links (merchant_id, slug, title, description, amount, currency, is_reusable, expires_at, recipient_email, batch_id)
-         VALUES ($1::uuid,$2,$3,$4,$5,$6,false,$7,$8,$9::uuid)`,
-        m.id, slug, title, description, amount === null ? null : BigInt(amount), currency, expiresAt, email, batchId
+        `INSERT INTO payment_links (merchant_id, slug, title, description, amount, currency, is_reusable, expires_at, recipient_email, batch_id, charge_vat)
+         VALUES ($1::uuid,$2,$3,$4,$5,$6,false,$7,$8,$9::uuid,$10)`,
+        m.id, slug, title, description, amount === null ? null : BigInt(amount), currency, expiresAt, email, batchId, chargeVat
       );
       links.push({ email, slug, url: linkUrl(slug) });
     }
@@ -256,7 +264,7 @@ router.get('/public/:slug', async (req, res, next) => {
   try {
     const rows = await prisma.$queryRawUnsafe(
       `SELECT pl.slug, pl.title, pl.description, pl.amount::text AS amount, pl.currency,
-              pl.status, pl.expires_at, m.business_name
+              pl.charge_vat, pl.status, pl.expires_at, m.business_name
          FROM payment_links pl JOIN merchants m ON m.id = pl.merchant_id
         WHERE pl.slug = $1`,
       req.params.slug
@@ -266,12 +274,18 @@ router.get('/public/:slug', async (req, res, next) => {
     if (r.status !== 'active') return fail(res, 'This payment link is no longer active', 'LINK_INACTIVE', 410);
     if (r.expires_at && new Date(r.expires_at) < new Date())
       return fail(res, 'This payment link has expired', 'LINK_EXPIRED', 410);
+    const baseAmt = r.amount === null ? null : Number(r.amount);
+    const vatAmt  = (baseAmt !== null && r.charge_vat) ? Number(merchantVat(baseAmt)) : null;
     return ok(res, {
       slug:          r.slug,
       title:         r.title,
       description:   r.description,
-      amount:        r.amount === null ? null : Number(r.amount),
+      amount:        baseAmt,
       amount_fixed:  r.amount !== null,
+      charge_vat:    !!r.charge_vat,
+      vat_rate:      0.075,
+      vat_amount:    vatAmt,                                        // kobo, fixed links only
+      total_amount:  baseAmt === null ? null : baseAmt + (vatAmt || 0),
       currency:      r.currency,
       merchant_name: r.business_name,
     });
@@ -285,7 +299,7 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
   try {
     const linkRows = await prisma.$queryRawUnsafe(
       `SELECT id::text, merchant_id::text AS merchant_id, title, amount::text AS amount,
-              currency, status, expires_at
+              currency, charge_vat, status, expires_at
          FROM payment_links WHERE slug = $1`,
       req.params.slug
     );
@@ -310,6 +324,11 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
         return fail(res, 'A valid amount (in kobo, ≥ 100) is required');
     }
 
+    // Optional merchant-charged 7.5% VAT, added on top of the face amount. The
+    // customer is charged (and the transaction is for) base + VAT.
+    const vat     = link.charge_vat ? merchantVat(amount) : 0n;
+    const charged = BigInt(amount) + vat;
+
     const merchant = await prisma.merchant.findUnique({
       where: { id: link.merchant_id }, include: { aggregator: true },
     });
@@ -322,10 +341,10 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
     const gate = compliance.screenTransaction(merchant, { customerEmail: email || undefined });
     if (gate.decision === 'REJECT') return fail(res, gate.message, gate.reasonCode, 403);
 
-    // KYC single-transaction limit (NGN).
+    // KYC single-transaction limit (NGN) — applied to the total charged.
     if (link.currency === 'NGN') {
       const limit = singleTxnLimitKobo(merchant.kycTier);
-      if (BigInt(amount) > limit)
+      if (charged > limit)
         return fail(res, `Amount exceeds the merchant's per-transaction limit of ₦${koboToNaira(limit).toLocaleString()}`, 'KYC_LIMIT_EXCEEDED');
     }
 
@@ -334,14 +353,15 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
       reference:     ref,
       merchantId:    merchant.id,
       customerEmail: email,
-      amount:        BigInt(amount),
+      amount:        charged,
       currency:      link.currency,
       status:        'PENDING',
       channel:       'CARD',                       // placeholder; charge path sets the real channel
       authUrl:       `${CHECKOUT_BASE}/checkout.html?ref=${ref}`,
       accessCode:    ref,
       isSandbox:     false,
-      metadata:      { description: link.title, source: 'payment_link', payment_link_slug: req.params.slug },
+      metadata:      { description: link.title, source: 'payment_link', payment_link_slug: req.params.slug,
+                       charge_vat: link.charge_vat, base_amount: amount, vat_amount: Number(vat) },
     }});
 
     return created(res, {

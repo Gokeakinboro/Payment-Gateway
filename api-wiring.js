@@ -2478,6 +2478,7 @@ function showCreatePaymentLinkModal() {
         '<input class="form-input" id="pl-f-desc" placeholder="Shown to the customer"></div>' +
       '<div class="form-group"><label class="form-label">Amount (₦) — leave blank to let the customer enter it</label>' +
         '<input class="form-input" id="pl-f-amount" type="number" min="1" step="0.01" placeholder="e.g. 5000"></div>' +
+      '<div class="form-group"><label style="font-size:13px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="pl-f-vat"> Charge 7.5% VAT — added on top of the amount the customer pays.</label></div>' +
       '<div class="form-group"><label style="font-size:13px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="pl-f-reusable" checked> Reusable (uncheck for a one-time link). Ignored when you add recipients below — those are always one-off.</label></div>' +
       '<div class="form-group"><label class="form-label">Expires (optional)</label>' +
         '<input class="form-input" id="pl-f-expires" type="date"></div>' +
@@ -2542,7 +2543,8 @@ async function submitCreatePaymentLink() {
   errEl.style.display = 'none';
   var title = (document.getElementById('pl-f-title').value || '').trim();
   if (!title) return show('A title is required.');
-  var body = { title: title, reusable: document.getElementById('pl-f-reusable').checked };
+  var body = { title: title, reusable: document.getElementById('pl-f-reusable').checked,
+               charge_vat: document.getElementById('pl-f-vat').checked };
   var desc = (document.getElementById('pl-f-desc').value || '').trim();
   if (desc) body.description = desc;
   var amtRaw = (document.getElementById('pl-f-amount').value || '').trim();
