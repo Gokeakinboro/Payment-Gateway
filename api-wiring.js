@@ -3830,6 +3830,12 @@ async function emailAggRevenueLive() { var b = _buildAggRevenueCsv(); await emai
 // ── NAVIGATE FUNCTION ─────────────────────────────────────────────────────────
 // Use window assignment (not function declaration) to avoid hoisting conflicts
 window.navigate = function(page) {
+  // Some nav ids live on a standalone static page (see EXTERNAL_PAGES in app.js)
+  // rather than an in-app SPA view — redirect instead of rendering "coming soon".
+  if (typeof EXTERNAL_PAGES !== 'undefined' && EXTERNAL_PAGES[page]) {
+    window.location.href = EXTERNAL_PAGES[page];
+    return;
+  }
   // Record in-app history so both the on-screen "← Back" (goBack) and the
   // browser/phone Back button return to the PREVIOUS page (not the landing page).
   if (currentPage && currentPage !== page && String(page).indexOf('hub::') !== 0) {
