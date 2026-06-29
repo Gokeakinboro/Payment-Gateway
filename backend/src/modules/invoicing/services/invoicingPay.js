@@ -11,8 +11,8 @@
  *   2. reconcileInvoicingPayments() — a worker sweep that catches card payments
  *      (whose success is written inside checkout.js) without touching that file.
  */
-const { prisma } = require('../../utils/db');
-const { dispatchWebhook } = require('../../services/webhookService');
+const { prisma } = require('../../../utils/db');
+const { dispatchWebhook } = require('../../../services/webhookService');
 
 // Apply one SUCCESS transaction to its invoice or QR code. Safe to call repeatedly.
 async function recordForTransaction(txn) {
