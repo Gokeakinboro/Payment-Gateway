@@ -31,6 +31,7 @@ router.post('/:walletId/spend', async (req, res, next) => {
       walletId: req.params.walletId, departmentId: deptId, amount,
       createdBy: req.walletTenant.userId, note: req.body.note ? String(req.body.note).slice(0, 200) : null,
     });
+    require('../services/walletNotify').memberSpent({ merchantId: mid, walletId: req.params.walletId, departmentId: deptId, amount, balanceAfter: r.balanceAfter }).catch(() => {});
     return ok(res, { reference: r.reference, wallet_balance: Number(r.balanceAfter), department_balance: Number(r.departmentBalanceAfter) }, 'Payment successful');
   } catch (e) { handle(res, e, next); }
 });

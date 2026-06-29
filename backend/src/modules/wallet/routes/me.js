@@ -113,6 +113,7 @@ router.post('/spend', async (req, res, next) => {
     const d = await prisma.$queryRawUnsafe(`SELECT id::text FROM inv_departments WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.body.department_id, m.merchant_id);
     if (!d.length) return fail(res, 'Invalid department');
     const r = await ledger.spendToDepartment({ walletId: m.wallet_id, departmentId: req.body.department_id, amount, createdBy: req.user.id, note: req.body.note ? String(req.body.note).slice(0, 200) : null });
+    require('../services/walletNotify').memberSpent({ merchantId: m.merchant_id, walletId: m.wallet_id, departmentId: req.body.department_id, amount, balanceAfter: r.balanceAfter }).catch(() => {});
     return ok(res, { reference: r.reference, wallet_balance: Number(r.balanceAfter) }, 'Payment successful');
   } catch (e) { handle(res, e, next); }
 });

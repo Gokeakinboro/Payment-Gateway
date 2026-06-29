@@ -21,6 +21,7 @@ async function recordForTransaction(txn) {
       walletId: meta.wallet_id, amount: txn.amount, type: 'fund', maxBalance: null,
       transactionId: txn.id, reference: txn.reference, counterparty: txn.customerEmail || null, note: 'Wallet funding',
     });
+    require('./walletNotify').memberFunded(meta.wallet_id, txn.amount, res.balanceAfter).catch(() => {});
     return { recorded: true, ...res };
   } catch (e) { return { error: e.code || e.message }; }
 }
