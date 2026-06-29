@@ -148,6 +148,7 @@ app.use('/api/v1/documents', require('./routes/documents'));
 app.use('/api/v1/support', require('./routes/support'));
 app.use('/api/v1/payment-links', require('./routes/paymentLinks'));
 app.use('/api/v1/invoicing', require('./modules/invoicing'));
+app.use('/api/v1/wallet', require('./modules/wallet'));
 app.use('/api/v1/whatsapp', require('./routes/whatsappWebhook'));
 
 // ── 404 handler ───────────────────────────────────────────────────────────
