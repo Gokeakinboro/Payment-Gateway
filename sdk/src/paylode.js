@@ -250,6 +250,182 @@ class Settlements {
   }
 }
 
+// ─── Invoice & Collect Resource ───────────────────────────────────────────
+// Modular billing: invoices, scan-to-pay QR codes, contacts/lists, products,
+// branding format and collection reports. Mirrors /api/v1/invoicing/*.
+// All amounts are in kobo (integer). Reusable by any platform (e.g. golf clubs)
+// that holds a Paylode sk_live_/sk_test_ key — each key resolves to a merchant.
+function qsOf(params) {
+  const clean = {};
+  Object.keys(params || {}).forEach((k) => {
+    if (params[k] !== undefined && params[k] !== null && params[k] !== '') clean[k] = params[k];
+  });
+  return new URLSearchParams(clean).toString();
+}
+
+class Invoicing {
+  constructor(secretKey) {
+    const key = secretKey;
+    const req = (m, p, b) => request(key, m, p, b);
+
+    // ── Invoices ──────────────────────────────────────────────────────────
+    // create({ amount(kobo, req), description?, currency?, charge_vat?,
+    //   allow_part_payment?, scheduled_at?, due_at?, reminder_interval_days?,
+    //   reminder_count?, department_id?,
+    //   recipients: { email?,name?,phone?, contact_id?, contact_ids?:[],
+    //                 list_ids?:[], all_contacts?:bool } })
+    this.invoices = {
+      create: (params = {}) => {
+        if (params.amount === undefined || params.amount === null) {
+          throw new PaylodeError('amount is required', 'MISSING_FIELD', 400);
+        }
+        if (typeof params.amount !== 'number' || !Number.isInteger(params.amount) || params.amount < 100) {
+          throw new PaylodeError('amount must be a whole number in kobo (≥ 100)', 'INVALID_AMOUNT', 400);
+        }
+        if (!params.recipients || typeof params.recipients !== 'object') {
+          throw new PaylodeError('recipients targeting object is required', 'MISSING_FIELD', 400);
+        }
+        return req('POST', 'invoicing/invoices', params);
+      },
+      list: (params = {}) => req('GET', `invoicing/invoices?${qsOf(params)}`),
+      fetch: (id) => {
+        if (!id) throw new PaylodeError('invoice id is required', 'MISSING_FIELD', 400);
+        return req('GET', `invoicing/invoices/${id}`);
+      },
+      send: (id) => {
+        if (!id) throw new PaylodeError('invoice id is required', 'MISSING_FIELD', 400);
+        return req('POST', `invoicing/invoices/${id}/send`);
+      },
+      cancel: (id) => {
+        if (!id) throw new PaylodeError('invoice id is required', 'MISSING_FIELD', 400);
+        return req('POST', `invoicing/invoices/${id}/cancel`);
+      },
+    };
+
+    // ── QR (scan-to-pay) ──────────────────────────────────────────────────
+    // create({ type:'fixed'|'open', amount?(kobo, required when fixed),
+    //          label?, charge_vat?, department_id? })
+    this.qr = {
+      create: (params = {}) => {
+        if (params.type === 'fixed' && (typeof params.amount !== 'number' || params.amount < 100)) {
+          throw new PaylodeError('a fixed-amount QR needs amount in kobo (≥ 100)', 'INVALID_AMOUNT', 400);
+        }
+        return req('POST', 'invoicing/qr', params);
+      },
+      list: () => req('GET', 'invoicing/qr'),
+      setActive: (id, isActive) => {
+        if (!id) throw new PaylodeError('qr id is required', 'MISSING_FIELD', 400);
+        return req('PATCH', `invoicing/qr/${id}`, { is_active: !!isActive });
+      },
+      remove: (id) => {
+        if (!id) throw new PaylodeError('qr id is required', 'MISSING_FIELD', 400);
+        return req('DELETE', `invoicing/qr/${id}`);
+      },
+    };
+
+    // ── Contacts ──────────────────────────────────────────────────────────
+    this.contacts = {
+      create: (params = {}) => {
+        if (!params.name) throw new PaylodeError('name is required', 'MISSING_FIELD', 400);
+        if (!params.email && !params.phone) throw new PaylodeError('an email or phone is required', 'MISSING_FIELD', 400);
+        return req('POST', 'invoicing/contacts', params);
+      },
+      list: (params = {}) => req('GET', `invoicing/contacts?${qsOf(params)}`),
+      // import(rows[], 'skip'|'overwrite') — rows: [{name,email?,phone?,tags?,custom_fields?}]
+      import: (rows, onDuplicate = 'skip') => {
+        if (!Array.isArray(rows) || !rows.length) throw new PaylodeError('rows array is required', 'MISSING_FIELD', 400);
+        return req('POST', 'invoicing/contacts/import', { rows, on_duplicate: onDuplicate });
+      },
+      update: (id, params = {}) => {
+        if (!id) throw new PaylodeError('contact id is required', 'MISSING_FIELD', 400);
+        return req('PATCH', `invoicing/contacts/${id}`, params);
+      },
+      remove: (id) => {
+        if (!id) throw new PaylodeError('contact id is required', 'MISSING_FIELD', 400);
+        return req('DELETE', `invoicing/contacts/${id}`);
+      },
+    };
+
+    // ── Lists ─────────────────────────────────────────────────────────────
+    this.lists = {
+      create: (params = {}) => {
+        if (!params.name) throw new PaylodeError('name is required', 'MISSING_FIELD', 400);
+        return req('POST', 'invoicing/lists', params);
+      },
+      list: () => req('GET', 'invoicing/lists'),
+      members: (id) => {
+        if (!id) throw new PaylodeError('list id is required', 'MISSING_FIELD', 400);
+        return req('GET', `invoicing/lists/${id}/members`);
+      },
+      // update(id, { add:[contactIds], remove:[contactIds] })
+      update: (id, params = {}) => {
+        if (!id) throw new PaylodeError('list id is required', 'MISSING_FIELD', 400);
+        return req('PATCH', `invoicing/lists/${id}`, params);
+      },
+      remove: (id) => {
+        if (!id) throw new PaylodeError('list id is required', 'MISSING_FIELD', 400);
+        return req('DELETE', `invoicing/lists/${id}`);
+      },
+    };
+
+    // ── Products / Services ───────────────────────────────────────────────
+    this.products = {
+      create: (params = {}) => {
+        if (!params.name) throw new PaylodeError('name is required', 'MISSING_FIELD', 400);
+        return req('POST', 'invoicing/products', params);
+      },
+      list: () => req('GET', 'invoicing/products'),
+      remove: (id) => {
+        if (!id) throw new PaylodeError('product id is required', 'MISSING_FIELD', 400);
+        return req('DELETE', `invoicing/products/${id}`);
+      },
+    };
+
+    // ── Format / branding (singleton per merchant) ────────────────────────
+    this.format = {
+      get: () => req('GET', 'invoicing/formats'),
+      // update({ logo_url?, address?, business_email?, business_phone?,
+      //   layout?:'classic'|'modern'|'minimal'|'receipt',
+      //   allow_part_payment_default?, charge_vat_default? })
+      update: (params = {}) => req('PUT', 'invoicing/formats', params),
+    };
+
+    // ── Departments & departmental users ──────────────────────────────────
+    this.departments = {
+      create: (params = {}) => {
+        if (!params.name) throw new PaylodeError('name is required', 'MISSING_FIELD', 400);
+        return req('POST', 'invoicing/departments', params);
+      },
+      list: () => req('GET', 'invoicing/departments'),
+      remove: (id) => {
+        if (!id) throw new PaylodeError('department id is required', 'MISSING_FIELD', 400);
+        return req('DELETE', `invoicing/departments/${id}`);
+      },
+      users: (id) => {
+        if (!id) throw new PaylodeError('department id is required', 'MISSING_FIELD', 400);
+        return req('GET', `invoicing/departments/${id}/users`);
+      },
+      // addUser(deptId, { name, email, phone? }) — onboards with a temp password
+      addUser: (id, params = {}) => {
+        if (!id) throw new PaylodeError('department id is required', 'MISSING_FIELD', 400);
+        if (!params.name || !params.email) throw new PaylodeError('name and email are required', 'MISSING_FIELD', 400);
+        return req('POST', `invoicing/departments/${id}/users`, params);
+      },
+      removeUser: (id, userMapId) => {
+        if (!id || !userMapId) throw new PaylodeError('department id and user map id are required', 'MISSING_FIELD', 400);
+        return req('DELETE', `invoicing/departments/${id}/users/${userMapId}`);
+      },
+    };
+
+    // ── Reports ───────────────────────────────────────────────────────────
+    this.reports = {
+      summary: () => req('GET', 'invoicing/reports/summary'),
+      // transactions({ format?:'csv', from?, to? }) — collections log
+      transactions: (params = {}) => req('GET', `invoicing/reports/transactions?${qsOf(params)}`),
+    };
+  }
+}
+
 // ─── Webhooks Utility ─────────────────────────────────────────────────────
 class Webhooks {
   /**
@@ -318,6 +494,7 @@ class Paylode {
     this.customer     = new Customers(secretKey);
     this.subaccount   = new Subaccounts(secretKey);
     this.settlement   = new Settlements(secretKey);
+    this.invoicing    = new Invoicing(secretKey);
   }
 
   get version() { return SDK_VERSION; }
