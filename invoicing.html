@@ -86,8 +86,9 @@ async function tInvoices(){
      <div class="grid3">
        <div><label>Recipient email</label><input id="i_email" type="email" placeholder="single recipient"></div>
        <div><label>Recipient name</label><input id="i_name"></div>
-       <div><label>Or send to</label><select id="i_target"><option value="">This recipient</option><option value="all">All contacts</option></select></div>
+       <div><label>Recipient phone</label><input id="i_phone" placeholder="for WhatsApp/SMS (optional)"></div>
      </div>
+     <div><label>Or send to</label><select id="i_target"><option value="">This recipient</option><option value="all">All contacts</option></select></div>
      <div class="grid3">
        <div><label>Schedule send (optional)</label><input id="i_sched" type="datetime-local"></div>
        <div><label>Due date (optional)</label><input id="i_due" type="date"></div>
@@ -121,10 +122,10 @@ async function createInvoice(){
     department_id: el('i_dept').value || undefined,
     scheduled_at: el('i_sched').value || undefined, due_at: el('i_due').value || undefined,
     reminder_interval_days: el('i_rint').value || undefined, reminder_count: el('i_rcnt').value || undefined,
-    recipients: el('i_target').value==='all' ? { all_contacts:true } : { email: el('i_email').value, name: el('i_name').value } };
+    recipients: el('i_target').value==='all' ? { all_contacts:true } : { email: el('i_email').value, name: el('i_name').value, phone: el('i_phone').value } };
   const r = await api('/invoices', { method:'POST', body: JSON.stringify(body) });
   setMsg('i_msg', r.message, r.status?'ok':'err');
-  if (r.status){ el('i_amt').value=el('i_desc').value=el('i_email').value=el('i_name').value=''; loadInvoices(); }
+  if (r.status){ el('i_amt').value=el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=''; loadInvoices(); }
 }
 async function resend(id){ const r=await api(`/invoices/${id}/send`,{method:'POST'}); setMsg('i_msg',r.message,r.status?'ok':'err'); }
 async function cancelInv(id){ if(!confirm('Cancel this invoice?'))return; const r=await api(`/invoices/${id}/cancel`,{method:'POST'}); if(r.status) loadInvoices(); }

@@ -46,6 +46,7 @@ function formatLink(r) {
     amount_major: amt === null ? null : amt / 100,
     currency:    r.currency,
     charge_vat:  !!r.charge_vat,
+    customer_phone: r.customer_phone || null,
     reusable:    r.is_reusable,
     status:      r.status,
     expires_at:  r.expires_at,
@@ -58,7 +59,7 @@ function formatLink(r) {
 }
 
 const SELECT_COLS = `id::text, slug, title, description, amount::text AS amount, currency,
-                     charge_vat, is_reusable, status, expires_at, paid_count, created_at,
+                     charge_vat, customer_phone, is_reusable, status, expires_at, paid_count, created_at,
                      recipient_email, batch_id::text AS batch_id`;
 
 // NGN single-transaction cap by KYC tier (kobo) — mirrors transactions.initialize.
@@ -80,6 +81,7 @@ router.post('/', requireAuth, requireMerchant, async (req, res, next) => {
     const currency    = req.body.currency === 'USD' ? 'USD' : 'NGN';
     const reusable    = req.body.reusable === undefined ? true : !!req.body.reusable;
     const chargeVat   = !!req.body.charge_vat;
+    const customerPhone = req.body.customer_phone ? String(req.body.customer_phone).trim().slice(0, 32) : null;
 
     // Amount is optional — omit it for a customer-entered ("open") amount.
     let amount = null;
@@ -100,10 +102,10 @@ router.post('/', requireAuth, requireMerchant, async (req, res, next) => {
 
     const slug = crypto.randomBytes(8).toString('base64url'); // ~11 url-safe chars
     const rows = await prisma.$queryRawUnsafe(
-      `INSERT INTO payment_links (merchant_id, slug, title, description, amount, currency, is_reusable, expires_at, charge_vat)
-       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO payment_links (merchant_id, slug, title, description, amount, currency, is_reusable, expires_at, charge_vat, customer_phone)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING ${SELECT_COLS}`,
-      m.id, slug, title, description, amount === null ? null : BigInt(amount), currency, reusable, expiresAt, chargeVat
+      m.id, slug, title, description, amount === null ? null : BigInt(amount), currency, reusable, expiresAt, chargeVat, customerPhone
     );
     return created(res, formatLink(rows[0]), 'Payment link created');
   } catch (e) { next(e); }
