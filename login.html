@@ -48,20 +48,22 @@ input:focus{border-color:#1a2744;box-shadow:0 0 0 3px rgba(26,39,68,.08)}
       </div>
     </div>
     <div class="err" id="err"></div>
+    <form id="login-form" onsubmit="event.preventDefault();doLogin();return false;">
     <div class="field">
       <label>Email address</label>
-      <input type="email" id="em" placeholder="Enter your email address" autocomplete="email">
+      <input type="email" id="em" name="email" placeholder="Enter your email address" autocomplete="email">
     </div>
     <div class="field">
       <label>Password</label>
       <div class="pw-wrap">
-        <input type="password" id="pw" placeholder="Enter your password" autocomplete="current-password">
+        <input type="password" id="pw" name="password" placeholder="Enter your password" autocomplete="current-password">
         <button type="button" class="eye" onclick="togglePw()" title="Show/hide password">
           <svg id="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
     </div>
-    <button class="btn" id="btn" onclick="doLogin()">Sign In</button>
+    <button class="btn" id="btn" type="submit">Sign In</button>
+    </form>
     <div style="text-align:center;margin-top:12px"><button type="button" onclick="showForgot()" style="background:none;border:none;color:#64748b;font-size:12px;cursor:pointer;font-family:inherit;text-decoration:underline">Forgot password?</button></div>
     <div class="footer-note">Paylode Services Limited &nbsp;·&nbsp; CBN Licensed PSSP</div>
   </div>
@@ -222,7 +224,6 @@ async function submitForgot() {
 document.addEventListener('keydown', function(e) {
   if (e.key==='Enter') {
     if (document.getElementById('twofa-step').style.display!=='none') do2FA();
-    else doLogin();
   }
 });
 
