@@ -2476,6 +2476,8 @@ function showCreatePaymentLinkModal() {
         '<input class="form-input" id="pl-f-title" placeholder="e.g. Premium Plan, Donation, Invoice #1024"></div>' +
       '<div class="form-group"><label class="form-label">Description (optional)</label>' +
         '<input class="form-input" id="pl-f-desc" placeholder="Shown to the customer"></div>' +
+      '<div class="form-group"><label class="form-label">Customer phone (optional)</label>' +
+        '<input class="form-input" id="pl-f-phone" type="tel" placeholder="for WhatsApp/SMS delivery (coming soon)"></div>' +
       '<div class="form-group"><label class="form-label">Amount (₦) — leave blank to let the customer enter it</label>' +
         '<input class="form-input" id="pl-f-amount" type="number" min="1" step="0.01" placeholder="e.g. 5000"></div>' +
       '<div class="form-group"><label style="font-size:13px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="pl-f-vat"> Charge 7.5% VAT — added on top of the amount the customer pays.</label></div>' +
@@ -2547,6 +2549,8 @@ async function submitCreatePaymentLink() {
                charge_vat: document.getElementById('pl-f-vat').checked };
   var desc = (document.getElementById('pl-f-desc').value || '').trim();
   if (desc) body.description = desc;
+  var phone = (document.getElementById('pl-f-phone').value || '').trim();
+  if (phone) body.customer_phone = phone;
   var amtRaw = (document.getElementById('pl-f-amount').value || '').trim();
   if (amtRaw !== '') {
     var v = parseFloat(amtRaw);
