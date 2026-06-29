@@ -4,6 +4,7 @@ const router = require('express').Router();
 const { prisma, tenantAuth, randToken } = require('../_shared');
 const { ok, fail, created, notFound } = require('../../../utils/helpers');
 const { renderQr, qrPayUrl } = require('../services/qrService');
+const whatsapp = require('../../../services/whatsappService');
 
 router.use(tenantAuth);
 
@@ -94,6 +95,27 @@ router.delete('/:id', async (req, res, next) => {
       `DELETE FROM inv_qr_codes WHERE id=$1::uuid AND merchant_id=$2::uuid RETURNING id::text`, req.params.id, req.invTenant.merchantId);
     if (!rows.length) return notFound(res, 'QR code');
     return ok(res, { id: rows[0].id }, 'QR code deleted');
+  } catch (e) { next(e); }
+});
+
+// Share a QR code's scan-to-pay link to a customer over WhatsApp.
+// body: { phone }. Best-effort send (no-ops until a WhatsApp sender/template is set).
+router.post('/:id/share', async (req, res, next) => {
+  try {
+    const phone = String(req.body.phone || '').trim();
+    if (!phone) return fail(res, 'A recipient phone number is required');
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT access_token, label FROM inv_qr_codes WHERE id=$1::uuid AND merchant_id=$2::uuid`,
+      req.params.id, req.invTenant.merchantId);
+    if (!rows.length) return notFound(res, 'QR code');
+    const merchant = await prisma.merchant.findUnique({ where: { id: req.invTenant.merchantId }, select: { businessName: true } });
+    const result = await whatsapp.notifyQr({
+      phone, businessName: merchant && merchant.businessName, label: rows[0].label,
+      payUrl: qrPayUrl(rows[0].access_token),
+    });
+    if (result && result.skipped) return fail(res, 'WhatsApp sending is not configured yet', 'WA_NOT_CONFIGURED', 503);
+    if (!result || !result.ok) return fail(res, 'Could not send the QR code over WhatsApp', 'WA_SEND_FAILED', 502);
+    return ok(res, { sent: true }, 'QR code shared on WhatsApp');
   } catch (e) { next(e); }
 });
 

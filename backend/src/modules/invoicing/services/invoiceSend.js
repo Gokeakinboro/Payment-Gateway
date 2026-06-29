@@ -3,7 +3,7 @@
 // create-invoice route (immediate send) and the worker (scheduled sends + reminders).
 const { prisma, CHECKOUT_BASE, escapeHtml, koboToNairaStr } = require('../_shared');
 const { sendEmail } = require('../../../services/emailService');
-const sendchamp = require('../../../services/sendchampService');
+const whatsapp = require('../../../services/whatsappService');
 
 const invoiceUrl = (token) => `${CHECKOUT_BASE}/invoice.html?t=${token}`;
 
@@ -50,7 +50,7 @@ async function sendInvoice(invoiceId, { isReminder = false } = {}) {
   // WhatsApp notification (best-effort; no-ops until a SendChamp sender + template
   // are configured). Additive to email — uses the recipient phone we now capture.
   if (inv.recipient_phone) {
-    sendchamp.notifyInvoice({
+    whatsapp.notifyInvoice({
       phone: inv.recipient_phone, recipientName: inv.recipient_name, businessName: bizName,
       invoiceNumber: inv.invoice_number, amount: inv.total_amount, currency: inv.currency, payUrl,
     }).catch(() => {});

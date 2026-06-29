@@ -13,7 +13,7 @@
  */
 const { prisma } = require('../../../utils/db');
 const { dispatchWebhook } = require('../../../services/webhookService');
-const sendchamp = require('../../../services/sendchampService');
+const whatsapp = require('../../../services/whatsappService');
 
 // Apply one SUCCESS transaction to its invoice or QR code. Safe to call repeatedly.
 async function recordForTransaction(txn) {
