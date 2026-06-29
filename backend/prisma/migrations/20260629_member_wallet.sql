@@ -5,7 +5,11 @@
 -- Per-merchant config + white-label branding + the on/off toggle.
 CREATE TABLE IF NOT EXISTS merchant_wallet_config (
   merchant_id         uuid PRIMARY KEY REFERENCES merchants(id) ON DELETE CASCADE,
-  enabled             boolean NOT NULL DEFAULT false,
+  enabled             boolean NOT NULL DEFAULT false,   -- SA-controlled switch (only SA flips true)
+  requested           boolean NOT NULL DEFAULT false,   -- merchant expressed interest (onboarding tick)
+  requested_at        timestamptz,
+  approved_by         uuid,                             -- SA who approved
+  approved_at         timestamptz,
   brand_name          text,
   brand_logo_url      text,
   brand_color         text,
@@ -24,6 +28,7 @@ CREATE TABLE IF NOT EXISTS merchant_wallet_config (
 CREATE TABLE IF NOT EXISTS wallet_members (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   merchant_id uuid NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
+  user_id     uuid UNIQUE REFERENCES users(id),   -- login account (temp-pw onboarding); null = no login yet
   name        text NOT NULL,
   email       text,
   phone       text,
@@ -41,7 +46,7 @@ CREATE TABLE IF NOT EXISTS wallets (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   merchant_id           uuid NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
   member_id             uuid NOT NULL UNIQUE REFERENCES wallet_members(id) ON DELETE CASCADE,
-  balance               bigint NOT NULL DEFAULT 0,   -- kobo
+  balance               bigint NOT NULL DEFAULT 0 CHECK (balance >= 0),  -- kobo; NEVER negative
   currency              text   NOT NULL DEFAULT 'NGN',
   status                text   NOT NULL DEFAULT 'active', -- active | frozen
   low_balance_threshold bigint NOT NULL DEFAULT 0,

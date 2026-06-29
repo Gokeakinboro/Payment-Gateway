@@ -6,11 +6,17 @@
  * Member-facing (app) endpoints authenticate the member separately (see services/memberAuth).
  */
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const { prisma } = require('../../utils/db');
 const { requireAuth, requireApiKey } = require('../../middleware/auth');
 const { fail } = require('../../utils/helpers');
 
 const DEFAULT_MAX_BALANCE = 300000000n; // ₦3,000,000 in kobo
+const LOGIN_URL = (process.env.APP_BASE_URL || process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '') + '/login.html';
+
+// One-time temp password for member onboarding (mirrors departmental users).
+const genTempPassword = () => crypto.randomBytes(6).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) + 'A1!';
+const hashPassword = (pw) => bcrypt.hash(pw, 12);
 
 const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || '').trim());
 const normalizePhone = (p) => {
@@ -85,7 +91,25 @@ async function getConfig(merchantId) {
   };
 }
 
+// ── Member self-service auth ─────────────────────────────────────────────────
+// Resolves the logged-in user (member) → req.walletMember. Members log in with the
+// same /auth endpoints (temp-pw, force change, forgot-password) as everyone else.
+function memberAuth(req, res, next) {
+  return requireAuth(req, res, async () => {
+    try {
+      const rows = await prisma.$queryRawUnsafe(
+        `SELECT m.id::text AS member_id, m.merchant_id::text AS merchant_id, m.name, m.email, m.phone, m.status,
+                w.id::text AS wallet_id, w.balance::text AS balance, w.currency, w.low_balance_threshold::text AS low_balance_threshold
+           FROM wallet_members m JOIN wallets w ON w.member_id = m.id WHERE m.user_id = $1::uuid`, req.user.id);
+      if (!rows.length) return fail(res, 'No wallet member is linked to this account', 'NOT_A_MEMBER', 403);
+      if (rows[0].status !== 'active') return fail(res, 'Your wallet account is suspended', 'MEMBER_SUSPENDED', 403);
+      req.walletMember = rows[0];
+      next();
+    } catch (e) { next(e); }
+  });
+}
+
 module.exports = {
-  prisma, DEFAULT_MAX_BALANCE, isValidEmail, normalizePhone, genRef,
-  tenantAuth, requireWalletEnabled, getConfig,
+  prisma, DEFAULT_MAX_BALANCE, LOGIN_URL, isValidEmail, normalizePhone, genRef,
+  genTempPassword, hashPassword, tenantAuth, requireWalletEnabled, memberAuth, getConfig,
 };

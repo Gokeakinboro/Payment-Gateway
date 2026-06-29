@@ -6,8 +6,10 @@
  */
 const router = require('express').Router();
 
+router.use('/admin',    require('./routes/admin'));    // SA: approve/reject enablement
 router.use('/config',   require('./routes/config'));
 router.use('/members',  require('./routes/members'));
+router.use('/me',       require('./routes/me'));       // member self-service (app)
 router.use('/fund',     require('./routes/fund'));
 router.use('/spend',    require('./routes/spend'));
 router.use('/loads',    require('./routes/loads'));
