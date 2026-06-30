@@ -1,0 +1,75 @@
+/* Paylode UI — shared design system. Link this on every internal portal page so
+   the look stays consistent (navy #1a2744 / lime #7dc534). White-label member
+   pages (wallet.html) intentionally do NOT use this. */
+:root{
+  --navy:#1a2744; --navy-light:#253360; --lime:#7dc534; --lime-light:#9ed44f; --lime-dark:#5fa01f;
+  --white:#fff; --gray-50:#f8fafc; --gray-100:#f1f5f9; --gray-200:#e2e8f0; --gray-300:#cbd5e1;
+  --gray-400:#94a3b8; --gray-500:#64748b; --gray-600:#475569; --gray-700:#334155; --gray-800:#1e293b;
+  --green:#16a34a; --red:#dc2626; --amber:#f59e0b; --blue:#3b82f6;
+  --line:#e6eaf2; --bg:#f4f6fb; --radius:12px;
+  --font:'DM Sans',system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+body{font-family:var(--font);background:var(--bg);color:var(--gray-800);font-size:14px;line-height:1.5;margin:0}
+
+/* Header / top bar */
+header,.pl-top{background:var(--navy);color:#fff;padding:14px 22px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+header h1,.pl-top .t{font-size:16px;font-weight:700;margin:0}
+header a,.pl-top a{color:rgba(255,255,255,.75);text-decoration:none;font-size:13px}
+header a:hover,.pl-top a:hover{color:#fff}
+
+/* Cards */
+.card{background:var(--white);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:16px}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+h2{font-size:15px;margin:0 0 12px;color:var(--gray-800)}
+h3{font-size:13px;text-transform:uppercase;letter-spacing:.4px;color:var(--gray-500);margin-bottom:12px}
+
+/* Tabs (support both .active and .on conventions) */
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.tab{padding:9px 16px;border-radius:8px;background:#fff;border:1px solid var(--line);font-size:13px;font-weight:600;color:var(--gray-500);cursor:pointer}
+.tab.active,.tab.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;font-family:var(--font);background:var(--navy);color:#fff;transition:all .15s}
+.btn:hover{background:var(--navy-light)}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+.btn-lime{background:var(--lime);color:var(--navy)}.btn-lime:hover{background:var(--lime-light)}
+.btn-outline,.btn-out,.btn.sec{background:#fff;color:var(--gray-600);border:1px solid var(--gray-300)}
+.btn-outline:hover,.btn-out:hover,.btn.sec:hover{background:var(--gray-50)}
+.btn-sm{padding:6px 12px;font-size:12px}
+.mini{font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer;margin-right:4px}
+
+/* Forms */
+label{display:block;font-size:12px;font-weight:600;color:var(--gray-600);margin:10px 0 4px}
+input,select,textarea{width:100%;padding:10px 12px;border:1.5px solid var(--gray-300);border-radius:8px;font-size:14px;font-family:inherit;color:var(--gray-800);outline:none;background:#fff}
+input:focus,select:focus,textarea:focus{border-color:var(--navy);box-shadow:0 0 0 3px rgba(26,39,68,.08)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1;min-width:140px}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th,th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-500);padding:10px 8px;border-bottom:1px solid var(--line);background:var(--gray-50)}
+tbody td,td{padding:11px 8px;border-bottom:1px solid var(--line);color:var(--gray-700)}
+tbody tr:hover{background:var(--gray-50)}
+.right{text-align:right}
+
+/* Stat cards */
+.stat,.stat-card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+.stat .l,.stat-label{font-size:12px;color:var(--gray-500)}
+.stat .v,.stat-value{font-size:22px;font-weight:800;margin-top:4px;color:var(--gray-800)}
+
+/* Badges / pills (Paylode palette + invoicing status helpers) */
+.badge,.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.badge-green,.pill.paid,.b-paid{background:#d1fae5;color:#065f46}
+.badge-blue,.pill.part,.b-sent{background:#dbeafe;color:#1e40af}
+.badge-amber,.pill.unpaid,.b-part{background:#fef3c7;color:#92400e}
+.badge-red,.b-over{background:#fee2e2;color:#991b1b}
+.badge-gray,.b-draft,.b-cancel{background:var(--gray-100);color:var(--gray-600)}
+.badge-lime{background:#ecfccb;color:#3f6212}
+.pill.approved{background:#d1fae5;color:#065f46}.pill.rejected{background:#fee2e2;color:#991b1b}.pill.pending{background:#fef3c7;color:#92400e}
+
+/* Messages / utilities */
+.msg{font-size:13px;margin-top:10px}.msg.ok{color:#15803d}.msg.err{color:#b91c1c}
+.muted{color:var(--gray-500);font-size:13px}
