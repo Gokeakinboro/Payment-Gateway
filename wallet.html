@@ -344,6 +344,26 @@ async function bioUnlock(){
   return atob(data.pin);
 }
 function toggleBiometric(){if(bioOn()){try{localStorage.removeItem(bioKey());}catch(e){}openAccount();}else{enableBiometric().then(openAccount);}}
+
+// ── PUSH NOTIFICATIONS ───────────────────────────────────
+function b64ToU8(s){var pad='='.repeat((4-s.length%4)%4);var b=(s+pad).replace(/-/g,'+').replace(/_/g,'/');var raw=atob(b);var a=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)a[i]=raw.charCodeAt(i);return a;}
+function pushSupported(){return ('serviceWorker'in navigator)&&('PushManager'in window)&&('Notification'in window);}
+async function pushState(){try{if(!pushSupported())return 'unsupported';var reg=await navigator.serviceWorker.ready;var sub=await reg.pushManager.getSubscription();return sub?'on':'off';}catch(e){return 'off';}}
+async function enablePush(){
+  try{
+    if(!pushSupported())return alert('Notifications are not supported here. On iPhone, install the wallet to your Home Screen first.');
+    var perm=await Notification.requestPermission();if(perm!=='granted')return alert('Notifications were not allowed.');
+    var kr=await api('/wallet/me/push/key');if(!kr.ok||!kr.data.key)return alert('Notifications are not configured yet.');
+    var reg=await navigator.serviceWorker.ready;
+    var sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64ToU8(kr.data.key)});
+    var r=await api('/wallet/me/push',{method:'POST',body:{subscription:sub.toJSON()}});
+    if(!r.ok)return alert('Could not enable notifications.');
+  }catch(e){alert('Could not enable notifications.');}
+  openAccount();
+}
+async function disablePush(){try{var reg=await navigator.serviceWorker.ready;var sub=await reg.pushManager.getSubscription();if(sub){await api('/wallet/me/push',{method:'DELETE',body:{endpoint:sub.endpoint}});await sub.unsubscribe();}}catch(e){}openAccount();}
+async function togglePush(){var s=await pushState();if(s==='on')disablePush();else enablePush();}
+async function updatePushBtn(){var b=document.getElementById('ac-push');if(!b)return;var s=await pushState();if(s==='unsupported'){b.style.display='none';return;}b.textContent=(s==='on'?'Disable':'Enable')+' notifications';}
 async function changePinFlow(){var ok2=await requirePin({title:'Confirm current PIN',sub:'Verify your current PIN, then set a new one.'});if(ok2!==null){if(ME)ME.pin_set=false;await setupPin();openAccount();}}
 function openSheet(html){document.getElementById('sheet').innerHTML=html;document.getElementById('modal').classList.add('on');}
 
@@ -470,8 +490,10 @@ function openAccount(){
     '</div>'+
     '<button class="btn btn-2" style="margin-top:10px;width:100%;text-align:left" onclick="changePinFlow()">Change transaction PIN</button>'+
     (window.PublicKeyCredential?('<button class="btn btn-2" style="margin-top:10px;width:100%;text-align:left" onclick="toggleBiometric()">'+(bioOn()?'Disable':'Enable')+' Face / Touch ID</button>'):'')+
+    '<button class="btn btn-2" id="ac-push" style="margin-top:10px;width:100%;text-align:left" onclick="togglePush()">Notifications</button>'+
     '<button class="btn btn-2" style="margin-top:10px;width:100%;background:#fff;color:var(--red);border:1.5px solid var(--red)" onclick="logout()">Log out</button>'
   );
+  updatePushBtn();
 }
 // Toggle the edit-details fields (kept collapsed alongside change-password).
 function toggleEditDetails(){
