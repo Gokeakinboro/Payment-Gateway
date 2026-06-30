@@ -3,7 +3,7 @@
 // Unifies wallet activity + invoices addressed to the member, and lets them fund,
 // spend across departments, and pay invoices from their wallet balance.
 const router = require('express').Router();
-const { prisma, memberAuth, getConfig } = require('../_shared');
+const { prisma, memberAuth, getConfig, normalizePhone, isValidEmail } = require('../_shared');
 const { ok, fail, created, notFound, generateRef } = require('../../../utils/helpers');
 const compliance = require('../../../services/complianceService');
 const ledger = require('../services/ledger');
@@ -31,6 +31,51 @@ router.get('/', async (req, res, next) => {
       wallet: { id: m.wallet_id, balance: num(m.balance), currency: m.currency, low_balance_threshold: num(m.low_balance_threshold) },
       branding: { name: cfg.brand_name || 'Wallet', logo_url: cfg.brand_logo_url || null, color: cfg.brand_color || '#1a2744' },
     });
+  } catch (e) { next(e); }
+});
+
+// Edit own profile: name, phone, and email. Email is the LOGIN identity, so it is
+// updated on the users row too (uniqueness-checked) and kept in sync on mw_members.
+router.patch('/profile', async (req, res, next) => {
+  try {
+    const m = req.walletMember;
+    const updates = {};                                   // mw_members fields to set
+    if (req.body.name !== undefined) {
+      const name = String(req.body.name || '').trim();
+      if (!name) return fail(res, 'Name cannot be empty');
+      updates.name = name;
+    }
+    if (req.body.phone !== undefined) {
+      const phone = req.body.phone ? normalizePhone(req.body.phone) : null;
+      if (req.body.phone && !phone) return fail(res, 'Enter a valid phone number');
+      updates.phone = phone;
+    }
+    let newEmail = null;
+    if (req.body.email !== undefined) {
+      const e = String(req.body.email || '').trim().toLowerCase();
+      if (!isValidEmail(e)) return fail(res, 'Enter a valid email address');
+      if (e !== String(m.email || '').toLowerCase()) {
+        const clash = await prisma.user.findUnique({ where: { email: e } });
+        if (clash && clash.id !== req.user.id) return fail(res, 'That email is already in use', 'EMAIL_TAKEN', 409);
+        newEmail = e;
+      }
+    }
+    if (!Object.keys(updates).length && !newEmail) return fail(res, 'Nothing to update');
+
+    await prisma.$transaction(async (tx) => {
+      if (newEmail) { await tx.user.update({ where: { id: req.user.id }, data: { email: newEmail } }); updates.email = newEmail; }
+      const sets = []; const vals = []; let i = 1;
+      for (const k of ['name', 'phone', 'email']) {
+        if (updates[k] !== undefined) { sets.push(`${k} = $${i++}`); vals.push(updates[k]); }
+      }
+      if (sets.length) {
+        vals.push(m.member_id);
+        await tx.$executeRawUnsafe(`UPDATE mw_members SET ${sets.join(', ')}, updated_at = now() WHERE id = $${i}::uuid`, ...vals);
+      }
+    });
+
+    const fresh = { ...m, ...updates };
+    return ok(res, { member: { id: m.member_id, name: fresh.name, email: fresh.email, phone: fresh.phone } }, 'Profile updated');
   } catch (e) { next(e); }
 });
 
