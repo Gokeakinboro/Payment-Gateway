@@ -3,12 +3,12 @@
 // Overrides all hardcoded render functions with live API data
 // ─────────────────────────────────────────────────────────────────────────────
 
-function getToken(){ return localStorage.getItem('paylode_token'); }
-function getUser(){ try{ return JSON.parse(localStorage.getItem('paylode_user')||'{}'); }catch(e){ return {}; } }
+function getToken(){ return sessionStorage.getItem('paylode_token'); }
+function getUser(){ try{ return JSON.parse(sessionStorage.getItem('paylode_user')||'{}'); }catch(e){ return {}; } }
 function logout(){
-  localStorage.removeItem('paylode_token');
-  localStorage.removeItem('paylode_user');
-  localStorage.removeItem('paylode_selected_role');
+  sessionStorage.removeItem('paylode_token');
+  sessionStorage.removeItem('paylode_user');
+  sessionStorage.removeItem('paylode_selected_role');
   window.location.href='/index.html';
 }
 
@@ -1708,7 +1708,7 @@ async function activateMyAccount() {
   const res = await apiFetch('/merchants/me/activate', { method: 'POST', body: JSON.stringify({ accept_terms: true }) });
   if (res && res.status) {
     document.getElementById('modal').style.display = 'none';
-    try { const u = getUser(); if (u.merchant) { u.merchant.kycStatus = 'ACTIVE'; u.merchant.isActive = true; localStorage.setItem('paylode_user', JSON.stringify(u)); } } catch (e) {}
+    try { const u = getUser(); if (u.merchant) { u.merchant.kycStatus = 'ACTIVE'; u.merchant.isActive = true; sessionStorage.setItem('paylode_user', JSON.stringify(u)); } } catch (e) {}
     alert('Your account is now live! Your live (sk_live / pk_live) keys are active.');
     loadMerchantOverview();
   } else {
@@ -3738,7 +3738,7 @@ async function confirm2FA() {
     document.getElementById('modal').style.display = 'none';
     alert('2FA enabled successfully! Every future login will require your authenticator code.');
     // Update local user cache
-    var u = getUser(); u.totpEnabled = true; localStorage.setItem('paylode_user', JSON.stringify(u));
+    var u = getUser(); u.totpEnabled = true; sessionStorage.setItem('paylode_user', JSON.stringify(u));
     // Re-render settings page
     if (typeof renderPage === 'function') renderPage();
   } else {
@@ -3755,7 +3755,7 @@ async function disable2FA() {
   var res = await apiFetch('/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: pw, code: code }) });
   if (res && res.status) {
     alert('2FA has been disabled.');
-    var u = getUser(); u.totpEnabled = false; localStorage.setItem('paylode_user', JSON.stringify(u));
+    var u = getUser(); u.totpEnabled = false; sessionStorage.setItem('paylode_user', JSON.stringify(u));
     if (typeof renderPage === 'function') renderPage();
   } else {
     if (msgEl) msgEl.innerHTML = '<div class="warn-box" style="font-size:12px">' + ((res&&res.message)||'Disable failed. Check your password and code.') + '</div>';
@@ -4049,7 +4049,7 @@ function forceFirstTimePasswordChange() {
         '<input id="fp-confirm" type="password" placeholder="Confirm new password" style="' + ip + '">' +
         '<label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:#64748b;margin:-2px 0 14px;cursor:pointer"><input type="checkbox" id="fp-show" onclick="togglePwFields(this.checked)" style="cursor:pointer"> Show passwords</label>' +
         '<button id="fp-btn" style="width:100%;padding:12px;background:#1a2744;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer" onclick="submitFirstTimePassword()">Update password &amp; continue</button>' +
-        '<div style="text-align:center;margin-top:12px"><a href="#" onclick="localStorage.clear();location.href=\'/login.html\';return false" style="font-size:12px;color:#64748b">Sign out</a></div>' +
+        '<div style="text-align:center;margin-top:12px"><a href="#" onclick="sessionStorage.clear();location.href=\'/login.html\';return false" style="font-size:12px;color:#64748b">Sign out</a></div>' +
       '</div></div>';
 }
 function togglePwFields(show) {
@@ -4065,7 +4065,7 @@ async function submitFirstTimePassword() {
   var btn = document.getElementById('fp-btn'); btn.textContent = 'Updating...'; btn.disabled = true;
   var res = await apiFetch('/auth/change-password', { method:'POST', body: JSON.stringify({ currentPassword: cur, newPassword: nw }) });
   if (res && res.status) {
-    try { var u = getUser(); u.mustChangePassword = false; localStorage.setItem('paylode_user', JSON.stringify(u)); } catch(e) {}
+    try { var u = getUser(); u.mustChangePassword = false; sessionStorage.setItem('paylode_user', JSON.stringify(u)); } catch(e) {}
     location.reload();
   } else { btn.textContent = 'Update password & continue'; btn.disabled = false; err((res && res.message) || 'Could not update password.'); }
 }
@@ -5855,7 +5855,7 @@ async function reviewOnboardingApp(ref, status) {
 }
 
 async function downloadAppDoc(ref, key) {
-  var token = localStorage.getItem('paylode_token');
+  var token = sessionStorage.getItem('paylode_token');
   try {
     var r = await fetch(API_BASE + '/onboarding/submissions/' + encodeURIComponent(ref) + '/document/' + encodeURIComponent(key), { headers: { Authorization: 'Bearer ' + token } });
     if (!r.ok) { alert('Could not load document'); return; }
@@ -6032,7 +6032,7 @@ function uploadDocReport(docId) {
     var f = input.files && input.files[0]; if (!f) return;
     if (f.size > 5 * 1024 * 1024) { alert('Report must be under 5MB.'); return; }
     var fd = new FormData(); fd.append('report', f);
-    var token = localStorage.getItem('paylode_token');
+    var token = sessionStorage.getItem('paylode_token');
     try {
       var res = await fetch(API_BASE + '/documents/item/' + docId + '/report', { method:'POST', headers:{ Authorization:'Bearer ' + token }, body: fd });
       var d = await res.json();
@@ -6043,7 +6043,7 @@ function uploadDocReport(docId) {
   input.click();
 }
 async function viewDocReport(docId) {
-  var token = localStorage.getItem('paylode_token');
+  var token = sessionStorage.getItem('paylode_token');
   try {
     var res = await fetch(API_BASE + '/documents/item/' + docId + '/report', { headers:{ Authorization:'Bearer ' + token } });
     if (!res.ok) { alert('Could not open report (' + res.status + ')'); return; }
@@ -6075,7 +6075,7 @@ async function setDocStatus(docId, status) {
 // Fetch an uploaded file (auth header can't ride on a plain <a>/window.open, so
 // pull it as a blob with the token, then view or download it).
 async function _fetchDocBlob(ref, idx) {
-  var token = localStorage.getItem('paylode_token');
+  var token = sessionStorage.getItem('paylode_token');
   var res = await fetch(API_BASE + '/documents/file/' + encodeURIComponent(ref) + '/' + idx, {
     headers: { Authorization: 'Bearer ' + token },
   });
@@ -6130,10 +6130,10 @@ async function deferSelectedDocs() {
 }
 
 (function initRole() {
-  var token = localStorage.getItem('paylode_token');
+  var token = sessionStorage.getItem('paylode_token');
   if (!token) { window.location.href = '/login.html'; return; }
   try {
-    var user = JSON.parse(localStorage.getItem('paylode_user') || '{}');
+    var user = JSON.parse(sessionStorage.getItem('paylode_user') || '{}');
     var _r = (user.role || '').toUpperCase();
     if      (_r === 'SUPER_ADMIN')        currentRole = 'superadmin';
     else if (_r === 'ADMIN')              currentRole = 'admin';
