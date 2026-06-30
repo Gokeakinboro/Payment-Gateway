@@ -4080,7 +4080,14 @@ document.addEventListener('DOMContentLoaded', function() {
   if (user && (user.role || '').toUpperCase() === 'MERCHANT') {
     apiFetch('/wallet/me')
       .then(function(r) {
-        if (r && r.status !== false && r.data) { window.location.replace('/wallet.html'); return; }
+        if (r && r.status !== false && r.data) {
+          // Carry the session across: the wallet app reads localStorage.wallet_token,
+          // the portal stored it in sessionStorage.paylode_token. Without this the member
+          // would land back on the wallet's login screen (looks like "login does nothing").
+          try { var t = sessionStorage.getItem('paylode_token'); if (t) localStorage.setItem('wallet_token', t); } catch (e) {}
+          window.location.replace('/wallet.html');
+          return;
+        }
         continueDashboardBoot(user);
       })
       .catch(function() { continueDashboardBoot(user); });
