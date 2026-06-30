@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#1a2744">
+<title>Wallet</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--brand:#1a2744;--brand-d:#0f1829;--bg:#f4f6fb;--card:#fff;--gray:#64748b;--line:#e6eaf2;--green:#16a34a;--red:#dc2626}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:#1e293b;font-size:15px;line-height:1.5;-webkit-tap-highlight-color:transparent}
+  .screen{display:none;min-height:100vh}
+  .screen.on{display:block}
+  /* Auth screens */
+  .auth{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--brand-d)}
+  .auth .box{width:100%;max-width:400px;background:#fff;border-radius:16px;padding:28px;box-shadow:0 24px 60px rgba(0,0,0,.35)}
+  .auth h1{font-size:19px;color:var(--brand);margin-bottom:4px}
+  .auth .sub{font-size:13px;color:var(--gray);margin-bottom:20px}
+  label{display:block;font-size:12px;font-weight:600;color:#475569;margin:14px 0 5px;text-transform:uppercase;letter-spacing:.3px}
+  input{width:100%;padding:12px 13px;border:1.5px solid #cbd5e1;border-radius:9px;font-size:15px;outline:none}
+  input:focus{border-color:var(--brand)}
+  .pw{position:relative}.pw input{padding-right:44px}
+  .eye{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#94a3b8;font-size:13px}
+  .btn{width:100%;padding:13px;background:var(--brand);color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;margin-top:18px}
+  .btn:disabled{opacity:.6;cursor:not-allowed}
+  .btn-2{background:#fff;color:var(--brand);border:1.5px solid var(--brand)}
+  .link{background:none;border:none;color:var(--gray);font-size:13px;cursor:pointer;text-decoration:underline;display:block;margin:14px auto 0}
+  .err{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:9px 12px;font-size:13px;margin-top:12px;display:none}
+  .ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;border-radius:8px;padding:9px 12px;font-size:13px;margin-top:12px;display:none}
+  /* App */
+  .top{background:var(--brand);color:#fff;padding:14px 18px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:5}
+  .top img{height:30px;width:30px;object-fit:contain;border-radius:6px;background:#fff}
+  .top .nm{font-weight:700;font-size:16px;flex:1}
+  .top .out{background:rgba(255,255,255,.15);border:none;color:#fff;padding:6px 12px;border-radius:7px;font-size:13px;cursor:pointer}
+  .wrap{max-width:560px;margin:0 auto;padding:16px}
+  .bal{background:var(--brand);color:#fff;border-radius:16px;padding:22px;margin-bottom:16px}
+  .bal .lbl{font-size:12px;opacity:.7;text-transform:uppercase;letter-spacing:.5px}
+  .bal .amt{font-size:34px;font-weight:800;margin:6px 0 14px}
+  .bal .row{display:flex;gap:10px}
+  .bal .row .btn{margin:0;background:#fff;color:var(--brand)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+  .card h3{font-size:13px;text-transform:uppercase;letter-spacing:.4px;color:var(--gray);margin-bottom:12px}
+  .tabs{display:flex;gap:6px;margin-bottom:14px}
+  .tab{flex:1;padding:9px;text-align:center;border-radius:9px;background:#fff;border:1px solid var(--line);font-size:13px;font-weight:600;color:var(--gray);cursor:pointer}
+  .tab.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .pane{display:none}.pane.on{display:block}
+  .it{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .it:last-child{border-bottom:none}
+  .it .l{color:#334155}.it .s{font-size:12px;color:var(--gray)}
+  .it .a{font-weight:700}.a.cr{color:var(--green)}.a.dr{color:#334155}
+  .pill{font-size:11px;padding:2px 8px;border-radius:20px;font-weight:600}
+  .pill.paid{background:#d1fae5;color:#065f46}.pill.unpaid{background:#fef3c7;color:#92400e}.pill.part{background:#dbeafe;color:#1e40af}
+  select{width:100%;padding:11px 13px;border:1.5px solid #cbd5e1;border-radius:9px;font-size:15px;margin-bottom:10px;background:#fff}
+  .muted{color:var(--gray);font-size:13px;text-align:center;padding:18px}
+  .modal{position:fixed;inset:0;background:rgba(15,24,41,.55);display:none;align-items:flex-end;justify-content:center;z-index:20}
+  .modal.on{display:flex}
+  .sheet{background:#fff;width:100%;max-width:560px;border-radius:18px 18px 0 0;padding:20px;max-height:88vh;overflow:auto}
+  .sheet h3{font-size:16px;margin-bottom:14px;color:var(--brand)}
+  @media(min-width:560px){.modal{align-items:center}.sheet{border-radius:18px}}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="s-login" class="screen auth on"><div class="box">
+  <h1>Sign in</h1><div class="sub">Access your wallet</div>
+  <label>Email</label><input id="li-em" type="email" name="email" autocomplete="email" placeholder="you@example.com">
+  <label>Password</label><div class="pw"><input id="li-pw" type="password" name="password" autocomplete="current-password" placeholder="Your password"><button class="eye" onclick="tog('li-pw',this)">Show</button></div>
+  <div class="err" id="li-err"></div>
+  <button class="btn" id="li-btn" onclick="doLogin()">Sign In</button>
+  <button class="link" onclick="show('s-forgot')">Forgot password?</button>
+</div></div>
+
+<!-- FORCE CHANGE PASSWORD -->
+<div id="s-change" class="screen auth"><div class="box">
+  <h1>Set your password</h1><div class="sub">Choose a new password to continue</div>
+  <label>New password</label><div class="pw"><input id="ch-pw" type="password" placeholder="At least 8 characters"><button class="eye" onclick="tog('ch-pw',this)">Show</button></div>
+  <label>Confirm password</label><input id="ch-pw2" type="password" placeholder="Re-enter password">
+  <div class="err" id="ch-err"></div>
+  <button class="btn" id="ch-btn" onclick="doChange()">Save & Continue</button>
+</div></div>
+
+<!-- FORGOT -->
+<div id="s-forgot" class="screen auth"><div class="box">
+  <h1>Reset password</h1><div class="sub">We'll email you a temporary password</div>
+  <label>Email</label><input id="fo-em" type="email" autocomplete="email" placeholder="you@example.com">
+  <div class="err" id="fo-err"></div><div class="ok" id="fo-ok"></div>
+  <button class="btn" id="fo-btn" onclick="doForgot()">Send temporary password</button>
+  <button class="link" onclick="show('s-login')">← Back to sign in</button>
+</div></div>
+
+<!-- APP -->
+<div id="s-app" class="screen">
+  <div class="top"><img id="ap-logo" alt="" style="display:none"><div class="nm" id="ap-brand">Wallet</div><button class="out" onclick="logout()">Sign out</button></div>
+  <div class="wrap">
+    <div class="bal">
+      <div class="lbl">Available balance</div>
+      <div class="amt" id="ap-bal">₦0.00</div>
+      <div class="row"><button class="btn" onclick="openFund()">Add money</button><button class="btn btn-2" style="background:rgba(255,255,255,.15);color:#fff;border:none" onclick="openSpend()">Pay</button></div>
+    </div>
+    <div class="tabs">
+      <div class="tab on" data-p="tx" onclick="tab('tx')">Activity</div>
+      <div class="tab" data-p="inv" onclick="tab('inv')">Invoices</div>
+    </div>
+    <div class="pane on" id="p-tx"><div class="card"><h3>Recent activity</h3><div id="ap-tx"><div class="muted">Loading…</div></div></div></div>
+    <div class="pane" id="p-inv"><div class="card"><h3>Your invoices</h3><div id="ap-inv"><div class="muted">Loading…</div></div></div></div>
+  </div>
+</div>
+
+<!-- Fund / Spend / Pay-invoice modal -->
+<div class="modal" id="modal" onclick="if(event.target===this)closeM()"><div class="sheet" id="sheet"></div></div>
+
+<script>
+var API = '/api/v1';
+var TK = 'wallet_token';
+var ME = null, DEPTS = [];
+function show(id){document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('on')});document.getElementById(id).classList.add('on');}
+function tog(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'Show':'Hide';}
+function ngn(k){return '₦'+(Number(k||0)/100).toLocaleString('en-NG',{minimumFractionDigits:2});}
+function tok(){return localStorage.getItem(TK);}
+function err(id,m){var e=document.getElementById(id);e.textContent=m;e.style.display='block';}
+function hide(id){var e=document.getElementById(id);if(e)e.style.display='none';}
+
+async function api(path,opts){
+  opts=opts||{};
+  var h={'Content-Type':'application/json'};
+  if(opts.auth!==false&&tok())h['Authorization']='Bearer '+tok();
+  var r=await fetch(API+path,{method:opts.method||'GET',headers:h,body:opts.body?JSON.stringify(opts.body):undefined});
+  var d=await r.json().catch(function(){return{};});
+  return {ok:r.ok&&d.status!==false,status:r.status,data:d.data,message:d.message,raw:d};
+}
+
+// ── Auth ──
+async function doLogin(){
+  hide('li-err');var b=document.getElementById('li-btn');
+  var email=document.getElementById('li-em').value.trim(),password=document.getElementById('li-pw').value;
+  if(!email||!password)return err('li-err','Enter your email and password');
+  b.disabled=true;b.textContent='Signing in…';
+  var r=await api('/auth/login',{method:'POST',auth:false,body:{email:email,password:password}});
+  b.disabled=false;b.textContent='Sign In';
+  if(!r.ok)return err('li-err',r.message||'Sign in failed');
+  if(r.data&&r.data.twofa_required)return err('li-err','This account requires 2FA — use the main portal.');
+  localStorage.setItem(TK,r.data.token);
+  if(r.data.user&&r.data.user.mustChangePassword){show('s-change');return;}
+  loadApp();
+}
+async function doChange(){
+  hide('ch-err');var pw=document.getElementById('ch-pw').value,pw2=document.getElementById('ch-pw2').value;
+  if(pw.length<8)return err('ch-err','Password must be at least 8 characters');
+  if(pw!==pw2)return err('ch-err','Passwords do not match');
+  var b=document.getElementById('ch-btn');b.disabled=true;b.textContent='Saving…';
+  // current password = the temp password just used to log in
+  var r=await api('/auth/change-password',{method:'POST',body:{currentPassword:document.getElementById('li-pw').value,newPassword:pw}});
+  b.disabled=false;b.textContent='Save & Continue';
+  if(!r.ok)return err('ch-err',r.message||'Could not set password');
+  loadApp();
+}
+async function doForgot(){
+  hide('fo-err');hide('fo-ok');var em=document.getElementById('fo-em').value.trim();
+  if(!em)return err('fo-err','Enter your email');
+  var b=document.getElementById('fo-btn');b.disabled=true;b.textContent='Sending…';
+  var r=await api('/auth/forgot-password',{method:'POST',auth:false,body:{email:em}});
+  b.disabled=false;b.textContent='Send temporary password';
+  var o=document.getElementById('fo-ok');o.textContent='If that email exists, a temporary password has been sent.';o.style.display='block';
+}
+function logout(){localStorage.removeItem(TK);ME=null;show('s-login');}
+
+// ── App ──
+async function loadApp(){
+  var r=await api('/wallet/me');
+  if(r.status===403){err('li-err','This account is not a wallet member.');show('s-login');localStorage.removeItem(TK);return;}
+  if(!r.ok){show('s-login');return;}
+  ME=r.data;
+  // branding
+  var br=ME.branding||{};
+  document.documentElement.style.setProperty('--brand',br.color||'#1a2744');
+  document.getElementById('ap-brand').textContent=br.name||'Wallet';
+  document.getElementById('ap-logo').style.display=br.logo_url?'block':'none';
+  if(br.logo_url)document.getElementById('ap-logo').src=br.logo_url;
+  document.getElementById('ap-bal').textContent=ngn(ME.wallet.balance);
+  document.title=(br.name||'Wallet');
+  show('s-app');
+  loadTx();loadInv();loadDepts();
+}
+async function loadTx(){
+  var r=await api('/wallet/me/transactions');var el=document.getElementById('ap-tx');
+  if(!r.ok||!r.data||!r.data.length){el.innerHTML='<div class="muted">No activity yet</div>';return;}
+  el.innerHTML=r.data.slice(0,40).map(function(t){
+    if(t.kind==='wallet'){var cr=t.direction==='credit';return '<div class="it"><div><div class="l">'+label(t.type)+'</div><div class="s">'+fmtDate(t.date)+'</div></div><div class="a '+(cr?'cr':'dr')+'">'+(cr?'+':'−')+ngn(t.amount)+'</div></div>';}
+    return '<div class="it"><div><div class="l">Invoice '+(t.invoice_number||'')+'</div><div class="s">'+fmtDate(t.date)+' · '+esc(t.description||'')+'</div></div><span class="pill '+pill(t.status)+'">'+t.status+'</span></div>';
+  }).join('');
+}
+async function loadInv(){
+  var r=await api('/wallet/me/invoices');var el=document.getElementById('ap-inv');
+  if(!r.ok||!r.data||!r.data.length){el.innerHTML='<div class="muted">No invoices</div>';return;}
+  el.innerHTML=r.data.map(function(v){
+    var due=v.total_amount-v.amount_paid;var payable=v.status!=='paid'&&v.status!=='cancelled'&&due>0;
+    return '<div class="it"><div><div class="l">'+esc(v.description||('Invoice '+v.invoice_number))+'</div><div class="s">'+ngn(v.total_amount)+(v.amount_paid?(' · paid '+ngn(v.amount_paid)):'')+'</div></div>'+
+      (payable?'<button class="tab on" style="flex:none;padding:7px 12px" onclick="payInv(\''+v.id+'\','+due+')">Pay '+ngn(due)+'</button>':'<span class="pill '+pill(v.status)+'">'+v.status+'</span>')+'</div>';
+  }).join('');
+}
+async function loadDepts(){var r=await api('/wallet/me/departments');DEPTS=r.ok?(r.data||[]):[];}
+
+function tab(p){document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('on',t.dataset.p===p)});document.querySelectorAll('.pane').forEach(function(x){x.classList.remove('on')});document.getElementById('p-'+p).classList.add('on');}
+function closeM(){document.getElementById('modal').classList.remove('on');}
+function openSheet(html){document.getElementById('sheet').innerHTML=html;document.getElementById('modal').classList.add('on');}
+
+function openFund(){
+  openSheet('<h3>Add money</h3><label>Amount (₦)</label><input id="m-amt" type="number" min="100" step="0.01" placeholder="0.00"><div class="err" id="m-err"></div><button class="btn" id="m-btn" onclick="doFund()">Continue to payment</button>');
+}
+async function doFund(){
+  hide('m-err');var v=parseFloat(document.getElementById('m-amt').value);if(!(v>0))return err('m-err','Enter a valid amount');
+  var b=document.getElementById('m-btn');b.disabled=true;b.textContent='Please wait…';
+  var r=await api('/wallet/me/fund',{method:'POST',body:{amount:Math.round(v*100)}});
+  if(!r.ok){b.disabled=false;b.textContent='Continue to payment';return err('m-err',r.message||'Could not start funding');}
+  window.location.href=r.data.redirect_url;
+}
+function openSpend(){
+  if(!DEPTS.length)return openSheet('<h3>Pay a department</h3><div class="muted">No departments available yet.</div>');
+  openSheet('<h3>Pay a department</h3><label>Department</label><select id="m-dept">'+DEPTS.map(function(d){return '<option value="'+d.id+'">'+esc(d.name)+'</option>'}).join('')+'</select><label>Amount (₦)</label><input id="m-amt" type="number" min="0.01" step="0.01" placeholder="0.00"><div class="err" id="m-err"></div><button class="btn" id="m-btn" onclick="doSpend()">Pay</button>');
+}
+async function doSpend(){
+  hide('m-err');var v=parseFloat(document.getElementById('m-amt').value);if(!(v>0))return err('m-err','Enter a valid amount');
+  var b=document.getElementById('m-btn');b.disabled=true;b.textContent='Paying…';
+  var r=await api('/wallet/me/spend',{method:'POST',body:{department_id:document.getElementById('m-dept').value,amount:Math.round(v*100)}});
+  b.disabled=false;b.textContent='Pay';
+  if(!r.ok)return err('m-err',r.message||'Payment failed');
+  ME.wallet.balance=r.data.wallet_balance;document.getElementById('ap-bal').textContent=ngn(r.data.wallet_balance);
+  closeM();loadTx();
+}
+function payInv(id,due){
+  openSheet('<h3>Pay invoice</h3><div class="muted" style="text-align:left;padding:0 0 12px">Outstanding: <strong>'+ngn(due)+'</strong> — paid from your wallet balance.</div><div class="err" id="m-err"></div><button class="btn" id="m-btn" onclick="doPayInv(\''+id+'\')">Pay '+ngn(due)+' now</button>');
+}
+async function doPayInv(id){
+  hide('m-err');var b=document.getElementById('m-btn');b.disabled=true;b.textContent='Paying…';
+  var r=await api('/wallet/me/invoices/'+id+'/pay',{method:'POST',body:{}});
+  b.disabled=false;
+  if(!r.ok)return err('m-err',r.message||'Payment failed');
+  ME.wallet.balance=r.data.wallet_balance;document.getElementById('ap-bal').textContent=ngn(r.data.wallet_balance);
+  closeM();loadTx();loadInv();
+}
+
+function label(t){return ({fund:'Wallet funding',spend:'Payment',invoice_payment:'Invoice payment',load:'Wallet load',debit:'Adjustment',refund:'Refund'})[t]||t;}
+function pill(s){return s==='paid'?'paid':(s==='part_paid'?'part':'unpaid');}
+function fmtDate(d){try{return new Date(d).toLocaleString('en-NG',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}catch(e){return '';}}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+// Boot: if a token exists, try to load the app.
+if(tok())loadApp();
+document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.getElementById('s-login').classList.contains('on'))doLogin();});
+</script>
+</body>
+</html>

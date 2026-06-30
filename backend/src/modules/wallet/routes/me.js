@@ -25,10 +25,21 @@ function memberInvoiceWhere(m) {
 router.get('/', async (req, res, next) => {
   try {
     const m = req.walletMember;
+    const cfg = await getConfig(m.merchant_id);
     return ok(res, {
       member: { id: m.member_id, name: m.name, email: m.email, phone: m.phone },
       wallet: { id: m.wallet_id, balance: num(m.balance), currency: m.currency, low_balance_threshold: num(m.low_balance_threshold) },
+      branding: { name: cfg.brand_name || 'Wallet', logo_url: cfg.brand_logo_url || null, color: cfg.brand_color || '#1a2744' },
     });
+  } catch (e) { next(e); }
+});
+
+// Departments the member can pay (spend targets).
+router.get('/departments', async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT id::text, name FROM inv_departments WHERE merchant_id = $1::uuid ORDER BY name`, req.walletMember.merchant_id);
+    return ok(res, rows);
   } catch (e) { next(e); }
 });
 
