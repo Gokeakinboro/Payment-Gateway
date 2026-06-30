@@ -12,7 +12,8 @@ const { requireAuth, requireApiKey } = require('../../middleware/auth');
 const { fail } = require('../../utils/helpers');
 
 const DEFAULT_MAX_BALANCE = 300000000n; // ₦3,000,000 in kobo
-const LOGIN_URL = (process.env.APP_BASE_URL || process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '') + '/login.html';
+// Members sign in via the wallet app (white-label member UI), NOT the merchant portal.
+const LOGIN_URL = (process.env.APP_BASE_URL || process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '') + '/wallet.html';
 
 // One-time temp password for member onboarding (mirrors departmental users).
 const genTempPassword = () => crypto.randomBytes(6).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) + 'A1!';
