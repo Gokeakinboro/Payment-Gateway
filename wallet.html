@@ -105,6 +105,7 @@
       <div class="lbl">Available balance</div>
       <div class="amt" id="ap-bal">₦0.00</div>
       <div class="row"><button class="btn" onclick="openFund()">Add money</button><button class="btn btn-2" style="background:rgba(255,255,255,.15);color:#fff;border:none" onclick="openSpend()">Pay</button></div>
+      <button class="btn" style="margin-top:10px;width:100%;background:#fff;color:var(--brand)" onclick="openScan()">⛶ Scan &amp; Pay</button>
     </div>
     <div class="tabs">
       <div class="tab on" data-p="tx" onclick="tab('tx')">Activity</div>
@@ -210,7 +211,7 @@ async function loadInv(){
 async function loadDepts(){var r=await api('/wallet/me/departments');DEPTS=r.ok?(r.data||[]):[];}
 
 function tab(p){document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('on',t.dataset.p===p)});document.querySelectorAll('.pane').forEach(function(x){x.classList.remove('on')});document.getElementById('p-'+p).classList.add('on');}
-function closeM(){document.getElementById('modal').classList.remove('on');}
+function closeM(){stopScan();document.getElementById('modal').classList.remove('on');}
 function openSheet(html){document.getElementById('sheet').innerHTML=html;document.getElementById('modal').classList.add('on');}
 
 function openFund(){
@@ -248,6 +249,60 @@ async function doPayInv(id){
   closeM();loadTx();loadInv();
 }
 
+// ── SCAN & PAY ───────────────────────────────────────────
+var _scStream=null,_scRAF=null,_scDet=null;
+function stopScan(){if(_scRAF){cancelAnimationFrame(_scRAF);_scRAF=null;}if(_scStream){_scStream.getTracks().forEach(function(t){t.stop();});_scStream=null;}}
+function openScan(){
+  openSheet('<h3>Scan &amp; Pay</h3>'+
+    '<div style="position:relative;background:#000;border-radius:12px;overflow:hidden;height:240px">'+
+      '<video id="sc-vid" playsinline muted style="width:100%;height:100%;object-fit:cover"></video>'+
+      '<div style="position:absolute;inset:18%;border:3px solid rgba(125,197,52,.95);border-radius:14px;pointer-events:none"></div>'+
+    '</div>'+
+    '<div class="muted" id="sc-hint" style="text-align:left;padding:10px 0">Point your camera at the QR code.</div>'+
+    '<div class="err" id="sc-err"></div>'+
+    '<button class="link" onclick="manualCode()">Enter code manually</button>');
+  startScan();
+}
+async function startScan(){
+  try{
+    _scStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    var v=document.getElementById('sc-vid');if(!v){stopScan();return;}
+    v.srcObject=_scStream;await v.play();
+    if('BarcodeDetector' in window){_scDet=new window.BarcodeDetector({formats:['qr_code']});scanNative(v);}
+    else{await loadJsQR();scanJsQR(v);}
+  }catch(e){var h=document.getElementById('sc-hint');if(h)h.style.display='none';err('sc-err','Camera unavailable — use “Enter code manually”.');}
+}
+async function scanNative(v){if(!_scStream)return;try{var codes=await _scDet.detect(v);if(codes&&codes.length)return onCode(codes[0].rawValue);}catch(e){}_scRAF=requestAnimationFrame(function(){scanNative(v);});}
+function scanJsQR(v){if(!_scStream||!window.jsQR)return;var c=document.createElement('canvas'),x=c.getContext('2d');
+  (function tick(){if(!_scStream)return;if(v.readyState>=2){c.width=v.videoWidth;c.height=v.videoHeight;x.drawImage(v,0,0,c.width,c.height);var d=x.getImageData(0,0,c.width,c.height);var r=window.jsQR(d.data,c.width,c.height);if(r&&r.data)return onCode(r.data);}_scRAF=requestAnimationFrame(tick);})();}
+function loadJsQR(){return new Promise(function(res){if(window.jsQR)return res();var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';s.onload=res;s.onerror=res;document.head.appendChild(s);});}
+function manualCode(){stopScan();var raw=prompt('Paste the QR link or code');if(raw)onCode(raw.trim());}
+function parseToken(raw){try{var u=new URL(raw);var c=u.searchParams.get('c');if(c)return c;}catch(e){}return /^[A-Za-z0-9_-]{8,}$/.test(raw)?raw:null;}
+function onCode(raw){if(!raw)return;stopScan();var t=parseToken(raw);if(!t)return openSheet('<h3>Scan &amp; Pay</h3><div class="err" style="display:block">That is not a valid Paylode QR.</div><button class="btn" onclick="openScan()">Try again</button>');resolveScan(t);}
+async function resolveScan(token){
+  openSheet('<h3>Scan &amp; Pay</h3><div class="muted">Loading bill…</div>');
+  var r=await api('/wallet/me/qr/'+encodeURIComponent(token));
+  if(!r.ok)return openSheet('<h3>Scan &amp; Pay</h3><div class="err" style="display:block">'+esc(r.message||'Could not read that QR')+'</div><button class="btn" onclick="openScan()">Scan again</button>');
+  var q=r.data,dept=q.department_name?(' · '+esc(q.department_name)):'';
+  if(q.type==='fixed'){
+    var vat=q.charge_vat?Math.round(q.amount*0.075):0,total=q.amount+vat;
+    openSheet('<h3>'+esc(q.label||'Pay this bill')+'</h3><div class="bal" style="margin:0 0 14px"><div class="lbl">Amount due'+dept+'</div><div class="amt">'+ngn(total)+'</div>'+(vat?'<div class="lbl">incl. VAT '+ngn(vat)+'</div>':'')+'</div><div class="err" id="m-err"></div><button class="btn" id="m-btn" onclick="doScanPay(\''+token+'\',false)">Pay this bill</button>');
+  }else{
+    openSheet('<h3>'+esc(q.label||'Pay this bill')+'</h3><div class="muted" style="text-align:left">Open amount'+dept+(q.charge_vat?' · VAT added':'')+'</div><label>Amount (₦)</label><input id="m-amt" type="number" min="0.01" step="0.01" placeholder="0.00"><div class="err" id="m-err"></div><button class="btn" id="m-btn" onclick="doScanPay(\''+token+'\',true)">Pay this bill</button>');
+  }
+}
+async function doScanPay(token,isOpen){
+  hide('m-err');var body={};
+  if(isOpen){var v=parseFloat(document.getElementById('m-amt').value);if(!(v>0))return err('m-err','Enter a valid amount');body.amount=Math.round(v*100);}
+  var b=document.getElementById('m-btn');b.disabled=true;b.textContent='Paying…';
+  var r=await api('/wallet/me/qr/'+encodeURIComponent(token)+'/pay',{method:'POST',body:body});
+  b.disabled=false;b.textContent='Pay this bill';
+  if(!r.ok)return err('m-err',r.message||'Payment failed');
+  ME.wallet.balance=r.data.wallet_balance;document.getElementById('ap-bal').textContent=ngn(r.data.wallet_balance);
+  openSheet('<h3>Payment successful ✓</h3><div class="ok" style="display:block">Paid '+ngn(r.data.paid)+(r.data.department?(' to '+esc(r.data.department)):'')+'.</div><button class="btn" onclick="closeM()">Done</button>');
+  loadTx();
+}
+
 function label(t){return ({fund:'Wallet funding',spend:'Payment',invoice_payment:'Invoice payment',load:'Wallet load',debit:'Adjustment',refund:'Refund'})[t]||t;}
 function pill(s){return s==='paid'?'paid':(s==='part_paid'?'part':'unpaid');}
 function fmtDate(d){try{return new Date(d).toLocaleString('en-NG',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}catch(e){return '';}}
@@ -257,8 +312,11 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return
 if(tok())loadApp();
 document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.getElementById('s-login').classList.contains('on'))doLogin();});
 
-// PWA: register service worker scoped to the wallet only (won't touch the merchant portal on this origin).
-if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js',{scope:'/wallet.html'}).catch(function(){});});}
+// Self-heal: remove any stale service worker + caches from an earlier PWA build so members
+// always run the current page (a stale cached wallet.html was making "Sign In" do nothing).
+// A proper caching service worker will be reintroduced later (tracked in KIV).
+if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){r.unregister();});}).catch(function(){});}
+if(window.caches&&caches.keys){caches.keys().then(function(ks){ks.forEach(function(k){caches.delete(k);});}).catch(function(){});}
 </script>
 </body>
 </html>

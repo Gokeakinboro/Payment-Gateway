@@ -129,4 +129,61 @@ router.post('/spend', async (req, res, next) => {
   } catch (e) { handle(res, e, next); }
 });
 
+// ── SCAN & PAY ───────────────────────────────────────────────────────────────
+// A member scans a merchant/department QR (inv_qr_codes) in the wallet app. Closed-loop:
+// the QR MUST belong to the member's own merchant. Resolve returns the bill; pay debits
+// the wallet (never negative) and credits the department.
+const VAT_RATE = 0.075;
+async function resolveQr(m, token) {
+  const rows = await prisma.$queryRawUnsafe(
+    `SELECT q.id::text, q.qr_reference, q.label, q.type, q.amount::text AS amount, q.charge_vat,
+            q.is_active, q.merchant_id::text AS merchant_id, q.department_id::text AS department_id,
+            d.name AS department_name
+       FROM inv_qr_codes q LEFT JOIN inv_departments d ON d.id = q.department_id
+      WHERE q.access_token = $1`, token);
+  if (!rows.length) return { error: 'This QR code is not recognised', code: 'QR_NOT_FOUND', status: 404 };
+  const q = rows[0];
+  if (q.merchant_id !== m.merchant_id) return { error: 'This wallet can only pay codes from your own organisation', code: 'QR_OUT_OF_NETWORK', status: 403 };
+  if (!q.is_active) return { error: 'This QR code is no longer active', code: 'QR_INACTIVE', status: 409 };
+  return { qr: {
+    id: q.id, reference: q.qr_reference, label: q.label, type: q.type,
+    amount: q.amount === null ? null : num(q.amount), charge_vat: !!q.charge_vat,
+    department_id: q.department_id, department_name: q.department_name || null,
+  }};
+}
+
+// GET /wallet/me/qr/:token — resolve a scanned QR into a payable bill.
+router.get('/qr/:token', async (req, res, next) => {
+  try {
+    const r = await resolveQr(req.walletMember, String(req.params.token));
+    if (r.error) return fail(res, r.error, r.code, r.status);
+    return ok(res, r.qr);
+  } catch (e) { next(e); }
+});
+
+// POST /wallet/me/qr/:token/pay — pay a scanned QR from the wallet (never goes negative).
+// Fixed QR → the preset amount; open QR → the member-entered amount (body.amount, kobo). VAT added if the QR charges it.
+router.post('/qr/:token/pay', async (req, res, next) => {
+  try {
+    const m = req.walletMember;
+    const r = await resolveQr(m, String(req.params.token));
+    if (r.error) return fail(res, r.error, r.code, r.status);
+    const q = r.qr;
+    const base = q.type === 'fixed' ? q.amount : parseInt(req.body.amount, 10);
+    if (!Number.isInteger(base) || base < 1)
+      return fail(res, q.type === 'fixed' ? 'This QR has no valid amount' : 'Enter a valid amount to pay');
+    const vat = q.charge_vat ? Math.round(base * VAT_RATE) : 0;
+    const amount = base + vat;
+    let result;
+    if (q.department_id) {
+      result = await ledger.spendToDepartment({ walletId: m.wallet_id, departmentId: q.department_id, amount, createdBy: req.user.id, note: q.label || ('QR ' + q.reference) });
+      require('../services/walletNotify').memberSpent({ merchantId: m.merchant_id, walletId: m.wallet_id, departmentId: q.department_id, amount, balanceAfter: result.balanceAfter }).catch(() => {});
+    } else {
+      result = await ledger.debit({ walletId: m.wallet_id, amount, type: 'spend', counterparty: q.reference, note: q.label || ('QR ' + q.reference), createdBy: req.user.id });
+    }
+    return ok(res, { reference: result.reference, wallet_balance: Number(result.balanceAfter), paid: amount, base, vat,
+      label: q.label, department: q.department_name || null }, 'Payment successful');
+  } catch (e) { handle(res, e, next); }
+});
+
 module.exports = router;
