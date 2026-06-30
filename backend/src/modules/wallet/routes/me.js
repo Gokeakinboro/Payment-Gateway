@@ -8,6 +8,7 @@ const { prisma, memberAuth, getConfig, normalizePhone, isValidEmail } = require(
 const { ok, fail, created, notFound, generateRef } = require('../../../utils/helpers');
 const compliance = require('../../../services/complianceService');
 const ledger = require('../services/ledger');
+const walletPush = require('../services/walletPush');
 const { payInvoiceFromWallet } = require('../services/walletInvoice');
 
 const CHECKOUT_BASE = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '');
@@ -127,6 +128,17 @@ router.post('/pin', async (req, res, next) => {
 router.post('/pin/verify', async (req, res, next) => {
   try { await assertPin(req); return ok(res, { ok: true }, 'PIN verified'); }
   catch (e) { handle(res, e, next); }
+});
+
+// Web-push (PWA notifications): public key + subscribe / unsubscribe.
+router.get('/push/key', (req, res) => ok(res, { key: walletPush.publicKey() }));
+router.post('/push', async (req, res, next) => {
+  try { await walletPush.subscribe(req.walletMember.member_id, req.body && req.body.subscription); return ok(res, { subscribed: true }, 'Notifications enabled'); }
+  catch (e) { next(e); }
+});
+router.delete('/push', async (req, res, next) => {
+  try { await walletPush.unsubscribe(req.body && req.body.endpoint); return ok(res, { unsubscribed: true }); }
+  catch (e) { next(e); }
 });
 
 // Departments the member can pay (spend targets).

@@ -46,3 +46,22 @@ self.addEventListener('fetch', (e) => {
     );
   }
 });
+
+// ── Web-push notifications ───────────────────────────────────────────────────
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) {}
+  e.waitUntil(self.registration.showNotification(d.title || 'Paylode Wallet', {
+    body: d.body || '', icon: '/icon-192.png', badge: '/icon-192.png',
+    data: { url: d.url || '/wallet.html' },
+  }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/wallet.html';
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) { if (c.url.indexOf('/wallet.html') !== -1 && 'focus' in c) return c.focus(); }
+    if (self.clients.openWindow) return self.clients.openWindow(url);
+  })());
+});
