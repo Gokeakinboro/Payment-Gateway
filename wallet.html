@@ -120,6 +120,9 @@
 <div class="modal" id="modal" onclick="if(event.target===this)closeM()"><div class="sheet" id="sheet"></div></div>
 
 <script>
+// On-screen error reporter — surfaces any JS failure instead of failing silently.
+window.onerror=function(msg,src,ln,col,e){try{var d=document.getElementById('__ge');if(!d){d=document.createElement('div');d.id='__ge';d.style.cssText='position:fixed;top:0;left:0;right:0;background:#b91c1c;color:#fff;padding:10px;font:12px monospace;z-index:99999;white-space:pre-wrap;word-break:break-all';document.body.appendChild(d);}d.textContent='ERROR: '+msg+'  @'+String(src||'').split('/').pop()+':'+ln+(e&&e.stack?('\n'+e.stack.slice(0,240)):'');}catch(_){}return false;};
+window.addEventListener('unhandledrejection',function(ev){window.onerror('async: '+((ev.reason&&ev.reason.message)||ev.reason),'',0,0,ev.reason);});
 var API = '/api/v1';
 var TK = 'wallet_token';
 var ME = null, DEPTS = [];
