@@ -125,10 +125,16 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
   }
 
   // Member Wallet funding (best-effort): credit the wallet instantly on success.
-  // Idempotent (unique on transaction_id). Card path swept by the worker too.
+  // Credit the SETTLED PRINCIPAL (payer-funded → merchant settles the principal;
+  // crediting the gross would over-credit by the fee). Idempotent (unique on
+  // transaction_id); the worker sweep also catches any settlement path that
+  // bypasses this hook (e.g. PalmPay VA, or an 'alreadyDone' early-return).
   if (txn.metadata && txn.metadata.source === 'wallet_fund') {
     require('../modules/wallet/services/walletFund')
-      .recordForTransaction({ ...txn, status: 'SUCCESS', amount: fees.chargeAmount })
+      .recordForTransaction({
+        ...txn, status: 'SUCCESS', amount: fees.merchantSettlement,
+        metadata: { ...(txn.metadata || {}), merchant_settlement: Number(fees.merchantSettlement) },
+      })
       .catch(() => {});
   }
 
