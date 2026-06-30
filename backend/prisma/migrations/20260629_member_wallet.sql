@@ -1,9 +1,9 @@
 -- Member Wallet — closed-loop, merchant-owned, white-label stored value.
--- One merchant ledger (member wallets) + departmental subsidiary ledgers.
+-- One merchant ledger (member mw_wallets) + departmental subsidiary ledgers.
 -- Amounts in kobo (bigint). Idempotent. Reuses inv_departments / inv_department_users.
 
 -- Per-merchant config + white-label branding + the on/off toggle.
-CREATE TABLE IF NOT EXISTS merchant_wallet_config (
+CREATE TABLE IF NOT EXISTS mw_config (
   merchant_id         uuid PRIMARY KEY REFERENCES merchants(id) ON DELETE CASCADE,
   enabled             boolean NOT NULL DEFAULT false,   -- SA-controlled switch (only SA flips true)
   requested           boolean NOT NULL DEFAULT false,   -- merchant expressed interest (onboarding tick)
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS merchant_wallet_config (
 
 -- Members (walled-garden, very-low-tier KYC: name/email/phone). Future external
 -- payers will be kyc_tier='full'.
-CREATE TABLE IF NOT EXISTS wallet_members (
+CREATE TABLE IF NOT EXISTS mw_members (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   merchant_id uuid NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
   user_id     uuid UNIQUE REFERENCES users(id),   -- login account (temp-pw onboarding); null = no login yet
@@ -37,15 +37,15 @@ CREATE TABLE IF NOT EXISTS wallet_members (
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX        IF NOT EXISTS idx_wallet_members_merchant ON wallet_members(merchant_id);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_members_phone ON wallet_members(merchant_id, lower(phone)) WHERE phone IS NOT NULL AND phone <> '';
-CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_members_email ON wallet_members(merchant_id, lower(email)) WHERE email IS NOT NULL AND email <> '';
+CREATE INDEX        IF NOT EXISTS idx_mw_members_merchant ON mw_members(merchant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mw_members_phone ON mw_members(merchant_id, lower(phone)) WHERE phone IS NOT NULL AND phone <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mw_members_email ON mw_members(merchant_id, lower(email)) WHERE email IS NOT NULL AND email <> '';
 
 -- One wallet per member.
-CREATE TABLE IF NOT EXISTS wallets (
+CREATE TABLE IF NOT EXISTS mw_wallets (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   merchant_id           uuid NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
-  member_id             uuid NOT NULL UNIQUE REFERENCES wallet_members(id) ON DELETE CASCADE,
+  member_id             uuid NOT NULL UNIQUE REFERENCES mw_members(id) ON DELETE CASCADE,
   balance               bigint NOT NULL DEFAULT 0 CHECK (balance >= 0),  -- kobo; NEVER negative
   currency              text   NOT NULL DEFAULT 'NGN',
   status                text   NOT NULL DEFAULT 'active', -- active | frozen
@@ -53,14 +53,14 @@ CREATE TABLE IF NOT EXISTS wallets (
   created_at            timestamptz NOT NULL DEFAULT now(),
   updated_at            timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_wallets_merchant ON wallets(merchant_id);
+CREATE INDEX IF NOT EXISTS idx_wallets_merchant ON mw_wallets(merchant_id);
 
 -- Append-only member ledger. Every balance change is one row (with balance_after).
-CREATE TABLE IF NOT EXISTS wallet_ledger (
+CREATE TABLE IF NOT EXISTS mw_ledger (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   merchant_id    uuid NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
-  wallet_id      uuid NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
-  member_id      uuid NOT NULL REFERENCES wallet_members(id) ON DELETE CASCADE,
+  wallet_id      uuid NOT NULL REFERENCES mw_wallets(id) ON DELETE CASCADE,
+  member_id      uuid NOT NULL REFERENCES mw_members(id) ON DELETE CASCADE,
   department_id  uuid REFERENCES inv_departments(id),
   direction      text   NOT NULL,   -- credit | debit
   amount         bigint NOT NULL,   -- kobo, positive
@@ -74,13 +74,13 @@ CREATE TABLE IF NOT EXISTS wallet_ledger (
   approved_by    uuid,
   created_at     timestamptz NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_ledger_reference ON wallet_ledger(reference);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_ledger_txn ON wallet_ledger(transaction_id) WHERE transaction_id IS NOT NULL;
-CREATE INDEX        IF NOT EXISTS idx_wallet_ledger_wallet ON wallet_ledger(wallet_id, created_at DESC);
-CREATE INDEX        IF NOT EXISTS idx_wallet_ledger_merchant ON wallet_ledger(merchant_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mw_ledger_reference ON mw_ledger(reference);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mw_ledger_txn ON mw_ledger(transaction_id) WHERE transaction_id IS NOT NULL;
+CREATE INDEX        IF NOT EXISTS idx_mw_ledger_wallet ON mw_ledger(wallet_id, created_at DESC);
+CREATE INDEX        IF NOT EXISTS idx_mw_ledger_merchant ON mw_ledger(merchant_id, created_at DESC);
 
 -- Departmental subsidiary ledger — credited when a member spends into a department.
-CREATE TABLE IF NOT EXISTS wallet_department_ledger (
+CREATE TABLE IF NOT EXISTS mw_dept_ledger (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   merchant_id      uuid NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
   department_id    uuid NOT NULL REFERENCES inv_departments(id) ON DELETE CASCADE,
@@ -88,21 +88,21 @@ CREATE TABLE IF NOT EXISTS wallet_department_ledger (
   amount           bigint NOT NULL,
   balance_after    bigint NOT NULL,
   type             text   NOT NULL,   -- spend | transfer | payout | adjustment
-  member_id        uuid REFERENCES wallet_members(id),
-  wallet_ledger_id uuid REFERENCES wallet_ledger(id),
+  member_id        uuid REFERENCES mw_members(id),
+  mw_ledger_id uuid REFERENCES mw_ledger(id),
   reference        text   NOT NULL,
   created_at       timestamptz NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_dept_ledger_reference ON wallet_department_ledger(reference);
-CREATE INDEX        IF NOT EXISTS idx_wallet_dept_ledger_dept ON wallet_department_ledger(department_id, created_at DESC);
-CREATE INDEX        IF NOT EXISTS idx_wallet_dept_ledger_merchant ON wallet_department_ledger(merchant_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_dept_ledger_reference ON mw_dept_ledger(reference);
+CREATE INDEX        IF NOT EXISTS idx_wallet_dept_ledger_dept ON mw_dept_ledger(department_id, created_at DESC);
+CREATE INDEX        IF NOT EXISTS idx_wallet_dept_ledger_merchant ON mw_dept_ledger(merchant_id, created_at DESC);
 
 -- Maker-checker for admin loads/debits/refunds. Maker = dept sub-user, checker = any admin.
-CREATE TABLE IF NOT EXISTS wallet_load_requests (
+CREATE TABLE IF NOT EXISTS mw_load_requests (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   merchant_id uuid NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
-  wallet_id   uuid NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
-  member_id   uuid NOT NULL REFERENCES wallet_members(id) ON DELETE CASCADE,
+  wallet_id   uuid NOT NULL REFERENCES mw_wallets(id) ON DELETE CASCADE,
+  member_id   uuid NOT NULL REFERENCES mw_members(id) ON DELETE CASCADE,
   direction   text   NOT NULL,   -- credit (load) | debit
   type        text   NOT NULL,   -- load | debit | refund | withdrawal
   amount      bigint NOT NULL,
@@ -110,8 +110,8 @@ CREATE TABLE IF NOT EXISTS wallet_load_requests (
   status      text   NOT NULL DEFAULT 'pending', -- pending | approved | rejected
   maker_id    uuid,              -- dept sub-user who initiated
   checker_id  uuid,              -- admin who decided
-  ledger_id   uuid,              -- wallet_ledger row created on approval
+  ledger_id   uuid,              -- mw_ledger row created on approval
   created_at  timestamptz NOT NULL DEFAULT now(),
   decided_at  timestamptz
 );
-CREATE INDEX IF NOT EXISTS idx_wallet_load_req_merchant ON wallet_load_requests(merchant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wallet_load_req_merchant ON mw_load_requests(merchant_id, status, created_at DESC);

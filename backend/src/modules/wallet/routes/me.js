@@ -39,7 +39,7 @@ router.get('/transactions', async (req, res, next) => {
     const led = await prisma.$queryRawUnsafe(
       `SELECT created_at, type, direction, amount::text AS amount, balance_after::text AS balance_after, reference,
               department_id::text AS department_id, note
-         FROM wallet_ledger WHERE wallet_id = $1::uuid ORDER BY created_at DESC LIMIT 200`, m.wallet_id);
+         FROM mw_ledger WHERE wallet_id = $1::uuid ORDER BY created_at DESC LIMIT 200`, m.wallet_id);
     const iw = memberInvoiceWhere(m);
     const inv = await prisma.$queryRawUnsafe(
       `SELECT created_at, invoice_number, description, total_amount::text AS total_amount, amount_paid::text AS amount_paid,

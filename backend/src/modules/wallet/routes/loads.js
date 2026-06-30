@@ -22,10 +22,10 @@ router.post('/requests', async (req, res, next) => {
     if (!Number.isInteger(amount) || amount < 1) return fail(res, 'A valid amount (kobo) is required');
     const type = req.body.type === 'debit' ? 'debit' : 'load';
     const direction = type === 'load' ? 'credit' : 'debit';
-    const w = await prisma.$queryRawUnsafe(`SELECT id::text, member_id::text AS member_id FROM wallets WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.body.wallet_id, mid);
+    const w = await prisma.$queryRawUnsafe(`SELECT id::text, member_id::text AS member_id FROM mw_wallets WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.body.wallet_id, mid);
     if (!w.length) return notFound(res, 'Wallet');
     const rows = await prisma.$queryRawUnsafe(
-      `INSERT INTO wallet_load_requests (merchant_id, wallet_id, member_id, direction, type, amount, reason, maker_id)
+      `INSERT INTO mw_load_requests (merchant_id, wallet_id, member_id, direction, type, amount, reason, maker_id)
        VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8) RETURNING id::text`,
       mid, w[0].id, w[0].member_id, direction, type, BigInt(amount),
       req.body.reason ? String(req.body.reason).slice(0, 300) : null, req.walletTenant.userId || null);
@@ -40,7 +40,7 @@ router.get('/requests', async (req, res, next) => {
     const status = String(req.query.status || '').trim();
     let sql = `SELECT r.id::text, r.type, r.direction, r.amount::text AS amount, r.reason, r.status,
                       r.created_at, r.decided_at, m.name AS member_name, r.wallet_id::text AS wallet_id
-                 FROM wallet_load_requests r JOIN wallet_members m ON m.id = r.member_id
+                 FROM mw_load_requests r JOIN mw_members m ON m.id = r.member_id
                 WHERE r.merchant_id = $1::uuid`;
     const vals = [mid];
     if (status) { sql += ` AND r.status = $2`; vals.push(status); }
@@ -57,7 +57,7 @@ router.post('/requests/:id/approve', async (req, res, next) => {
     const mid = req.walletTenant.merchantId;
     const rows = await prisma.$queryRawUnsafe(
       `SELECT id::text, wallet_id::text AS wallet_id, direction, type, amount::text AS amount, status
-         FROM wallet_load_requests WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.params.id, mid);
+         FROM mw_load_requests WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.params.id, mid);
     if (!rows.length) return notFound(res, 'Load request');
     const r = rows[0];
     if (r.status !== 'pending') return fail(res, 'This request is already ' + r.status, 'NOT_PENDING', 409);
@@ -68,7 +68,7 @@ router.post('/requests/:id/approve', async (req, res, next) => {
       approvedBy: req.walletTenant.userId, note: `Approved ${r.type}`,
     });
     await prisma.$executeRawUnsafe(
-      `UPDATE wallet_load_requests SET status='approved', checker_id=$1, ledger_id=$2::uuid, decided_at=now() WHERE id=$3::uuid`,
+      `UPDATE mw_load_requests SET status='approved', checker_id=$1, ledger_id=$2::uuid, decided_at=now() WHERE id=$3::uuid`,
       req.walletTenant.userId || null, move.ledgerId, r.id);
     return ok(res, { id: r.id, status: 'approved', wallet_balance: Number(move.balanceAfter) }, 'Load approved');
   } catch (e) { handle(res, e, next); }
@@ -78,7 +78,7 @@ router.post('/requests/:id/reject', async (req, res, next) => {
   try {
     if (!isAdmin(req)) return fail(res, 'Only a merchant admin can reject loads', 'FORBIDDEN', 403);
     const rows = await prisma.$queryRawUnsafe(
-      `UPDATE wallet_load_requests SET status='rejected', checker_id=$1, decided_at=now()
+      `UPDATE mw_load_requests SET status='rejected', checker_id=$1, decided_at=now()
         WHERE id=$2::uuid AND merchant_id=$3::uuid AND status='pending' RETURNING id::text`,
       req.walletTenant.userId || null, req.params.id, req.walletTenant.merchantId);
     if (!rows.length) return fail(res, 'Request not found or not pending', 'NOT_PENDING', 404);
@@ -94,7 +94,7 @@ router.post('/:walletId/refund', async (req, res, next) => {
     const mid = req.walletTenant.merchantId;
     const amount = parseInt(req.body.amount, 10);
     if (!Number.isInteger(amount) || amount < 1) return fail(res, 'A valid amount (kobo) is required');
-    const w = await prisma.$queryRawUnsafe(`SELECT id::text FROM wallets WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.params.walletId, mid);
+    const w = await prisma.$queryRawUnsafe(`SELECT id::text FROM mw_wallets WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.params.walletId, mid);
     if (!w.length) return notFound(res, 'Wallet');
     const move = await ledger.debit({
       walletId: req.params.walletId, amount, type: 'refund',

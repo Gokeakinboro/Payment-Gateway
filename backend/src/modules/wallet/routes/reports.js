@@ -14,13 +14,13 @@ router.get('/summary', async (req, res, next) => {
     const mid = req.walletTenant.merchantId;
     const s = (await prisma.$queryRawUnsafe(
       `SELECT
-         (SELECT COUNT(*)::int FROM wallet_members WHERE merchant_id=$1::uuid) AS members,
-         (SELECT COUNT(*)::int FROM wallets WHERE merchant_id=$1::uuid AND status='active') AS active_wallets,
-         (SELECT COALESCE(SUM(balance),0)::text FROM wallets WHERE merchant_id=$1::uuid) AS float_total,
-         (SELECT COUNT(*)::int FROM wallets w WHERE w.merchant_id=$1::uuid AND w.low_balance_threshold>0 AND w.balance < w.low_balance_threshold) AS low_balance,
-         (SELECT COALESCE(SUM(amount),0)::text FROM wallet_ledger WHERE merchant_id=$1::uuid AND type='fund') AS funded_total,
-         (SELECT COALESCE(SUM(amount),0)::text FROM wallet_ledger WHERE merchant_id=$1::uuid AND type='spend') AS spent_total,
-         (SELECT COUNT(*)::int FROM wallet_load_requests WHERE merchant_id=$1::uuid AND status='pending') AS pending_loads`,
+         (SELECT COUNT(*)::int FROM mw_members WHERE merchant_id=$1::uuid) AS members,
+         (SELECT COUNT(*)::int FROM mw_wallets WHERE merchant_id=$1::uuid AND status='active') AS active_wallets,
+         (SELECT COALESCE(SUM(balance),0)::text FROM mw_wallets WHERE merchant_id=$1::uuid) AS float_total,
+         (SELECT COUNT(*)::int FROM mw_wallets w WHERE w.merchant_id=$1::uuid AND w.low_balance_threshold>0 AND w.balance < w.low_balance_threshold) AS low_balance,
+         (SELECT COALESCE(SUM(amount),0)::text FROM mw_ledger WHERE merchant_id=$1::uuid AND type='fund') AS funded_total,
+         (SELECT COALESCE(SUM(amount),0)::text FROM mw_ledger WHERE merchant_id=$1::uuid AND type='spend') AS spent_total,
+         (SELECT COUNT(*)::int FROM mw_load_requests WHERE merchant_id=$1::uuid AND status='pending') AS pending_loads`,
       mid))[0];
     const recon = await ledger.reconcile(mid);
     return ok(res, {
@@ -40,7 +40,7 @@ router.get('/departments', async (req, res, next) => {
       `SELECT d.id::text AS department_id, d.name,
               COALESCE(SUM(CASE WHEN l.direction='credit' THEN l.amount ELSE -l.amount END),0)::text AS balance
          FROM inv_departments d
-         LEFT JOIN wallet_department_ledger l ON l.department_id = d.id
+         LEFT JOIN mw_dept_ledger l ON l.department_id = d.id
         WHERE d.merchant_id=$1::uuid GROUP BY d.id, d.name ORDER BY d.name`, mid);
     return ok(res, rows.map((r) => ({ ...r, balance: n(r.balance) })));
   } catch (e) { next(e); }

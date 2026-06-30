@@ -1,5 +1,5 @@
 'use strict';
-// Members + their wallets. Admin onboards members (individually or via a list);
+// Members + their mw_wallets. Admin onboards members (individually or via a list);
 // each gets a login (email + one-time temp password, forced change on first sign-in)
 // — same flow as departmental users. A member is created with a wallet in one step.
 const router = require('express').Router();
@@ -37,10 +37,10 @@ async function onboardMember(mid, body, cfg) {
     select: { id: true },
   });
   const mrows = await prisma.$queryRawUnsafe(
-    `INSERT INTO wallet_members (merchant_id, user_id, name, email, phone, kyc_tier)
+    `INSERT INTO mw_members (merchant_id, user_id, name, email, phone, kyc_tier)
      VALUES ($1::uuid,$2::uuid,$3,$4,$5,'low') RETURNING id::text`, mid, user.id, name, email, phone);
   await prisma.$executeRawUnsafe(
-    `INSERT INTO wallets (merchant_id, member_id, low_balance_threshold) VALUES ($1::uuid,$2::uuid,$3)`,
+    `INSERT INTO mw_wallets (merchant_id, member_id, low_balance_threshold) VALUES ($1::uuid,$2::uuid,$3)`,
     mid, mrows[0].id, cfg.low_balance_default);
 
   sendEmail({
@@ -60,7 +60,7 @@ async function onboardMember(mid, body, cfg) {
 router.get('/', async (req, res, next) => {
   try {
     const rows = await prisma.$queryRawUnsafe(
-      `SELECT ${SELECT} FROM wallet_members m LEFT JOIN wallets w ON w.member_id = m.id
+      `SELECT ${SELECT} FROM mw_members m LEFT JOIN mw_wallets w ON w.member_id = m.id
          WHERE m.merchant_id = $1::uuid ORDER BY m.created_at DESC LIMIT 2000`, req.walletTenant.merchantId);
     return ok(res, rows.map(shapeMember));
   } catch (e) { next(e); }
@@ -101,14 +101,14 @@ router.get('/:id', async (req, res, next) => {
   try {
     const mid = req.walletTenant.merchantId;
     const rows = await prisma.$queryRawUnsafe(
-      `SELECT ${SELECT} FROM wallet_members m LEFT JOIN wallets w ON w.member_id = m.id
+      `SELECT ${SELECT} FROM mw_members m LEFT JOIN mw_wallets w ON w.member_id = m.id
          WHERE m.id = $1::uuid AND m.merchant_id = $2::uuid`, req.params.id, mid);
     if (!rows.length) return notFound(res, 'Member');
     const member = shapeMember(rows[0]);
     const ledger = await prisma.$queryRawUnsafe(
       `SELECT direction, amount::text AS amount, balance_after::text AS balance_after, type, reference,
               department_id::text AS department_id, note, created_at
-         FROM wallet_ledger WHERE wallet_id = $1::uuid ORDER BY created_at DESC LIMIT 100`, member.wallet_id);
+         FROM mw_ledger WHERE wallet_id = $1::uuid ORDER BY created_at DESC LIMIT 100`, member.wallet_id);
     return ok(res, { ...member, ledger: ledger.map((l) => ({ ...l, amount: num(l.amount), balance_after: num(l.balance_after) })) });
   } catch (e) { next(e); }
 });
@@ -122,11 +122,11 @@ router.patch('/:id', async (req, res, next) => {
     if (sets.length) {
       sets.push('updated_at = now()'); vals.push(req.params.id, mid);
       const r = await prisma.$queryRawUnsafe(
-        `UPDATE wallet_members SET ${sets.join(', ')} WHERE id = $${i++}::uuid AND merchant_id = $${i}::uuid RETURNING id::text`, ...vals);
+        `UPDATE mw_members SET ${sets.join(', ')} WHERE id = $${i++}::uuid AND merchant_id = $${i}::uuid RETURNING id::text`, ...vals);
       if (!r.length) return notFound(res, 'Member');
     }
     if (b.low_balance_threshold !== undefined)
-      await prisma.$executeRawUnsafe(`UPDATE wallets SET low_balance_threshold = $1, updated_at = now() WHERE member_id = $2::uuid AND merchant_id = $3::uuid`,
+      await prisma.$executeRawUnsafe(`UPDATE mw_wallets SET low_balance_threshold = $1, updated_at = now() WHERE member_id = $2::uuid AND merchant_id = $3::uuid`,
         BigInt(parseInt(b.low_balance_threshold, 10) || 0), req.params.id, mid);
     return ok(res, { id: req.params.id }, 'Member updated');
   } catch (e) { next(e); }

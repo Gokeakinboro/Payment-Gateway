@@ -22,7 +22,7 @@ router.post('/:walletId/spend', async (req, res, next) => {
     const deptId = req.body.department_id;
     if (!deptId) return fail(res, 'department_id is required');
 
-    const w = await prisma.$queryRawUnsafe(`SELECT id::text FROM wallets WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.params.walletId, mid);
+    const w = await prisma.$queryRawUnsafe(`SELECT id::text FROM mw_wallets WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.params.walletId, mid);
     if (!w.length) return notFound(res, 'Wallet');
     const d = await prisma.$queryRawUnsafe(`SELECT id::text FROM inv_departments WHERE id=$1::uuid AND merchant_id=$2::uuid`, deptId, mid);
     if (!d.length) return fail(res, 'Invalid department');

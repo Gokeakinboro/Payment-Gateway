@@ -19,9 +19,9 @@ router.get('/', async (req, res, next) => {
 router.post('/request', adminOnly, async (req, res, next) => {
   try {
     await prisma.$executeRawUnsafe(
-      `INSERT INTO merchant_wallet_config (merchant_id, requested, requested_at)
+      `INSERT INTO mw_config (merchant_id, requested, requested_at)
          VALUES ($1::uuid, true, now())
-       ON CONFLICT (merchant_id) DO UPDATE SET requested = true, requested_at = COALESCE(merchant_wallet_config.requested_at, now()), updated_at = now()`,
+       ON CONFLICT (merchant_id) DO UPDATE SET requested = true, requested_at = COALESCE(mw_config.requested_at, now()), updated_at = now()`,
       req.walletTenant.merchantId);
     return ok(res, { requested: true }, 'Wallet requested — pending Paylode approval');
   } catch (e) { next(e); }
@@ -34,7 +34,7 @@ router.put('/', adminOnly, async (req, res, next) => {
     const maxBal = b.max_balance != null ? BigInt(parseInt(b.max_balance, 10) || 0) : 300000000n;
     const lowDef = b.low_balance_default != null ? BigInt(parseInt(b.low_balance_default, 10) || 0) : 0n;
     await prisma.$executeRawUnsafe(
-      `INSERT INTO merchant_wallet_config
+      `INSERT INTO mw_config
          (merchant_id, brand_name, brand_logo_url, brand_color, sender_email, sender_whatsapp,
           max_balance, low_balance_default, notify_email, notify_whatsapp)
        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10)

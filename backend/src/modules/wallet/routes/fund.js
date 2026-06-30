@@ -21,7 +21,7 @@ router.post('/:walletId', async (req, res, next) => {
     const rows = await prisma.$queryRawUnsafe(
       `SELECT w.id::text AS wallet_id, w.balance::text AS balance, w.status AS wallet_status,
               m.id::text AS member_id, m.name, m.email, m.status AS member_status
-         FROM wallets w JOIN wallet_members m ON m.id = w.member_id
+         FROM mw_wallets w JOIN mw_members m ON m.id = w.member_id
         WHERE w.id = $1::uuid AND w.merchant_id = $2::uuid`, req.params.walletId, mid);
     if (!rows.length) return notFound(res, 'Wallet');
     const w = rows[0];

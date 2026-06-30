@@ -1,7 +1,7 @@
 'use strict';
 /**
  * Credits a member wallet once its funding transaction succeeds. Idempotent
- * (unique transaction_id in wallet_ledger). Called from payinFinalize (instant
+ * (unique transaction_id in mw_ledger). Called from payinFinalize (instant
  * bank-transfer) and swept by the worker for card payments. The balance ceiling
  * is enforced at funding INITIATION; here the paid money is always credited.
  */
@@ -12,9 +12,9 @@ async function recordForTransaction(txn) {
   if (!txn || txn.status !== 'SUCCESS') return { skipped: true };
   const meta = txn.metadata || {};
   if (meta.source !== 'wallet_fund' || !meta.wallet_id) return { skipped: true };
-  const dup = await prisma.$queryRawUnsafe(`SELECT 1 FROM wallet_ledger WHERE transaction_id = $1::uuid LIMIT 1`, txn.id);
+  const dup = await prisma.$queryRawUnsafe(`SELECT 1 FROM mw_ledger WHERE transaction_id = $1::uuid LIMIT 1`, txn.id);
   if (dup.length) return { duplicate: true };
-  const w = await prisma.$queryRawUnsafe(`SELECT id::text FROM wallets WHERE id = $1::uuid`, meta.wallet_id);
+  const w = await prisma.$queryRawUnsafe(`SELECT id::text FROM mw_wallets WHERE id = $1::uuid`, meta.wallet_id);
   if (!w.length) return { skipped: true };
   try {
     const res = await ledger.credit({

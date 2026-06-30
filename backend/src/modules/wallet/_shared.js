@@ -62,7 +62,7 @@ function tenantAuth(req, res, next) {
 async function requireWalletEnabled(req, res, next) {
   try {
     const rows = await prisma.$queryRawUnsafe(
-      `SELECT enabled FROM merchant_wallet_config WHERE merchant_id = $1::uuid`, req.walletTenant.merchantId);
+      `SELECT enabled FROM mw_config WHERE merchant_id = $1::uuid`, req.walletTenant.merchantId);
     if (!rows.length || !rows[0].enabled)
       return fail(res, 'The Wallet system is not enabled for this merchant', 'WALLET_DISABLED', 403);
     next();
@@ -75,7 +75,7 @@ async function getConfig(merchantId) {
     `SELECT enabled, brand_name, brand_logo_url, brand_color, sender_email, sender_whatsapp,
             max_balance::text AS max_balance, low_balance_default::text AS low_balance_default,
             notify_email, notify_whatsapp
-       FROM merchant_wallet_config WHERE merchant_id = $1::uuid`, merchantId);
+       FROM mw_config WHERE merchant_id = $1::uuid`, merchantId);
   const r = rows[0] || {};
   return {
     enabled: !!r.enabled,
@@ -100,7 +100,7 @@ function memberAuth(req, res, next) {
       const rows = await prisma.$queryRawUnsafe(
         `SELECT m.id::text AS member_id, m.merchant_id::text AS merchant_id, m.name, m.email, m.phone, m.status,
                 w.id::text AS wallet_id, w.balance::text AS balance, w.currency, w.low_balance_threshold::text AS low_balance_threshold
-           FROM wallet_members m JOIN wallets w ON w.member_id = m.id WHERE m.user_id = $1::uuid`, req.user.id);
+           FROM mw_members m JOIN mw_wallets w ON w.member_id = m.id WHERE m.user_id = $1::uuid`, req.user.id);
       if (!rows.length) return fail(res, 'No wallet member is linked to this account', 'NOT_A_MEMBER', 403);
       if (rows[0].status !== 'active') return fail(res, 'Your wallet account is suspended', 'MEMBER_SUSPENDED', 403);
       req.walletMember = rows[0];

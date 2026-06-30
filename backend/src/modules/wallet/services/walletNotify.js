@@ -33,7 +33,7 @@ async function send({ merchantId, to, phone, name, subject, lines, waParams }) {
 // Resolve a member's contact + low-balance threshold + new balance, for member-facing alerts.
 async function memberFunded(walletId, amount, balanceAfter) {
   const r = (await prisma.$queryRawUnsafe(
-    `SELECT m.merchant_id::text AS merchant_id, m.name, m.email, m.phone FROM wallets w JOIN wallet_members m ON m.id=w.member_id WHERE w.id=$1::uuid`, walletId))[0];
+    `SELECT m.merchant_id::text AS merchant_id, m.name, m.email, m.phone FROM mw_wallets w JOIN mw_members m ON m.id=w.member_id WHERE w.id=$1::uuid`, walletId))[0];
   if (!r) return;
   await send({ merchantId: r.merchant_id, to: r.email, phone: r.phone, name: r.name,
     subject: 'Wallet funded', lines: [`Your wallet was funded with <strong>${ngn(amount)}</strong>.`, `New balance: <strong>${ngn(balanceAfter)}</strong>.`],
@@ -43,7 +43,7 @@ async function memberFunded(walletId, amount, balanceAfter) {
 // Member spent into a department — notify the member AND the department sub-user(s).
 async function memberSpent({ merchantId, walletId, departmentId, amount, balanceAfter }) {
   const m = (await prisma.$queryRawUnsafe(
-    `SELECT name, email, phone, low_balance_threshold::text AS lbt FROM wallets w JOIN wallet_members mm ON mm.id=w.member_id WHERE w.id=$1::uuid`, walletId))[0];
+    `SELECT name, email, phone, low_balance_threshold::text AS lbt FROM mw_wallets w JOIN mw_members mm ON mm.id=w.member_id WHERE w.id=$1::uuid`, walletId))[0];
   let deptName = 'a department';
   if (departmentId) {
     const d = (await prisma.$queryRawUnsafe(`SELECT name FROM inv_departments WHERE id=$1::uuid`, departmentId))[0];

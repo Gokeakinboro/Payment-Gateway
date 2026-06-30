@@ -18,7 +18,7 @@ router.get('/requests', async (req, res, next) => {
   try {
     const rows = await prisma.$queryRawUnsafe(
       `SELECT c.merchant_id::text AS merchant_id, m.business_name, c.requested_at, c.enabled
-         FROM merchant_wallet_config c JOIN merchants m ON m.id = c.merchant_id
+         FROM mw_config c JOIN merchants m ON m.id = c.merchant_id
         WHERE c.requested = true AND c.enabled = false ORDER BY c.requested_at ASC`);
     return ok(res, rows);
   } catch (e) { next(e); }
@@ -27,7 +27,7 @@ router.get('/requests', async (req, res, next) => {
 router.post('/:merchantId/approve', async (req, res, next) => {
   try {
     const rows = await prisma.$queryRawUnsafe(
-      `INSERT INTO merchant_wallet_config (merchant_id, enabled, requested, approved_by, approved_at)
+      `INSERT INTO mw_config (merchant_id, enabled, requested, approved_by, approved_at)
          VALUES ($1::uuid, true, true, $2::uuid, now())
        ON CONFLICT (merchant_id) DO UPDATE SET enabled = true, approved_by = $2::uuid, approved_at = now(), updated_at = now()
        RETURNING merchant_id::text`, req.params.merchantId, req.user.id);
@@ -38,7 +38,7 @@ router.post('/:merchantId/approve', async (req, res, next) => {
 router.post('/:merchantId/reject', async (req, res, next) => {
   try {
     await prisma.$executeRawUnsafe(
-      `UPDATE merchant_wallet_config SET requested = false, updated_at = now() WHERE merchant_id = $1::uuid`, req.params.merchantId);
+      `UPDATE mw_config SET requested = false, updated_at = now() WHERE merchant_id = $1::uuid`, req.params.merchantId);
     return ok(res, { merchant_id: req.params.merchantId }, 'Wallet request rejected');
   } catch (e) { next(e); }
 });
