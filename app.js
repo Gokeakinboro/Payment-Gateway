@@ -99,6 +99,7 @@ var NAV = {
       {id:'email_tpl',           icon:'✉', label:'Email Templates'  },
       {id:'activity_log',        icon:'☰', label:'Activity Log'     },
       {id:'invite_tracking',     icon:'✉', label:'Invite Tracking'  },
+      {id:'sa_wallet',           icon:'👛', label:'Wallet Approvals' },
       {id:'settings',            icon:'⚙', label:'Settings'         },
     ]},
     { section:'Developer', items:DEV_SDK_ITEMS },
@@ -121,6 +122,7 @@ var NAV = {
     { section:'Transactions', items:[{id:'merch_transactions',icon:'↕',label:'Transactions'},{id:'merch_settlements',icon:'✓',label:'Settlements'}]},
     { section:'Payment Links', items:[{id:'merch_payments',icon:'🔗',label:'Payment Links'}]},
     { section:'Invoice & Collect', items:[{id:'merch_invoicing',icon:'🧾',label:'Invoice & Collect'}]},
+    { section:'Member Wallet', items:[{id:'merch_wallet',icon:'👛',label:'Member Wallet'}]},
     { section:'Payouts',      items:[{id:'payouts',icon:'⇄',label:'Send Payouts'},{id:'payout_logs',icon:'≡',label:'Payout Logs'}]},
     { section:'Integration',  items:[{id:'merch_apikeys',icon:'⚿',label:'API Keys'},{id:'merch_webhooks',icon:'⇀',label:'Webhooks'}]},
     { section:'Developer',    items:DEV_SDK_ITEMS },
@@ -282,7 +284,7 @@ function renderSectionHub(sectionName) {
 function switchRole(role) { currentRole = role; currentPage = ROLE_META[role].defaultPage; renderNav(); renderPage(); closeSidebar(); }
 var __navHistory = [];
 // Nav ids that live on a standalone static page rather than an in-app view.
-var EXTERNAL_PAGES = { merch_invoicing: 'invoicing.html' };
+var EXTERNAL_PAGES = { merch_invoicing: 'invoicing.html', merch_wallet: 'wallet-admin.html', sa_wallet: 'wallet-sa.html' };
 function navigate(page)   {
   if (EXTERNAL_PAGES[page]) { window.location.href = EXTERNAL_PAGES[page]; return; }
   if (currentPage && currentPage !== page && String(page).indexOf('hub::') !== 0) __navHistory.push(currentPage);
