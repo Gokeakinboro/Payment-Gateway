@@ -134,9 +134,14 @@ async function api(path,opts){
   opts=opts||{};
   var h={'Content-Type':'application/json'};
   if(opts.auth!==false&&tok())h['Authorization']='Bearer '+tok();
-  var r=await fetch(API+path,{method:opts.method||'GET',headers:h,body:opts.body?JSON.stringify(opts.body):undefined});
-  var d=await r.json().catch(function(){return{};});
-  return {ok:r.ok&&d.status!==false,status:r.status,data:d.data,message:d.message,raw:d};
+  try{
+    var r=await fetch(API+path,{method:opts.method||'GET',headers:h,body:opts.body?JSON.stringify(opts.body):undefined});
+    var d=await r.json().catch(function(){return{};});
+    return {ok:r.ok&&d.status!==false,status:r.status,data:d.data,message:d.message,raw:d};
+  }catch(e){
+    // Network/request blocked (offline, VPN, ad-blocker, antivirus web-shield, proxy).
+    return {ok:false,status:0,message:'Could not reach the server. Turn off any VPN / ad-blocker / antivirus web-protection (or try mobile data) and try again.'};
+  }
 }
 
 // ── Auth ──
