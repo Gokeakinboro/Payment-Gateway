@@ -102,7 +102,7 @@
 
 <!-- APP -->
 <div id="s-app" class="screen">
-  <div class="top"><img id="ap-logo" alt="" style="display:none"><div class="nm" id="ap-brand">Wallet</div><button class="out" onclick="logout()">Sign out</button></div>
+  <div class="top"><img id="ap-logo" alt="" style="display:none"><div class="nm" id="ap-brand">Wallet</div><button class="out" onclick="openAccount()">My account</button></div>
   <div class="wrap">
     <div class="bal">
       <div class="lbl">Available balance</div>
@@ -326,6 +326,48 @@ async function doScanPay(token,isOpen){
   loadTx();
 }
 
+// ── ACCOUNT / PROFILE ────────────────────────────────────
+function openAccount(){
+  var m=(ME&&ME.member)||{};
+  openSheet(
+    '<h3>My account</h3>'+
+    '<div style="text-align:left;margin-bottom:16px">'+
+      '<div style="font-size:18px;font-weight:700;color:var(--brand)">'+esc(m.name||'Member')+'</div>'+
+      '<div class="muted" style="text-align:left;padding:2px 0">'+esc(m.email||'')+(m.phone?(' · '+esc(m.phone)):'')+'</div>'+
+    '</div>'+
+    '<button class="btn btn-2" id="ac-cp-toggle" style="width:100%;text-align:left" onclick="toggleChangePw()">Change password ›</button>'+
+    '<div id="ac-cp" style="display:none;margin-top:10px">'+
+      '<input id="ac-cur" type="password" autocomplete="off" autocapitalize="none" autocorrect="off" placeholder="Current password">'+
+      '<input id="ac-new" type="password" autocomplete="off" autocapitalize="none" autocorrect="off" placeholder="New password (min 8)" style="margin-top:8px">'+
+      '<input id="ac-new2" type="password" autocomplete="off" autocapitalize="none" autocorrect="off" placeholder="Confirm new password" style="margin-top:8px">'+
+      '<div class="err" id="ac-err"></div><div class="ok" id="ac-ok"></div>'+
+      '<button class="btn" id="ac-btn" style="margin-top:12px;width:100%" onclick="doAccountChange()">Update password</button>'+
+    '</div>'+
+    '<button class="btn btn-2" style="margin-top:10px;width:100%;background:#fff;color:var(--red);border:1.5px solid var(--red)" onclick="logout()">Log out</button>'
+  );
+}
+// Toggle the change-password fields (kept collapsed so the account sheet stays clean).
+function toggleChangePw(){
+  var d=document.getElementById('ac-cp'),t=document.getElementById('ac-cp-toggle');
+  var open=d.style.display==='none';
+  d.style.display=open?'block':'none';
+  t.textContent=open?'Change password ⌄':'Change password ›';
+  if(open)document.getElementById('ac-cur').focus();
+}
+async function doAccountChange(){
+  hide('ac-err');hide('ac-ok');
+  var cur=document.getElementById('ac-cur').value,nw=document.getElementById('ac-new').value,nw2=document.getElementById('ac-new2').value;
+  if(!cur)return err('ac-err','Enter your current password');
+  if(nw.length<8)return err('ac-err','New password must be at least 8 characters');
+  if(nw!==nw2)return err('ac-err','New passwords do not match');
+  var b=document.getElementById('ac-btn');b.disabled=true;b.textContent='Updating…';
+  var r=await api('/auth/change-password',{method:'POST',body:{currentPassword:cur,newPassword:nw}});
+  b.disabled=false;b.textContent='Update password';
+  if(!r.ok)return err('ac-err',r.message||'Could not update password');
+  var o=document.getElementById('ac-ok');o.textContent='Password updated successfully.';o.style.display='block';
+  document.getElementById('ac-cur').value='';document.getElementById('ac-new').value='';document.getElementById('ac-new2').value='';
+}
+
 function label(t){return ({fund:'Wallet funding',spend:'Payment',invoice_payment:'Invoice payment',load:'Wallet load',debit:'Adjustment',refund:'Refund'})[t]||t;}
 function pill(s){return s==='paid'?'paid':(s==='part_paid'?'part':'unpaid');}
 function fmtDate(d){try{return new Date(d).toLocaleString('en-NG',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}catch(e){return '';}}
@@ -335,11 +377,12 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return
 if(tok())loadApp();
 document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.getElementById('s-login').classList.contains('on'))doLogin();});
 
-// Self-heal: remove any stale service worker + caches from an earlier PWA build so members
-// always run the current page (a stale cached wallet.html was making "Sign In" do nothing).
-// A proper caching service worker will be reintroduced later (tracked in KIV).
-if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){r.unregister();});}).catch(function(){});}
-if(window.caches&&caches.keys){caches.keys().then(function(ks){ks.forEach(function(k){caches.delete(k);});}).catch(function(){});}
+// Installable PWA: register a SAFE service worker scoped to /wallet.html only. It
+// never caches HTML or /api/ (so wallet.html + balances are always fresh and Sign In
+// can't be stranded on a stale shell) — only static icons/manifest are cached. See sw.js.
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js',{scope:'/wallet.html'}).catch(function(){});
+}
 </script>
 </body>
 </html>
