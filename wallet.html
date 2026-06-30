@@ -343,8 +343,39 @@ function openAccount(){
       '<div class="err" id="ac-err"></div><div class="ok" id="ac-ok"></div>'+
       '<button class="btn" id="ac-btn" style="margin-top:12px;width:100%" onclick="doAccountChange()">Update password</button>'+
     '</div>'+
+    '<button class="btn btn-2" id="ac-ed-toggle" style="margin-top:10px;width:100%;text-align:left" onclick="toggleEditDetails()">Edit details ›</button>'+
+    '<div id="ac-ed" style="display:none;margin-top:10px">'+
+      '<input id="ed-name" autocomplete="off" placeholder="Full name" value="'+esc(m.name||'')+'">'+
+      '<input id="ed-phone" type="tel" autocomplete="off" placeholder="Phone number" value="'+esc(m.phone||'')+'" style="margin-top:8px">'+
+      '<input id="ed-email" type="email" autocomplete="off" autocapitalize="none" autocorrect="off" placeholder="Email address" value="'+esc(m.email||'')+'" style="margin-top:8px">'+
+      '<div class="muted" style="font-size:11px;margin-top:6px">Your email is also your sign-in — changing it changes how you log in.</div>'+
+      '<div class="err" id="ed-err"></div><div class="ok" id="ed-ok"></div>'+
+      '<button class="btn" id="ed-btn" style="margin-top:12px;width:100%" onclick="doEditDetails()">Save details</button>'+
+    '</div>'+
     '<button class="btn btn-2" style="margin-top:10px;width:100%;background:#fff;color:var(--red);border:1.5px solid var(--red)" onclick="logout()">Log out</button>'
   );
+}
+// Toggle the edit-details fields (kept collapsed alongside change-password).
+function toggleEditDetails(){
+  var d=document.getElementById('ac-ed'),t=document.getElementById('ac-ed-toggle');
+  var open=d.style.display==='none';
+  d.style.display=open?'block':'none';
+  t.textContent=open?'Edit details ⌄':'Edit details ›';
+  if(open)document.getElementById('ed-name').focus();
+}
+async function doEditDetails(){
+  hide('ed-err');hide('ed-ok');
+  var name=document.getElementById('ed-name').value.trim();
+  var phone=document.getElementById('ed-phone').value.trim();
+  var email=document.getElementById('ed-email').value.trim();
+  if(!name)return err('ed-err','Name cannot be empty');
+  if(!email)return err('ed-err','Email cannot be empty');
+  var b=document.getElementById('ed-btn');b.disabled=true;b.textContent='Saving…';
+  var r=await api('/wallet/me/profile',{method:'PATCH',body:{name:name,phone:phone,email:email}});
+  b.disabled=false;b.textContent='Save details';
+  if(!r.ok)return err('ed-err',r.message||'Could not save details');
+  if(ME&&r.data&&r.data.member){ME.member.name=r.data.member.name;ME.member.email=r.data.member.email;ME.member.phone=r.data.member.phone;}
+  var o=document.getElementById('ed-ok');o.textContent='Details updated.';o.style.display='block';
 }
 // Toggle the change-password fields (kept collapsed so the account sheet stays clean).
 function toggleChangePw(){
