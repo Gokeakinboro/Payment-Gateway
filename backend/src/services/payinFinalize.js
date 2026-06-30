@@ -124,6 +124,14 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
       .catch(() => {});
   }
 
+  // Member Wallet funding (best-effort): credit the wallet instantly on success.
+  // Idempotent (unique on transaction_id). Card path swept by the worker too.
+  if (txn.metadata && txn.metadata.source === 'wallet_fund') {
+    require('../modules/wallet/services/walletFund')
+      .recordForTransaction({ ...txn, status: 'SUCCESS', amount: fees.chargeAmount })
+      .catch(() => {});
+  }
+
   // Email the customer their receipt (best-effort, non-blocking).
   sendCustomerReceipt(txn.reference);
 
