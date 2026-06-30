@@ -33,17 +33,18 @@ async function send({ merchantId, to, phone, name, subject, lines, waParams }) {
 // Resolve a member's contact + low-balance threshold + new balance, for member-facing alerts.
 async function memberFunded(walletId, amount, balanceAfter) {
   const r = (await prisma.$queryRawUnsafe(
-    `SELECT m.merchant_id::text AS merchant_id, m.name, m.email, m.phone FROM mw_wallets w JOIN mw_members m ON m.id=w.member_id WHERE w.id=$1::uuid`, walletId))[0];
+    `SELECT m.id::text AS member_id, m.merchant_id::text AS merchant_id, m.name, m.email, m.phone FROM mw_wallets w JOIN mw_members m ON m.id=w.member_id WHERE w.id=$1::uuid`, walletId))[0];
   if (!r) return;
   await send({ merchantId: r.merchant_id, to: r.email, phone: r.phone, name: r.name,
     subject: 'Wallet funded', lines: [`Your wallet was funded with <strong>${ngn(amount)}</strong>.`, `New balance: <strong>${ngn(balanceAfter)}</strong>.`],
     waParams: [r.name || 'there', ngn(amount), ngn(balanceAfter)] });
+  require('./walletPush').sendToMember(r.member_id, { title: 'Wallet funded', body: `${ngn(amount)} added — balance ${ngn(balanceAfter)}.`, url: '/wallet.html' }).catch(() => {});
 }
 
 // Member spent into a department — notify the member AND the department sub-user(s).
 async function memberSpent({ merchantId, walletId, departmentId, amount, balanceAfter }) {
   const m = (await prisma.$queryRawUnsafe(
-    `SELECT name, email, phone, low_balance_threshold::text AS lbt FROM mw_wallets w JOIN mw_members mm ON mm.id=w.member_id WHERE w.id=$1::uuid`, walletId))[0];
+    `SELECT mm.id::text AS member_id, name, email, phone, low_balance_threshold::text AS lbt FROM mw_wallets w JOIN mw_members mm ON mm.id=w.member_id WHERE w.id=$1::uuid`, walletId))[0];
   let deptName = 'a department';
   if (departmentId) {
     const d = (await prisma.$queryRawUnsafe(`SELECT name FROM inv_departments WHERE id=$1::uuid`, departmentId))[0];
@@ -57,6 +58,7 @@ async function memberSpent({ merchantId, walletId, departmentId, amount, balance
     await send({ merchantId, to: m.email, phone: m.phone, name: m.name, subject: `Payment to ${deptName}`,
       lines: [`You paid <strong>${ngn(amount)}</strong> to ${deptName}.`, `Wallet balance: <strong>${ngn(balanceAfter)}</strong>.`],
       waParams: [m.name || 'there', ngn(amount), deptName] });
+    require('./walletPush').sendToMember(m.member_id, { title: `Paid ${ngn(amount)}`, body: `To ${deptName} — balance ${ngn(balanceAfter)}.`, url: '/wallet.html' }).catch(() => {});
     if (m.lbt && BigInt(m.lbt) > 0n && BigInt(balanceAfter) < BigInt(m.lbt))
       await send({ merchantId, to: m.email, phone: m.phone, name: m.name, subject: 'Low wallet balance',
         lines: [`Your wallet balance is low: <strong>${ngn(balanceAfter)}</strong>.`, `Top up to keep transacting.`], waParams: [m.name || 'there', ngn(balanceAfter)] });
