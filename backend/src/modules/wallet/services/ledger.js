@@ -37,7 +37,7 @@ async function moveWallet(tx, { walletId, direction, amount, type, maxBalance, d
   const ins = await tx.$queryRawUnsafe(
     `INSERT INTO mw_ledger (merchant_id, wallet_id, member_id, department_id, direction, amount, balance_after,
                                 type, reference, transaction_id, counterparty, note, created_by, approved_by)
-     VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id::text`,
+     VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10::uuid,$11,$12,$13::uuid,$14::uuid) RETURNING id::text`,
     w.merchant_id, walletId, w.member_id, departmentId || null, direction, amt, newBal, type, ref,
     transactionId || null, counterparty || null, note || null, createdBy || null, approvedBy || null);
   return { ledgerId: ins[0].id, balanceAfter: newBal, reference: ref, merchantId: w.merchant_id, memberId: w.member_id };
@@ -54,7 +54,7 @@ async function moveDepartment(tx, { merchantId, departmentId, direction, amount,
   if (newBal < 0n) throw new WalletError('Insufficient department balance', 'INSUFFICIENT_DEPT_FUNDS', 409);
   await tx.$executeRawUnsafe(
     `INSERT INTO mw_dept_ledger (merchant_id, department_id, direction, amount, balance_after, type, member_id, mw_ledger_id, reference)
-     VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9)`,
+     VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7::uuid,$8::uuid,$9)`,
     merchantId, departmentId, direction, amt, newBal, type, memberId || null, walletLedgerId || null, reference || genRef('WD'));
   return { balanceAfter: newBal };
 }
