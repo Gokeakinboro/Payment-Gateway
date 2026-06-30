@@ -96,3 +96,10 @@ settlements.js
 transactions.js
 checkout_new.html
 create_txn.js
+
+# Playwright e2e
+e2e/node_modules/
+e2e/personas.json
+e2e/test-results/
+e2e/playwright-report/
+e2e/.cache/

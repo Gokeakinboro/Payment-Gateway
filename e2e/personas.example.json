@@ -1,0 +1,6 @@
+[
+  { "role": "superadmin", "email": "SA_TEST_EMAIL",       "password": "SA_TEST_PW",       "expect": { "url": "dashboard.html", "text": "Super Admin" } },
+  { "role": "merchant",   "email": "MERCHANT_TEST_EMAIL", "password": "MERCHANT_TEST_PW", "expect": { "url": "dashboard.html", "text": "Member Wallet" } },
+  { "role": "aggregator", "email": "AGG_TEST_EMAIL",      "password": "AGG_TEST_PW",      "expect": { "url": "dashboard.html", "text": "My Merchants" } },
+  { "role": "member",     "email": "MEMBER_TEST_EMAIL",   "password": "MEMBER_TEST_PW",   "expect": { "url": "wallet.html" } }
+]
