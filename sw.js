@@ -1,7 +1,7 @@
 /* Paylode Wallet service worker.
    SAFE-BY-DEFAULT: never caches API / money data — only the app shell + static icons.
    Bump CACHE on shell changes to roll clients forward. */
-const CACHE = 'paylode-wallet-v1';
+const CACHE = 'paylode-wallet-v2';
 const SHELL = [
   '/wallet.html',
   '/manifest.webmanifest',
