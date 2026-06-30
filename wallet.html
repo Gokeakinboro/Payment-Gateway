@@ -38,6 +38,13 @@
   .link{background:none;border:none;color:var(--gray);font-size:13px;cursor:pointer;text-decoration:underline;display:block;margin:14px auto 0}
   .err{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:9px 12px;font-size:13px;margin-top:12px;display:none}
   .ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;border-radius:8px;padding:9px 12px;font-size:13px;margin-top:12px;display:none}
+  /* PIN / lock overlay (stacks above everything, incl. the payment sheet) */
+  .lockscreen{position:fixed;inset:0;background:var(--brand-d);z-index:60;display:none;align-items:center;justify-content:center;padding:20px}
+  .lockscreen.on{display:flex}
+  .lockscreen .box{width:100%;max-width:360px;background:#fff;border-radius:16px;padding:28px;box-shadow:0 24px 60px rgba(0,0,0,.35)}
+  .lockscreen h1{font-size:19px;color:var(--brand);margin-bottom:4px}
+  .lockscreen .sub{font-size:13px;color:var(--gray);margin-bottom:18px}
+  .pin-in{text-align:center;letter-spacing:10px;font-size:22px}
   /* App */
   .top{background:var(--brand);color:#fff;padding:14px 18px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:5}
   .top img{height:30px;width:30px;object-fit:contain;border-radius:6px;background:#fff}
@@ -121,6 +128,7 @@
 
 <!-- Fund / Spend / Pay-invoice modal -->
 <div class="modal" id="modal" onclick="if(event.target===this)closeM()"><div class="sheet" id="sheet"></div></div>
+<div class="lockscreen" id="pinmodal"></div>
 
 <script>
 // On-screen error reporter — surfaces any JS failure instead of failing silently.
@@ -212,6 +220,10 @@ async function loadApp(){
   document.getElementById('ap-bal').textContent=ngn(ME.wallet.balance);
   document.title=(br.name||'Wallet');
   show('s-app');
+  // Security gate: first-time members create a PIN; thereafter the app is locked
+  // on every open and must be unlocked with the PIN (or biometrics).
+  if(!ME.pin_set){await setupPin();}
+  if(!_unlocked){await requirePin({title:'Unlock',sub:'Enter your PIN to open your wallet.',cancelable:false,unlock:true});_unlocked=true;}
   loadTx();loadInv();loadDepts();
 }
 async function loadTx(){
@@ -235,6 +247,104 @@ async function loadDepts(){var r=await api('/wallet/me/departments');DEPTS=r.ok?
 
 function tab(p){document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('on',t.dataset.p===p)});document.querySelectorAll('.pane').forEach(function(x){x.classList.remove('on')});document.getElementById('p-'+p).classList.add('on');}
 function closeM(){stopScan();document.getElementById('modal').classList.remove('on');}
+
+// ── TRANSACTION PIN + BIOMETRIC ──────────────────────────
+var _unlocked=false;
+function bioKey(){return 'wlt_bio_'+((ME&&ME.member&&ME.member.id)||'x');}
+function bioOn(){try{return !!(window.PublicKeyCredential&&localStorage.getItem(bioKey()));}catch(e){return false;}}
+function rand(n){var a=new Uint8Array(n);crypto.getRandomValues(a);return a;}
+function s2b(s){return new TextEncoder().encode(s);}
+function buf2b64(buf){var b=new Uint8Array(buf),s='';for(var i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s);}
+function b642buf(x){var s=atob(x),a=new Uint8Array(s.length);for(var i=0;i<s.length;i++)a[i]=s.charCodeAt(i);return a.buffer;}
+
+// Show the PIN prompt; resolves to a correct PIN (server-verified) or null if cancelled.
+function requirePin(opts){
+  opts=opts||{};
+  return new Promise(function(resolve){
+    var bio=bioOn();
+    var ov=document.getElementById('pinmodal');
+    ov.innerHTML='<div class="box">'+
+      '<h1>'+(opts.title||'Enter your PIN')+'</h1>'+
+      '<div class="sub">'+(opts.sub||'Confirm with your transaction PIN.')+'</div>'+
+      '<input id="pin-in" class="pin-in" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" placeholder="••••">'+
+      '<div class="err" id="pin-err"></div>'+
+      '<button class="btn" id="pin-go" style="margin-top:14px">Confirm</button>'+
+      (bio?'<button class="btn btn-2" id="pin-bio">Use Face / Touch ID</button>':'')+
+      (opts.cancelable===false?'':'<button class="link" id="pin-x">Cancel</button>')+
+    '</div>';
+    ov.classList.add('on');
+    var inp=document.getElementById('pin-in');setTimeout(function(){try{inp.focus();}catch(e){}},60);
+    function done(v){ov.classList.remove('on');ov.innerHTML='';resolve(v);}
+    async function submit(pin){
+      hide('pin-err');
+      if(!/^\d{4,6}$/.test(pin))return err('pin-err','Enter your 4-6 digit PIN');
+      var g=document.getElementById('pin-go');if(g){g.disabled=true;g.textContent='Checking…';}
+      var r=await api('/wallet/me/pin/verify',{method:'POST',body:{pin:pin}});
+      if(g){g.disabled=false;g.textContent='Confirm';}
+      if(!r.ok)return err('pin-err',r.message||'Incorrect PIN');
+      done(pin);
+    }
+    document.getElementById('pin-go').onclick=function(){submit(inp.value);};
+    inp.addEventListener('keydown',function(e){if(e.key==='Enter')submit(inp.value);});
+    if(bio){document.getElementById('pin-bio').onclick=async function(){
+      try{var pin=await bioUnlock();if(pin)return submit(pin);}catch(e){err('pin-err','Biometric check failed — enter your PIN.');}
+    };if(opts.unlock)setTimeout(function(){var pb=document.getElementById('pin-bio');if(pb)pb.click();},250);}
+    var x=document.getElementById('pin-x');if(x)x.onclick=function(){done(null);};
+  });
+}
+
+// First-time PIN creation (forced). Resolves once a PIN is set.
+function setupPin(){
+  return new Promise(function(resolve){
+    var ov=document.getElementById('pinmodal');
+    ov.innerHTML='<div class="box">'+
+      '<h1>Create your PIN</h1><div class="sub">Set a 4-6 digit PIN to secure your wallet and approve every payment.</div>'+
+      '<input id="sp-pw" type="password" autocomplete="off" placeholder="Your account password">'+
+      '<input id="sp-pin" class="pin-in" type="password" inputmode="numeric" maxlength="6" placeholder="New PIN" style="margin-top:8px">'+
+      '<input id="sp-pin2" class="pin-in" type="password" inputmode="numeric" maxlength="6" placeholder="Confirm PIN" style="margin-top:8px">'+
+      '<div class="err" id="sp-err"></div><button class="btn" id="sp-go" style="margin-top:14px">Set PIN</button>';
+    ov.classList.add('on');
+    document.getElementById('sp-go').onclick=async function(){
+      hide('sp-err');
+      var pw=document.getElementById('sp-pw').value,p=document.getElementById('sp-pin').value,p2=document.getElementById('sp-pin2').value;
+      if(!pw)return err('sp-err','Enter your account password');
+      if(!/^\d{4,6}$/.test(p))return err('sp-err','PIN must be 4-6 digits');
+      if(p!==p2)return err('sp-err','PINs do not match');
+      var b=document.getElementById('sp-go');b.disabled=true;b.textContent='Saving…';
+      var r=await api('/wallet/me/pin',{method:'POST',body:{pin:p,password:pw}});
+      b.disabled=false;b.textContent='Set PIN';
+      if(!r.ok)return err('sp-err',r.message||'Could not set PIN');
+      if(ME)ME.pin_set=true;_unlocked=true;
+      ov.classList.remove('on');ov.innerHTML='';resolve(true);
+    };
+  });
+}
+
+// Biometric (WebAuthn platform authenticator) releases a device-stored PIN. The PIN
+// stays server-enforced on every payment; biometrics just save typing it.
+async function enableBiometric(){
+  if(!window.PublicKeyCredential)return alert('Biometrics are not supported on this device/browser.');
+  var pin=await requirePin({title:'Confirm PIN',sub:'Enter your PIN to enable biometric unlock.'});
+  if(!pin)return;
+  try{
+    var cred=await navigator.credentials.create({publicKey:{
+      challenge:rand(32),rp:{name:'Paylode Wallet'},
+      user:{id:s2b((ME.member.id||'member')),name:ME.member.email||'member',displayName:ME.member.name||'Member'},
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+      authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required'},
+      timeout:60000,attestation:'none'}});
+    if(!cred)throw 0;
+    localStorage.setItem(bioKey(),JSON.stringify({id:buf2b64(cred.rawId),pin:btoa(pin)}));
+    alert('Biometric unlock enabled.');
+  }catch(e){alert('Could not enable biometrics on this device.');}
+}
+async function bioUnlock(){
+  var raw=localStorage.getItem(bioKey());if(!raw)return null;var data=JSON.parse(raw);
+  await navigator.credentials.get({publicKey:{challenge:rand(32),allowCredentials:[{type:'public-key',id:b642buf(data.id)}],userVerification:'required',timeout:60000}});
+  return atob(data.pin);
+}
+function toggleBiometric(){if(bioOn()){try{localStorage.removeItem(bioKey());}catch(e){}openAccount();}else{enableBiometric().then(openAccount);}}
+async function changePinFlow(){var ok2=await requirePin({title:'Confirm current PIN',sub:'Verify your current PIN, then set a new one.'});if(ok2!==null){if(ME)ME.pin_set=false;await setupPin();openAccount();}}
 function openSheet(html){document.getElementById('sheet').innerHTML=html;document.getElementById('modal').classList.add('on');}
 
 function openFund(){
@@ -253,8 +363,10 @@ function openSpend(){
 }
 async function doSpend(){
   hide('m-err');var v=parseFloat(document.getElementById('m-amt').value);if(!(v>0))return err('m-err','Enter a valid amount');
+  var dept=document.getElementById('m-dept').value;
+  var pin=await requirePin({title:'Approve payment',sub:'Enter your PIN to pay '+ngn(Math.round(v*100))+'.'});if(!pin)return;
   var b=document.getElementById('m-btn');b.disabled=true;b.textContent='Paying…';
-  var r=await api('/wallet/me/spend',{method:'POST',body:{department_id:document.getElementById('m-dept').value,amount:Math.round(v*100)}});
+  var r=await api('/wallet/me/spend',{method:'POST',body:{department_id:dept,amount:Math.round(v*100),pin:pin}});
   b.disabled=false;b.textContent='Pay';
   if(!r.ok)return err('m-err',r.message||'Payment failed');
   ME.wallet.balance=r.data.wallet_balance;document.getElementById('ap-bal').textContent=ngn(r.data.wallet_balance);
@@ -264,8 +376,10 @@ function payInv(id,due){
   openSheet('<h3>Pay invoice</h3><div class="muted" style="text-align:left;padding:0 0 12px">Outstanding: <strong>'+ngn(due)+'</strong> — paid from your wallet balance.</div><div class="err" id="m-err"></div><button class="btn" id="m-btn" onclick="doPayInv(\''+id+'\')">Pay '+ngn(due)+' now</button>');
 }
 async function doPayInv(id){
-  hide('m-err');var b=document.getElementById('m-btn');b.disabled=true;b.textContent='Paying…';
-  var r=await api('/wallet/me/invoices/'+id+'/pay',{method:'POST',body:{}});
+  hide('m-err');
+  var pin=await requirePin({title:'Approve payment',sub:'Enter your PIN to pay this invoice.'});if(!pin)return;
+  var b=document.getElementById('m-btn');b.disabled=true;b.textContent='Paying…';
+  var r=await api('/wallet/me/invoices/'+id+'/pay',{method:'POST',body:{pin:pin}});
   b.disabled=false;
   if(!r.ok)return err('m-err',r.message||'Payment failed');
   ME.wallet.balance=r.data.wallet_balance;document.getElementById('ap-bal').textContent=ngn(r.data.wallet_balance);
@@ -317,6 +431,8 @@ async function resolveScan(token){
 async function doScanPay(token,isOpen){
   hide('m-err');var body={};
   if(isOpen){var v=parseFloat(document.getElementById('m-amt').value);if(!(v>0))return err('m-err','Enter a valid amount');body.amount=Math.round(v*100);}
+  var pin=await requirePin({title:'Approve payment',sub:'Enter your PIN to pay this bill.'});if(!pin)return;
+  body.pin=pin;
   var b=document.getElementById('m-btn');b.disabled=true;b.textContent='Paying…';
   var r=await api('/wallet/me/qr/'+encodeURIComponent(token)+'/pay',{method:'POST',body:body});
   b.disabled=false;b.textContent='Pay this bill';
@@ -352,6 +468,8 @@ function openAccount(){
       '<div class="err" id="ed-err"></div><div class="ok" id="ed-ok"></div>'+
       '<button class="btn" id="ed-btn" style="margin-top:12px;width:100%" onclick="doEditDetails()">Save details</button>'+
     '</div>'+
+    '<button class="btn btn-2" style="margin-top:10px;width:100%;text-align:left" onclick="changePinFlow()">Change transaction PIN</button>'+
+    (window.PublicKeyCredential?('<button class="btn btn-2" style="margin-top:10px;width:100%;text-align:left" onclick="toggleBiometric()">'+(bioOn()?'Disable':'Enable')+' Face / Touch ID</button>'):'')+
     '<button class="btn btn-2" style="margin-top:10px;width:100%;background:#fff;color:var(--red);border:1.5px solid var(--red)" onclick="logout()">Log out</button>'
   );
 }
