@@ -27,7 +27,7 @@ h3{font-size:13px;text-transform:uppercase;letter-spacing:.4px;color:var(--gray-
 /* Tabs (support both .active and .on conventions) */
 .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
 .tab{padding:9px 16px;border-radius:8px;background:#fff;border:1px solid var(--line);font-size:13px;font-weight:600;color:var(--gray-500);cursor:pointer}
-.tab.active,.tab.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.tab.active,.tab.on{background:var(--lime);color:var(--navy);border-color:var(--lime);font-weight:700}
 
 /* Buttons */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;font-family:var(--font);background:var(--navy);color:#fff;transition:all .15s}
