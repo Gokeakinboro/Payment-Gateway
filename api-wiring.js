@@ -4073,8 +4073,26 @@ async function submitFirstTimePassword() {
 // ── LOAD USER INFO IN TOPBAR ──────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
   var user = getUser();
+  // Wallet members have role MERCHANT but belong to mw_members (no merchant org), so they
+  // must use the white-label wallet app — NEVER the merchant portal. Ask the backend
+  // authoritatively before doing anything (incl. the temp-password gate), so a member can
+  // never be stranded on the merchant dashboard.
+  if (user && (user.role || '').toUpperCase() === 'MERCHANT') {
+    apiFetch('/wallet/me')
+      .then(function(r) {
+        if (r && r.status !== false && r.data) { window.location.replace('/wallet.html'); return; }
+        continueDashboardBoot(user);
+      })
+      .catch(function() { continueDashboardBoot(user); });
+    return;
+  }
+  continueDashboardBoot(user);
+});
+
+function continueDashboardBoot(user) {
+  if (!user) { window.location.href = '/login.html'; return; }
   // First-time password: block the whole dashboard until the temp password is changed.
-  if (user && user.mustChangePassword) { forceFirstTimePasswordChange(); return; }
+  if (user.mustChangePassword) { forceFirstTimePasswordChange(); return; }
   if (user.firstName) {
     var initials = (user.firstName[0] + (user.lastName ? user.lastName[0] : '')).toUpperCase();
     var av = document.getElementById('user-avatar');
@@ -4115,7 +4133,7 @@ document.addEventListener('DOMContentLoaded', function() {
   renderNav();
   loadPageData(currentPage);
   checkDeadLetters();
-});
+}
 
 // ── PAYOUTS DASHBOARD ─────────────────────────────────────────────────────────
 async function loadPayouts() {
