@@ -100,6 +100,7 @@ function memberAuth(req, res, next) {
     try {
       const rows = await prisma.$queryRawUnsafe(
         `SELECT m.id::text AS member_id, m.merchant_id::text AS merchant_id, m.name, m.email, m.phone, m.status,
+                m.pin_hash, m.pin_failed, m.pin_locked_until,
                 w.id::text AS wallet_id, w.balance::text AS balance, w.currency, w.low_balance_threshold::text AS low_balance_threshold
            FROM mw_members m JOIN mw_wallets w ON w.member_id = m.id WHERE m.user_id = $1::uuid`, req.user.id);
       if (!rows.length) return fail(res, 'No wallet member is linked to this account', 'NOT_A_MEMBER', 403);

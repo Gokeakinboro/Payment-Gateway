@@ -2,6 +2,7 @@
 // Member self-service (the member app/web). Authenticated as the logged-in member.
 // Unifies wallet activity + invoices addressed to the member, and lets them fund,
 // spend across departments, and pay invoices from their wallet balance.
+const bcrypt = require('bcryptjs');
 const router = require('express').Router();
 const { prisma, memberAuth, getConfig, normalizePhone, isValidEmail } = require('../_shared');
 const { ok, fail, created, notFound, generateRef } = require('../../../utils/helpers');
@@ -13,6 +14,32 @@ const CHECKOUT_BASE = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices
 router.use(memberAuth);
 const num = (v) => (v == null ? null : Number(v));
 function handle(res, e, next) { if (e && e.name === 'WalletError') return fail(res, e.message, e.code, e.status); next(e); }
+
+// ── Transaction PIN (app-unlock + per-payment authorization) ──────────────────
+const PIN_MAX_FAILS = 5, PIN_LOCK_MIN = 15;
+const pinErr = (message, code, status = 401) => Object.assign(new Error(message), { name: 'WalletError', code, status });
+
+// Verify the PIN supplied on this request (req.body.pin). Enforces a lockout after
+// repeated wrong attempts. Throws a WalletError (mapped by handle()) on any failure.
+async function assertPin(req) {
+  const m = req.walletMember;
+  if (!m.pin_hash) throw pinErr('Set up your transaction PIN first', 'PIN_NOT_SET', 403);
+  if (m.pin_locked_until && new Date(m.pin_locked_until) > new Date())
+    throw pinErr('Too many wrong PIN attempts. Try again later.', 'PIN_LOCKED', 429);
+  const pin = String(req.body.pin || '');
+  const good = /^\d{4,6}$/.test(pin) && await bcrypt.compare(pin, m.pin_hash);
+  if (!good) {
+    const fails = (m.pin_failed || 0) + 1;
+    const lock = fails >= PIN_MAX_FAILS;
+    await prisma.$executeRawUnsafe(
+      `UPDATE mw_members SET pin_failed=$1, pin_locked_until=$2 WHERE id=$3::uuid`,
+      lock ? 0 : fails, lock ? new Date(Date.now() + PIN_LOCK_MIN * 60000) : null, m.member_id);
+    throw lock
+      ? pinErr(`Too many wrong PIN attempts. Try again in ${PIN_LOCK_MIN} minutes.`, 'PIN_LOCKED', 429)
+      : pinErr(`Incorrect PIN. ${PIN_MAX_FAILS - fails} attempt(s) left.`, 'PIN_WRONG', 401);
+  }
+  if (m.pin_failed) await prisma.$executeRawUnsafe(`UPDATE mw_members SET pin_failed=0, pin_locked_until=NULL WHERE id=$1::uuid`, m.member_id);
+}
 
 // Invoices addressed to this member (matched by email/phone within the merchant).
 function memberInvoiceWhere(m) {
@@ -28,6 +55,7 @@ router.get('/', async (req, res, next) => {
     const cfg = await getConfig(m.merchant_id);
     return ok(res, {
       member: { id: m.member_id, name: m.name, email: m.email, phone: m.phone },
+      pin_set: !!m.pin_hash,
       wallet: { id: m.wallet_id, balance: num(m.balance), currency: m.currency, low_balance_threshold: num(m.low_balance_threshold) },
       branding: { name: cfg.brand_name || 'Wallet', logo_url: cfg.brand_logo_url || null, color: cfg.brand_color || '#1a2744' },
     });
@@ -79,6 +107,28 @@ router.patch('/profile', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Set or change the transaction PIN. Requires the account password to authorize.
+router.post('/pin', async (req, res, next) => {
+  try {
+    const m = req.walletMember;
+    const pin = String(req.body.pin || '');
+    if (!/^\d{4,6}$/.test(pin)) return fail(res, 'PIN must be 4 to 6 digits', 'PIN_INVALID');
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user || !await bcrypt.compare(String(req.body.password || ''), user.passwordHash))
+      return fail(res, 'Your account password is incorrect', 'BAD_PASSWORD', 401);
+    const hash = await bcrypt.hash(pin, 12);
+    await prisma.$executeRawUnsafe(
+      `UPDATE mw_members SET pin_hash=$1, pin_set_at=now(), pin_failed=0, pin_locked_until=NULL WHERE id=$2::uuid`, hash, m.member_id);
+    return ok(res, { pin_set: true }, 'Transaction PIN set');
+  } catch (e) { next(e); }
+});
+
+// Verify the PIN — used to unlock the app and as the biometric/payment gate. Body: { pin }.
+router.post('/pin/verify', async (req, res, next) => {
+  try { await assertPin(req); return ok(res, { ok: true }, 'PIN verified'); }
+  catch (e) { handle(res, e, next); }
+});
+
 // Departments the member can pay (spend targets).
 router.get('/departments', async (req, res, next) => {
   try {
@@ -127,6 +177,7 @@ router.get('/invoices', async (req, res, next) => {
 router.post('/invoices/:id/pay', async (req, res, next) => {
   try {
     const m = req.walletMember;
+    await assertPin(req);
     const r = await payInvoiceFromWallet({
       walletId: m.wallet_id, invoiceId: req.params.id, merchantId: m.merchant_id,
       amount: req.body.amount != null ? parseInt(req.body.amount, 10) : null, createdBy: req.user.id,
@@ -168,6 +219,7 @@ router.post('/spend', async (req, res, next) => {
     if (!req.body.department_id) return fail(res, 'department_id is required');
     const d = await prisma.$queryRawUnsafe(`SELECT id::text FROM inv_departments WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.body.department_id, m.merchant_id);
     if (!d.length) return fail(res, 'Invalid department');
+    await assertPin(req);
     const r = await ledger.spendToDepartment({ walletId: m.wallet_id, departmentId: req.body.department_id, amount, createdBy: req.user.id, note: req.body.note ? String(req.body.note).slice(0, 200) : null });
     require('../services/walletNotify').memberSpent({ merchantId: m.merchant_id, walletId: m.wallet_id, departmentId: req.body.department_id, amount, balanceAfter: r.balanceAfter }).catch(() => {});
     return ok(res, { reference: r.reference, wallet_balance: Number(r.balanceAfter) }, 'Payment successful');
@@ -219,6 +271,7 @@ router.post('/qr/:token/pay', async (req, res, next) => {
       return fail(res, q.type === 'fixed' ? 'This QR has no valid amount' : 'Enter a valid amount to pay');
     const vat = q.charge_vat ? Math.round(base * VAT_RATE) : 0;
     const amount = base + vat;
+    await assertPin(req);
     let result;
     if (q.department_id) {
       result = await ledger.spendToDepartment({ walletId: m.wallet_id, departmentId: q.department_id, amount, createdBy: req.user.id, note: q.label || ('QR ' + q.reference) });
