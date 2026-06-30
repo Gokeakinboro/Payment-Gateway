@@ -495,7 +495,7 @@ function mShow(id){ M_STEPS.forEach(function(s){ document.getElementById(s).styl
 function openLogin(){
   // Already signed in with a valid token? Go straight to the dashboard.
   try {
-    var t = localStorage.getItem('paylode_token');
+    var t = sessionStorage.getItem('paylode_token');
     if (t) { var p = JSON.parse(atob(t.split('.')[1])); if (!p.exp || p.exp*1000 > Date.now()) { window.location.href='/dashboard.html'; return; } }
   } catch(e){}
   mShow('m-role');
@@ -505,7 +505,7 @@ function closeLogin(){ document.getElementById('loginModal').classList.remove('o
 function backToRole(){ mShow('m-role'); }
 
 function pickRole(role){
-  localStorage.setItem('paylode_selected_role', role);
+  sessionStorage.setItem('paylode_selected_role', role);
   var r = M_ROLES[role] || M_ROLES.merchant;
   document.getElementById('m-role-icon').textContent = r.icon;
   document.getElementById('m-role-icon').style.background = r.bg;
@@ -533,8 +533,8 @@ async function mLogin(){
       setTimeout(function(){ var c=document.getElementById('m-2fa-code'); if(c) c.focus(); }, 80);
       btn.textContent='Sign In'; btn.disabled=false;
     } else if (data.status && data.data && data.data.token){
-      localStorage.setItem('paylode_token', data.data.token);
-      localStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
+      sessionStorage.setItem('paylode_token', data.data.token);
+      sessionStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
       window.location.replace('/dashboard.html');
     } else {
       err.textContent = data.message || 'Invalid email or password'; err.style.display='block';
@@ -556,8 +556,8 @@ async function m2FA(){
     var res  = await fetch('/api/v1/auth/2fa/validate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({temp_token:m_temp, code})});
     var data = await res.json();
     if (data.status && data.data && data.data.token){
-      localStorage.setItem('paylode_token', data.data.token);
-      localStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
+      sessionStorage.setItem('paylode_token', data.data.token);
+      sessionStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
       window.location.replace('/dashboard.html');
     } else {
       err.textContent = data.message || 'Invalid code'; err.style.display='block';

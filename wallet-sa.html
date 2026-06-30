@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Wallet Approvals — Super Admin</title>
+<link rel="stylesheet" href="paylode-ui.css?v=1">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   :root{--navy:#1a2744;--lime:#7dc534;--bg:#f4f6fb;--gray:#64748b;--line:#e6eaf2;--green:#16a34a}
@@ -34,7 +35,7 @@
   </div>
 </div>
 <script>
-var API='/api/v1';var TOKEN=localStorage.getItem('paylode_token');
+var API='/api/v1';var TOKEN=sessionStorage.getItem('paylode_token');
 if(!TOKEN)location.href='/login.html';
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function msg(ok,t){var m=document.getElementById('msg');m.className='msg '+(ok?'ok':'err');m.textContent=t;}
