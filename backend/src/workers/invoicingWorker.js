@@ -11,6 +11,7 @@ const { prisma } = require('../utils/db');
 const { logger } = require('../utils/logger');
 const { sendInvoice } = require('../modules/invoicing/services/invoiceSend');
 const { reconcileInvoicingPayments } = require('../modules/invoicing/services/invoicingPay');
+const { reconcileWalletFunding } = require('../modules/wallet/services/walletFund');
 
 const TICK_MS = Number(process.env.INVOICING_TICK_MS || 60 * 1000);
 
@@ -50,8 +51,9 @@ async function tick() {
     const sent = await processScheduledSends();
     const reminded = await processOverdueReminders();
     const rec = await reconcileInvoicingPayments();
-    if (sent || reminded || rec.recorded)
-      logger.info({ sent, reminded, recorded: rec.recorded }, 'invoicing tick');
+    const wal = await reconcileWalletFunding();
+    if (sent || reminded || rec.recorded || wal.credited)
+      logger.info({ sent, reminded, recorded: rec.recorded, walletCredited: wal.credited }, 'invoicing tick');
   } catch (e) {
     logger.error({ err: e.message }, 'invoicing worker tick failed');
   }
