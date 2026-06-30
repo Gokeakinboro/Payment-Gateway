@@ -34,7 +34,7 @@
   </div>
 </div>
 <script>
-var API='/api/v1';var TOKEN=localStorage.getItem('paylode_token');
+var API='/api/v1';var TOKEN=sessionStorage.getItem('paylode_token');
 if(!TOKEN)location.href='/login.html';
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function msg(ok,t){var m=document.getElementById('msg');m.className='msg '+(ok?'ok':'err');m.textContent=t;}

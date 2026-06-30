@@ -49,7 +49,7 @@
 
 <script>
 var API='/api/v1';
-var TOKEN=localStorage.getItem('paylode_token');
+var TOKEN=sessionStorage.getItem('paylode_token');
 if(!TOKEN)location.href='/login.html';
 var CFG=null;
 async function api(path,opts){opts=opts||{};var h={'Content-Type':'application/json','Authorization':'Bearer '+TOKEN};
