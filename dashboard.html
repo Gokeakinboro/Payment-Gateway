@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<script>(function(){var t=localStorage.getItem("paylode_token");if(!t){window.location.replace("/login.html");return;}try{var p=JSON.parse(atob(t.split(".")[1]));if(p.exp&&p.exp*1000<Date.now()){localStorage.removeItem("paylode_token");localStorage.removeItem("paylode_user");window.location.replace("/login.html");}}catch(e){localStorage.removeItem("paylode_token");window.location.replace("/login.html");}})();</script>
+<script>(function(){var t=sessionStorage.getItem("paylode_token");if(!t){window.location.replace("/login.html");return;}try{var p=JSON.parse(atob(t.split(".")[1]));if(p.exp&&p.exp*1000<Date.now()){sessionStorage.removeItem("paylode_token");sessionStorage.removeItem("paylode_user");window.location.replace("/login.html");}}catch(e){sessionStorage.removeItem("paylode_token");window.location.replace("/login.html");}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Paylode Services Limited — Payment Gateway</title>
 <style>

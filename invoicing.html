@@ -47,7 +47,7 @@
 
 <script>
 const API = window.location.origin + '/api/v1/invoicing';
-const TOKEN = localStorage.getItem('paylode_token');
+const TOKEN = sessionStorage.getItem('paylode_token');
 const ngn = (k) => '₦' + (Number(k)/100).toLocaleString('en-NG',{minimumFractionDigits:2});
 const esc = (s) => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const el = (id) => document.getElementById(id);

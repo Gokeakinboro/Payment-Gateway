@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <script>/* Already signed in? Skip the login form (fixes browser Back landing on login). */
-(function(){try{var t=localStorage.getItem('paylode_token');if(t){var p=JSON.parse(atob(t.split('.')[1]));if(!p.exp||p.exp*1000>Date.now()){window.location.replace('/dashboard.html');}}}catch(e){}})();</script>
+(function(){try{var t=sessionStorage.getItem('paylode_token');if(t){var p=JSON.parse(atob(t.split('.')[1]));if(!p.exp||p.exp*1000>Date.now()){window.location.replace('/dashboard.html');}}}catch(e){}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Paylode — Sign In</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -119,7 +119,7 @@ const ROLES = {
 };
 
 // Set role display from stored selection
-const role = localStorage.getItem('paylode_selected_role') || 'superadmin';
+const role = sessionStorage.getItem('paylode_selected_role') || 'superadmin';
 const r    = ROLES[role] || ROLES.superadmin;
 document.getElementById('role-icon').textContent    = r.icon;
 document.getElementById('role-icon').style.background = r.bg;
@@ -142,8 +142,8 @@ async function doLogin() {
       _2faTempToken = data.data.temp_token;
       show2FAStep(data.data.user_email);
     } else if (data.status && data.data && data.data.token) {
-      localStorage.setItem('paylode_token', data.data.token);
-      localStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
+      sessionStorage.setItem('paylode_token', data.data.token);
+      sessionStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
       window.location.replace('/dashboard.html');
     } else {
       err.textContent=data.message||'Invalid email or password'; err.style.display='block';
@@ -172,8 +172,8 @@ async function do2FA() {
     const res  = await fetch('/api/v1/auth/2fa/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ temp_token:_2faTempToken, code }) });
     const data = await res.json();
     if (data.status && data.data && data.data.token) {
-      localStorage.setItem('paylode_token', data.data.token);
-      localStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
+      sessionStorage.setItem('paylode_token', data.data.token);
+      sessionStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
       window.location.replace('/dashboard.html');
     } else {
       err.textContent=data.message||'Invalid code'; err.style.display='block';

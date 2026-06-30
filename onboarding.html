@@ -925,11 +925,11 @@ function restoreUploads() {
 
 function esc(s) { return String(s==null?'':s).replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
-// ── localStorage draft engine ─────────────────────────────────────────────────
+// ── sessionStorage draft engine ─────────────────────────────────────────────────
 function saveDraft(silent) {
   const snapshot = { v:1, formType, applicantType, currentStep, formData, principals, uploads, ynAnswers, ts: Date.now() };
   try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(snapshot));
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(snapshot));
   } catch (e) {
     // Quota exceeded — retry without the heavy data-URLs (keep text + file names).
     try {
@@ -937,7 +937,7 @@ function saveDraft(silent) {
       Object.keys(lite.uploads||{}).forEach(k => { if (lite.uploads[k]) lite.uploads[k].dataUrl = null; });
       (lite.principals||[]).forEach(p => { if (p.id_file) p.id_file.dataUrl = null; });
       lite.filesDropped = true;
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(lite));
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify(lite));
     } catch (e2) { /* give up silently */ }
   }
   if (!silent) showSaveFlash();
@@ -956,15 +956,15 @@ function showSaveFlash() {
   setTimeout(() => f.classList.remove('show'), 1800);
 }
 
-function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+function clearDraft() { try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {} }
 
 function hasDraft() {
-  try { return !!localStorage.getItem(DRAFT_KEY); } catch (e) { return false; }
+  try { return !!sessionStorage.getItem(DRAFT_KEY); } catch (e) { return false; }
 }
 
 function resumeDraft() {
   let snap;
-  try { snap = JSON.parse(localStorage.getItem(DRAFT_KEY)); } catch (e) { return; }
+  try { snap = JSON.parse(sessionStorage.getItem(DRAFT_KEY)); } catch (e) { return; }
   if (!snap) return;
   formType      = snap.formType || 'merchant';
   applicantType = snap.applicantType || null;
@@ -1831,7 +1831,7 @@ function hideAlert() {
 // ── EDIT / RESUBMIT MODE (merchant correcting a rejected application) ─────────
 // Entered via ?edit=1 from the dashboard. Loads the merchant's own submission,
 // prefills the full form, and submits via PUT (resubmit) instead of POST.
-function authToken() { try { return localStorage.getItem('paylode_token'); } catch (e) { return null; } }
+function authToken() { try { return sessionStorage.getItem('paylode_token'); } catch (e) { return null; } }
 
 async function enterEditMode() {
   const token = authToken();

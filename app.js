@@ -223,7 +223,7 @@ function userHasPerm(perm){
   if (!perm) return true;
   if (currentRole === 'superadmin') return true;
   try {
-    var u = JSON.parse(localStorage.getItem('paylode_user') || '{}');
+    var u = JSON.parse(sessionStorage.getItem('paylode_user') || '{}');
     var perms = Array.isArray(u.permissions) ? u.permissions : [];
     var hasNewVocab = perms.some(function(p){ return p.indexOf('view_') === 0 || p.indexOf('edit_') === 0; });
     if (!hasNewVocab) perms = PERM_ROLE_DEFAULTS[(u.role||'').toUpperCase()] || [];
@@ -237,7 +237,7 @@ function renderNav() {
   document.getElementById('topbar-title').textContent = meta.title;
   // Use real business/company name from JWT if available
   var _u = {};
-  try { _u = JSON.parse(localStorage.getItem('paylode_user') || '{}'); } catch(e) {}
+  try { _u = JSON.parse(sessionStorage.getItem('paylode_user') || '{}'); } catch(e) {}
   var _name = _u.businessName || _u.companyName || _u.organizationName ||
               (_u.firstName ? (_u.firstName + ' ' + (_u.lastName||'')).trim() : null) || meta.name;
   document.getElementById('role-name').textContent = _name;
@@ -915,7 +915,7 @@ async function rejectDSR(id) {
 
 function renderSettings() {
   var user = {};
-  try { user = JSON.parse(localStorage.getItem('paylode_user') || '{}'); } catch(e) {}
+  try { user = JSON.parse(sessionStorage.getItem('paylode_user') || '{}'); } catch(e) {}
   var isStaff = ['SUPER_ADMIN','COMPLIANCE_OFFICER','ADMIN'].indexOf(user.role) > -1;
   var tfaEnabled = user.totpEnabled;
   var tfaSection = isStaff ? (
@@ -1688,7 +1688,7 @@ async function disable2FA() {
 // ── Statement download helpers (merchant role) ────────────────────────────
 async function downloadStatement() {
   var month = (document.getElementById('stmt-month')||{}).value || new Date().toISOString().slice(0,7);
-  var token = localStorage.getItem('paylode_token');
+  var token = sessionStorage.getItem('paylode_token');
   var res = await fetch('/api/v1/statements/my?month=' + month, { headers:{'Authorization':'Bearer '+token} });
   if (!res.ok) { alert('Failed to generate statement.'); return; }
   var blob = await res.blob();
@@ -1955,14 +1955,14 @@ try { renderPage(); } catch (e) { console.error('renderPage failed', e); }
 
 // ── Auth helpers (required by api-wiring.js) ──────────────────────────────
 function getUser() {
-  try { return JSON.parse(localStorage.getItem('paylode_user') || 'null'); }
+  try { return JSON.parse(sessionStorage.getItem('paylode_user') || 'null'); }
   catch (e) { return null; }
 }
 
 var API_BASE = '/api/v1';
 
 async function apiFetch(path, options) {
-  var token = localStorage.getItem('paylode_token');
+  var token = sessionStorage.getItem('paylode_token');
   var opts  = options || {};
   var headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
   if (token) headers['Authorization'] = 'Bearer ' + token;
@@ -1970,8 +1970,8 @@ async function apiFetch(path, options) {
   var res = await fetch(API_BASE + path, Object.assign({}, opts, { headers: headers }));
 
   if (res.status === 401) {
-    localStorage.removeItem('paylode_token');
-    localStorage.removeItem('paylode_user');
+    sessionStorage.removeItem('paylode_token');
+    sessionStorage.removeItem('paylode_user');
     window.location.href = '/login.html';
     return null;
   }
@@ -1987,9 +1987,9 @@ function setupInactivityTimeout() {
   var timer;
 
   function doLogout() {
-    localStorage.removeItem('paylode_token');
-    localStorage.removeItem('paylode_user');
-    localStorage.removeItem('paylode_selected_role');
+    sessionStorage.removeItem('paylode_token');
+    sessionStorage.removeItem('paylode_user');
+    sessionStorage.removeItem('paylode_selected_role');
     window.location.href = '/login.html?reason=timeout';
   }
 
