@@ -123,10 +123,15 @@
 var API = '/api/v1';
 var TK = 'wallet_token';
 var ME = null, DEPTS = [];
+// Resilient token store: some browsers (Brave shields / strict privacy) throw on
+// localStorage, which would silently abort sign-in. Fall back to an in-memory token.
+var _memTok = null;
+function tokSet(v){ _memTok = v; try{ localStorage.setItem(TK, v); }catch(e){} }
+function tokDel(){ _memTok = null; try{ localStorage.removeItem(TK); }catch(e){} }
 function show(id){document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('on')});document.getElementById(id).classList.add('on');}
 function tog(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'Show':'Hide';}
 function ngn(k){return '₦'+(Number(k||0)/100).toLocaleString('en-NG',{minimumFractionDigits:2});}
-function tok(){return localStorage.getItem(TK);}
+function tok(){ try{ return localStorage.getItem(TK) || _memTok; }catch(e){ return _memTok; } }
 function err(id,m){var e=document.getElementById(id);e.textContent=m;e.style.display='block';}
 function hide(id){var e=document.getElementById(id);if(e)e.style.display='none';}
 
@@ -154,7 +159,7 @@ async function doLogin(){
   b.disabled=false;b.textContent='Sign In';
   if(!r.ok)return err('li-err',r.message||'Sign in failed');
   if(r.data&&r.data.twofa_required)return err('li-err','This account requires 2FA — use the main portal.');
-  localStorage.setItem(TK,r.data.token);
+  tokSet(r.data.token);
   if(r.data.user&&r.data.user.mustChangePassword){show('s-change');return;}
   loadApp();
 }
@@ -177,12 +182,12 @@ async function doForgot(){
   b.disabled=false;b.textContent='Send temporary password';
   var o=document.getElementById('fo-ok');o.textContent='If that email exists, a temporary password has been sent.';o.style.display='block';
 }
-function logout(){localStorage.removeItem(TK);ME=null;show('s-login');}
+function logout(){tokDel();ME=null;show('s-login');}
 
 // ── App ──
 async function loadApp(){
   var r=await api('/wallet/me');
-  if(r.status===403){err('li-err','This account is not a wallet member.');show('s-login');localStorage.removeItem(TK);return;}
+  if(r.status===403){err('li-err','This account is not a wallet member.');show('s-login');tokDel();return;}
   if(!r.ok){show('s-login');return;}
   ME=r.data;
   // branding
