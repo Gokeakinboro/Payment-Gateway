@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#1a2744">
 <title>Wallet</title>
+<!-- PWA (single umbrella "Paylode Wallet"; merchant themes in-app after login) -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Wallet">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   :root{--brand:#1a2744;--brand-d:#0f1829;--bg:#f4f6fb;--card:#fff;--gray:#64748b;--line:#e6eaf2;--green:#16a34a;--red:#dc2626}
@@ -248,6 +256,9 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return
 // Boot: if a token exists, try to load the app.
 if(tok())loadApp();
 document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.getElementById('s-login').classList.contains('on'))doLogin();});
+
+// PWA: register service worker scoped to the wallet only (won't touch the merchant portal on this origin).
+if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js',{scope:'/wallet.html'}).catch(function(){});});}
 </script>
 </body>
 </html>
