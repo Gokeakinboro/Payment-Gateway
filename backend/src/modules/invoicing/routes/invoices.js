@@ -115,7 +115,7 @@ router.post('/', async (req, res, next) => {
           (invoice_number, merchant_id, department_id, contact_id, recipient_name, recipient_email, recipient_phone,
            description, amount, charge_vat, vat_amount, total_amount, currency, allow_part_payment,
            status, scheduled_at, due_at, reminder_interval_days, reminder_count, access_token)
-         VALUES ($1,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+         VALUES ($1,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
          RETURNING id::text`,
         number, mid, departmentId, r.contact_id || null, r.name || null, r.email || null, r.phone || null,
         description, BigInt(amount), chargeVat, vat, total, currency, allowPart,
