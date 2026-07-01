@@ -99,14 +99,23 @@ async function getConfig(merchantId) {
 function memberAuth(req, res, next) {
   return requireAuth(req, res, async () => {
     try {
+      // A login can belong to several clubs (multi-club). Pick the ACTIVE membership
+      // from the X-Member-Id header (if it belongs to this user), else the first
+      // active one — so single-club members are unaffected (backward compatible).
       const rows = await prisma.$queryRawUnsafe(
         `SELECT m.id::text AS member_id, m.merchant_id::text AS merchant_id, m.name, m.email, m.phone, m.status,
                 m.pin_hash, m.pin_failed, m.pin_locked_until,
                 w.id::text AS wallet_id, w.balance::text AS balance, w.currency, w.low_balance_threshold::text AS low_balance_threshold
-           FROM mw_members m JOIN mw_wallets w ON w.member_id = m.id WHERE m.user_id = $1::uuid`, req.user.id);
-      if (!rows.length) return fail(res, 'No wallet member is linked to this account', 'NOT_A_MEMBER', 403);
-      if (rows[0].status !== 'active') return fail(res, 'Your wallet account is suspended', 'MEMBER_SUSPENDED', 403);
-      req.walletMember = rows[0];
+           FROM mw_members m JOIN mw_wallets w ON w.member_id = m.id
+          WHERE m.user_id = $1::uuid AND m.status <> 'deleted'
+          ORDER BY m.created_at`, req.user.id);
+      if (!rows.length) return fail(res, 'No membership is linked to this account', 'NOT_A_MEMBER', 403);
+      const wanted = req.headers['x-member-id'];
+      let active = wanted ? rows.find((r) => r.member_id === wanted) : null;
+      if (wanted && !active) return fail(res, 'Membership not found for this account', 'NOT_A_MEMBER', 403);
+      if (!active) active = rows.find((r) => r.status === 'active') || rows[0];
+      if (active.status !== 'active') return fail(res, 'Your membership is suspended', 'MEMBER_SUSPENDED', 403);
+      req.walletMember = active;
       next();
     } catch (e) { next(e); }
   });
