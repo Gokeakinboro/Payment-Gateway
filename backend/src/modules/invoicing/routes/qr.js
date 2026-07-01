@@ -1,9 +1,10 @@
 'use strict';
 // QR Scan & Pay — Fixed / Open amount codes, downloadable (PNG/SVG) + shareable link.
 const router = require('express').Router();
-const { prisma, tenantAuth, randToken } = require('../_shared');
+const { prisma, tenantAuth, randToken, escapeHtml, koboToNairaStr, isValidEmail } = require('../_shared');
 const { ok, fail, created, notFound } = require('../../../utils/helpers');
 const { renderQr, qrPayUrl } = require('../services/qrService');
+const { sendEmail } = require('../../../services/emailService');
 
 router.use(tenantAuth);
 
@@ -52,7 +53,7 @@ router.post('/', async (req, res, next) => {
     const token = randToken(18);
     const rows = await prisma.$queryRawUnsafe(
       `INSERT INTO inv_qr_codes (merchant_id, department_id, qr_reference, access_token, label, type, amount, charge_vat)
-       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8) RETURNING ${COLS}`,
+       VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8) RETURNING ${COLS}`,
       mid, departmentId, reference, token, b.label ? String(b.label).slice(0, 80) : null, type,
       amount === null ? null : BigInt(amount), !!b.charge_vat);
     return created(res, shape(rows[0]), 'QR code created');
@@ -94,6 +95,47 @@ router.delete('/:id', async (req, res, next) => {
       `DELETE FROM inv_qr_codes WHERE id=$1::uuid AND merchant_id=$2::uuid RETURNING id::text`, req.params.id, req.invTenant.merchantId);
     if (!rows.length) return notFound(res, 'QR code');
     return ok(res, { id: rows[0].id }, 'QR code deleted');
+  } catch (e) { next(e); }
+});
+
+// Share a saved QR by email via SMTP (branded, QR image inline). WhatsApp sharing
+// stays a client-side wa.me deep link on the dashboard.
+router.post('/:id/share', async (req, res, next) => {
+  try {
+    const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+    if (!isValidEmail(email)) return fail(res, 'A valid recipient email is required');
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT q.access_token, q.label, q.amount::text AS amount, m.business_name
+         FROM inv_qr_codes q JOIN merchants m ON m.id = q.merchant_id
+        WHERE q.id = $1::uuid AND q.merchant_id = $2::uuid`,
+      req.params.id, req.invTenant.merchantId);
+    if (!rows.length) return notFound(res, 'QR code');
+    const r = rows[0];
+    const bizName = r.business_name || 'A merchant';
+    const payUrl = qrPayUrl(r.access_token);
+    const img = await renderQr(r.access_token);
+    const png = img.pngDataUrl.split(',')[1];
+    const amtLine = r.amount === null
+      ? 'You can enter the amount when you pay.'
+      : `Amount: &#8358;${koboToNairaStr(r.amount)}`;
+    const label = r.label ? escapeHtml(r.label) : 'Payment';
+    const html = `<div style="font-family:system-ui,Arial,sans-serif;max-width:520px;color:#1a1a1a">
+      <p><strong>${escapeHtml(bizName)}</strong> has sent you a QR code to pay.</p>
+      <p style="margin:14px 0;font-size:15px"><strong>${label}</strong></p>
+      <p style="font-size:14px">${amtLine}</p>
+      <div style="text-align:center;margin:16px 0"><img src="cid:paylodeqr" alt="Scan to pay" style="width:220px;height:220px"></div>
+      <p style="text-align:center"><a href="${payUrl}" style="background:#16a34a;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block">Pay now</a></p>
+      <p style="font-size:12px;color:#666;margin-top:12px">Or open: ${escapeHtml(payUrl)}</p>
+      <p style="font-size:11px;color:#999;margin-top:18px">Powered by Paylode</p></div>`;
+    const info = await sendEmail({
+      to: email,
+      subject: `${bizName} — scan to pay${r.label ? ` (${r.label})` : ''}`.slice(0, 160),
+      html,
+      text: `${bizName} — ${r.label || 'Payment'}. ${r.amount === null ? '' : '₦' + koboToNairaStr(r.amount) + '. '}Pay: ${payUrl}`,
+      attachments: [{ filename: 'paylode-qr.png', content: Buffer.from(png, 'base64'), cid: 'paylodeqr' }],
+    });
+    if (info && info.skipped) return fail(res, 'Email service is not configured', 'EMAIL_NOT_CONFIGURED', 503);
+    return ok(res, { sent: true }, `QR code emailed to ${email}`);
   } catch (e) { next(e); }
 });
 

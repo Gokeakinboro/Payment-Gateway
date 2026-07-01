@@ -2762,9 +2762,10 @@ function plQrShowModal(q) {
         '<div><label class="form-label">WhatsApp phone</label><input class="form-input" id="qr-share-phone" type="tel" placeholder="080..."></div>' +
       '</div>' +
       '<div class="flex" style="gap:8px;margin-top:10px">' +
-        '<button class="btn btn-outline" style="flex:1" onclick="plQrShareEmail()">✉ Share via Email</button>' +
+        '<button class="btn btn-outline" style="flex:1" id="qr-share-email-btn" onclick="plQrShareEmail()">✉ Email this QR</button>' +
         '<button class="btn btn-lime" style="flex:1" onclick="plQrShareWhatsApp()">Share via WhatsApp</button>' +
       '</div>' +
+      '<div id="qr-share-msg" style="display:none;font-size:12px;margin-top:8px"></div>' +
     '</div>'
   );
   plQrLoadImg(q.id);
@@ -2775,11 +2776,18 @@ function plQrShareText(q) {
   var amt = (q.amount === null || q.amount === undefined) ? '' : ' (' + fmtMoney(q.amount, 'NGN') + ')';
   return 'Pay ' + (q.label ? q.label + ' ' : '') + 'securely via Paylode' + amt + ':\n' + q.pay_url;
 }
-function plQrShareEmail() {
+async function plQrShareEmail() {
   var q = _plQrCurrent; if (!q) return;
   var email = (document.getElementById('qr-share-email').value || '').trim();
-  var subject = 'Pay via Paylode' + (q.label ? ' — ' + q.label : '');
-  window.location.href = 'mailto:' + encodeURIComponent(email) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(plQrShareText(q));
+  var msg = document.getElementById('qr-share-msg');
+  function say(t, good) { if (msg) { msg.textContent = t; msg.style.color = good ? 'var(--green)' : 'var(--red)'; msg.style.display = 'block'; } }
+  if (!email || email.indexOf('@') < 0) return say('Enter a valid email address.', false);
+  var btn = document.getElementById('qr-share-email-btn'); if (btn) { btn.disabled = true; }
+  say('Sending…', true);
+  var res = await apiFetch('/invoicing/qr/' + q.id + '/share', { method: 'POST', body: JSON.stringify({ email: email }) });
+  if (btn) btn.disabled = false;
+  if (res && res.status !== false) say(res.message || ('QR emailed to ' + email), true);
+  else say((res && res.message) || 'Could not send the email.', false);
 }
 function plQrShareWhatsApp() {
   var q = _plQrCurrent; if (!q) return;
