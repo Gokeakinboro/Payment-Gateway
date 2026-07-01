@@ -36,17 +36,19 @@ router.put('/', adminOnly, async (req, res, next) => {
     await prisma.$executeRawUnsafe(
       `INSERT INTO mw_config
          (merchant_id, brand_name, brand_logo_url, brand_color, sender_email, sender_whatsapp,
-          max_balance, low_balance_default, notify_email, notify_whatsapp)
-       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          max_balance, low_balance_default, notify_email, notify_whatsapp, allow_public_members)
+       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        ON CONFLICT (merchant_id) DO UPDATE SET
          brand_name=EXCLUDED.brand_name, brand_logo_url=EXCLUDED.brand_logo_url, brand_color=EXCLUDED.brand_color,
          sender_email=EXCLUDED.sender_email, sender_whatsapp=EXCLUDED.sender_whatsapp,
          max_balance=EXCLUDED.max_balance, low_balance_default=EXCLUDED.low_balance_default,
-         notify_email=EXCLUDED.notify_email, notify_whatsapp=EXCLUDED.notify_whatsapp, updated_at=now()`,
+         notify_email=EXCLUDED.notify_email, notify_whatsapp=EXCLUDED.notify_whatsapp,
+         allow_public_members=EXCLUDED.allow_public_members, updated_at=now()`,
       mid, b.brand_name || null, b.brand_logo_url || null, b.brand_color || null,
       b.sender_email || null, b.sender_whatsapp || null, maxBal, lowDef,
       b.notify_email === undefined ? true : !!b.notify_email,
-      b.notify_whatsapp === undefined ? true : !!b.notify_whatsapp);
+      b.notify_whatsapp === undefined ? true : !!b.notify_whatsapp,
+      b.allow_public_members === undefined ? false : !!b.allow_public_members);
     return ok(res, shape(await getConfig(mid)), 'Wallet settings saved');
   } catch (e) { next(e); }
 });

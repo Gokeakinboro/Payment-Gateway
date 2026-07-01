@@ -75,7 +75,7 @@ async function getConfig(merchantId) {
   const rows = await prisma.$queryRawUnsafe(
     `SELECT enabled, brand_name, brand_logo_url, brand_color, sender_email, sender_whatsapp,
             max_balance::text AS max_balance, low_balance_default::text AS low_balance_default,
-            notify_email, notify_whatsapp
+            notify_email, notify_whatsapp, allow_public_members
        FROM mw_config WHERE merchant_id = $1::uuid`, merchantId);
   const r = rows[0] || {};
   return {
@@ -89,6 +89,7 @@ async function getConfig(merchantId) {
     low_balance_default: r.low_balance_default ? BigInt(r.low_balance_default) : 0n,
     notify_email: r.notify_email === undefined ? true : !!r.notify_email,
     notify_whatsapp: r.notify_whatsapp === undefined ? true : !!r.notify_whatsapp,
+    allow_public_members: !!r.allow_public_members,
   };
 }
 

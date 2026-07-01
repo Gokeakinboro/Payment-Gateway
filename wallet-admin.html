@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Member Wallet — Paylode</title>
+<title>Paymula — Paylode</title>
 <link rel="stylesheet" href="paylode-ui.css?v=3">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
@@ -45,7 +45,7 @@
 </style>
 </head>
 <body>
-<div class="top"><a href="dashboard.html">← Dashboard</a><div class="t" id="brandt">Member Wallet</div></div>
+<div class="top"><a href="dashboard.html">← Dashboard</a><div class="t" id="brandt">Paymula</div></div>
 <div class="wrap" id="root"><div class="muted">Loading…</div></div>
 
 <script>
@@ -65,16 +65,16 @@ function el(id){return document.getElementById(id);}
   var r=await api('/wallet/config');
   CFG=r.ok?r.data:null;
   if(!CFG||!CFG.enabled){ return renderGate(); }
-  if(CFG.brand_name)el('brandt').textContent=CFG.brand_name+' — Wallet';
+  if(CFG.brand_name)el('brandt').textContent=CFG.brand_name+' — Paymula';
   renderApp();
 })();
 
 function renderGate(){
   var requested=CFG&&CFG.requested;
-  el('root').innerHTML='<div class="gate"><div class="ic">🔐</div><h2>Member Wallet</h2>'+
+  el('root').innerHTML='<div class="gate"><div class="ic">🔐</div><h2>Paymula</h2>'+
     (requested
       ? '<p class="muted">Your request is pending Paylode approval. We\'ll enable it shortly.</p>'
-      : '<p style="color:#64748b;margin-bottom:16px">A closed-loop wallet for your members to fund and spend across your departments. Holds customer funds, so Paylode reviews each activation.</p><button class="btn" id="reqbtn" onclick="reqWallet()">Request wallet access</button>')+
+      : '<p style="color:#64748b;margin-bottom:16px">A closed-loop way for your members to add money and spend across your departments. Holds customer funds, so Paylode reviews each activation.</p><button class="btn" id="reqbtn" onclick="reqWallet()">Request access</button>')+
     '<div class="msg" id="gmsg"></div></div>';
 }
 async function reqWallet(){
@@ -93,13 +93,15 @@ function renderApp(){
       '<div class="card"><h3>Members</h3><div id="mb-list"><div class="muted">Loading…</div></div></div></div>'+
     '<div class="pane" id="p-approvals"><div class="card"><h3>Pending load approvals</h3><div id="ap-list"><div class="muted">Loading…</div></div></div></div>'+
     '<div class="pane" id="p-settings"><div class="card"><h3>White-label branding</h3>'+
-      '<label>Wallet name</label><input id="st-name">'+
+      '<label>Display name</label><input id="st-name">'+
       '<label>Logo (PNG/JPG/SVG, ≤2 MB, square ~512×512)</label><div class="row" style="align-items:center"><input type="file" id="st-logo" accept="image/png,image/jpeg,image/svg+xml" onchange="prevLogo(this)" style="flex:2"><img class="logo-prev" id="st-logoprev"></div>'+
       '<label>Brand colour</label><input id="st-color" type="color" style="height:42px;padding:4px">'+
       '<div class="row"><div><label>Sender email</label><input id="st-semail"></div><div><label>Sender WhatsApp</label><input id="st-swa"></div></div>'+
-      '<h3 style="margin-top:18px">Limits & alerts</h3><div class="row"><div><label>Max wallet balance (₦)</label><input id="st-max" type="number"></div><div><label>Low-balance alert default (₦)</label><input id="st-low" type="number"></div></div>'+
+      '<h3 style="margin-top:18px">Limits & alerts</h3><div class="row"><div><label>Max balance (₦)</label><input id="st-max" type="number"></div><div><label>Low-balance alert default (₦)</label><input id="st-low" type="number"></div></div>'+
       '<label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="st-nemail" style="width:auto"> Email notifications</label>'+
       '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="st-nwa" style="width:auto"> WhatsApp notifications</label>'+
+      '<h3 style="margin-top:18px">Public sign-up</h3>'+
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="st-pub" style="width:auto;margin-top:3px"> <span>Let the public find this club in the Paymula app and join as members (they complete KYC). Leave off to keep membership invite-only.</span></label>'+
       '<button class="btn btn-lime" style="margin-top:14px" onclick="saveCfg()">Save settings</button><div class="msg" id="st-msg"></div></div></div>';
   loadOverview();loadMembers();loadApprovals();fillSettings();
 }
@@ -139,7 +141,7 @@ async function reject(id){var r=await api('/wallet/loads/requests/'+id+'/reject'
 
 var LOGO_FILE=null;
 function prevLogo(inp){var f=inp.files&&inp.files[0];if(!f)return;if(f.size>2*1024*1024){alert('Logo must be ≤ 2 MB');inp.value='';return;}LOGO_FILE=f;var p=el('st-logoprev');p.src=URL.createObjectURL(f);p.style.display='block';}
-function fillSettings(){el('st-name').value=CFG.brand_name||'';el('st-color').value=CFG.brand_color||'#1a2744';el('st-semail').value=CFG.sender_email||'';el('st-swa').value=CFG.sender_whatsapp||'';el('st-max').value=(CFG.max_balance||300000000)/100;el('st-low').value=(CFG.low_balance_default||0)/100;el('st-nemail').checked=CFG.notify_email!==false;el('st-nwa').checked=CFG.notify_whatsapp!==false;if(CFG.brand_logo_url){var p=el('st-logoprev');p.src=CFG.brand_logo_url;p.style.display='block';}}
+function fillSettings(){el('st-name').value=CFG.brand_name||'';el('st-color').value=CFG.brand_color||'#1a2744';el('st-semail').value=CFG.sender_email||'';el('st-swa').value=CFG.sender_whatsapp||'';el('st-max').value=(CFG.max_balance||300000000)/100;el('st-low').value=(CFG.low_balance_default||0)/100;el('st-nemail').checked=CFG.notify_email!==false;el('st-nwa').checked=CFG.notify_whatsapp!==false;el('st-pub').checked=!!CFG.allow_public_members;if(CFG.brand_logo_url){var p=el('st-logoprev');p.src=CFG.brand_logo_url;p.style.display='block';}}
 async function saveCfg(){
   var m=el('st-msg');m.className='msg';
   var logoUrl=CFG.brand_logo_url||null;
@@ -149,10 +151,10 @@ async function saveCfg(){
     var ud=await ur.json().catch(function(){return{};});
     if(ud&&ud.data&&ud.data.url)logoUrl=ud.data.url;else{m.className='msg err';m.textContent='Logo upload failed';return;}
   }
-  var body={brand_name:el('st-name').value,brand_logo_url:logoUrl,brand_color:el('st-color').value,sender_email:el('st-semail').value,sender_whatsapp:el('st-swa').value,max_balance:Math.round(parseFloat(el('st-max').value||0)*100),low_balance_default:Math.round(parseFloat(el('st-low').value||0)*100),notify_email:el('st-nemail').checked,notify_whatsapp:el('st-nwa').checked};
+  var body={brand_name:el('st-name').value,brand_logo_url:logoUrl,brand_color:el('st-color').value,sender_email:el('st-semail').value,sender_whatsapp:el('st-swa').value,max_balance:Math.round(parseFloat(el('st-max').value||0)*100),low_balance_default:Math.round(parseFloat(el('st-low').value||0)*100),notify_email:el('st-nemail').checked,notify_whatsapp:el('st-nwa').checked,allow_public_members:el('st-pub').checked};
   var r=await api('/wallet/config',{method:'PUT',body:body});
   m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?'Settings saved':(r.message||'Failed');
-  if(r.ok){CFG=r.data;LOGO_FILE=null;if(CFG.brand_name)el('brandt').textContent=CFG.brand_name+' — Wallet';}
+  if(r.ok){CFG=r.data;LOGO_FILE=null;if(CFG.brand_name)el('brandt').textContent=CFG.brand_name+' — Paymula';}
 }
 </script>
 </body>
