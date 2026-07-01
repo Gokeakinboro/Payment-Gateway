@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Wallet Approvals — Super Admin</title>
+<title>Paymula Approvals — Super Admin</title>
 <link rel="stylesheet" href="paylode-ui.css?v=3">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
@@ -26,11 +26,11 @@
 </style>
 </head>
 <body>
-<div class="top"><a href="dashboard.html">← Dashboard</a><div class="t">Member Wallet — Approvals</div></div>
+<div class="top"><a href="dashboard.html">← Dashboard</a><div class="t">Paymula — Approvals</div></div>
 <div class="wrap">
   <div class="msg" id="msg"></div>
-  <div class="card"><h3>Pending wallet enablement requests</h3>
-    <div class="sub">The Member Wallet holds customer funds — review each merchant before enabling.</div>
+  <div class="card"><h3>Pending Paymula enablement requests</h3>
+    <div class="sub">Paymula holds customer funds — review each merchant before enabling.</div>
     <div id="list"><div class="muted">Loading…</div></div>
   </div>
 </div>
@@ -55,9 +55,9 @@ async function load(){
     '<button class="btn btn-out" onclick="reject(\''+x.merchant_id+'\')">Reject</button></td></tr>';
   }).join('')+'</table>';
 }
-async function approve(id,name){if(!confirm('Enable Member Wallet for '+(name||'this merchant')+'?'))return;
+async function approve(id,name){if(!confirm('Enable Paymula for '+(name||'this merchant')+'?'))return;
   var r=await api('/wallet/admin/'+id+'/approve',{method:'POST'});msg(r.ok,r.ok?'Wallet enabled for '+(name||'merchant'):(r.message||'Failed'));if(r.ok)load();}
-async function reject(id){if(!confirm('Reject this wallet request?'))return;
+async function reject(id){if(!confirm('Reject this request?'))return;
   var r=await api('/wallet/admin/'+id+'/reject',{method:'POST'});msg(r.ok,r.ok?'Request rejected':(r.message||'Failed'));if(r.ok)load();}
 load();
 </script>

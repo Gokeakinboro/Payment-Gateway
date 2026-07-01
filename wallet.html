@@ -81,7 +81,7 @@
 
 <!-- LOGIN -->
 <div id="s-login" class="screen auth on"><div class="box">
-  <h1>Sign in</h1><div class="sub">Access your wallet</div>
+  <h1>Sign in</h1><div class="sub">Sign in to continue</div>
   <label>Email</label><input id="li-em" type="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="you@example.com">
   <label>Password</label><div class="pw"><input id="li-pw" type="password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Your password"><button class="eye" onclick="tog('li-pw',this)">Show</button></div>
   <div class="err" id="li-err"></div>
@@ -208,7 +208,7 @@ function logout(){tokDel();ME=null;show('s-login');}
 // ── App ──
 async function loadApp(){
   var r=await api('/wallet/me');
-  if(r.status===403){err('li-err','This account is not a wallet member.');show('s-login');tokDel();return;}
+  if(r.status===403){err('li-err','This account is not a Paymula member.');show('s-login');tokDel();return;}
   if(!r.ok){show('s-login');return;}
   ME=r.data;
   // branding
@@ -223,7 +223,7 @@ async function loadApp(){
   // Security gate: first-time members create a PIN; thereafter the app is locked
   // on every open and must be unlocked with the PIN (or biometrics).
   if(!ME.pin_set){await setupPin();}
-  if(!_unlocked){await requirePin({title:'Unlock',sub:'Enter your PIN to open your wallet.',cancelable:false,unlock:true});_unlocked=true;}
+  if(!_unlocked){await requirePin({title:'Unlock',sub:'Enter your PIN to open Paymula.',cancelable:false,unlock:true});_unlocked=true;}
   loadTx();loadInv();loadDepts();
 }
 async function loadTx(){
@@ -298,7 +298,7 @@ function setupPin(){
   return new Promise(function(resolve){
     var ov=document.getElementById('pinmodal');
     ov.innerHTML='<div class="box">'+
-      '<h1>Create your PIN</h1><div class="sub">Set a 4-6 digit PIN to secure your wallet and approve every payment.</div>'+
+      '<h1>Create your PIN</h1><div class="sub">Set a 4-6 digit PIN to secure Paymula and approve every payment.</div>'+
       '<input id="sp-pw" type="password" autocomplete="off" placeholder="Your account password">'+
       '<input id="sp-pin" class="pin-in" type="password" inputmode="numeric" maxlength="6" placeholder="New PIN" style="margin-top:8px">'+
       '<input id="sp-pin2" class="pin-in" type="password" inputmode="numeric" maxlength="6" placeholder="Confirm PIN" style="margin-top:8px">'+
@@ -393,7 +393,7 @@ async function doSpend(){
   closeM();loadTx();
 }
 function payInv(id,due){
-  openSheet('<h3>Pay invoice</h3><div class="muted" style="text-align:left;padding:0 0 12px">Outstanding: <strong>'+ngn(due)+'</strong> — paid from your wallet balance.</div><div class="err" id="m-err"></div><button class="btn" id="m-btn" onclick="doPayInv(\''+id+'\')">Pay '+ngn(due)+' now</button>');
+  openSheet('<h3>Pay invoice</h3><div class="muted" style="text-align:left;padding:0 0 12px">Outstanding: <strong>'+ngn(due)+'</strong> — paid from your Paymula balance.</div><div class="err" id="m-err"></div><button class="btn" id="m-btn" onclick="doPayInv(\''+id+'\')">Pay '+ngn(due)+' now</button>');
 }
 async function doPayInv(id){
   hide('m-err');
@@ -539,7 +539,7 @@ async function doAccountChange(){
   document.getElementById('ac-cur').value='';document.getElementById('ac-new').value='';document.getElementById('ac-new2').value='';
 }
 
-function label(t){return ({fund:'Wallet funding',spend:'Payment',invoice_payment:'Invoice payment',load:'Wallet load',debit:'Adjustment',refund:'Refund'})[t]||t;}
+function label(t){return ({fund:'Top up',spend:'Payment',invoice_payment:'Invoice payment',load:'Load',debit:'Adjustment',refund:'Refund'})[t]||t;}
 function pill(s){return s==='paid'?'paid':(s==='part_paid'?'part':'unpaid');}
 function fmtDate(d){try{return new Date(d).toLocaleString('en-NG',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}catch(e){return '';}}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
