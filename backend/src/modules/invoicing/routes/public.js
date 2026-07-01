@@ -20,7 +20,7 @@ router.get('/invoice/:token', async (req, res, next) => {
       `SELECT i.id::text, i.invoice_number, i.description, i.amount::text AS amount,
               i.vat_amount::text AS vat_amount, i.total_amount::text AS total_amount,
               i.amount_paid::text AS amount_paid, i.currency, i.status, i.allow_part_payment,
-              i.due_at, i.recipient_name, m.business_name, f.logo_url, f.address, f.business_email, f.business_phone, f.layout
+              i.due_at, i.recipient_name, i.line_items::text AS line_items, m.business_name, f.logo_url, f.address, f.business_email, f.business_phone, f.layout
          FROM inv_invoices i JOIN merchants m ON m.id = i.merchant_id
          LEFT JOIN inv_formats f ON f.merchant_id = i.merchant_id
         WHERE i.access_token = $1`, req.params.token);
@@ -38,6 +38,7 @@ router.get('/invoice/:token', async (req, res, next) => {
       amount_paid: n(r.amount_paid), balance: n(r.total_amount) - n(r.amount_paid),
       currency: r.currency, status: r.status, allow_part_payment: r.allow_part_payment, due_at: r.due_at,
       recipient_name: r.recipient_name,
+      line_items: (function () { try { return r.line_items ? JSON.parse(r.line_items) : null; } catch (e) { return null; } })(),
       merchant: { name: r.business_name, logo_url: r.logo_url, address: r.address, email: r.business_email, phone: r.business_phone },
       layout: r.layout || 'classic',
     });
