@@ -149,6 +149,7 @@ app.use('/api/v1/support', require('./routes/support'));
 app.use('/api/v1/payment-links', require('./routes/paymentLinks'));
 app.use('/api/v1/invoicing', require('./modules/invoicing'));
 app.use('/api/v1/wallet', require('./modules/wallet'));
+app.use('/api/v1/assistant', require('./modules/assistant'));
 
 // ── 404 handler ───────────────────────────────────────────────────────────
 app.use((req, res) => {
