@@ -5446,6 +5446,7 @@ async function loadAggOnboard() {
 
   el.innerHTML =
     '<div class="page-header">' +
+      '<button class="btn btn-outline btn-sm" onclick="goBack()" style="font-size:12px;margin-bottom:10px">&#8592; Back</button>' +
       '<div class="page-title">Onboard New Merchant</div>' +
       '<div class="page-desc">Fill the form on behalf of the merchant, or send them a personal sign-up link</div>' +
     '</div>' +
@@ -5522,6 +5523,7 @@ async function loadAdminOnboard() {
 
   el.innerHTML =
     '<div class="page-header">' +
+      '<button class="btn btn-outline btn-sm" onclick="goBack()" style="font-size:12px;margin-bottom:10px">&#8592; Back</button>' +
       '<div class="page-title">Onboard New Merchant</div>' +
       '<div class="page-desc">Fill the form on behalf of the merchant, or send them a personal sign-up link</div>' +
     '</div>' +
