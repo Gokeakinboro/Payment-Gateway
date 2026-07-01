@@ -1,7 +1,7 @@
 {
-  "name": "Paylode Wallet",
-  "short_name": "Wallet",
-  "description": "Fund your wallet and pay across departments — powered by Paylode.",
+  "name": "Paymula",
+  "short_name": "Paymula",
+  "description": "Add money and pay across departments — powered by Paylode.",
   "id": "/wallet.html",
   "start_url": "/wallet.html?src=pwa",
   "scope": "/",
