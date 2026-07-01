@@ -88,6 +88,13 @@
   <button class="btn" id="li-btn" onclick="doLogin()">Sign In</button>
   <button class="link" onclick="show('s-forgot')">Forgot password?</button>
   <button class="link" onclick="show('s-register');loadClubs('')">New here? Create an account</button>
+  <div id="li-install" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+    <div style="font-size:13px;color:var(--gray);text-align:center">📲 Get the app on your phone</div>
+    <div style="margin-top:6px;display:flex;gap:14px;justify-content:center">
+      <button class="link" style="color:var(--brand);font-weight:700" onclick="doInstall()">Install app</button>
+      <button class="link" style="color:var(--gray)" onclick="dismissLoginInstall()">Not now</button>
+    </div>
+  </div>
 </div></div>
 
 <!-- FORCE CHANGE PASSWORD -->
@@ -166,7 +173,13 @@ function persistActive(){ try { localStorage.setItem('pm_active_member', ACTIVE_
 var _memTok = null;
 function tokSet(v){ _memTok = v; try{ localStorage.setItem(TK, v); }catch(e){} }
 function tokDel(){ _memTok = null; try{ localStorage.removeItem(TK); }catch(e){} }
-function show(id){document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('on')});document.getElementById(id).classList.add('on');if(id==='s-app'){try{initInstall();}catch(e){}}}
+function show(id){document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('on')});document.getElementById(id).classList.add('on');if(id==='s-app'){try{initInstall();}catch(e){}}if(id==='s-login'){try{initLoginInstall();}catch(e){}}}
+function initLoginInstall(){
+  var e=document.getElementById('li-install'); if(!e)return;
+  var dismissed=false; try{dismissed=localStorage.getItem('pm_login_install_dismiss')==='1';}catch(_){}
+  e.style.display=(!_standalone()&&!dismissed)?'block':'none';
+}
+function dismissLoginInstall(){ try{localStorage.setItem('pm_login_install_dismiss','1');}catch(_){} var e=document.getElementById('li-install'); if(e)e.style.display='none'; }
 
 // ── Public self-registration (pick a club → KYC form → verify+create) ──
 var RG_CLUB=null;
@@ -637,7 +650,7 @@ function fmtDate(d){try{return new Date(d).toLocaleString('en-NG',{day:'numeric'
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 
 // Boot: if a token exists, try to load the app.
-if(tok())loadApp();
+if(tok())loadApp();else{try{initLoginInstall();}catch(e){}}
 document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.getElementById('s-login').classList.contains('on'))doLogin();});
 
 // Installable PWA: register a SAFE service worker scoped to /wallet.html only. It
@@ -662,7 +675,14 @@ function showIosInstall(){var m=document.getElementById('ios-install');if(m)m.st
 function hideIosInstall(){var m=document.getElementById('ios-install');if(m)m.style.display='none';}
 function doInstall(){
   if(_deferredPrompt){_deferredPrompt.prompt();_deferredPrompt.userChoice.then(function(){_deferredPrompt=null;_hideInstallBar();}).catch(function(){});return;}
-  if(_isiOS()){ if(_isSafari()){showIosInstall();} else {alert('To install Paymula, open this page in Safari, then tap Share → Add to Home Screen.');} return; }
+  if(_isiOS()){
+    if(_isSafari()){ showIosInstall(); }
+    else {
+      var copied=false; try{navigator.clipboard.writeText(location.href);copied=true;}catch(e){}
+      alert('On iPhone, apps can only be added from Safari (an Apple restriction — Chrome and other browsers can\'t do it).'+(copied?'\n\nWe\'ve copied the link. Open Safari, paste it in the address bar, then tap Share → “Add to Home Screen”.':'\n\nOpen this page in Safari, then tap Share → “Add to Home Screen”.'));
+    }
+    return;
+  }
   alert('To install Paymula: open your browser menu and choose “Install app” / “Add to Home screen”.');
 }
 function initInstall(){
