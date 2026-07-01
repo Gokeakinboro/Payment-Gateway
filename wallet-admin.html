@@ -130,8 +130,16 @@ async function bulkMembers(){
 }
 async function loadMembers(){
   var r=await api('/wallet/members');var e=el('mb-list');
-  e.innerHTML=(r.ok&&r.data.length)?('<table><tr><th>Name</th><th>Email</th><th class="right">Balance</th><th>Status</th></tr>'+r.data.map(function(x){return '<tr><td>'+esc(x.name)+'</td><td>'+esc(x.email||'—')+'</td><td class="right">'+ngn(x.balance)+'</td><td>'+x.status+'</td></tr>';}).join('')+'</table>'):'<div class="muted">No members yet</div>';
+  e.innerHTML=(r.ok&&r.data.length)?('<table><tr><th>Name</th><th>Email</th><th class="right">Balance</th><th>Status</th><th>Actions</th></tr>'+r.data.map(function(x){
+    var a=(x.status==='active')
+      ? '<button class="btn btn-sm" onclick="mStatus(\''+x.id+'\',\'suspended\')">Suspend</button> <button class="btn btn-sm" onclick="mStatus(\''+x.id+'\',\'deactivated\')">Deactivate</button>'
+      : '<button class="btn btn-sm btn-lime" onclick="mStatus(\''+x.id+'\',\'active\')">Reactivate</button>';
+    a+=' <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="mDelete(\''+x.id+'\',\''+String(x.name||"").replace(/\x27/g,"")+'\')">Delete</button>';
+    return '<tr><td>'+esc(x.name)+'</td><td>'+esc(x.email||'—')+'</td><td class="right">'+ngn(x.balance)+'</td><td>'+esc(x.status)+'</td><td>'+a+'</td></tr>';
+  }).join('')+'</table>'):'<div class="muted">No members yet</div>';
 }
+async function mStatus(id,status){var r=await api('/wallet/members/'+id,{method:'PATCH',body:{status:status}});if(r.ok)loadMembers();else alert(r.message||'Update failed');}
+async function mDelete(id,name){if(!confirm('Delete '+(name||'this member')+'? They will be removed from your address book (their history is kept).'))return;var r=await api('/wallet/members/'+id,{method:'DELETE'});if(r.ok)loadMembers();else alert(r.message||'Could not delete');}
 async function loadApprovals(){
   var r=await api('/wallet/loads/requests?status=pending');var e=el('ap-list');
   e.innerHTML=(r.ok&&r.data.length)?('<table><tr><th>Member</th><th>Type</th><th class="right">Amount</th><th>Reason</th><th></th></tr>'+r.data.map(function(x){return '<tr><td>'+esc(x.member_name)+'</td><td>'+x.type+'</td><td class="right">'+ngn(x.amount)+'</td><td>'+esc(x.reason||'')+'</td><td class="right"><button class="btn btn-sm" onclick="approve(\''+x.id+'\')">Approve</button> <button class="btn btn-sm btn-out" onclick="reject(\''+x.id+'\')">Reject</button></td></tr>';}).join('')+'</table>'):'<div class="muted">No pending approvals</div>';
