@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#1a2744">
-<title>Wallet</title>
+<title>Paymula</title>
 <!-- PWA (single umbrella "Paylode Wallet"; merchant themes in-app after login) -->
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/favicon-32.png" sizes="32x32">
@@ -12,7 +12,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Wallet">
+<meta name="apple-mobile-web-app-title" content="Paymula">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   :root{--brand:#1a2744;--brand-d:#0f1829;--bg:#f4f6fb;--card:#fff;--gray:#64748b;--line:#cbd5e1;--green:#16a34a;--red:#dc2626}
@@ -109,7 +109,7 @@
 
 <!-- APP -->
 <div id="s-app" class="screen">
-  <div class="top"><img id="ap-logo" alt="" style="display:none"><div class="nm" id="ap-brand">Wallet</div><button class="out" onclick="openAccount()">My account</button></div>
+  <div class="top"><img id="ap-logo" alt="" style="display:none"><div class="nm" id="ap-brand">Paymula</div><button class="out" onclick="openAccount()">My account</button></div>
   <div class="wrap">
     <div class="bal">
       <div class="lbl">Available balance</div>
@@ -142,7 +142,7 @@ var ME = null, DEPTS = [];
 var _memTok = null;
 function tokSet(v){ _memTok = v; try{ localStorage.setItem(TK, v); }catch(e){} }
 function tokDel(){ _memTok = null; try{ localStorage.removeItem(TK); }catch(e){} }
-function show(id){document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('on')});document.getElementById(id).classList.add('on');}
+function show(id){document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('on')});document.getElementById(id).classList.add('on');if(id==='s-app'){try{initInstall();}catch(e){}}}
 function tog(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'Show':'Hide';}
 function ngn(k){return '₦'+(Number(k||0)/100).toLocaleString('en-NG',{minimumFractionDigits:2});}
 function tok(){ try{ return localStorage.getItem(TK) || _memTok; }catch(e){ return _memTok; } }
@@ -214,11 +214,11 @@ async function loadApp(){
   // branding
   var br=ME.branding||{};
   document.documentElement.style.setProperty('--brand',br.color||'#1a2744');
-  document.getElementById('ap-brand').textContent=br.name||'Wallet';
+  document.getElementById('ap-brand').textContent=br.name||'Paymula';
   document.getElementById('ap-logo').style.display=br.logo_url?'block':'none';
   if(br.logo_url)document.getElementById('ap-logo').src=br.logo_url;
   document.getElementById('ap-bal').textContent=ngn(ME.wallet.balance);
-  document.title=(br.name||'Wallet');
+  document.title=(br.name||'Paymula');
   show('s-app');
   // Security gate: first-time members create a PIN; thereafter the app is locked
   // on every open and must be unlocked with the PIN (or biometrics).
@@ -328,7 +328,7 @@ async function enableBiometric(){
   if(!pin)return;
   try{
     var cred=await navigator.credentials.create({publicKey:{
-      challenge:rand(32),rp:{name:'Paylode Wallet'},
+      challenge:rand(32),rp:{name:'Paymula'},
       user:{id:s2b((ME.member.id||'member')),name:ME.member.email||'member',displayName:ME.member.name||'Member'},
       pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
       authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required'},
@@ -351,7 +351,7 @@ function pushSupported(){return ('serviceWorker'in navigator)&&('PushManager'in 
 async function pushState(){try{if(!pushSupported())return 'unsupported';var reg=await navigator.serviceWorker.ready;var sub=await reg.pushManager.getSubscription();return sub?'on':'off';}catch(e){return 'off';}}
 async function enablePush(){
   try{
-    if(!pushSupported())return alert('Notifications are not supported here. On iPhone, install the wallet to your Home Screen first.');
+    if(!pushSupported())return alert('Notifications are not supported here. On iPhone, install the app to your Home Screen first.');
     var perm=await Notification.requestPermission();if(perm!=='granted')return alert('Notifications were not allowed.');
     var kr=await api('/wallet/me/push/key');if(!kr.ok||!kr.data.key)return alert('Notifications are not configured yet.');
     var reg=await navigator.serviceWorker.ready;
@@ -554,6 +554,46 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('/sw.js',{scope:'/wallet.html'}).catch(function(){});
 }
+
+// ── Install / download app prompt (platform-aware: Android native, iOS Add-to-Home-Screen) ──
+var _deferredPrompt=null;
+function _standalone(){return (window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone===true;}
+function _isiOS(){return /iphone|ipad|ipod/i.test(navigator.userAgent);}
+function _isSafari(){var ua=navigator.userAgent;return /safari/i.test(ua)&&!/crios|fxios|edgios|android/i.test(ua)&&!/chrome/i.test(ua);}
+function _instDismissed(){try{return localStorage.getItem('pm_install_dismiss')==='1';}catch(e){return false;}}
+window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();_deferredPrompt=e;var a=document.getElementById('s-app');if(a&&a.classList.contains('on'))_showInstallBar();});
+window.addEventListener('appinstalled',function(){_deferredPrompt=null;_hideInstallBar();try{localStorage.setItem('pm_installed','1');}catch(e){}});
+function _showInstallBar(){if(_standalone()||_instDismissed())return;var b=document.getElementById('installbar');if(b)b.style.display='flex';}
+function _hideInstallBar(){var b=document.getElementById('installbar');if(b)b.style.display='none';}
+function dismissInstall(){try{localStorage.setItem('pm_install_dismiss','1');}catch(e){}_hideInstallBar();}
+function showIosInstall(){var m=document.getElementById('ios-install');if(m)m.style.display='flex';}
+function hideIosInstall(){var m=document.getElementById('ios-install');if(m)m.style.display='none';}
+function doInstall(){
+  if(_deferredPrompt){_deferredPrompt.prompt();_deferredPrompt.userChoice.then(function(){_deferredPrompt=null;_hideInstallBar();}).catch(function(){});return;}
+  if(_isiOS()){ if(_isSafari()){showIosInstall();} else {alert('To install Paymula, open this page in Safari, then tap Share → Add to Home Screen.');} return; }
+  alert('To install Paymula: open your browser menu and choose “Install app” / “Add to Home screen”.');
+}
+function initInstall(){
+  if(_standalone()||_instDismissed()){_hideInstallBar();return;}
+  if(_deferredPrompt||_isiOS())_showInstallBar();
+}
 </script>
+
+<!-- Install / download app prompt (shown on the member page when installable) -->
+<div id="installbar" style="position:fixed;left:0;right:0;bottom:0;z-index:9998;display:none;align-items:center;gap:10px;background:#1a2744;color:#fff;padding:12px 14px;box-shadow:0 -6px 20px rgba(0,0,0,.25);font-family:inherit">
+  <div style="flex:1;font-size:13px;line-height:1.35">📲 Install Paymula for quick access &amp; payment alerts.</div>
+  <button onclick="doInstall()" style="background:#fff;color:#1a2744;border:none;border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;white-space:nowrap">Install</button>
+  <button onclick="dismissInstall()" aria-label="Dismiss" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1;padding:2px 6px">&times;</button>
+</div>
+<div id="ios-install" onclick="if(event.target===this)hideIosInstall()" style="position:fixed;inset:0;z-index:9999;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.5)">
+  <div style="background:#fff;color:#1e293b;width:100%;max-width:480px;border-radius:16px 16px 0 0;padding:20px;font-family:inherit">
+    <div style="font-size:16px;font-weight:700;color:#1a2744;margin-bottom:6px">Install Paymula</div>
+    <div style="font-size:13.5px;color:#475569;line-height:1.6;margin:8px 0">Add Paymula to your iPhone Home Screen in two taps:</div>
+    <div style="font-size:13.5px;color:#334155;margin:10px 0">1&nbsp; Tap the <b>Share</b> button (the ⬆︎ box) in Safari's toolbar.</div>
+    <div style="font-size:13.5px;color:#334155;margin:10px 0">2&nbsp; Choose <b>“Add to Home Screen”</b>, then tap <b>Add</b>.</div>
+    <div style="font-size:12px;color:#94a3b8;margin-top:8px">Works in Safari. Other iPhone browsers can't install apps.</div>
+    <button onclick="hideIosInstall()" style="width:100%;margin-top:14px;background:#1a2744;color:#fff;border:none;border-radius:10px;padding:12px;font-weight:700;cursor:pointer;font-family:inherit;font-size:14px">Got it</button>
+  </div>
+</div>
 </body>
 </html>
