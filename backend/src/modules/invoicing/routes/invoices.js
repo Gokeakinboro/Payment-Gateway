@@ -67,7 +67,18 @@ router.post('/', async (req, res, next) => {
     const mid = t.merchantId;
     const b = req.body || {};
 
-    const amount = parseInt(b.amount, 10);
+    // Multi line-item support: if items[] provided, invoice total = sum of item amounts.
+    let lineItems = null, amount;
+    if (Array.isArray(b.items) && b.items.length) {
+      const items = b.items
+        .map((it) => ({ description: String((it && it.description) || '').trim().slice(0, 200), amount: parseInt(it && it.amount, 10) }))
+        .filter((it) => it.description && Number.isInteger(it.amount) && it.amount > 0);
+      if (!items.length) return fail(res, 'Each line item needs a description and a positive amount (kobo)');
+      amount = items.reduce((s, it) => s + it.amount, 0);
+      lineItems = JSON.stringify(items);
+    } else {
+      amount = parseInt(b.amount, 10);
+    }
     if (!Number.isInteger(amount) || amount < 100) return fail(res, 'amount must be a whole number in kobo (≥ 100)');
     const currency = b.currency === 'USD' ? 'USD' : 'NGN';
     const description = b.description ? String(b.description).slice(0, 500) : null;
@@ -114,12 +125,12 @@ router.post('/', async (req, res, next) => {
         `INSERT INTO inv_invoices
           (invoice_number, merchant_id, department_id, contact_id, recipient_name, recipient_email, recipient_phone,
            description, amount, charge_vat, vat_amount, total_amount, currency, allow_part_payment,
-           status, scheduled_at, due_at, reminder_interval_days, reminder_count, access_token)
-         VALUES ($1,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+           status, scheduled_at, due_at, reminder_interval_days, reminder_count, access_token, line_items)
+         VALUES ($1,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb)
          RETURNING id::text`,
         number, mid, departmentId, r.contact_id || null, r.name || null, r.email || null, r.phone || null,
         description, BigInt(amount), chargeVat, vat, total, currency, allowPart,
-        isScheduled ? 'scheduled' : 'draft', scheduledAt, dueAt, remInterval, remCount, token);
+        isScheduled ? 'scheduled' : 'draft', scheduledAt, dueAt, remInterval, remCount, token, lineItems);
       const id = rows[0].id;
       createdInvoices.push({ id, invoice_number: number, recipient_email: r.email });
       if (!isScheduled) { try { await sendInvoice(id); } catch (e) { /* best-effort email */ } }
