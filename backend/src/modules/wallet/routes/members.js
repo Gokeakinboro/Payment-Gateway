@@ -61,7 +61,7 @@ router.get('/', async (req, res, next) => {
   try {
     const rows = await prisma.$queryRawUnsafe(
       `SELECT ${SELECT} FROM mw_members m LEFT JOIN mw_wallets w ON w.member_id = m.id
-         WHERE m.merchant_id = $1::uuid ORDER BY m.created_at DESC LIMIT 2000`, req.walletTenant.merchantId);
+         WHERE m.merchant_id = $1::uuid AND m.status <> 'deleted' ORDER BY m.created_at DESC LIMIT 2000`, req.walletTenant.merchantId);
     return ok(res, rows.map(shapeMember));
   } catch (e) { next(e); }
 });
@@ -118,7 +118,10 @@ router.patch('/:id', async (req, res, next) => {
     const mid = req.walletTenant.merchantId; const b = req.body || {};
     const sets = []; const vals = []; let i = 1;
     if (b.name !== undefined) { sets.push(`name = $${i++}`); vals.push(String(b.name).trim()); }
-    if (b.status !== undefined) { sets.push(`status = $${i++}`); vals.push(b.status === 'suspended' ? 'suspended' : 'active'); }
+    if (b.status !== undefined) {
+      const st = ['active', 'suspended', 'deactivated'].includes(b.status) ? b.status : 'active';
+      sets.push(`status = $${i++}`); vals.push(st);
+    }
     if (sets.length) {
       sets.push('updated_at = now()'); vals.push(req.params.id, mid);
       const r = await prisma.$queryRawUnsafe(
@@ -129,6 +132,26 @@ router.patch('/:id', async (req, res, next) => {
       await prisma.$executeRawUnsafe(`UPDATE mw_wallets SET low_balance_threshold = $1, updated_at = now() WHERE member_id = $2::uuid AND merchant_id = $3::uuid`,
         BigInt(parseInt(b.low_balance_threshold, 10) || 0), req.params.id, mid);
     return ok(res, { id: req.params.id }, 'Member updated');
+  } catch (e) { next(e); }
+});
+
+// Soft-delete a member (status='deleted') — removed from the address book but the
+// ledger/audit trail is preserved (hard delete would CASCADE-wipe mw_ledger).
+// Blocked while the member still holds a balance.
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const mid = req.walletTenant.merchantId;
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT w.balance::text AS balance FROM mw_members m JOIN mw_wallets w ON w.member_id = m.id
+         WHERE m.id = $1::uuid AND m.merchant_id = $2::uuid`, req.params.id, mid);
+    if (!rows.length) return notFound(res, 'Member');
+    if (BigInt(rows[0].balance || '0') > 0n)
+      return fail(res, 'This member still has a balance — zero it out before deleting.', 'HAS_BALANCE', 400);
+    const r = await prisma.$queryRawUnsafe(
+      `UPDATE mw_members SET status='deleted', updated_at=now() WHERE id=$1::uuid AND merchant_id=$2::uuid RETURNING id::text`,
+      req.params.id, mid);
+    if (!r.length) return notFound(res, 'Member');
+    return ok(res, { id: req.params.id }, 'Member deleted');
   } catch (e) { next(e); }
 });
 
