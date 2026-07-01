@@ -562,6 +562,7 @@ function openAccount(){
       '<div style="font-size:18px;font-weight:700;color:var(--brand)">'+esc(m.name||'Member')+'</div>'+
       '<div class="muted" style="text-align:left;padding:2px 0">'+esc(m.email||'')+(m.phone?(' · '+esc(m.phone)):'')+'</div>'+
     '</div>'+
+    (!_standalone()?'<button class="btn btn-2" style="width:100%;text-align:left;margin-bottom:10px" onclick="closeM();doInstall()">📲 Install app on your phone</button>':'')+
     '<button class="btn btn-2" id="ac-cp-toggle" style="width:100%;text-align:left" onclick="toggleChangePw()">Change password ›</button>'+
     '<div id="ac-cp" style="display:none;margin-top:10px">'+
       '<input id="ac-cur" type="password" autocomplete="off" autocapitalize="none" autocorrect="off" placeholder="Current password">'+
