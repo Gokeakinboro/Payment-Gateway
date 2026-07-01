@@ -87,6 +87,7 @@
   <div class="err" id="li-err"></div>
   <button class="btn" id="li-btn" onclick="doLogin()">Sign In</button>
   <button class="link" onclick="show('s-forgot')">Forgot password?</button>
+  <button class="link" onclick="show('s-register');loadClubs('')">New here? Create an account</button>
 </div></div>
 
 <!-- FORCE CHANGE PASSWORD -->
@@ -104,6 +105,27 @@
   <label>Email</label><input id="fo-em" type="email" autocomplete="email" placeholder="you@example.com">
   <div class="err" id="fo-err"></div><div class="ok" id="fo-ok"></div>
   <button class="btn" id="fo-btn" onclick="doForgot()">Send temporary password</button>
+  <button class="link" onclick="show('s-login')">← Back to sign in</button>
+</div></div>
+
+<!-- REGISTER (public self-sign-up: pick a club → KYC form) -->
+<div id="s-register" class="screen auth"><div class="box">
+  <h1>Create your account</h1><div class="sub">Join a club on Paymula</div>
+  <label>Find your club</label>
+  <input id="rg-club-q" placeholder="Search clubs by name…" autocapitalize="none" oninput="loadClubs(this.value)">
+  <div id="rg-clubs" style="max-height:160px;overflow:auto;margin:8px 0"></div>
+  <div id="rg-form" style="display:none">
+    <div id="rg-chosen" style="font-size:13px;font-weight:700;color:var(--brand);margin:6px 0 4px"></div>
+    <label>Full name</label><input id="rg-name">
+    <label>Email</label><input id="rg-email" type="email" autocapitalize="none" autocorrect="off" spellcheck="false">
+    <label>Phone</label><input id="rg-phone" type="tel" inputmode="tel">
+    <label>NIN</label><input id="rg-nin" inputmode="numeric" maxlength="11" placeholder="11-digit NIN">
+    <label>BVN</label><input id="rg-bvn" inputmode="numeric" maxlength="11" placeholder="11-digit BVN">
+    <label>Residential address</label><input id="rg-address">
+    <label>Password</label><input id="rg-pw" type="password" placeholder="At least 8 characters">
+    <div class="err" id="rg-err"></div><div class="ok" id="rg-ok"></div>
+    <button class="btn" id="rg-btn" onclick="doRegister()">Verify &amp; create account</button>
+  </div>
   <button class="link" onclick="show('s-login')">← Back to sign in</button>
 </div></div>
 
@@ -143,6 +165,45 @@ var _memTok = null;
 function tokSet(v){ _memTok = v; try{ localStorage.setItem(TK, v); }catch(e){} }
 function tokDel(){ _memTok = null; try{ localStorage.removeItem(TK); }catch(e){} }
 function show(id){document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('on')});document.getElementById(id).classList.add('on');if(id==='s-app'){try{initInstall();}catch(e){}}}
+
+// ── Public self-registration (pick a club → KYC form → verify+create) ──
+var RG_CLUB=null;
+function rgv(id){return (document.getElementById(id).value||'').trim();}
+async function loadClubs(q){
+  var box=document.getElementById('rg-clubs'); if(!box) return;
+  try{
+    var r=await fetch(API+'/wallet/public/clubs'+(q?('?q='+encodeURIComponent(q)):''));
+    var d=await r.json(); var list=(d&&d.data)||[];
+    if(!list.length){ box.innerHTML='<div class="muted" style="padding:6px 0;font-size:13px">No clubs found — try another name.</div>'; return; }
+    box.innerHTML=list.map(function(c){
+      return '<div onclick="pickClub(\''+c.id+'\',\''+String(c.name||'').replace(/\x27/g,'')+'\')" style="padding:9px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">'+
+        esc(c.name)+(c.state?(' <span style="color:var(--gray)">· '+esc(c.state)+'</span>'):'')+'</div>';
+    }).join('');
+  }catch(e){ box.innerHTML='<div class="muted" style="font-size:13px">Could not load clubs.</div>'; }
+}
+function pickClub(id,name){
+  RG_CLUB=id;
+  document.getElementById('rg-chosen').textContent='Joining: '+name;
+  document.getElementById('rg-club-q').style.display='none';
+  document.getElementById('rg-clubs').style.display='none';
+  document.getElementById('rg-form').style.display='block';
+}
+async function doRegister(){
+  var err=document.getElementById('rg-err'), okd=document.getElementById('rg-ok');
+  err.style.display='none'; okd.style.display='none';
+  if(!RG_CLUB){ err.textContent='Please choose a club first.'; err.style.display='block'; return; }
+  var body={merchant_id:RG_CLUB,name:rgv('rg-name'),email:rgv('rg-email'),phone:rgv('rg-phone'),
+            nin:rgv('rg-nin'),bvn:rgv('rg-bvn'),address:rgv('rg-address'),password:rgv('rg-pw')};
+  var btn=document.getElementById('rg-btn'); btn.disabled=true; btn.textContent='Verifying…';
+  try{
+    var r=await fetch(API+'/wallet/public/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d=await r.json();
+    if(d&&d.status){ okd.textContent='Account created! Signing you in…'; okd.style.display='block';
+      setTimeout(function(){document.getElementById('li-em').value=body.email;show('s-login');},1600); }
+    else { err.textContent=(d&&d.message)||'Could not create your account.'; err.style.display='block'; }
+  }catch(e){ err.textContent='Cannot connect. Please try again.'; err.style.display='block'; }
+  btn.disabled=false; btn.textContent='Verify & create account';
+}
 function tog(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'Show':'Hide';}
 function ngn(k){return '₦'+(Number(k||0)/100).toLocaleString('en-NG',{minimumFractionDigits:2});}
 function tok(){ try{ return localStorage.getItem(TK) || _memTok; }catch(e){ return _memTok; } }
