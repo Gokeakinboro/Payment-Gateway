@@ -6,6 +6,7 @@
  */
 const router = require('express').Router();
 
+router.use('/public',   require('./routes/public'));   // UNAUTH: opted-in club directory (self-registration)
 router.use('/admin',    require('./routes/admin'));    // SA: approve/reject enablement
 router.use('/config',   require('./routes/config'));
 router.use('/members',  require('./routes/members'));
