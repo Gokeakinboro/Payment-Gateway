@@ -131,7 +131,7 @@
 
 <!-- APP -->
 <div id="s-app" class="screen">
-  <div class="top"><img id="ap-logo" alt="" style="display:none"><div class="nm" id="ap-brand">Paymula</div><button class="out" onclick="openAccount()">My account</button></div>
+  <div class="top"><img id="ap-logo" alt="" style="display:none"><div class="nm" id="ap-brand">Paymula</div><select id="club-switch" onchange="switchClub(this.value)" title="Switch club" style="display:none;margin-left:8px;max-width:140px;font-size:12px;border-radius:6px;padding:4px 6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.14);color:#fff"></select><button class="out" onclick="openAccount()">My account</button></div>
   <div class="wrap">
     <div class="bal">
       <div class="lbl">Available balance</div>
@@ -159,6 +159,8 @@ window.addEventListener('unhandledrejection',function(ev){window.onerror('async:
 var API = '/api/v1';
 var TK = 'wallet_token';
 var ME = null, DEPTS = [];
+var ACTIVE_MEMBER = null; try { ACTIVE_MEMBER = localStorage.getItem('pm_active_member') || null; } catch(e){}
+function persistActive(){ try { localStorage.setItem('pm_active_member', ACTIVE_MEMBER || ''); } catch(e){} }
 // Resilient token store: some browsers (Brave shields / strict privacy) throw on
 // localStorage, which would silently abort sign-in. Fall back to an in-memory token.
 var _memTok = null;
@@ -214,6 +216,7 @@ async function api(path,opts){
   opts=opts||{};
   var h={'Content-Type':'application/json'};
   if(opts.auth!==false&&tok())h['Authorization']='Bearer '+tok();
+  if(!opts.noMember&&ACTIVE_MEMBER)h['X-Member-Id']=ACTIVE_MEMBER;
   var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
   var timer=ctrl?setTimeout(function(){try{ctrl.abort();}catch(e){}},18000):null;
   try{
@@ -267,7 +270,34 @@ async function doForgot(){
 function logout(){tokDel();ME=null;show('s-login');}
 
 // ── App ──
+async function loadMemberships(){
+  var mem=await api('/wallet/me/memberships',{noMember:true});
+  var list=(mem.ok&&mem.data)||[];
+  var sel=document.getElementById('club-switch');
+  if(list.length>1){
+    if(!ACTIVE_MEMBER||!list.some(function(x){return x.member_id===ACTIVE_MEMBER;})){
+      var act=list.find(function(x){return x.active;})||list[0];ACTIVE_MEMBER=act.member_id;persistActive();
+    }
+    sel.innerHTML=list.map(function(x){return '<option value="'+x.member_id+'"'+(x.member_id===ACTIVE_MEMBER?' selected':'')+'>'+esc(x.club_name||'Club')+'</option>';}).join('');
+    sel.style.display='inline-block';
+  }else{
+    if(list.length===1){ACTIVE_MEMBER=list[0].member_id;persistActive();}
+    if(sel)sel.style.display='none';
+  }
+}
+function switchClub(id){ if(!id||id===ACTIVE_MEMBER)return; ACTIVE_MEMBER=id; persistActive(); refreshActive(); }
+async function refreshActive(){
+  var r=await api('/wallet/me'); if(!r.ok)return; ME=r.data;
+  var br=ME.branding||{};
+  document.documentElement.style.setProperty('--brand',br.color||'#1a2744');
+  document.getElementById('ap-brand').textContent=br.name||'Paymula';
+  var lg=document.getElementById('ap-logo'); lg.style.display=br.logo_url?'block':'none'; if(br.logo_url)lg.src=br.logo_url;
+  document.getElementById('ap-bal').textContent=ngn(ME.wallet.balance);
+  document.title=(br.name||'Paymula');
+  loadTx();loadInv();loadDepts();
+}
 async function loadApp(){
+  await loadMemberships();
   var r=await api('/wallet/me');
   if(r.status===403){err('li-err','This account is not a Paymula member.');show('s-login');tokDel();return;}
   if(!r.ok){show('s-login');return;}
