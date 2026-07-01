@@ -78,12 +78,15 @@ function render(){ ({invoices:tInvoices,qr:tQr,contacts:tContacts,lists:tLists,f
 async function tInvoices(){
   el('main').innerHTML = `
    <div class="card"><h2>Create invoice</h2>
-     <div class="grid3">
-       <div><label>Amount (₦)</label><input id="i_amt" type="number" min="1"></div>
+     <div class="grid2">
        <div><label>Currency</label><select id="i_cur"><option>NGN</option><option>USD</option></select></div>
        <div><label>Department (optional)</label><select id="i_dept"><option value="">—</option></select></div>
      </div>
-     <label>Description</label><input id="i_desc" placeholder="What is this invoice for?">
+     <label>Line items</label>
+     <div id="i_items"></div>
+     <button type="button" class="btn sec" onclick="addItem()" style="margin-top:6px">+ Add item</button>
+     <div class="right" style="margin-top:8px;font-weight:700">Total: <span id="i_total">₦0.00</span></div>
+     <label>Description / note (optional)</label><input id="i_desc" placeholder="Shown on the invoice">
      <div class="grid3">
        <div><label>Recipient email</label><input id="i_email" type="email" placeholder="single recipient"></div>
        <div><label>Recipient name</label><input id="i_name"></div>
@@ -105,6 +108,7 @@ async function tInvoices(){
    <div class="card"><h2>Invoices</h2><div id="i_list" class="muted">Loading…</div></div>`;
   // departments dropdown
   const d = await api('/departments'); if (d.status) el('i_dept').innerHTML = '<option value="">—</option>' + d.data.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
+  addItem();
   loadInvoices();
 }
 async function loadInvoices(){
@@ -116,9 +120,22 @@ async function loadInvoices(){
       <td class="right"><button class="mini" onclick="resend('${i.id}')">Resend</button>${i.status!=='paid'?`<button class="mini" onclick="cancelInv('${i.id}')">Cancel</button>`:''}</td></tr>`).join('') + `</table>`;
 }
 function badge(s,over){ const m={paid:'b-paid',sent:'b-sent',viewed:'b-sent',draft:'b-draft',part_paid:'b-part',cancelled:'b-cancel'}; const cls=over&&s!=='paid'?'b-over':(m[s]||'b-draft'); return `<span class="badge ${cls}">${over&&s!=='paid'?'overdue':s}</span>`; }
+function addItem(desc, amt){
+  const div = document.createElement('div');
+  div.className = 'i-row'; div.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+  div.innerHTML = '<input class="i-desc" placeholder="Item description" style="flex:2" value="'+(desc?esc(desc):'')+'">'+
+    '<input class="i-amt" type="number" min="1" step="0.01" placeholder="Amount ₦" style="flex:1" oninput="calcTotal()" value="'+(amt||'')+'">'+
+    '<button type="button" class="mini" title="Remove" onclick="this.closest(\'.i-row\').remove();calcTotal()">✕</button>';
+  el('i_items').appendChild(div);
+}
+function calcTotal(){ let t=0; document.querySelectorAll('#i_items .i-amt').forEach(function(i){ const v=parseFloat(i.value); if(v>0) t+=v; }); el('i_total').textContent = ngn(Math.round(t*100)); }
 async function createInvoice(){
-  const amt = parseFloat(el('i_amt').value); if(!amt||amt<1) return setMsg('i_msg','Enter an amount.','err');
-  const body = { amount: Math.round(amt*100), currency: el('i_cur').value, description: el('i_desc').value,
+  const items=[]; document.querySelectorAll('#i_items .i-row').forEach(function(row){
+    const desc=row.querySelector('.i-desc').value.trim(); const a=parseFloat(row.querySelector('.i-amt').value);
+    if(desc && a>0) items.push({ description:desc, amount:Math.round(a*100) });
+  });
+  if(!items.length) return setMsg('i_msg','Add at least one line item with a description and amount.','err');
+  const body = { items, currency: el('i_cur').value, description: el('i_desc').value,
     charge_vat: el('i_vat').checked, allow_part_payment: el('i_part').checked,
     department_id: el('i_dept').value || undefined,
     scheduled_at: el('i_sched').value || undefined, due_at: el('i_due').value || undefined,
@@ -126,7 +143,7 @@ async function createInvoice(){
     recipients: el('i_target').value==='all' ? { all_contacts:true } : { email: el('i_email').value, name: el('i_name').value, phone: el('i_phone').value } };
   const r = await api('/invoices', { method:'POST', body: JSON.stringify(body) });
   setMsg('i_msg', r.message, r.status?'ok':'err');
-  if (r.status){ el('i_amt').value=el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=''; loadInvoices(); }
+  if (r.status){ el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=''; el('i_items').innerHTML=''; addItem(); calcTotal(); loadInvoices(); }
 }
 async function resend(id){ const r=await api(`/invoices/${id}/send`,{method:'POST'}); setMsg('i_msg',r.message,r.status?'ok':'err'); }
 async function cancelInv(id){ if(!confirm('Cancel this invoice?'))return; const r=await api(`/invoices/${id}/cancel`,{method:'POST'}); if(r.status) loadInvoices(); }
