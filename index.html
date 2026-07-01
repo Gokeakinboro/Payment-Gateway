@@ -388,42 +388,13 @@ a{color:inherit}
   <div class="modal">
     <button class="modal-close" onclick="closeLogin()" aria-label="Close">&times;</button>
 
-    <!-- Step 1: choose account type -->
-    <div id="m-role">
-      <h3>Log in to Paylode</h3>
-      <div class="sub">Select your account type to continue.</div>
-      <div class="role-list">
-        <button class="role-opt" onclick="pickRole('merchant')">
-          <div class="ic" style="background:#d1fae5">🏪</div>
-          <div><div class="nm">Merchant</div><div class="ds">Transactions, payouts &amp; API keys</div></div>
-          <div class="arr">→</div>
-        </button>
-        <button class="role-opt" onclick="pickRole('aggregator')">
-          <div class="ic" style="background:#dbeafe">🔗</div>
-          <div><div class="nm">Aggregator</div><div class="ds">Manage your merchant portfolio</div></div>
-          <div class="arr">→</div>
-        </button>
-        <button class="role-opt" onclick="pickRole('compliance')">
-          <div class="ic" style="background:#fef3c7">⚖</div>
-          <div><div class="nm">Compliance Officer</div><div class="ds">KYC review &amp; AML monitoring</div></div>
-          <div class="arr">→</div>
-        </button>
-        <button class="role-opt" onclick="pickRole('superadmin')">
-          <div class="ic" style="background:#e8edf5">🏛</div>
-          <div><div class="nm">Super Admin</div><div class="ds">Full platform access</div></div>
-          <div class="arr">→</div>
-        </button>
-      </div>
-    </div>
-
-    <!-- Step 2: credentials -->
-    <div id="m-login" style="display:none">
-      <button class="back-mini" onclick="backToRole()">← Change account type</button>
+    <!-- Credentials -->
+    <div id="m-login">
       <div class="role-header">
-        <div class="role-icon" id="m-role-icon">🏪</div>
+        <div class="role-icon" style="background:#7dc534;color:#1a2744;font-weight:700;font-size:20px">P</div>
         <div>
-          <div class="role-name" id="m-role-name">Merchant</div>
-          <div class="role-desc" id="m-role-desc">Transactions &amp; API keys</div>
+          <div class="role-name">Log in to Paylode</div>
+          <div class="role-desc">Enter your credentials to continue</div>
         </div>
       </div>
       <div class="err" id="m-err"></div>
@@ -478,13 +449,9 @@ a{color:inherit}
 </div>
 
 <script>
-var M_ROLES = {
-  merchant:   {icon:'🏪', name:'Merchant',          desc:'Transactions & API keys', bg:'#d1fae5'},
-  aggregator: {icon:'🔗', name:'Aggregator',        desc:'Portfolio management',    bg:'#dbeafe'},
-  compliance: {icon:'⚖',  name:'Compliance Officer', desc:'KYC & AML monitoring',    bg:'#fef3c7'},
-  superadmin: {icon:'🏛', name:'Super Admin',        desc:'Full platform access',    bg:'#e8edf5'}
-};
-var M_STEPS = ['m-role','m-login','m-2fa','m-forgot'];
+// Single login — the backend resolves the user's role from their credentials
+// and the dashboard renders the matching view. No role selection on the way in.
+var M_STEPS = ['m-login','m-2fa','m-forgot'];
 var m_temp = null;
 
 function toggleSignup(e){ e.stopPropagation(); document.getElementById('signupMenu').classList.toggle('open'); }
@@ -498,23 +465,11 @@ function openLogin(){
     var t = sessionStorage.getItem('paylode_token');
     if (t) { var p = JSON.parse(atob(t.split('.')[1])); if (!p.exp || p.exp*1000 > Date.now()) { window.location.href='/dashboard.html'; return; } }
   } catch(e){}
-  mShow('m-role');
-  document.getElementById('loginModal').classList.add('open');
-}
-function closeLogin(){ document.getElementById('loginModal').classList.remove('open'); }
-function backToRole(){ mShow('m-role'); }
-
-function pickRole(role){
-  sessionStorage.setItem('paylode_selected_role', role);
-  var r = M_ROLES[role] || M_ROLES.merchant;
-  document.getElementById('m-role-icon').textContent = r.icon;
-  document.getElementById('m-role-icon').style.background = r.bg;
-  document.getElementById('m-role-name').textContent = r.name;
-  document.getElementById('m-role-desc').textContent = r.desc;
-  document.getElementById('m-err').style.display='none';
   mShow('m-login');
+  document.getElementById('loginModal').classList.add('open');
   setTimeout(function(){ var e=document.getElementById('m-em'); if(e) e.focus(); }, 80);
 }
+function closeLogin(){ document.getElementById('loginModal').classList.remove('open'); }
 
 async function mLogin(){
   var email = document.getElementById('m-em').value.trim();
