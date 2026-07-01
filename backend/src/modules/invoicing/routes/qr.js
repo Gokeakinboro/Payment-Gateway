@@ -52,7 +52,7 @@ router.post('/', async (req, res, next) => {
     const token = randToken(18);
     const rows = await prisma.$queryRawUnsafe(
       `INSERT INTO inv_qr_codes (merchant_id, department_id, qr_reference, access_token, label, type, amount, charge_vat)
-       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8) RETURNING ${COLS}`,
+       VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8) RETURNING ${COLS}`,
       mid, departmentId, reference, token, b.label ? String(b.label).slice(0, 80) : null, type,
       amount === null ? null : BigInt(amount), !!b.charge_vat);
     return created(res, shape(rows[0]), 'QR code created');
