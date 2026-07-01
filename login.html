@@ -35,16 +35,16 @@ input:focus{border-color:#1a2744;box-shadow:0 0 0 3px rgba(26,39,68,.08)}
 </head>
 <body>
 <div class="wrap">
-  <a class="back" href="/index.html?switch=1">← Back to portal selection</a>
+  <a class="back" href="/index.html">← Back to home</a>
 
   <!-- Step 1: Password login -->
   <div id="login-step">
   <div class="card">
-    <div class="role-header" id="role-header">
-      <div class="role-icon" id="role-icon">🏛</div>
+    <div class="role-header">
+      <div class="role-icon" style="background:#7dc534;color:#1a2744;font-weight:700">P</div>
       <div>
-        <div class="role-name" id="role-name">Super Admin</div>
-        <div class="role-desc" id="role-desc">Full platform access</div>
+        <div class="role-name">Log in to Paylode</div>
+        <div class="role-desc">Enter your credentials to continue</div>
       </div>
     </div>
     <div class="err" id="err"></div>
@@ -111,21 +111,8 @@ input:focus{border-color:#1a2744;box-shadow:0 0 0 3px rgba(26,39,68,.08)}
 </div>
 
 <script>
-const ROLES = {
-  superadmin:  { icon:'🏛', name:'Super Admin',        desc:'Full platform access',           bg:'#e8edf5' },
-  compliance:  { icon:'⚖',  name:'Compliance Officer', desc:'KYC & AML monitoring',            bg:'#fef3c7' },
-  aggregator:  { icon:'🔗', name:'Aggregator',          desc:'Portfolio management',            bg:'#dbeafe' },
-  merchant:    { icon:'🏪', name:'Merchant',             desc:'Transactions & API keys',        bg:'#d1fae5' },
-};
-
-// Set role display from stored selection
-const role = sessionStorage.getItem('paylode_selected_role') || 'superadmin';
-const r    = ROLES[role] || ROLES.superadmin;
-document.getElementById('role-icon').textContent    = r.icon;
-document.getElementById('role-icon').style.background = r.bg;
-document.getElementById('role-name').textContent    = r.name;
-document.getElementById('role-desc').textContent    = r.desc;
-
+// Single login — the user's role is resolved from their credentials by the
+// backend and the dashboard renders the matching view. No role selection here.
 var _2faTempToken = null;
 
 async function doLogin() {
