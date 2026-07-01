@@ -14,6 +14,27 @@ const { payInvoiceFromWallet } = require('../services/walletInvoice');
 const CHECKOUT_BASE = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '');
 router.use(memberAuth);
 const num = (v) => (v == null ? null : Number(v));
+
+// All clubs this login belongs to (for the in-app club switcher). The active one
+// (per X-Member-Id / default) is flagged. Client sends X-Member-Id to switch.
+router.get('/memberships', async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT m.id::text AS member_id, m.status, w.balance::text AS balance, w.currency,
+              COALESCE(NULLIF(c.brand_name, ''), mer.business_name) AS club_name, c.brand_color
+         FROM mw_members m
+         JOIN mw_wallets w ON w.member_id = m.id
+         JOIN merchants mer ON mer.id = m.merchant_id
+         LEFT JOIN mw_config c ON c.merchant_id = m.merchant_id
+        WHERE m.user_id = $1::uuid AND m.status <> 'deleted'
+        ORDER BY club_name`, req.user.id);
+    return ok(res, rows.map((r) => ({
+      member_id: r.member_id, club_name: r.club_name, balance: num(r.balance),
+      currency: r.currency || 'NGN', status: r.status, brand_color: r.brand_color || null,
+      active: r.member_id === req.walletMember.member_id,
+    })));
+  } catch (e) { next(e); }
+});
 function handle(res, e, next) { if (e && e.name === 'WalletError') return fail(res, e.message, e.code, e.status); next(e); }
 
 // ── Transaction PIN (app-unlock + per-payment authorization) ──────────────────
