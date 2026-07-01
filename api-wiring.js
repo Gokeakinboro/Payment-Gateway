@@ -2415,8 +2415,40 @@ async function rotateApiKey(id, prefix, label) {
 // ════════════════════════════════════════════════════════════════════════════
 //  MERCHANT — PAYMENT LINKS (shareable, no-code checkout links)
 // ════════════════════════════════════════════════════════════════════════════
+var _plTab = 'links';
 async function loadMerchPaymentLinks() {
   var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML =
+    '<div class="page-header flex-between"><div><div class="page-title">Payment Links & QR Code</div>' +
+      '<div class="page-desc">Shareable checkout links and scan-to-pay QR codes — no code required.</div></div>' +
+      '<div id="pl-action"></div>' +
+    '</div>' +
+    '<div class="flex" style="gap:6px;margin-bottom:16px">' +
+      '<button id="pl-tab-links" class="btn btn-sm btn-lime" onclick="plSwitchTab(\'links\')">Payment Links</button>' +
+      '<button id="pl-tab-qr" class="btn btn-sm btn-outline" onclick="plSwitchTab(\'qr\')">QR Codes</button>' +
+    '</div>' +
+    '<div id="pl-tab-body">' + loading() + '</div>';
+  plSwitchTab(_plTab);
+}
+
+function plSwitchTab(tab) {
+  _plTab = tab;
+  var lb = document.getElementById('pl-tab-links'), qb = document.getElementById('pl-tab-qr');
+  if (lb) lb.className = 'btn btn-sm ' + (tab === 'links' ? 'btn-lime' : 'btn-outline');
+  if (qb) qb.className = 'btn btn-sm ' + (tab === 'qr' ? 'btn-lime' : 'btn-outline');
+  var act = document.getElementById('pl-action');
+  if (tab === 'qr') {
+    if (act) act.innerHTML = '<button class="btn btn-lime" onclick="plQrShowCreate()">+ New QR Code</button>';
+    plRenderQrTab();
+  } else {
+    if (act) act.innerHTML = '<button class="btn btn-lime" onclick="showCreatePaymentLinkModal()">+ New Payment Link</button>';
+    plRenderLinksTab();
+  }
+}
+
+async function plRenderLinksTab() {
+  var el = document.getElementById('pl-tab-body');
   if (!el) return;
   el.innerHTML = loading();
   try {
@@ -2454,11 +2486,7 @@ async function loadMerchPaymentLinks() {
       '</tr>';
     }).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:30px">No payment links yet. Create one to start collecting payments with a shareable link.</td></tr>';
 
-    el.innerHTML =
-      '<div class="page-header flex-between"><div><div class="page-title">Payment Links</div>' +
-        '<div class="page-desc">Create a shareable link that opens a Paylode checkout — no code required.</div></div>' +
-        '<button class="btn btn-lime" onclick="showCreatePaymentLinkModal()">+ New Payment Link</button>' +
-      '</div>' + note +
+    el.innerHTML = note +
       '<div class="card"><div class="table-wrap"><table>' +
       '<thead><tr><th>Title</th><th>Amount</th><th>Status</th><th>Paid</th><th>Link</th><th>Actions</th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table></div></div>';
@@ -2624,6 +2652,202 @@ async function plDelete(id) {
   if (!confirm('Delete this payment link? This cannot be undone.')) return;
   var res = await apiFetch('/payment-links/' + id, { method: 'DELETE' });
   if (res && res.status) loadMerchPaymentLinks(); else alert('Error: ' + ((res && res.message) || 'Delete failed'));
+}
+
+// ── QR CODES tab — scan-to-pay codes (shares the Invoice & Collect /invoicing/qr API) ──
+var _plQrList = [];
+var _plQrCurrent = null;
+var _plContacts = null;
+
+async function plRenderQrTab() {
+  var el = document.getElementById('pl-tab-body');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/invoicing/qr');
+    if (!res || res.status === false) { el.innerHTML = errorBox((res && res.message) || 'Could not load QR codes'); return; }
+    _plQrList = res.data || [];
+    var rows = _plQrList.length ? _plQrList.map(function(q) {
+      var amt = (q.amount === null || q.amount === undefined) ? '<span style="color:var(--gray-400)">Customer enters</span>' : fmtMoney(q.amount, 'NGN');
+      var st  = q.is_active ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Disabled</span>';
+      return '<tr>' +
+        '<td><div style="font-weight:600">' + _escA(q.label || q.reference) + '</div>' +
+          '<div style="font-size:11px;color:var(--gray-400)">' + _escA(q.reference) + '</div></td>' +
+        '<td>' + (q.type === 'open' ? 'Open' : 'Fixed') + '</td>' +
+        '<td>' + amt + '</td>' +
+        '<td>' + st + '</td>' +
+        '<td><div class="flex" style="gap:6px;flex-wrap:wrap">' +
+          '<button class="btn btn-lime btn-sm" onclick="plQrView(\'' + q.id + '\')">View / Share</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="plQrToggle(\'' + q.id + '\',' + (q.is_active ? 'false' : 'true') + ')">' + (q.is_active ? 'Disable' : 'Enable') + '</button>' +
+          '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="plQrDelete(\'' + q.id + '\')">Delete</button>' +
+        '</div></td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:30px">No QR codes yet. Create one so customers can scan and pay.</td></tr>';
+    el.innerHTML =
+      '<div class="card"><div class="table-wrap"><table>' +
+      '<thead><tr><th>Label</th><th>Type</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div></div>';
+  } catch (e) {
+    el.innerHTML = errorBox('Failed to load QR codes: ' + e.message);
+  }
+}
+
+function plQrShowCreate() {
+  showModal(
+    '<div class="modal-header"><div class="modal-title">New QR Code</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="padding:4px 2px">' +
+      '<div class="form-group"><label class="form-label">Type</label>' +
+        '<select class="form-input form-select" id="qr-f-type" onchange="document.getElementById(\'qr-f-amtwrap\').style.display=this.value===\'fixed\'?\'block\':\'none\'">' +
+          '<option value="fixed">Fixed amount</option><option value="open">Open amount (customer enters)</option></select></div>' +
+      '<div class="form-group" id="qr-f-amtwrap"><label class="form-label">Amount (₦)</label>' +
+        '<input class="form-input" id="qr-f-amount" type="number" min="1" step="0.01" placeholder="e.g. 5000"></div>' +
+      '<div class="form-group"><label class="form-label">Label (optional)</label>' +
+        '<input class="form-input" id="qr-f-label" placeholder="e.g. Bar, Front Desk, Event Gate"></div>' +
+      '<div class="form-group"><label style="font-size:13px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="qr-f-vat"> Charge 7.5% VAT — added on top of the amount.</label></div>' +
+      '<div id="qr-f-msg" style="display:none;font-size:12px;color:var(--red);margin-bottom:8px"></div>' +
+      '<div class="flex-between">' +
+        '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+        '<button class="btn btn-lime" id="qr-f-btn" onclick="plQrCreate()">Generate QR</button>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+async function plQrCreate() {
+  var type = document.getElementById('qr-f-type').value;
+  var msg  = document.getElementById('qr-f-msg');
+  function err(t){ if(msg){ msg.textContent=t; msg.style.display='block'; } }
+  var body = { type: type, label: document.getElementById('qr-f-label').value, charge_vat: document.getElementById('qr-f-vat').checked };
+  if (type === 'fixed') {
+    var a = parseFloat(document.getElementById('qr-f-amount').value);
+    if (!a || a < 1) return err('Enter a valid amount.');
+    body.amount = Math.round(a * 100);
+  }
+  var btn = document.getElementById('qr-f-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  var res = await apiFetch('/invoicing/qr', { method: 'POST', body: JSON.stringify(body) });
+  if (!res || res.status === false) { if (btn) { btn.disabled = false; btn.textContent = 'Generate QR'; } return err((res && res.message) || 'Could not create the QR code.'); }
+  document.getElementById('modal').style.display = 'none';
+  await plRenderQrTab();
+  plQrShowModal(res.data);
+}
+
+function plQrView(id) {
+  var q = _plQrList.filter(function(x){ return x.id === id; })[0];
+  if (q) plQrShowModal(q);
+}
+
+function plQrShowModal(q) {
+  _plQrCurrent = q;
+  var amtLabel = (q.amount === null || q.amount === undefined) ? 'Customer enters amount' : fmtMoney(q.amount, 'NGN');
+  showModal(
+    '<div class="modal-header"><div class="modal-title">' + _escA(q.label || q.reference) + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div style="padding:4px 2px">' +
+      '<div style="text-align:center;margin-bottom:8px">' +
+        '<div style="font-size:12px;color:var(--gray-500);margin-bottom:8px">' + amtLabel + ' · ' + (q.type === 'open' ? 'Open' : 'Fixed') + '</div>' +
+        '<div id="qr-img-box" style="min-height:200px;display:flex;align-items:center;justify-content:center">' + loading() + '</div>' +
+      '</div>' +
+      '<div class="mono" id="qr-payurl" style="background:#f7f7f7;padding:10px;border-radius:8px;word-break:break-all;font-size:12px">' + _escA(q.pay_url) + '</div>' +
+      '<div class="flex" style="gap:8px;flex-wrap:wrap;margin-top:10px">' +
+        '<button class="btn btn-outline btn-sm" onclick="plCopy(document.getElementById(\'qr-payurl\').textContent,this)">Copy link</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="plQrDownload(\'' + q.id + '\',\'png\')">Download PNG</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="plQrDownload(\'' + q.id + '\',\'svg\')">Download SVG</button>' +
+      '</div>' +
+      '<div style="border-top:1px solid var(--gray-200);margin:14px 0 10px"></div>' +
+      '<div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:8px">Share this QR</div>' +
+      '<div id="qr-contacts-wrap" class="form-group" style="margin-bottom:8px"></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+        '<div><label class="form-label">Email</label><input class="form-input" id="qr-share-email" type="email" placeholder="customer@email.com"></div>' +
+        '<div><label class="form-label">WhatsApp phone</label><input class="form-input" id="qr-share-phone" type="tel" placeholder="080..."></div>' +
+      '</div>' +
+      '<div class="flex" style="gap:8px;margin-top:10px">' +
+        '<button class="btn btn-outline" style="flex:1" id="qr-share-email-btn" onclick="plQrShareEmail()">✉ Email this QR</button>' +
+        '<button class="btn btn-lime" style="flex:1" onclick="plQrShareWhatsApp()">Share via WhatsApp</button>' +
+      '</div>' +
+      '<div id="qr-share-msg" style="display:none;font-size:12px;margin-top:8px"></div>' +
+    '</div>'
+  );
+  plQrLoadImg(q.id);
+  plQrLoadContacts();
+}
+
+function plQrShareText(q) {
+  var amt = (q.amount === null || q.amount === undefined) ? '' : ' (' + fmtMoney(q.amount, 'NGN') + ')';
+  return 'Pay ' + (q.label ? q.label + ' ' : '') + 'securely via Paylode' + amt + ':\n' + q.pay_url;
+}
+async function plQrShareEmail() {
+  var q = _plQrCurrent; if (!q) return;
+  var email = (document.getElementById('qr-share-email').value || '').trim();
+  var msg = document.getElementById('qr-share-msg');
+  function say(t, good) { if (msg) { msg.textContent = t; msg.style.color = good ? 'var(--green)' : 'var(--red)'; msg.style.display = 'block'; } }
+  if (!email || email.indexOf('@') < 0) return say('Enter a valid email address.', false);
+  var btn = document.getElementById('qr-share-email-btn'); if (btn) { btn.disabled = true; }
+  say('Sending…', true);
+  var res = await apiFetch('/invoicing/qr/' + q.id + '/share', { method: 'POST', body: JSON.stringify({ email: email }) });
+  if (btn) btn.disabled = false;
+  if (res && res.status !== false) say(res.message || ('QR emailed to ' + email), true);
+  else say((res && res.message) || 'Could not send the email.', false);
+}
+function plQrShareWhatsApp() {
+  var q = _plQrCurrent; if (!q) return;
+  var phone = (document.getElementById('qr-share-phone').value || '').replace(/[^0-9]/g, '');
+  if (phone.indexOf('0') === 0) phone = '234' + phone.slice(1);
+  else if (phone && phone.indexOf('234') !== 0 && phone.length === 10) phone = '234' + phone;
+  window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(plQrShareText(q)), '_blank');
+}
+
+async function plQrLoadImg(id) {
+  var box = document.getElementById('qr-img-box'); if (!box) return;
+  try {
+    var token = sessionStorage.getItem('paylode_token');
+    var r = await fetch(API_BASE + '/invoicing/qr/' + id + '/image?format=png', { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) throw new Error('img');
+    var u = URL.createObjectURL(await r.blob());
+    box.innerHTML = '<img alt="QR code" src="' + u + '" style="width:220px;height:220px;border:1px solid var(--gray-200);border-radius:8px">';
+  } catch (e) { box.innerHTML = '<div style="font-size:12px;color:var(--red)">Could not load QR image</div>'; }
+}
+async function plQrLoadContacts() {
+  var wrap = document.getElementById('qr-contacts-wrap'); if (!wrap) return;
+  try {
+    if (_plContacts === null) {
+      var res = await apiFetch('/invoicing/contacts');
+      _plContacts = (res && res.data) ? res.data : [];
+    }
+    if (!_plContacts.length) { wrap.innerHTML = ''; return; }
+    var opts = '<option value="">— choose from contacts —</option>' + _plContacts.map(function(c, i) {
+      return '<option value="' + i + '">' + _escA(c.name || c.email || c.phone || ('Contact ' + (i + 1))) + '</option>';
+    }).join('');
+    wrap.innerHTML = '<label class="form-label">Address book</label><select class="form-input form-select" id="qr-contact-pick" onchange="plQrPickContact(this.value)">' + opts + '</select>';
+  } catch (e) { wrap.innerHTML = ''; }
+}
+function plQrPickContact(i) {
+  if (i === '' || !_plContacts) return;
+  var c = _plContacts[Number(i)]; if (!c) return;
+  if (c.email) document.getElementById('qr-share-email').value = c.email;
+  if (c.phone) document.getElementById('qr-share-phone').value = c.phone;
+}
+
+async function plQrDownload(id, format) {
+  var token = sessionStorage.getItem('paylode_token');
+  try {
+    var r = await fetch(API_BASE + '/invoicing/qr/' + id + '/image?format=' + format, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) { alert('Could not download the QR image.'); return; }
+    var u = URL.createObjectURL(await r.blob());
+    var a = document.createElement('a');
+    a.href = u; a.download = 'paylode-qr-' + id + '.' + format;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(u); }, 1000);
+  } catch (e) { alert('Download failed: ' + e.message); }
+}
+async function plQrToggle(id, active) {
+  var res = await apiFetch('/invoicing/qr/' + id, { method: 'PATCH', body: JSON.stringify({ is_active: active }) });
+  if (res && res.status !== false) plRenderQrTab(); else alert('Error: ' + ((res && res.message) || 'Update failed'));
+}
+async function plQrDelete(id) {
+  if (!confirm('Delete this QR code? This cannot be undone.')) return;
+  var res = await apiFetch('/invoicing/qr/' + id, { method: 'DELETE' });
+  if (res && res.status !== false) plRenderQrTab(); else alert('Error: ' + ((res && res.message) || 'Delete failed'));
 }
 
 function showGenerateKeyModal() {
