@@ -79,7 +79,7 @@ router.get('/', async (req, res, next) => {
       member: { id: m.member_id, name: m.name, email: m.email, phone: m.phone },
       pin_set: !!m.pin_hash,
       wallet: { id: m.wallet_id, balance: num(m.balance), currency: m.currency, low_balance_threshold: num(m.low_balance_threshold) },
-      branding: { name: cfg.brand_name || 'Wallet', logo_url: cfg.brand_logo_url || null, color: cfg.brand_color || '#1a2744' },
+      branding: { name: cfg.brand_name || 'Billspay', logo_url: cfg.brand_logo_url || null, color: cfg.brand_color || '#1a2744' },
     });
   } catch (e) { next(e); }
 });

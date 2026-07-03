@@ -122,7 +122,7 @@ var NAV = {
     { section:'Transactions', items:[{id:'merch_transactions',icon:'↕',label:'Transactions'},{id:'merch_settlements',icon:'✓',label:'Settlements'}]},
     { section:'Payment Links & QR Code', items:[{id:'merch_payments',icon:'🔗',label:'Payment Links & QR Code'}]},
     { section:'Invoice & Collect', items:[{id:'merch_invoicing',icon:'🧾',label:'Invoice & Collect'}]},
-    { section:'Member Wallet', items:[{id:'merch_wallet',icon:'👛',label:'Member Wallet'}]},
+    { section:'Billspay', items:[{id:'merch_wallet',icon:'👛',label:'Billspay'}]},
     { section:'Payouts',      items:[{id:'payouts',icon:'⇄',label:'Send Payouts'},{id:'payout_logs',icon:'≡',label:'Payout Logs'}]},
     { section:'Integration',  items:[{id:'merch_apikeys',icon:'⚿',label:'API Keys'},{id:'merch_webhooks',icon:'⇀',label:'Webhooks'}]},
     { section:'Developer',    items:DEV_SDK_ITEMS },

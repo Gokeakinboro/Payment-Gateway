@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#1a2744">
-<title>Paymula</title>
+<title>Billspay</title>
 <!-- PWA (single umbrella "Paylode Wallet"; merchant themes in-app after login) -->
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/favicon-32.png" sizes="32x32">
@@ -12,7 +12,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Paymula">
+<meta name="apple-mobile-web-app-title" content="Billspay">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   :root{--brand:#1a2744;--brand-d:#0f1829;--bg:#f4f6fb;--card:#fff;--gray:#64748b;--line:#cbd5e1;--green:#16a34a;--red:#dc2626}
@@ -117,7 +117,7 @@
 
 <!-- REGISTER (public self-sign-up: pick a club → KYC form) -->
 <div id="s-register" class="screen auth"><div class="box">
-  <h1>Create your account</h1><div class="sub">Join a club on Paymula</div>
+  <h1>Create your account</h1><div class="sub">Join a club on Billspay</div>
   <label>Find your club</label>
   <input id="rg-club-q" placeholder="Search clubs by name…" autocapitalize="none" oninput="loadClubs(this.value)">
   <div id="rg-clubs" style="max-height:160px;overflow:auto;margin:8px 0"></div>
@@ -138,7 +138,7 @@
 
 <!-- APP -->
 <div id="s-app" class="screen">
-  <div class="top"><img id="ap-logo" alt="" style="display:none"><div class="nm" id="ap-brand">Paymula</div><select id="club-switch" onchange="switchClub(this.value)" title="Switch club" style="display:none;margin-left:8px;max-width:140px;font-size:12px;border-radius:6px;padding:4px 6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.14);color:#fff"></select><button class="out" onclick="openAccount()">My account</button></div>
+  <div class="top"><img id="ap-logo" alt="" style="display:none"><div class="nm" id="ap-brand">Billspay</div><select id="club-switch" onchange="switchClub(this.value)" title="Switch club" style="display:none;margin-left:8px;max-width:140px;font-size:12px;border-radius:6px;padding:4px 6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.14);color:#fff"></select><button class="out" onclick="openAccount()">My account</button></div>
   <div class="wrap">
     <div class="bal">
       <div class="lbl">Available balance</div>
@@ -303,31 +303,31 @@ async function refreshActive(){
   var r=await api('/wallet/me'); if(!r.ok)return; ME=r.data;
   var br=ME.branding||{};
   document.documentElement.style.setProperty('--brand',br.color||'#1a2744');
-  document.getElementById('ap-brand').textContent=br.name||'Paymula';
+  document.getElementById('ap-brand').textContent=br.name||'Billspay';
   var lg=document.getElementById('ap-logo'); lg.style.display=br.logo_url?'block':'none'; if(br.logo_url)lg.src=br.logo_url;
   document.getElementById('ap-bal').textContent=ngn(ME.wallet.balance);
-  document.title=(br.name||'Paymula');
+  document.title=(br.name||'Billspay');
   loadTx();loadInv();loadDepts();
 }
 async function loadApp(){
   await loadMemberships();
   var r=await api('/wallet/me');
-  if(r.status===403){err('li-err','This account is not a Paymula member.');show('s-login');tokDel();return;}
+  if(r.status===403){err('li-err','This account is not a Billspay member.');show('s-login');tokDel();return;}
   if(!r.ok){show('s-login');return;}
   ME=r.data;
   // branding
   var br=ME.branding||{};
   document.documentElement.style.setProperty('--brand',br.color||'#1a2744');
-  document.getElementById('ap-brand').textContent=br.name||'Paymula';
+  document.getElementById('ap-brand').textContent=br.name||'Billspay';
   document.getElementById('ap-logo').style.display=br.logo_url?'block':'none';
   if(br.logo_url)document.getElementById('ap-logo').src=br.logo_url;
   document.getElementById('ap-bal').textContent=ngn(ME.wallet.balance);
-  document.title=(br.name||'Paymula');
+  document.title=(br.name||'Billspay');
   show('s-app');
   // Security gate: first-time members create a PIN; thereafter the app is locked
   // on every open and must be unlocked with the PIN (or biometrics).
   if(!ME.pin_set){await setupPin();}
-  if(!_unlocked){await requirePin({title:'Unlock',sub:'Enter your PIN to open Paymula.',cancelable:false,unlock:true});_unlocked=true;}
+  if(!_unlocked){await requirePin({title:'Unlock',sub:'Enter your PIN to open Billspay.',cancelable:false,unlock:true});_unlocked=true;}
   loadTx();loadInv();loadDepts();
   // iPhone Safari: gently show the visual Add-to-Home-Screen coach once (highest intent, just after login).
   try{ if(_isiOS()&&_isSafari()&&!_standalone()){ var _seen=false; try{_seen=localStorage.getItem('pm_ios_coach_seen')==='1';}catch(e){} if(!_seen){ setTimeout(function(){ try{localStorage.setItem('pm_ios_coach_seen','1');}catch(e){} showIosInstall(); },1200); } } }catch(e){}
@@ -404,7 +404,7 @@ function setupPin(){
   return new Promise(function(resolve){
     var ov=document.getElementById('pinmodal');
     ov.innerHTML='<div class="box">'+
-      '<h1>Create your PIN</h1><div class="sub">Set a 4-6 digit PIN to secure Paymula and approve every payment.</div>'+
+      '<h1>Create your PIN</h1><div class="sub">Set a 4-6 digit PIN to secure Billspay and approve every payment.</div>'+
       '<input id="sp-pw" type="password" autocomplete="off" placeholder="Your account password">'+
       '<input id="sp-pin" class="pin-in" type="password" inputmode="numeric" maxlength="6" placeholder="New PIN" style="margin-top:8px">'+
       '<input id="sp-pin2" class="pin-in" type="password" inputmode="numeric" maxlength="6" placeholder="Confirm PIN" style="margin-top:8px">'+
@@ -434,7 +434,7 @@ async function enableBiometric(){
   if(!pin)return;
   try{
     var cred=await navigator.credentials.create({publicKey:{
-      challenge:rand(32),rp:{name:'Paymula'},
+      challenge:rand(32),rp:{name:'Billspay'},
       user:{id:s2b((ME.member.id||'member')),name:ME.member.email||'member',displayName:ME.member.name||'Member'},
       pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
       authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required'},
@@ -499,7 +499,7 @@ async function doSpend(){
   closeM();loadTx();
 }
 function payInv(id,due){
-  openSheet('<h3>Pay invoice</h3><div class="muted" style="text-align:left;padding:0 0 12px">Outstanding: <strong>'+ngn(due)+'</strong> — paid from your Paymula balance.</div><div class="err" id="m-err"></div><button class="btn" id="m-btn" onclick="doPayInv(\''+id+'\')">Pay '+ngn(due)+' now</button>');
+  openSheet('<h3>Pay invoice</h3><div class="muted" style="text-align:left;padding:0 0 12px">Outstanding: <strong>'+ngn(due)+'</strong> — paid from your Billspay balance.</div><div class="err" id="m-err"></div><button class="btn" id="m-btn" onclick="doPayInv(\''+id+'\')">Pay '+ngn(due)+' now</button>');
 }
 async function doPayInv(id){
   hide('m-err');
@@ -685,7 +685,7 @@ function doInstall(){
     }
     return;
   }
-  alert('To install Paymula: open your browser menu and choose “Install app” / “Add to Home screen”.');
+  alert('To install Billspay: open your browser menu and choose “Install app” / “Add to Home screen”.');
 }
 function initInstall(){
   if(_standalone()||_instDismissed()){_hideInstallBar();return;}
@@ -698,15 +698,15 @@ function initInstall(){
 
 <!-- Install / download app prompt (shown on the member page when installable) -->
 <div id="installbar" style="position:fixed;left:0;right:0;bottom:0;z-index:9998;display:none;align-items:center;gap:10px;background:#1a2744;color:#fff;padding:12px 14px;box-shadow:0 -6px 20px rgba(0,0,0,.25);font-family:inherit">
-  <div style="flex:1;font-size:13px;line-height:1.35">📲 Install Paymula for quick access &amp; payment alerts.</div>
+  <div style="flex:1;font-size:13px;line-height:1.35">📲 Install Billspay for quick access &amp; payment alerts.</div>
   <button onclick="doInstall()" style="background:#fff;color:#1a2744;border:none;border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;white-space:nowrap">Install</button>
   <button onclick="dismissInstall()" aria-label="Dismiss" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1;padding:2px 6px">&times;</button>
 </div>
 <div id="ios-install" onclick="if(event.target===this)hideIosInstall()" style="position:fixed;inset:0;z-index:9999;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.5)">
   <style>@keyframes pmbounce{0%,100%{transform:translateY(0)}50%{transform:translateY(7px)}}</style>
   <div style="background:#fff;color:#1e293b;width:100%;max-width:480px;border-radius:18px 18px 0 0;padding:22px 20px 26px;font-family:inherit;box-shadow:0 -8px 30px rgba(0,0,0,.3)">
-    <div style="text-align:center;font-size:17px;font-weight:800;color:#1a2744">Add Paymula to your Home Screen</div>
-    <div style="text-align:center;font-size:12.5px;color:#64748b;margin:4px 0 16px">Two quick taps — then Paymula opens like a normal app.</div>
+    <div style="text-align:center;font-size:17px;font-weight:800;color:#1a2744">Add Billspay to your Home Screen</div>
+    <div style="text-align:center;font-size:12.5px;color:#64748b;margin:4px 0 16px">Two quick taps — then Billspay opens like a normal app.</div>
     <div style="display:flex;align-items:center;gap:12px;background:#f4f6fb;border-radius:12px;padding:12px;margin-bottom:10px">
       <div style="width:30px;height:30px;border-radius:50%;background:#1a2744;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">1</div>
       <div style="flex:1;font-size:14px">Tap the <b>Share</b> button</div>

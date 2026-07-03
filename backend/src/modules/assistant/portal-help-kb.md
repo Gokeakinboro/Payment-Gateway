@@ -47,7 +47,7 @@ Sidebar sections a merchant sees:
 - **Transactions** → *Transactions* (all your payments) and *Settlements* (what's been settled to your bank).
 - **Payment Links & QR Code** — create shareable checkout links and scan-to-pay QR codes (two tabs). See §5.
 - **Invoice & Collect** — create/send invoices, manage Contacts & Lists, invoice format, departments, reports.
-- **Member Wallet** — closed-loop wallet for your members (request access; SA approves). ⟨CONFIRM how much to expose to merchants⟩
+- **Billspay** — closed-loop, merchant-branded member payments for your members/club (request access; SA approves). Bills-payment features are planned on top. ⟨CONFIRM how much to expose to merchants⟩
 - **Payouts** → *Send Payouts* (single/bulk disbursements) and *Payout Logs*.
 - **Integration** → *API Keys* and *Webhooks*.
 - **Developer** — SDK quick start, card payments, virtual accounts, payouts, verify, webhooks, published SDKs, error codes, test cards.
