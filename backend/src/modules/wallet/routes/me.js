@@ -5,13 +5,13 @@
 const bcrypt = require('bcryptjs');
 const router = require('express').Router();
 const { prisma, memberAuth, getConfig, normalizePhone, isValidEmail } = require('../_shared');
-const { ok, fail, created, notFound, generateRef } = require('../../../utils/helpers');
+const { ok, fail, created, notFound } = require('../../../utils/helpers');
+const { createCheckoutTransaction } = require('../../gateway-core/services/gatewayTxn');
 const compliance = require('../../../services/complianceService');
 const ledger = require('../services/ledger');
 const walletPush = require('../services/walletPush');
 const { payInvoiceFromWallet } = require('../services/walletInvoice');
 
-const CHECKOUT_BASE = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '');
 router.use(memberAuth);
 const num = (v) => (v == null ? null : Number(v));
 
@@ -232,14 +232,11 @@ router.post('/fund', async (req, res, next) => {
     if (!merchant || !merchant.isActive) return fail(res, 'This merchant cannot currently accept payments', 'MERCHANT_INACTIVE', 403);
     const gate = compliance.screenTransaction(merchant, { customerEmail: m.email || undefined });
     if (gate.decision === 'REJECT') return fail(res, gate.message, gate.reasonCode, 403);
-    const ref = generateRef('WLTFUND');
-    await prisma.transaction.create({ data: {
-      reference: ref, merchantId: m.merchant_id, customerEmail: m.email || '',
-      amount: BigInt(amount), currency: 'NGN', status: 'PENDING', channel: 'CARD',
-      authUrl: `${CHECKOUT_BASE}/checkout.html?ref=${ref}`, accessCode: ref, isSandbox: false,
-      metadata: { description: `Wallet top-up`, source: 'wallet_fund', wallet_id: m.wallet_id, member_id: m.member_id },
-    }});
-    return created(res, { reference: ref, redirect_url: `${CHECKOUT_BASE}/checkout.html?ref=${ref}` }, 'Funding started');
+    const { reference, redirectUrl } = await createCheckoutTransaction({
+      merchantId: m.merchant_id, amount, currency: 'NGN', customerEmail: m.email || '', refPrefix: 'WLTFUND',
+      source: 'wallet_fund', metadata: { description: `Wallet top-up`, wallet_id: m.wallet_id, member_id: m.member_id },
+    });
+    return created(res, { reference, redirect_url: redirectUrl }, 'Funding started');
   } catch (e) { next(e); }
 });
 
