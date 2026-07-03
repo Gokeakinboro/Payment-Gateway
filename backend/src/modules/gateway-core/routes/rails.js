@@ -1,10 +1,10 @@
 'use strict';
 const router = require('express').Router();
 const { body, validationResult } = require('express-validator');
-const { prisma }  = require('../utils/db');
-const { requireAuth, requireSuperAdmin } = require('../middleware/auth');
-const { ok, created, fail, notFound, koboToNaira } = require('../utils/helpers');
-const { logAudit } = require('../services/auditService');
+const { prisma }  = require('../../../utils/db');
+const { requireAuth, requireSuperAdmin } = require('../../../middleware/auth');
+const { ok, created, fail, notFound, koboToNaira } = require('../../../utils/helpers');
+const { logAudit } = require('../../../services/auditService');
 
 const SERVICE_TYPES = ['VISA','MASTERCARD','VERVE','BANK_TRANSFER','VIRTUAL_ACCOUNT','PAY_WITH_TRANSFER','PAY_WITH_WALLET','USSD','PAYOUT'];
 const CHANNEL_MAP = { VISA:'CARD', MASTERCARD:'CARD', VERVE:'CARD', BANK_TRANSFER:'BANK_TRANSFER',
@@ -40,7 +40,7 @@ router.get('/', requireAuth, async (req, res, next) => {
 // they offer us and their price to us. Rails merge LIVE status + our float.
 router.get('/providers-overview', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
-    const { RAILS } = require('../config/serviceProviders');
+    const { RAILS } = require('../../../config/serviceProviders');
     const live = await prisma.paymentRail.findMany({
       select: { name: true, status: true, payoutEnabled: true, floatBalance: true, floatSyncedAt: true, sponsorBank: true },
     });

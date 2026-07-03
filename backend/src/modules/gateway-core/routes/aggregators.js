@@ -1,13 +1,13 @@
 'use strict';
 const aggRouter = require('express').Router();
 const bcrypt = require('bcryptjs');
-const { prisma } = require('../utils/db');
-const { requireAuth, requireSuperAdmin, requireAggregator, requirePermission } = require('../middleware/auth');
-const { ok, fail, notFound, koboToNaira } = require('../utils/helpers');
-const { logAudit } = require('../services/auditService');
-const { sendEmail, getEmailContent } = require('../services/emailService');
-const { logger } = require('../utils/logger');
-const { hasPermission } = require('../config/permissions');
+const { prisma } = require('../../../utils/db');
+const { requireAuth, requireSuperAdmin, requireAggregator, requirePermission } = require('../../../middleware/auth');
+const { ok, fail, notFound, koboToNaira } = require('../../../utils/helpers');
+const { logAudit } = require('../../../services/auditService');
+const { sendEmail, getEmailContent } = require('../../../services/emailService');
+const { logger } = require('../../../utils/logger');
+const { hasPermission } = require('../../../config/permissions');
 
 // #8: only viewers with view_merchant_contact (SUPER_ADMIN default) see contact PII.
 function redactAggContact(a, viewer) {

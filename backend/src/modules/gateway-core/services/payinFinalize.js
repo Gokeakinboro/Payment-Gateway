@@ -8,8 +8,8 @@
 //  Idempotent: the SUCCESS write is a status-guarded updateMany, so concurrent
 //  PalmPay retries finalize+notify exactly once (losers see count 0, no-op).
 // ─────────────────────────────────────────────────────────────────────────────
-const { prisma } = require('../utils/db');
-const { dispatchWebhook } = require('./webhookService');
+const { prisma } = require('../../../utils/db');
+const { dispatchWebhook } = require('../../../services/webhookService');
 const { computeFeesForPayin, resolvePayinRail, resolvePayinRateConfig } = require('./feeEngine');
 const { sendCustomerReceipt } = require('./receiptEmail');
 
@@ -119,7 +119,7 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
   // Invoice & Collect bookkeeping (best-effort): record the payment against its
   // invoice / QR code and update status. Idempotent (unique on transaction_id).
   if (txn.metadata && (txn.metadata.source === 'invoice' || txn.metadata.source === 'qr')) {
-    require('../modules/invoicing/services/invoicingPay')
+    require('../../invoicing/services/invoicingPay')
       .recordForTransaction({ ...txn, status: 'SUCCESS', amount: fees.chargeAmount })
       .catch(() => {});
   }
@@ -130,7 +130,7 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
   // transaction_id); the worker sweep also catches any settlement path that
   // bypasses this hook (e.g. PalmPay VA, or an 'alreadyDone' early-return).
   if (txn.metadata && txn.metadata.source === 'wallet_fund') {
-    require('../modules/wallet/services/walletFund')
+    require('../../wallet/services/walletFund')
       .recordForTransaction({
         ...txn, status: 'SUCCESS', amount: fees.merchantSettlement,
         metadata: { ...(txn.metadata || {}), merchant_settlement: Number(fees.merchantSettlement) },

@@ -1,9 +1,9 @@
 'use strict';
 const router = require('express').Router();
-const { prisma } = require('../utils/db');
-const { requireAuth, requireSuperAdmin } = require('../middleware/auth');
-const { ok, fail, created } = require('../utils/helpers');
-const { logAudit } = require('../services/auditService');
+const { prisma } = require('../../../utils/db');
+const { requireAuth, requireSuperAdmin } = require('../../../middleware/auth');
+const { ok, fail, created } = require('../../../utils/helpers');
+const { logAudit } = require('../../../services/auditService');
 
 const notFoundResp = (res, msg) => res.status(404).json({ status: false, message: msg || 'Not found' });
 

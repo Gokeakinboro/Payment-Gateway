@@ -3,12 +3,12 @@ const router  = require('express').Router();
 const crypto  = require('crypto');
 const multer  = require('multer');
 const { body, validationResult } = require('express-validator');
-const { prisma }  = require('../utils/db');
-const { requireAuth, requireApiKey, requireSuperAdmin, requireCompliance } = require('../middleware/auth');
-const { ok, fail, notFound, created, koboToNaira, generateRef } = require('../utils/helpers');
-const { logAudit } = require('../services/auditService');
+const { prisma }  = require('../../../utils/db');
+const { requireAuth, requireApiKey, requireSuperAdmin, requireCompliance } = require('../../../middleware/auth');
+const { ok, fail, notFound, created, koboToNaira, generateRef } = require('../../../utils/helpers');
+const { logAudit } = require('../../../services/auditService');
 const { notifyRailIncident, recordRailResult, checkRailBalanceAndAlert } = require('../services/railHealth');
-const { BANKS, resolveBank } = require('../data/nibssBanks');
+const { BANKS, resolveBank } = require('../../../data/nibssBanks');
 const { syncRailFloat } = require('../services/railFloat');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
