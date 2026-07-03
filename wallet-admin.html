@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Paymula — Paylode</title>
+<title>Billspay — Paylode</title>
 <link rel="stylesheet" href="paylode-ui.css?v=3">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
@@ -45,7 +45,7 @@
 </style>
 </head>
 <body>
-<div class="top"><a href="dashboard.html">← Dashboard</a><div class="t" id="brandt">Paymula</div></div>
+<div class="top"><a href="dashboard.html">← Dashboard</a><div class="t" id="brandt">Billspay</div></div>
 <div class="wrap" id="root"><div class="muted">Loading…</div></div>
 
 <script>
@@ -65,13 +65,13 @@ function el(id){return document.getElementById(id);}
   var r=await api('/wallet/config');
   CFG=r.ok?r.data:null;
   if(!CFG||!CFG.enabled){ return renderGate(); }
-  if(CFG.brand_name)el('brandt').textContent=CFG.brand_name+' — Paymula';
+  if(CFG.brand_name)el('brandt').textContent=CFG.brand_name+' — Billspay';
   renderApp();
 })();
 
 function renderGate(){
   var requested=CFG&&CFG.requested;
-  el('root').innerHTML='<div class="gate"><div class="ic">🔐</div><h2>Paymula</h2>'+
+  el('root').innerHTML='<div class="gate"><div class="ic">🔐</div><h2>Billspay</h2>'+
     (requested
       ? '<p class="muted">Your request is pending Paylode approval. We\'ll enable it shortly.</p>'
       : '<p style="color:#64748b;margin-bottom:16px">A closed-loop way for your members to add money and spend across your departments. Holds customer funds, so Paylode reviews each activation.</p><button class="btn" id="reqbtn" onclick="reqWallet()">Request access</button>')+
@@ -101,7 +101,7 @@ function renderApp(){
       '<label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="st-nemail" style="width:auto"> Email notifications</label>'+
       '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="st-nwa" style="width:auto"> WhatsApp notifications</label>'+
       '<h3 style="margin-top:18px">Public sign-up</h3>'+
-      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="st-pub" style="width:auto;margin-top:3px"> <span>Let the public find this club in the Paymula app and join as members (they complete KYC). Leave off to keep membership invite-only.</span></label>'+
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="st-pub" style="width:auto;margin-top:3px"> <span>Let the public find this club in the Billspay app and join as members (they complete KYC). Leave off to keep membership invite-only.</span></label>'+
       '<button class="btn btn-lime" style="margin-top:14px" onclick="saveCfg()">Save settings</button><div class="msg" id="st-msg"></div></div></div>';
   loadOverview();loadMembers();loadApprovals();fillSettings();
 }
@@ -162,7 +162,7 @@ async function saveCfg(){
   var body={brand_name:el('st-name').value,brand_logo_url:logoUrl,brand_color:el('st-color').value,sender_email:el('st-semail').value,sender_whatsapp:el('st-swa').value,max_balance:Math.round(parseFloat(el('st-max').value||0)*100),low_balance_default:Math.round(parseFloat(el('st-low').value||0)*100),notify_email:el('st-nemail').checked,notify_whatsapp:el('st-nwa').checked,allow_public_members:el('st-pub').checked};
   var r=await api('/wallet/config',{method:'PUT',body:body});
   m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?'Settings saved':(r.message||'Failed');
-  if(r.ok){CFG=r.data;LOGO_FILE=null;if(CFG.brand_name)el('brandt').textContent=CFG.brand_name+' — Paymula';}
+  if(r.ok){CFG=r.data;LOGO_FILE=null;if(CFG.brand_name)el('brandt').textContent=CFG.brand_name+' — Billspay';}
 }
 </script>
 </body>
