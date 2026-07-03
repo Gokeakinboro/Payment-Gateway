@@ -1,6 +1,6 @@
 {
-  "name": "Paymula",
-  "short_name": "Paymula",
+  "name": "Billspay",
+  "short_name": "Billspay",
   "description": "Add money and pay across departments — powered by Paylode.",
   "id": "/wallet.html",
   "start_url": "/wallet.html?src=pwa",

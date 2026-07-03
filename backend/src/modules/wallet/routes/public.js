@@ -1,5 +1,5 @@
 'use strict';
-// Public (UNAUTHENTICATED) Paymula endpoints for member self-registration.
+// Public (UNAUTHENTICATED) Billspay endpoints for member self-registration.
 //   GET  /api/v1/wallet/public/clubs      — opted-in + enabled club directory
 //   POST /api/v1/wallet/public/register   — member self-registration + KYC verify
 // Read paths carry no funds/PII. Register is rate-limited + KYC-gated.
