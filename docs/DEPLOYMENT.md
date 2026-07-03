@@ -84,3 +84,61 @@ overwrote. To roll back, copy those files back to their manifest paths and (for 
 - Python 3 + `paramiko` (`pip install paramiko`).
 - Node (for the syntax gate).
 - `PAYLODE_SSH_PASS` set in the environment for the run (never commit it).
+
+---
+
+## Split-services topology (P3 modularity re-arch)
+
+The backend can run either as the **monolith** (`src/server.js` = `paylode-api`, all
+modules in one process — still fully supported, the safe fallback) or as **split
+services** from the same codebase:
+
+| PM2 app | Entry | Port | Mounts |
+| --- | --- | --- | --- |
+| `paylode-core` | `src/entrypoints/core.js` | 3001 | money core + all non-product routes; runs the rail-float + payout-recon jobs |
+| `paylode-invoicing` | `src/entrypoints/invoicing.js` | 3101 | `/api/v1/invoicing` only |
+| `paylode-wallet` | `src/entrypoints/wallet.js` | 3102 | `/api/v1/wallet` only |
+| `paylode-assistant` | `src/entrypoints/assistant.js` | 3103 | `/api/v1/assistant` only |
+
+An **nginx router on 176** (`nginx/paylode-176-router.conf`, listens `:3000`)
+path-routes each product to its service and everything else to core. Because it keeps
+`:3000` and every public path identical, **45 and the frontend/SDKs need no changes**.
+
+### Why: independent deploys
+Upgrade one product without touching the gateway:
+```bash
+# on 176, after deploy.py has shipped the new code:
+pm2 reload paylode-invoicing        # core + wallet + assistant keep running
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3101/health   # expect 200
+```
+
+### One-time cutover on 176 (staged, user-run)
+```bash
+cd /opt/paylode-api/backend
+npx prisma generate                         # if schema changed
+pm2 start ecosystem.config.js               # starts core + 3 product svcs + workers
+cp /opt/paylode-api/nginx/paylode-176-router.conf /etc/nginx/conf.d/paylode-router.conf
+nginx -t && systemctl reload nginx          # router now owns :3000
+pm2 delete paylode-api                       # stop the old monolith on :3000
+pm2 save
+# verify: /health on 3001/3101/3102/3103 all 200, and the public domain still works
+```
+
+### Rollback to monolith (instant)
+```bash
+rm /etc/nginx/conf.d/paylode-router.conf && systemctl reload nginx
+pm2 delete paylode-core paylode-invoicing paylode-wallet paylode-assistant
+pm2 start src/server.js --name paylode-api -i max   # monolith back on :3000
+pm2 save
+```
+
+### Independence guarantee
+Stopping a product service returns 503 **only** for that product's paths; the money
+core (checkout / VA / payouts / settlement) keeps serving. Verified locally by
+`tools/p3-split-check.js` (clean module partition) and enforced at runtime by the
+guarded registry (`tools/guard-selftest.js`).
+
+> **deploy.py note:** the backend manifest is now **walked** (`backend/src/**/*.js`
+> + prisma + `ecosystem.config.js`), not an explicit list — a moved/added file can
+> never be silently dropped. It also `mkdir -p`s new remote dirs. Run
+> `npm run verify:arch` before every deploy of this re-arch.
