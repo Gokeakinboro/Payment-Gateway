@@ -14,10 +14,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const router = require('express').Router();
 const palmpay = require('../services/palmpayService');
-const { prisma } = require('../utils/db');
-const { logger } = require('../utils/logger');
+const { prisma } = require('../../../utils/db');
+const { logger } = require('../../../utils/logger');
 const { finalizePayinSuccess, failPayin } = require('../services/payinFinalize');
-const { dispatchWebhook } = require('../services/webhookService');
+const { dispatchWebhook } = require('../../../services/webhookService');
 
 const { applyPayoutResult, legStatusFor } = require('../services/payoutSettle');
 

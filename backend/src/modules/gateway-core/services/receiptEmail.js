@@ -5,9 +5,9 @@
 //  by reference, never throws, and never blocks the payment response — call it
 //  fire-and-forget right after a transaction flips to SUCCESS.
 // ─────────────────────────────────────────────────────────────────────────────
-const { prisma } = require('../utils/db');
-const { sendEmail, getEmailContent } = require('./emailService');
-const { logger } = require('../utils/logger');
+const { prisma } = require('../../../utils/db');
+const { sendEmail, getEmailContent } = require('../../../services/emailService');
+const { logger } = require('../../../utils/logger');
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));

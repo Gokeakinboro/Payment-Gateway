@@ -169,7 +169,7 @@ async function start() {
     if ((process.env.NODE_APP_INSTANCE || '0') === '0') {
       // Rail-float poll — refresh OUR balance on each payout rail (PalmPay etc.).
       try {
-        const { syncAllFloats } = require('./services/railFloat');
+        const { syncAllFloats } = require('./modules/gateway-core/services/railFloat');
         const POLL_MS = Number(process.env.RAIL_FLOAT_POLL_MS || 10 * 60 * 1000); // 10 min
         const run = () => syncAllFloats().catch(e => logger.error({ err: e }, 'rail float poll failed'));
         setTimeout(run, 15000);          // once shortly after boot
@@ -183,7 +183,7 @@ async function start() {
       // webhook never landed. Queries the rail's payout-result API and settles/refunds
       // via the same shared logic as the webhook. Worker 0 only.
       try {
-        const { reconcileSentPayouts } = require('./services/payoutSettle');
+        const { reconcileSentPayouts } = require('./modules/gateway-core/services/payoutSettle');
         const RECON_MS = Number(process.env.PAYOUT_RECON_MS || 3 * 60 * 1000); // 3 min
         const recon = () => reconcileSentPayouts().catch(e => logger.error({ err: e }, 'payout reconciliation failed'));
         setTimeout(recon, 25000);        // once shortly after boot
