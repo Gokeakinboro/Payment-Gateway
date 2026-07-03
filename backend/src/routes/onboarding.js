@@ -519,6 +519,22 @@ router.get('/submissions/:reference', requireAuth, requireCompliance, async (req
   } catch (e) { next(e); }
 });
 
+// ── GET /api/v1/onboarding/merchant/:merchantId/application ───────────────────
+// The full onboarding form a merchant submitted — for SA/Compliance to view and
+// download from the merchant detail screen. Linked via onboarding_submissions
+// .merchantId (set when the account is provisioned). 404 if the merchant was
+// created manually / predates the online form.
+router.get('/merchant/:merchantId/application', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const row = await prisma.onboardingSubmission.findFirst({
+      where: { merchantId: req.params.merchantId },
+      orderBy: { submittedAt: 'desc' },
+    });
+    if (!row) return fail(res, 'No onboarding application on file for this merchant', 'NOT_FOUND', 404);
+    ok(res, row, 'Merchant onboarding application');
+  } catch (e) { next(e); }
+});
+
 // Create the merchant + API keys + seed per-document tracking from a submission.
 // Runs inside the approval transaction (tx) so it is atomic with the status claim.
 async function provisionMerchant(tx, sub, opts = {}) {
