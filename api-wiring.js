@@ -435,6 +435,7 @@ async function viewMerchant(id) {
   var isSA = (currentRole === 'superadmin');
   var canReview = (['superadmin','admin','compliance'].indexOf(currentRole) !== -1); // suspend/activate/docs
   var canManage = (currentRole === 'superadmin' || currentRole === 'admin');         // edit/close
+  var canViewApp = (currentRole === 'superadmin' || currentRole === 'compliance');    // see the submitted onboarding form
   var nameEsc = (m.businessName||'').replace(/'/g,'');
 
   var overviewHtml =
@@ -464,6 +465,7 @@ async function viewMerchant(id) {
       '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Close</button>' +
       '<div class="flex" style="gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
         (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')">&#128196; KYC Documents</button>' : '') +
+        (canViewApp ? '<button class="btn btn-outline" onclick="loadMerchantApplication(\'' + id + '\')">&#128203; Application Form</button>' : '') +
         (canReview ? '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\';resendSandbox(\'' + id + '\',\'' + nameEsc + '\')">&#128231; Resend Sandbox</button>' : '') +
         (canReview ? (m.isActive
           ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';suspendMerchant(\'' + id + '\',\'' + nameEsc + '\')">Suspend</button>'
@@ -497,6 +499,128 @@ function switchMerchantTab(tab, merchantId) {
   if (tab === 'overview')  viewMerchant(merchantId);
   if (tab === 'rates')     loadMerchantRates(merchantId);
   if (tab === 'outlets')   loadMerchantOutlets(merchantId);
+}
+
+// ── MERCHANT APPLICATION FORM (SA / Compliance) ───────────────────────────────
+// Shows the full onboarding form the merchant filled in, and lets the reviewer
+// download/print it for their records. Data = onboarding_submissions.data (jsonb).
+function _appEsc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _appHumanize(k) { return String(k).replace(/_/g,' ').replace(/\b\w/g, function(c){ return c.toUpperCase(); }); }
+function _appSectionTitle(k) {
+  var M = { np_identity:'Personal / Identity', np_contact:'Contact Details', np_business:'Business Details',
+            entity_details:'Entity / Registration', settlement:'Settlement Account', dd_questions:'Due Diligence',
+            ynAnswers:'Due Diligence Answers', business:'Business Details' };
+  return M[k] || _appHumanize(k);
+}
+function _appFmt(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (Array.isArray(v)) return v.length ? v.map(_appFmt).join(', ') : '—';
+  if (typeof v === 'object') return Object.keys(v).map(function(k){ return _appHumanize(k) + ': ' + _appFmt(v[k]); }).join('; ');
+  var s = String(v);
+  if (s.indexOf('data:') === 0) return '[embedded file]';   // don't dump base64 blobs
+  if (s.length > 300) return s.slice(0, 300) + '…';
+  return s;
+}
+// data keys rendered via dedicated top-level fields (skip in the generic loop).
+var _APP_SKIP_KEYS = { signature: 1, principals: 1 };
+function _appRows(obj) {
+  var keys = Object.keys(obj || {});
+  if (!keys.length) return '<div class="rev-row"><span class="rev-value">—</span></div>';
+  return keys.map(function(k) {
+    return '<div class="rev-row"><span class="rev-label">' + _appEsc(_appHumanize(k)) +
+           '</span><span class="rev-value" style="font-size:12px">' + _appEsc(_appFmt(obj[k])) + '</span></div>';
+  }).join('');
+}
+// Builds the inner HTML shared by the on-screen view and the print/download doc.
+function buildMerchantApplicationInner(app) {
+  var data = app.data || {};
+  var head =
+    '<div class="rev-row"><span class="rev-label">Business Name</span><span class="rev-value">' + _appEsc(app.businessName || '—') + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Reference</span><span class="rev-value mono" style="font-size:12px">' + _appEsc(app.reference || '—') + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Applicant Type</span><span class="rev-value">' + _appEsc(app.applicantType || '—') + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Form Type</span><span class="rev-value">' + _appEsc(app.formType || '—') + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Submitted</span><span class="rev-value">' + (app.submittedAt ? new Date(app.submittedAt).toLocaleString('en-NG') : '—') + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Status</span><span class="rev-value">' + _appEsc(app.status || '—') + '</span></div>';
+  var sections = Object.keys(data).filter(function(k){ return !_APP_SKIP_KEYS[k]; }).map(function(k) {
+    var v = data[k];
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      return '<h4 class="app-sec">' + _appEsc(_appSectionTitle(k)) + '</h4>' + _appRows(v);
+    }
+    return '<div class="rev-row"><span class="rev-label">' + _appEsc(_appHumanize(k)) + '</span><span class="rev-value">' + _appEsc(_appFmt(v)) + '</span></div>';
+  }).join('');
+  var principals = (app.principals || []).map(function(p, i) {
+    return '<h4 class="app-sec">Principal ' + (i + 1) + '</h4>' + _appRows(p);
+  }).join('');
+  var docs = (app.documents || []).length
+    ? '<h4 class="app-sec">Uploaded Documents</h4>' + (app.documents || []).map(function(d) {
+        return '<div class="rev-row"><span class="rev-label">' + _appEsc(d.docType || d.key || 'Document') + '</span><span class="rev-value" style="font-size:12px">' + _appEsc(d.name || '—') + (d.path ? '' : ' (not uploaded)') + '</span></div>';
+      }).join('')
+    : '';
+  var sigSrc = app.signature ? (typeof app.signature === 'string' ? app.signature : (app.signature.dataUrl || '')) : '';
+  var sig = sigSrc ? '<h4 class="app-sec">Signature</h4><img src="' + sigSrc + '" alt="signature" style="max-width:240px;border:1px solid #e2e8f0;border-radius:6px">' : '';
+  return '<h4 class="app-sec">Application Summary</h4>' + head + sections + principals + docs + sig;
+}
+
+async function loadMerchantApplication(id) {
+  var host = document.getElementById('modal-inner');
+  var tabNav = '<div class="tab-nav"><button class="tab-btn" onclick="viewMerchant(\'' + id + '\')">Overview</button>' +
+    '<button class="tab-btn" onclick="loadMerchantRates(\'' + id + '\')">Rate Config</button>' +
+    '<button class="tab-btn" onclick="loadMerchantOutlets(\'' + id + '\')">Outlets</button>' +
+    '<button class="tab-btn active">Application Form</button></div>';
+  host.innerHTML = '<div class="modal-header"><div class="modal-title">Application Form</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    tabNav + '<div style="padding:16px;color:var(--gray-400)">Loading application…</div>';
+  var res = await apiFetch('/onboarding/merchant/' + id + '/application');
+  if (!res || !res.status || !res.data) {
+    host.innerHTML = '<div class="modal-header"><div class="modal-title">Application Form</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+      tabNav + '<div style="padding:20px;color:var(--gray-400)">No onboarding application form on file for this merchant.<br><span style="font-size:12px">The account may have been created manually or predates the online onboarding form.</span></div>';
+    return;
+  }
+  window._lastApplication = res.data;
+  host.innerHTML = '<div class="modal-header"><div class="modal-title">Application Form</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    tabNav +
+    '<div id="application-body">' + buildMerchantApplicationInner(res.data) + '</div>' +
+    '<div class="divider"></div><div class="flex-between">' +
+      '<button class="btn btn-outline" onclick="viewMerchant(\'' + id + '\')">&#8592; Back</button>' +
+      '<button class="btn btn-lime" onclick="downloadMerchantApplication(\'' + id + '\')">&#128229; Download / Print Form</button>' +
+    '</div>';
+}
+
+async function downloadMerchantApplication(id) {
+  var app = window._lastApplication;
+  if (!app || app.merchantId !== id) {
+    var res = await apiFetch('/onboarding/merchant/' + id + '/application');
+    app = res && res.data;
+  }
+  if (!app) { alert('No application on file to download.'); return; }
+  var css =
+    'body{font-family:Arial,Helvetica,sans-serif;color:#1a2744;max-width:820px;margin:0 auto;padding:28px 22px}' +
+    'h1{font-size:20px;margin:0 0 2px}.meta{color:#64748b;font-size:12px;margin-bottom:18px}' +
+    'h4.app-sec{margin:20px 0 6px;font-size:13px;color:#1a2744;border-bottom:2px solid #7DC534;padding-bottom:4px}' +
+    '.rev-row{display:flex;justify-content:space-between;gap:16px;padding:5px 0;border-bottom:1px solid #eef2f7;font-size:12.5px}' +
+    '.rev-label{color:#64748b;flex:0 0 42%}.rev-value{text-align:right;flex:1;word-break:break-word}.mono{font-family:monospace}' +
+    '.topbar{border-bottom:3px solid #1a2744;padding-bottom:10px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-end}' +
+    '.brand{font-weight:800;color:#1a2744;font-size:16px}.brand span{color:#7DC534}' +
+    '@media print{.noprint{display:none}}' +
+    '.noprint{margin-top:22px;text-align:center}.pbtn{background:#7DC534;color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:14px;cursor:pointer}';
+  var when = new Date().toLocaleString('en-NG');
+  var doc =
+    '<!doctype html><html><head><meta charset="utf-8"><title>' + _appEsc(app.businessName || 'Merchant') + ' — Onboarding Application</title>' +
+    '<style>' + css + '</style></head><body>' +
+    '<div class="topbar"><div class="brand">Paylode</div><div class="meta" style="text-align:right">Merchant Onboarding Application<br>Generated ' + _appEsc(when) + '</div></div>' +
+    '<h1>' + _appEsc(app.businessName || 'Merchant') + '</h1>' +
+    '<div class="meta">Reference ' + _appEsc(app.reference || '—') + ' &middot; Submitted ' + (app.submittedAt ? new Date(app.submittedAt).toLocaleString('en-NG') : '—') + '</div>' +
+    buildMerchantApplicationInner(app) +
+    '<div class="noprint"><button class="pbtn" onclick="window.print()">Print / Save as PDF</button></div>' +
+    '</body></html>';
+  var w = window.open('', '_blank');
+  if (!w) { alert('Please allow pop-ups to download the application form.'); return; }
+  w.document.open(); w.document.write(doc); w.document.close();
+  w.focus();
+  setTimeout(function(){ try { w.print(); } catch (e) {} }, 400);
 }
 
 // ── MERCHANT RATE CONFIG ──────────────────────────────────────────────────────
