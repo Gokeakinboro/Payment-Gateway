@@ -80,22 +80,26 @@ kyc_updated.js
 onboarding_live.js
 youverify_webhook.js
 
-# Route file copies at root (deployed directly to server)
-admin.js
-aggregators.js
-auth.js
-auditService.js
-chargebacks.js
-checkout.js
-checkout_isw.js
-helpers.js
-interswitchService.js
-kyc.js
-kyc_bulk.js
-settlements.js
-transactions.js
-checkout_new.html
-create_txn.js
+# Route file copies at ROOT only (deployed directly to server).
+# NOTE: these MUST be root-anchored with a leading "/". A bare "admin.js"
+# pattern matches that filename ANYWHERE, which silently shadowed the real
+# backend/src/routes/chargebacks.js and backend/src/services/interswitchService.js
+# (they could never be committed → the repo backend couldn't boot). Anchored.
+/admin.js
+/aggregators.js
+/auth.js
+/auditService.js
+/chargebacks.js
+/checkout.js
+/checkout_isw.js
+/helpers.js
+/interswitchService.js
+/kyc.js
+/kyc_bulk.js
+/settlements.js
+/transactions.js
+/checkout_new.html
+/create_txn.js
 
 # Playwright e2e
 e2e/node_modules/
