@@ -33,6 +33,13 @@ FRONTEND = [
     ('sandbox.html',                               '/var/www/paylode/sandbox.html'),
 ]
 
+# nginx config (176). Placed by the deploy so the router config is version-controlled,
+# but deploy.py does NOT reload nginx — after a change to this file run
+# `nginx -t && systemctl reload nginx` on 176. (Split-services topology; see DEPLOYMENT.md.)
+NGINX = [
+    ('nginx/paylode-176-router.conf',              '/etc/nginx/conf.d/paylode-router.conf'),
+]
+
 # Backend (176) is derived by WALKING the tree rather than an explicit list, so a
 # refactor that moves/adds files can never silently drop one (which would ship a
 # server.js that require()s files that never landed — see the 2026-07-03 incident).
@@ -58,7 +65,7 @@ def backend_manifest():
             files.append((single, REMOTE_BASE + '/' + single))
     return files
 
-MANIFEST = FRONTEND + backend_manifest()
+MANIFEST = FRONTEND + backend_manifest() + [n for n in NGINX if os.path.exists(n[0])]
 
 def md5_local(p):
     h = hashlib.md5()
