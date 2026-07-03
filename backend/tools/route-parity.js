@@ -57,13 +57,20 @@ const after = afterFromRegistry();
 console.log(`BEFORE (${BASELINE_REF}:server.js): ${before.length} module mounts`);
 console.log(`AFTER  (registry):           ${after.length} module mounts`);
 
-const d = diff(before, after);
-if (d.length) {
-  failed = true;
-  console.log('\n✗ ORDER/CONTENT DRIFT:');
-  for (const r of d) console.log(`  [${r.idx}] before=${r.before}  after=${r.after}`);
+// Once the refactor is merged, `main`'s server.js no longer lists app.use mounts
+// (they moved into the registry), so there's nothing to diff. Skip the mount-diff
+// gracefully — pass `BASELINE_REF=<pre-refactor sha>` to do a real comparison.
+if (before.length === 0) {
+  console.log('· baseline has no app.use mounts (already refactored) — mount-diff N/A; running LOAD check only.');
 } else {
-  console.log('✓ mount list + order identical');
+  const d = diff(before, after);
+  if (d.length) {
+    failed = true;
+    console.log('\n✗ ORDER/CONTENT DRIFT:');
+    for (const r of d) console.log(`  [${r.idx}] before=${r.before}  after=${r.after}`);
+  } else {
+    console.log('✓ mount list + order identical');
+  }
 }
 
 // LOAD check — require the app (start() is guarded) and inspect module health.

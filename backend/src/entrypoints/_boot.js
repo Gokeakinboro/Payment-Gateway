@@ -17,8 +17,10 @@ function bootService({ serviceName, modules, port, withCoreJobs = false }) {
     try {
       await prisma.$connect();
       logger.info(`✓ [${serviceName}] Database connected`);
-      app.listen(port, () => {
-        logger.info(`✓ ${serviceName} on port ${port} [${process.env.NODE_ENV}]`);
+      // Bind loopback only — these services sit BEHIND the 176 nginx router
+      // (which proxies to 127.0.0.1:<port>), so they must not be publicly reachable.
+      app.listen(port, '127.0.0.1', () => {
+        logger.info(`✓ ${serviceName} on 127.0.0.1:${port} [${process.env.NODE_ENV}]`);
         logger.info(`  Health:  http://localhost:${port}/health`);
         logger.info(`  Modules: ${modules.map(m => m.name).join(', ') || '(none)'}`);
       });
