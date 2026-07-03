@@ -11,7 +11,7 @@
     "start:wallet": "node src/entrypoints/wallet.js",
     "start:assistant": "node src/entrypoints/assistant.js",
     "pm2:split": "pm2 start ecosystem.config.js",
-    "verify:arch": "node tools/resolve-requires.js && node tools/route-parity.js && node tools/p3-split-check.js && node tools/guard-selftest.js",
+    "verify:arch": "node tools/resolve-requires.js && node tools/route-parity.js && node tools/p3-split-check.js && node tools/guard-selftest.js && node tools/db-boundary-check.js",
     "db:migrate": "npx prisma migrate deploy",
     "db:seed": "node prisma/seed.js",
     "db:studio": "npx prisma studio",
