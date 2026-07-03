@@ -13,6 +13,7 @@
  */
 const { prisma } = require('../../../utils/db');
 const { dispatchWebhook } = require('../../../services/webhookService');
+const whatsapp = require('../../../services/whatsappService');
 
 // Apply one SUCCESS transaction to its invoice or QR code. Safe to call repeatedly.
 async function recordForTransaction(txn) {
@@ -43,6 +44,7 @@ async function recordForTransaction(txn) {
         FROM (SELECT COALESCE(SUM(amount_paid),0) AS paid FROM inv_invoice_payments WHERE invoice_id = $1::uuid) sub
        WHERE i.id = $1::uuid
        RETURNING i.merchant_id::text AS merchant_id, i.invoice_number, i.status, i.recipient_email,
+                 i.recipient_phone, i.recipient_name, i.currency,
                  i.total_amount::text AS total_amount, sub.paid::text AS paid`,
       meta.invoice_id
     );
@@ -51,6 +53,16 @@ async function recordForTransaction(txn) {
       invoice_number: inv.invoice_number, status: inv.status,
       amount_paid: Number(inv.paid), total: Number(inv.total_amount), reference: txn.reference,
     });
+    // WhatsApp receipt to the payer once fully paid (best-effort; no-ops until configured).
+    if (inv && inv.status === 'paid' && inv.recipient_phone) {
+      prisma.merchant.findUnique({ where: { id: inv.merchant_id }, select: { businessName: true } })
+        .then((m) => whatsapp.notifyReceipt({
+          phone: inv.recipient_phone, recipientName: inv.recipient_name,
+          businessName: (m && m.businessName) || 'Paylode', invoiceNumber: inv.invoice_number,
+          amount: inv.total_amount, currency: inv.currency,
+        }).catch(() => {}))
+        .catch(() => {});
+    }
     return { recorded: true, invoice: inv };
   }
 

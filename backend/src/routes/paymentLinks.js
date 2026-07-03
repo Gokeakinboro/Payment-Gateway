@@ -19,6 +19,7 @@ const { requireAuth, requireMerchant } = require('../middleware/auth');
 const { ok, fail, notFound, created, generateRef, koboToNaira } = require('../utils/helpers');
 const compliance = require('../services/complianceService');
 const { sendEmail } = require('../services/emailService');
+const whatsapp = require('../services/whatsappService');
 
 const CHECKOUT_BASE = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '');
 const linkUrl = slug => `${CHECKOUT_BASE}/checkout.html?link=${slug}`;
@@ -107,7 +108,16 @@ router.post('/', requireAuth, requireMerchant, async (req, res, next) => {
        RETURNING ${SELECT_COLS}`,
       m.id, slug, title, description, amount === null ? null : BigInt(amount), currency, reusable, expiresAt, chargeVat, customerPhone
     );
-    return created(res, formatLink(rows[0]), 'Payment link created');
+    const link = formatLink(rows[0]);
+    // Share the link over WhatsApp when a customer phone was supplied (best-effort;
+    // no-ops until a WhatsApp sender + template are configured).
+    if (link.customer_phone) {
+      whatsapp.notifyPaymentLink({
+        phone: link.customer_phone, businessName: m.businessName, title: link.title,
+        amount: link.amount, currency: link.currency, payUrl: link.url,
+      }).catch(() => {});
+    }
+    return created(res, link, 'Payment link created');
   } catch (e) { next(e); }
 });
 
