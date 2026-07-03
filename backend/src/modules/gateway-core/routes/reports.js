@@ -1,9 +1,9 @@
 'use strict';
 const router     = require('express').Router();
 const nodemailer = require('nodemailer');
-const { prisma } = require('../utils/db');
-const { requireAuth, requireCompliance, requireSuperAdmin } = require('../middleware/auth');
-const { ok, fail, koboToNaira } = require('../utils/helpers');
+const { prisma } = require('../../../utils/db');
+const { requireAuth, requireCompliance, requireSuperAdmin } = require('../../../middleware/auth');
+const { ok, fail, koboToNaira } = require('../../../utils/helpers');
 
 function getMailer() {
   return nodemailer.createTransport({
@@ -827,8 +827,8 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
 // The client builds the file (CSV/Excel) and posts it base64; we email it.
 // Any logged-in user (incl. merchants) can email a report to themselves; staff
 // may specify another recipient. Works for EVERY report (download → email).
-const { sendEmail } = require('../services/emailService');
-const { logAudit }  = require('../services/auditService');
+const { sendEmail } = require('../../../services/emailService');
+const { logAudit }  = require('../../../services/auditService');
 router.post('/email', requireAuth, async (req, res, next) => {
   try {
     const { filename, content_base64, mime, subject, to } = req.body;

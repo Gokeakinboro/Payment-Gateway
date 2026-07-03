@@ -20,8 +20,12 @@ const MIDDLEWARE_PATHS = new Set([
   '/api/v1/auth/login',         // authLimiter
 ]);
 
+// Baseline = the last-merged production server.js. Default `main` (pre-refactor,
+// still lists the app.use mounts); override with BASELINE_REF for stacked branches.
+const BASELINE_REF = process.env.BASELINE_REF || 'main';
+
 function beforeFromGit() {
-  const src = execSync('git show HEAD:backend/src/server.js', { encoding: 'utf8' });
+  const src = execSync(`git show ${BASELINE_REF}:backend/src/server.js`, { encoding: 'utf8' });
   const out = [];
   const re = /app\.use\(\s*'(\/api\/v1\/[^']+)'/g;
   let m;
@@ -50,7 +54,7 @@ let failed = false;
 const before = beforeFromGit();
 const after = afterFromRegistry();
 
-console.log(`BEFORE (git HEAD server.js): ${before.length} module mounts`);
+console.log(`BEFORE (${BASELINE_REF}:server.js): ${before.length} module mounts`);
 console.log(`AFTER  (registry):           ${after.length} module mounts`);
 
 const d = diff(before, after);

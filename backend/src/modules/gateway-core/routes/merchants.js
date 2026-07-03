@@ -1,13 +1,13 @@
 'use strict';
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
-const { prisma } = require('../utils/db');
-const { requireAuth, requireSuperAdmin, requireCompliance, requireAdmin, requireAdminOrCompliance, requirePermission } = require('../middleware/auth');
-const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../utils/helpers');
-const { logAudit } = require('../services/auditService');
-const { hasPermission } = require('../config/permissions');
-const { sendEmail, getEmailContent } = require('../services/emailService');
-const { logger } = require('../utils/logger');
+const { prisma } = require('../../../utils/db');
+const { requireAuth, requireSuperAdmin, requireCompliance, requireAdmin, requireAdminOrCompliance, requirePermission } = require('../../../middleware/auth');
+const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../../../utils/helpers');
+const { logAudit } = require('../../../services/auditService');
+const { hasPermission } = require('../../../config/permissions');
+const { sendEmail, getEmailContent } = require('../../../services/emailService');
+const { logger } = require('../../../utils/logger');
 
 // Local temp-password generator (mirrors auth.js genTempPassword).
 function genTempPassword() {

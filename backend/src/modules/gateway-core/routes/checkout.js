@@ -6,12 +6,12 @@
  */
 const router = require('express').Router();
 const crypto = require('crypto');
-const { prisma }  = require('../utils/db');
-const { ok, fail, notFound } = require('../utils/helpers');
-const { dispatchWebhook }    = require('../services/webhookService');
+const { prisma }  = require('../../../utils/db');
+const { ok, fail, notFound } = require('../../../utils/helpers');
+const { dispatchWebhook }    = require('../../../services/webhookService');
 const { computeFeesForTxn, channelToServiceType, computeFeesForPayin, resolvePayinRail, resolvePayinRateConfig } = require('../services/feeEngine');
 const { resolveCardProcessor } = require('../services/cardRouter');
-const compliance = require('../services/complianceService');
+const compliance = require('../../../services/complianceService');
 const palmpay = require('../services/palmpayService');
 const { finalizePayinSuccess } = require('../services/payinFinalize');
 const { sendCustomerReceipt } = require('../services/receiptEmail');

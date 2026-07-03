@@ -1,16 +1,16 @@
 'use strict';
 const router = require('express').Router();
 const { body, query, param, validationResult } = require('express-validator');
-const { prisma }        = require('../utils/db');
-const { requireAuth, requireApiKey, requireCompliance } = require('../middleware/auth');
+const { prisma }        = require('../../../utils/db');
+const { requireAuth, requireApiKey, requireCompliance } = require('../../../middleware/auth');
 const {
   ok, fail, notFound, created,
   generateRef, computeFees, computeFeesWithConfig, koboToNaira,
   detectCardScheme, VALID_CARD_SCHEMES,
-} = require('../utils/helpers');
-const { dispatchWebhook } = require('../services/webhookService');
-const { checkAmlRules }   = require('../services/amlService');
-const compliance          = require('../services/complianceService');
+} = require('../../../utils/helpers');
+const { dispatchWebhook } = require('../../../services/webhookService');
+const { checkAmlRules }   = require('../../../services/amlService');
+const compliance          = require('../../../services/complianceService');
 
 // Base URL of the hosted, customer-facing checkout page. The page reads ?ref=<reference>
 // and drives the GET /checkout/:reference flow. (Was the non-existent

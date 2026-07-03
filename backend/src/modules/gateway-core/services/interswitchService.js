@@ -1,6 +1,6 @@
 'use strict';
 const https  = require('https');
-const { logger } = require('../utils/logger');
+const { logger } = require('../../../utils/logger');
 
 const IS_PROD    = process.env.NODE_ENV === 'production';
 const ISW_BASE   = IS_PROD

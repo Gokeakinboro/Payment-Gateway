@@ -15,9 +15,9 @@
 //  rail + reason + suggested action (reroute via funding another rail / the
 //  routing queue). Rails are NEVER exposed to merchants.
 // ─────────────────────────────────────────────────────────────────────────────
-const { sendEmail } = require('./emailService');
-const { logAudit } = require('./auditService');
-const { logger } = require('../utils/logger');
+const { sendEmail } = require('../../../services/emailService');
+const { logAudit } = require('../../../services/auditService');
+const { logger } = require('../../../utils/logger');
 
 const OPS_EMAIL          = process.env.OPS_EMAIL || 'product@paylodeservices.com';
 const FAILURE_THRESHOLD  = parseInt(process.env.RAIL_FAILURE_THRESHOLD || '3', 10); // consecutive fails before alert
