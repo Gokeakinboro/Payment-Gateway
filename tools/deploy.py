@@ -24,46 +24,41 @@ HOST = os.environ.get('PAYLODE_HOST', '176.57.188.45')
 USER = os.environ.get('PAYLODE_USER', 'root')
 PASS = os.environ.get('PAYLODE_SSH_PASS')
 
-# local -> remote.  Keep this list in sync with what actually ships.
-MANIFEST = [
+# Static frontend (live box = 45) — explicit list.
+FRONTEND = [
     ('onboarding.html',                            '/var/www/paylode/onboarding.html'),
     ('app.js',                                     '/var/www/paylode/app.js'),
     ('api-wiring.js',                              '/var/www/paylode/api-wiring.js'),
     ('dashboard.html',                             '/var/www/paylode/dashboard.html'),
     ('sandbox.html',                               '/var/www/paylode/sandbox.html'),
-    ('backend/src/routes/onboarding.js',           '/opt/paylode-api/backend/src/routes/onboarding.js'),
-    ('backend/src/routes/deferrals.js',            '/opt/paylode-api/backend/src/routes/deferrals.js'),
-    ('backend/src/routes/documents.js',            '/opt/paylode-api/backend/src/routes/documents.js'),
-    ('backend/src/routes/users.js',                '/opt/paylode-api/backend/src/routes/users.js'),
-    ('backend/src/routes/aggregators.js',          '/opt/paylode-api/backend/src/routes/aggregators.js'),
-    ('backend/src/routes/merchants.js',            '/opt/paylode-api/backend/src/routes/merchants.js'),
-    ('backend/src/routes/payouts.js',              '/opt/paylode-api/backend/src/routes/payouts.js'),
-    ('backend/src/data/nibssBanks.js',             '/opt/paylode-api/backend/src/data/nibssBanks.js'),
-    ('backend/src/routes/support.js',              '/opt/paylode-api/backend/src/routes/support.js'),
-    ('backend/src/routes/auth.js',                 '/opt/paylode-api/backend/src/routes/auth.js'),
-    ('backend/src/routes/admin.js',                '/opt/paylode-api/backend/src/routes/admin.js'),
-    ('backend/src/routes/reports.js',              '/opt/paylode-api/backend/src/routes/reports.js'),
-    ('backend/src/routes/transactions.js',         '/opt/paylode-api/backend/src/routes/transactions.js'),
-    ('backend/src/routes/settlements.js',          '/opt/paylode-api/backend/src/routes/settlements.js'),
-    ('backend/src/routes/kyc.js',                  '/opt/paylode-api/backend/src/routes/kyc.js'),
-    ('backend/src/config/permissions.js',          '/opt/paylode-api/backend/src/config/permissions.js'),
-    ('backend/src/middleware/auth.js',             '/opt/paylode-api/backend/src/middleware/auth.js'),
-    ('backend/src/services/deferralExpiryService.js', '/opt/paylode-api/backend/src/services/deferralExpiryService.js'),
-    ('backend/src/services/emailService.js',       '/opt/paylode-api/backend/src/services/emailService.js'),
-    ('backend/src/services/feeEngine.js',          '/opt/paylode-api/backend/src/services/feeEngine.js'),
-    ('backend/src/services/railHealth.js',         '/opt/paylode-api/backend/src/services/railHealth.js'),
-    ('backend/src/routes/checkout.js',             '/opt/paylode-api/backend/src/routes/checkout.js'),
-    ('backend/src/routes/compliance.js',           '/opt/paylode-api/backend/src/routes/compliance.js'),
-    ('backend/src/config/complianceRules.js',      '/opt/paylode-api/backend/src/config/complianceRules.js'),
-    ('backend/src/data/sanctionsList.js',          '/opt/paylode-api/backend/src/data/sanctionsList.js'),
-    ('backend/src/services/complianceService.js',  '/opt/paylode-api/backend/src/services/complianceService.js'),
-    ('backend/src/services/palmpayService.js',     '/opt/paylode-api/backend/src/services/palmpayService.js'),
-    ('backend/src/services/payinFinalize.js',      '/opt/paylode-api/backend/src/services/payinFinalize.js'),
-    ('backend/src/services/railFloat.js',          '/opt/paylode-api/backend/src/services/railFloat.js'),
-    ('backend/src/routes/palmpay-webhook.js',      '/opt/paylode-api/backend/src/routes/palmpay-webhook.js'),
-    ('backend/src/server.js',                      '/opt/paylode-api/backend/src/server.js'),
-    ('backend/prisma/schema.prisma',               '/opt/paylode-api/backend/prisma/schema.prisma'),
 ]
+
+# Backend (176) is derived by WALKING the tree rather than an explicit list, so a
+# refactor that moves/adds files can never silently drop one (which would ship a
+# server.js that require()s files that never landed — see the 2026-07-03 incident).
+# Ships: every backend/src/**/*.js, the prisma schema + migrations, ecosystem.config.js.
+REMOTE_BASE = '/opt/paylode-api'
+
+def _walk(base, suffixes):
+    out = []
+    for root, _dirs, fnames in os.walk(base):
+        if 'node_modules' in root.split(os.sep):
+            continue
+        for fn in fnames:
+            if fn.endswith(suffixes):
+                lp = os.path.join(root, fn).replace('\\', '/')
+                out.append((lp, REMOTE_BASE + '/' + lp))
+    return sorted(out)
+
+def backend_manifest():
+    files = _walk('backend/src', ('.js',))
+    files += _walk('backend/prisma/migrations', ('.sql',))
+    for single in ('backend/prisma/schema.prisma', 'backend/ecosystem.config.js'):
+        if os.path.exists(single):
+            files.append((single, REMOTE_BASE + '/' + single))
+    return files
+
+MANIFEST = FRONTEND + backend_manifest()
 
 def md5_local(p):
     h = hashlib.md5()
@@ -105,9 +100,14 @@ def main():
 
     ts = time.strftime('%Y%m%d-%H%M%S'); bak = '/root/deploy-backup-' + ts
     run('mkdir -p ' + bak)
-    # 2) backup + 3) binary upload
+    # 2) backup + 3) binary upload. Ensure the remote directory exists (new module
+    # dirs like modules/gateway-core/routes won't exist on first split deploy), and
+    # mirror the path under the backup dir so same-named files can't clobber.
     for local, remote in files:
-        run('cp -p "%s" "%s/" 2>/dev/null' % (remote, bak))
+        rdir = posixpath.dirname(remote)
+        bdir = bak + rdir
+        run('mkdir -p "%s" "%s"' % (rdir, bdir))
+        run('cp -p "%s" "%s/" 2>/dev/null' % (remote, bdir))
         sftp.put(local, remote)
         print('  uploaded', remote)
     sftp.close()

@@ -6,6 +6,12 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
+    "start:core": "node src/entrypoints/core.js",
+    "start:invoicing": "node src/entrypoints/invoicing.js",
+    "start:wallet": "node src/entrypoints/wallet.js",
+    "start:assistant": "node src/entrypoints/assistant.js",
+    "pm2:split": "pm2 start ecosystem.config.js",
+    "verify:arch": "node tools/resolve-requires.js && node tools/route-parity.js && node tools/p3-split-check.js && node tools/guard-selftest.js",
     "db:migrate": "npx prisma migrate deploy",
     "db:seed": "node prisma/seed.js",
     "db:studio": "npx prisma studio",
