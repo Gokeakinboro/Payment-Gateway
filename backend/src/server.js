@@ -13,22 +13,19 @@ const morgan     = require('morgan');
 const rateLimit  = require('express-rate-limit');
 
 const { logger }   = require('./utils/logger');
-require('./services/deferralExpiryService');
+// KYC deferral-expiry sweep self-schedules on require (advisory-locked, all workers).
+// Guarded so a failure here can't crash boot.
+try { require('./services/deferralExpiryService'); }
+catch (e) { logger.error({ err: e }, '✗ deferralExpiryService failed to load (continuing)'); }
 const { prisma }   = require('./utils/db');
 const errorHandler = require('./middleware/errorHandler');
 
-// Routes
-const authRoutes        = require('./routes/auth');
-const merchantRoutes    = require('./routes/merchants');
-const transactionRoutes = require('./routes/transactions');
-const webhookRoutes     = require('./routes/webhooks');
-const aggregatorRoutes  = require('./routes/aggregators');
-const adminRoutes       = require('./routes/admin');
-const kycRoutes         = require('./routes/kyc');
-const settlementRoutes  = require('./routes/settlements');
-const reportRoutes      = require('./routes/reports');
-const railRoutes        = require('./routes/rails');
-const checkoutRoutes    = require('./routes/checkout');
+// Guarded, ordered module mounting (see modules/registry.js). Replaces the old
+// top-level route requires: a bad require in any one module no longer crashes boot.
+const { mountModules } = require('./modules/registry');
+
+// Populated by mountModules() below; read by the /health endpoints.
+const moduleHealth = {};
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -104,52 +101,47 @@ const onboardingLimiter = rateLimit({
 app.use('/api/v1/onboarding/submit', onboardingLimiter);
 
 // ── Health check ──────────────────────────────────────────────────────────
+// Summarise per-module load status (ok/failed/disabled) so a partially-degraded
+// gateway is observable rather than silently down.
+const moduleSummary = () => {
+  const s = { ok: 0, failed: 0, disabled: 0 };
+  const failed = [];
+  for (const [name, m] of Object.entries(moduleHealth)) {
+    s[m.status] = (s[m.status] || 0) + 1;
+    if (m.status === 'failed') failed.push(name);
+  }
+  return { counts: s, failed };
+};
+
 app.get('/health', async (req, res) => {
+  const mods = moduleSummary();
   try {
     await prisma.$queryRaw`SELECT 1`;
     res.json({
-      status:    'healthy',
+      status:    mods.counts.failed > 0 ? 'degraded' : 'healthy',
       service:   'Paylode API',
       version:   '1.0.0',
       db:        'connected',
+      modules:   mods,
       timestamp: new Date().toISOString(),
       cbn:       process.env.CBN_LICENSE_NO || 'configured',
     });
   } catch (e) {
-    res.status(503).json({ status: 'unhealthy', db: 'disconnected', error: e.message });
+    res.status(503).json({ status: 'unhealthy', db: 'disconnected', modules: mods, error: e.message });
   }
 });
 
-// ── API Routes ────────────────────────────────────────────────────────────
-app.use('/api/v1/auth',         authRoutes);
-app.use('/api/v1/merchants',    merchantRoutes);
-app.use('/api/v1/transactions', transactionRoutes);
-app.use('/api/v1/webhooks',     webhookRoutes);
-app.use('/api/v1/aggregators',  aggregatorRoutes);
-app.use('/api/v1/admin',        adminRoutes);
-app.use('/api/v1/kyc',          kycRoutes);
-app.use('/api/v1/settlements',  settlementRoutes);
-app.use('/api/v1/reports',      reportRoutes);
-app.use('/api/v1/rails',        railRoutes);
-app.use('/api/v1/checkout',     checkoutRoutes);
-app.use('/api/v1/onboarding',          require('./routes/onboarding'));
-app.use('/api/v1/payouts',             require('./routes/payouts'));
-app.use('/api/v1/users',               require('./routes/users'));
-app.use('/api/v1/chargebacks',         require('./routes/chargebacks'));
-app.use('/api/v1/compliance',          require('./routes/compliance'));
-app.use('/api/v1/uploads',             require('./routes/uploads'));
-app.use('/api/v1/statements',          require('./routes/statements'));
-app.use('/api/v1/admin/email-templates', require('./routes/email-templates'));
+// Per-module detail (which loaded, which failed + why, which are toggled off).
+app.get('/health/modules', (req, res) => {
+  res.json({ status: true, modules: moduleHealth });
+});
 
-app.use('/api/v1/webhooks/youverify', require('./routes/youverify-webhook'));
-app.use('/api/v1/webhooks/palmpay', require('./routes/palmpay-webhook'));
-app.use('/api/v1/deferrals', require('./routes/deferrals'));
-app.use('/api/v1/documents', require('./routes/documents'));
-app.use('/api/v1/support', require('./routes/support'));
-app.use('/api/v1/payment-links', require('./routes/paymentLinks'));
-app.use('/api/v1/invoicing', require('./modules/invoicing'));
-app.use('/api/v1/wallet', require('./modules/wallet'));
-app.use('/api/v1/assistant', require('./modules/assistant'));
+// ── API Routes ────────────────────────────────────────────────────────────
+// Each module is loaded lazily inside try/catch (see modules/registry.js). One
+// module failing to load records `failed` + serves 503 at its path — the rest of
+// the gateway still boots. Order is preserved from the registry (significant for
+// overlapping prefixes like /webhooks vs /webhooks/palmpay).
+mountModules(app, { logger, health: moduleHealth });
 
 // ── 404 handler ───────────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -171,25 +163,35 @@ async function start() {
       logger.info(`  CBN License: ${process.env.CBN_LICENSE_NO}`);
     });
 
-    // Rail-float poll — refresh OUR balance on each payout rail (PalmPay etc.).
-    // Runs on ONE pm2 worker only (instance 0) to avoid N× polling.
+    // Background jobs run on ONE pm2 worker only (instance 0) to avoid N× polling.
+    // Each job is started inside its own try/catch so a failure to load/schedule
+    // one can't crash boot (same guarantee the module registry gives the routes).
     if ((process.env.NODE_APP_INSTANCE || '0') === '0') {
-      const { syncAllFloats } = require('./services/railFloat');
-      const POLL_MS = Number(process.env.RAIL_FLOAT_POLL_MS || 10 * 60 * 1000); // 10 min
-      const run = () => syncAllFloats().catch(e => logger.error({ err: e }, 'rail float poll failed'));
-      setTimeout(run, 15000);          // once shortly after boot
-      setInterval(run, POLL_MS);       // then on a schedule
-      logger.info(`  Rail-float poll every ${Math.round(POLL_MS / 60000)} min (worker 0)`);
+      // Rail-float poll — refresh OUR balance on each payout rail (PalmPay etc.).
+      try {
+        const { syncAllFloats } = require('./services/railFloat');
+        const POLL_MS = Number(process.env.RAIL_FLOAT_POLL_MS || 10 * 60 * 1000); // 10 min
+        const run = () => syncAllFloats().catch(e => logger.error({ err: e }, 'rail float poll failed'));
+        setTimeout(run, 15000);          // once shortly after boot
+        setInterval(run, POLL_MS);       // then on a schedule
+        logger.info(`  Rail-float poll every ${Math.round(POLL_MS / 60000)} min (worker 0)`);
+      } catch (e) {
+        logger.error({ err: e }, '  ✗ rail-float poll failed to start (continuing)');
+      }
 
       // Stuck-'sent' payout reconciliation — backstop for payout legs whose rail
       // webhook never landed. Queries the rail's payout-result API and settles/refunds
       // via the same shared logic as the webhook. Worker 0 only.
-      const { reconcileSentPayouts } = require('./services/payoutSettle');
-      const RECON_MS = Number(process.env.PAYOUT_RECON_MS || 3 * 60 * 1000); // 3 min
-      const recon = () => reconcileSentPayouts().catch(e => logger.error({ err: e }, 'payout reconciliation failed'));
-      setTimeout(recon, 25000);        // once shortly after boot
-      setInterval(recon, RECON_MS);    // then on a schedule
-      logger.info(`  Stuck-sent payout reconciliation every ${Math.round(RECON_MS / 60000)} min (worker 0)`);
+      try {
+        const { reconcileSentPayouts } = require('./services/payoutSettle');
+        const RECON_MS = Number(process.env.PAYOUT_RECON_MS || 3 * 60 * 1000); // 3 min
+        const recon = () => reconcileSentPayouts().catch(e => logger.error({ err: e }, 'payout reconciliation failed'));
+        setTimeout(recon, 25000);        // once shortly after boot
+        setInterval(recon, RECON_MS);    // then on a schedule
+        logger.info(`  Stuck-sent payout reconciliation every ${Math.round(RECON_MS / 60000)} min (worker 0)`);
+      } catch (e) {
+        logger.error({ err: e }, '  ✗ payout reconciliation failed to start (continuing)');
+      }
     }
   } catch (err) {
     logger.error('Failed to start server:', err);
@@ -204,4 +206,9 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
-start();
+// Auto-start only when run directly (`node src/server.js`). When required by a
+// test/tooling harness (route-parity dump, future per-service entrypoints), the
+// app is returned without connecting the DB or binding a port.
+if (require.main === module) start();
+
+module.exports = { app, start, moduleHealth };
