@@ -23,20 +23,20 @@
 const MODULES = [
   // ── Core / platform ──────────────────────────────────────────────────────
   { name: 'auth',            basePath: '/api/v1/auth',                 load: () => require('../routes/auth'),              enabledEnv: 'MODULE_AUTH_ENABLED',            category: 'core' },
-  { name: 'merchants',       basePath: '/api/v1/merchants',            load: () => require('../routes/merchants'),         enabledEnv: 'MODULE_MERCHANTS_ENABLED',       category: 'core' },
-  { name: 'transactions',    basePath: '/api/v1/transactions',         load: () => require('../routes/transactions'),      enabledEnv: 'MODULE_TRANSACTIONS_ENABLED',    category: 'money' },
+  { name: 'merchants',       basePath: '/api/v1/merchants',            load: () => require('./gateway-core/routes/merchants'),         enabledEnv: 'MODULE_MERCHANTS_ENABLED',       category: 'core' },
+  { name: 'transactions',    basePath: '/api/v1/transactions',         load: () => require('./gateway-core/routes/transactions'),      enabledEnv: 'MODULE_TRANSACTIONS_ENABLED',    category: 'money' },
   { name: 'webhooks',        basePath: '/api/v1/webhooks',             load: () => require('../routes/webhooks'),          enabledEnv: 'MODULE_WEBHOOKS_ENABLED',        category: 'core' },
-  { name: 'aggregators',     basePath: '/api/v1/aggregators',          load: () => require('../routes/aggregators'),       enabledEnv: 'MODULE_AGGREGATORS_ENABLED',     category: 'core' },
+  { name: 'aggregators',     basePath: '/api/v1/aggregators',          load: () => require('./gateway-core/routes/aggregators'),       enabledEnv: 'MODULE_AGGREGATORS_ENABLED',     category: 'core' },
   { name: 'admin',           basePath: '/api/v1/admin',                load: () => require('../routes/admin'),             enabledEnv: 'MODULE_ADMIN_ENABLED',           category: 'core' },
   { name: 'kyc',             basePath: '/api/v1/kyc',                  load: () => require('../routes/kyc'),               enabledEnv: 'MODULE_KYC_ENABLED',             category: 'core' },
-  { name: 'settlements',     basePath: '/api/v1/settlements',          load: () => require('../routes/settlements'),       enabledEnv: 'MODULE_SETTLEMENTS_ENABLED',     category: 'money' },
-  { name: 'reports',         basePath: '/api/v1/reports',              load: () => require('../routes/reports'),           enabledEnv: 'MODULE_REPORTS_ENABLED',         category: 'core' },
-  { name: 'rails',           basePath: '/api/v1/rails',                load: () => require('../routes/rails'),             enabledEnv: 'MODULE_RAILS_ENABLED',           category: 'money' },
-  { name: 'checkout',        basePath: '/api/v1/checkout',             load: () => require('../routes/checkout'),          enabledEnv: 'MODULE_CHECKOUT_ENABLED',        category: 'money' },
+  { name: 'settlements',     basePath: '/api/v1/settlements',          load: () => require('./gateway-core/routes/settlements'),       enabledEnv: 'MODULE_SETTLEMENTS_ENABLED',     category: 'money' },
+  { name: 'reports',         basePath: '/api/v1/reports',              load: () => require('./gateway-core/routes/reports'),           enabledEnv: 'MODULE_REPORTS_ENABLED',         category: 'core' },
+  { name: 'rails',           basePath: '/api/v1/rails',                load: () => require('./gateway-core/routes/rails'),             enabledEnv: 'MODULE_RAILS_ENABLED',           category: 'money' },
+  { name: 'checkout',        basePath: '/api/v1/checkout',             load: () => require('./gateway-core/routes/checkout'),          enabledEnv: 'MODULE_CHECKOUT_ENABLED',        category: 'money' },
   { name: 'onboarding',      basePath: '/api/v1/onboarding',           load: () => require('../routes/onboarding'),        enabledEnv: 'MODULE_ONBOARDING_ENABLED',      category: 'core' },
-  { name: 'payouts',         basePath: '/api/v1/payouts',              load: () => require('../routes/payouts'),           enabledEnv: 'MODULE_PAYOUTS_ENABLED',         category: 'money' },
+  { name: 'payouts',         basePath: '/api/v1/payouts',              load: () => require('./gateway-core/routes/payouts'),           enabledEnv: 'MODULE_PAYOUTS_ENABLED',         category: 'money' },
   { name: 'users',           basePath: '/api/v1/users',                load: () => require('../routes/users'),             enabledEnv: 'MODULE_USERS_ENABLED',           category: 'core' },
-  { name: 'chargebacks',     basePath: '/api/v1/chargebacks',          load: () => require('../routes/chargebacks'),       enabledEnv: 'MODULE_CHARGEBACKS_ENABLED',     category: 'money' },
+  { name: 'chargebacks',     basePath: '/api/v1/chargebacks',          load: () => require('./gateway-core/routes/chargebacks'),       enabledEnv: 'MODULE_CHARGEBACKS_ENABLED',     category: 'money' },
   { name: 'compliance',      basePath: '/api/v1/compliance',           load: () => require('../routes/compliance'),        enabledEnv: 'MODULE_COMPLIANCE_ENABLED',      category: 'core' },
   { name: 'uploads',         basePath: '/api/v1/uploads',              load: () => require('../routes/uploads'),           enabledEnv: 'MODULE_UPLOADS_ENABLED',         category: 'core' },
   { name: 'statements',      basePath: '/api/v1/statements',           load: () => require('../routes/statements'),        enabledEnv: 'MODULE_STATEMENTS_ENABLED',      category: 'core' },
@@ -44,10 +44,10 @@ const MODULES = [
 
   // ── Provider webhooks (specific sub-paths — must stay AFTER /webhooks) ────
   { name: 'youverify-webhook', basePath: '/api/v1/webhooks/youverify', load: () => require('../routes/youverify-webhook'), enabledEnv: 'MODULE_YOUVERIFY_WEBHOOK_ENABLED', category: 'webhook' },
-  { name: 'palmpay-webhook',   basePath: '/api/v1/webhooks/palmpay',   load: () => require('../routes/palmpay-webhook'),   enabledEnv: 'MODULE_PALMPAY_WEBHOOK_ENABLED',   category: 'money' },
+  { name: 'palmpay-webhook',   basePath: '/api/v1/webhooks/palmpay',   load: () => require('./gateway-core/routes/palmpay-webhook'),   enabledEnv: 'MODULE_PALMPAY_WEBHOOK_ENABLED',   category: 'money' },
 
   // ── More core ────────────────────────────────────────────────────────────
-  { name: 'deferrals',     basePath: '/api/v1/deferrals',      load: () => require('../routes/deferrals'),    enabledEnv: 'MODULE_DEFERRALS_ENABLED',     category: 'core' },
+  { name: 'deferrals',     basePath: '/api/v1/deferrals',      load: () => require('./gateway-core/routes/deferrals'),    enabledEnv: 'MODULE_DEFERRALS_ENABLED',     category: 'core' },
   { name: 'documents',     basePath: '/api/v1/documents',      load: () => require('../routes/documents'),    enabledEnv: 'MODULE_DOCUMENTS_ENABLED',     category: 'core' },
   { name: 'support',       basePath: '/api/v1/support',        load: () => require('../routes/support'),      enabledEnv: 'MODULE_SUPPORT_ENABLED',       category: 'core' },
   { name: 'payment-links', basePath: '/api/v1/payment-links',  load: () => require('../routes/paymentLinks'), enabledEnv: 'MODULE_PAYMENT_LINKS_ENABLED', category: 'money' },

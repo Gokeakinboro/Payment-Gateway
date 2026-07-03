@@ -1,8 +1,8 @@
 'use strict';
 const router = require('express').Router();
-const { prisma } = require('../utils/db');
-const { requireAuth, requireCompliance } = require('../middleware/auth');
-const { ok, fail, koboToNaira, generateRef } = require('../utils/helpers');
+const { prisma } = require('../../../utils/db');
+const { requireAuth, requireCompliance } = require('../../../middleware/auth');
+const { ok, fail, koboToNaira, generateRef } = require('../../../utils/helpers');
 
 // Format a minor-unit amount in its currency (kobo→₦, cents→$)
 function fmtMinor(minor, ccy) {
