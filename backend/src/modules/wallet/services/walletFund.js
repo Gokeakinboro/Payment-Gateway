@@ -16,6 +16,7 @@
  */
 const { prisma } = require('../_shared');
 const ledger = require('./ledger');
+const { findSuccessfulTransactionsBySource } = require('../../gateway-core/services/gatewayTxn');
 
 async function recordForTransaction(txn) {
   if (!txn || txn.status !== 'SUCCESS') return { skipped: true };
@@ -42,14 +43,9 @@ async function recordForTransaction(txn) {
 // or a finalize that early-returned 'alreadyDone' before the credit hook). Wide
 // 14-day window (low volume + idempotent) so a missed credit is never stranded.
 async function reconcileWalletFunding() {
-  const txns = await prisma.transaction.findMany({
-    where: {
-      status: 'SUCCESS',
-      createdAt: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) },
-      metadata: { path: ['source'], equals: 'wallet_fund' },
-    },
+  const txns = await findSuccessfulTransactionsBySource({
+    sources: 'wallet_fund', sinceMs: 14 * 24 * 60 * 60 * 1000,
     select: { id: true, reference: true, amount: true, status: true, customerEmail: true, metadata: true },
-    take: 500,
   });
   let credited = 0;
   for (const t of txns) { const r = await recordForTransaction(t); if (r.recorded) credited++; }

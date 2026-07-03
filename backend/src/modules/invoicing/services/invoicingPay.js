@@ -14,6 +14,7 @@
 const { prisma } = require('../../../utils/db');
 const { dispatchWebhook } = require('../../../services/webhookService');
 const whatsapp = require('../../../services/whatsappService');
+const { findSuccessfulTransactionsBySource } = require('../../gateway-core/services/gatewayTxn');
 
 // Apply one SUCCESS transaction to its invoice or QR code. Safe to call repeatedly.
 async function recordForTransaction(txn) {
@@ -94,17 +95,9 @@ function notifyMerchant(merchantId, event, data) {
 // Worker sweep: catch SUCCESS invoicing transactions not yet recorded (e.g. card
 // payments finalized inside checkout.js). Runs every minute from the worker.
 async function reconcileInvoicingPayments() {
-  const txns = await prisma.transaction.findMany({
-    where: {
-      status: 'SUCCESS',
-      createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-      OR: [
-        { metadata: { path: ['source'], equals: 'invoice' } },
-        { metadata: { path: ['source'], equals: 'qr' } },
-      ],
-    },
+  const txns = await findSuccessfulTransactionsBySource({
+    sources: ['invoice', 'qr'], sinceMs: 24 * 60 * 60 * 1000,
     select: { id: true, reference: true, amount: true, status: true, channel: true, metadata: true },
-    take: 500,
   });
   let recorded = 0;
   for (const t of txns) {

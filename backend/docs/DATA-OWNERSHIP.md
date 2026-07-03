@@ -32,20 +32,32 @@ manifest `backend/src/modules/_domains.js`.
    (`invoicingPay` / `walletFund`), keyed by `txn.metadata.source`.
 3. Anything else = a violation and fails CI.
 
-## Catalogued exceptions (pre-existing, reviewed — kept visible)
+## Cross-domain interfaces (hooks — the sanctioned way to touch another domain)
 
-These pass the lint but are listed in `_domains.js` `KNOWN_EXCEPTIONS` so they stay
-on the radar. **Follow-up (KIV, money-staged): route them through hooks** so the
-boundary becomes clean.
+A domain touches another's data only through the owner's code, never a raw
+cross-domain query. Declared in `_domains.js`.
 
-- **Products create the gateway `transaction`** for a collection
-  (`invoicing/routes/public.js`, `wallet/routes/{fund,me}.js`) → future: a
-  gateway-core `createGatewayTransaction` hook (mirrors `payinFinalize`→product).
-- **Products read `transaction`** to reconcile a completed payment
-  (`invoicingPay.js`, `walletFund.js`) — read-only.
-- **wallet ↔ invoicing "pay invoice from wallet"** (`wallet/services/walletInvoice.js`,
-  `wallet/routes/me.js`) writes `inv_invoice*` / reads `inv_qr_codes` → future: an
-  invoicing-provided pay/read hook so wallet stops writing `inv_*` directly.
+- **core → product** (`CORE_TO_PRODUCT_HOOKS`): `payinFinalize.js` calls
+  `invoicingPay` / `walletFund` on a successful pay-in (keyed by `metadata.source`).
+- **product → core** (`PRODUCT_TO_CORE_HOOKS`): products mint/read the core
+  `transaction` via `gateway-core/services/gatewayTxn.js`
+  (`createCheckoutTransaction`, `findSuccessfulTransactionsBySource`) instead of
+  `prisma.transaction` — used by invoicing (public, invoicingPay) + wallet (fund,
+  me, walletFund).
+- **product → product** (`PRODUCT_TO_PRODUCT_HOOKS`): wallet's "pay invoice from
+  wallet" records payments through `invoicing/services/invoicePayHooks.js`
+  (`lockInvoiceForUpdate`, `applyInvoicePayment`, passed the wallet's `tx`) instead
+  of raw `inv_*` SQL.
+
+## Catalogued exceptions (reviewed — kept visible)
+
+The former `transaction.create`/`findMany` and `walletInvoice` `inv_*` writes were
+removed by routing them through the hooks above (2026-07-03). What remains:
+
+- **wallet member app READS invoicing invoice/QR tables for display**
+  (`wallet/routes/me.js`) — read-only cross-product; the writes go through the
+  invoicing hooks. A future invoicing read-hook could remove even this, but reads
+  don't risk the boundary.
 
 ## Adding a table
 
