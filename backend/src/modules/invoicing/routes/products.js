@@ -81,6 +81,38 @@ router.put('/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Bulk import (the "Import CSV" button). Body: { department_id?, items:[{name, default_amount(kobo), description?}] }.
+// Skips blank names / bad amounts; dedupes by name within the batch. Max 1000.
+router.post('/import', async (req, res, next) => {
+  try {
+    const t = req.invTenant, mid = t.merchantId, b = req.body || {};
+    const deptId = t.isDeptUser ? t.departmentId : (b.department_id || null);
+    if (deptId && !t.isDeptUser && !(await deptOk(deptId, mid))) return fail(res, 'Invalid department');
+    const raw = Array.isArray(b.items) ? b.items : [];
+    if (!raw.length) return fail(res, 'No items to import');
+    if (raw.length > 1000) return fail(res, 'Too many items (max 1000 per import)');
+    const seen = new Set(); const items = [];
+    for (const it of raw) {
+      const name = String((it && it.name) || '').trim().slice(0, 200); if (!name) continue;
+      const key = name.toLowerCase(); if (seen.has(key)) continue; seen.add(key);
+      let amt = null;
+      if (it.default_amount != null && String(it.default_amount) !== '') {
+        const n = parseInt(it.default_amount, 10); if (Number.isInteger(n) && n >= 0) amt = n;
+      }
+      items.push({ name, amt, desc: it.description ? String(it.description).slice(0, 500) : null });
+    }
+    if (!items.length) return fail(res, 'No valid items to import');
+    const vals = []; const params = []; let i = 1;
+    for (const r of items) {
+      vals.push(`($${i++}::uuid,$${i++},$${i++},$${i++},$${i++}::uuid)`);
+      params.push(mid, r.name, r.amt === null ? null : BigInt(r.amt), r.desc, deptId);
+    }
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO inv_products (merchant_id, name, default_amount, description, department_id) VALUES ${vals.join(',')}`, ...params);
+    return created(res, { created: items.length }, `Imported ${items.length} item(s)`);
+  } catch (e) { next(e); }
+});
+
 router.delete('/:id', async (req, res, next) => {
   try {
     const rows = await prisma.$queryRawUnsafe(
