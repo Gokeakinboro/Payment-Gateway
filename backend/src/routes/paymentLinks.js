@@ -55,17 +55,47 @@ function formatLink(r) {
     created_at:  r.created_at,
     recipient_email: r.recipient_email || null,
     batch_id:        r.batch_id || null,
+    line_items:      r.line_items || null,
+    department_id:   r.department_id || null,
+    service_charge_amount: r.service_charge_amount == null ? 0 : Number(r.service_charge_amount),
+    apply_service_charge:  !!r.apply_service_charge,
+    vat_amount:      r.vat_amount == null ? 0 : Number(r.vat_amount),
     url:         linkUrl(r.slug),
   };
 }
 
 const SELECT_COLS = `id::text, slug, title, description, amount::text AS amount, currency,
                      charge_vat, customer_phone, is_reusable, status, expires_at, paid_count, created_at,
-                     recipient_email, batch_id::text AS batch_id`;
+                     recipient_email, batch_id::text AS batch_id,
+                     line_items, department_id::text AS department_id,
+                     service_charge_amount::text AS service_charge_amount, apply_service_charge,
+                     vat_amount::text AS vat_amount`;
 
 // NGN single-transaction cap by KYC tier (kobo) — mirrors transactions.initialize.
 function singleTxnLimitKobo(tier) {
   return ({ 1: 5_000_000n, 2: 100_000_000n, 3: 500_000_000n })[tier] || 5_000_000n;
+}
+
+// Hook: create a payment_links row. Core owns payment_links, so other domains
+// (invoicing's itemized-link builder, which resolves the dept catalog + service
+// charge) create links through THIS instead of touching the table — keeps the
+// boundary clean (see docs/DATA-OWNERSHIP.md). `amount` is the face (excl VAT).
+async function createPaymentLink({
+  merchantId, title, description = null, amount = null, currency = 'NGN', reusable = true,
+  expiresAt = null, chargeVat = false, customerPhone = null, lineItems = null,
+  departmentId = null, serviceChargeAmount = 0, applyServiceCharge = false, vatAmount = 0,
+}) {
+  const slug = crypto.randomBytes(8).toString('base64url');
+  const rows = await prisma.$queryRawUnsafe(
+    `INSERT INTO payment_links
+       (merchant_id, slug, title, description, amount, currency, is_reusable, expires_at, charge_vat,
+        customer_phone, line_items, department_id, service_charge_amount, apply_service_charge, vat_amount)
+     VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::uuid,$13,$14,$15)
+     RETURNING ${SELECT_COLS}`,
+    merchantId, slug, title, description, amount === null ? null : BigInt(amount), currency, reusable,
+    expiresAt, chargeVat, customerPhone, lineItems ? JSON.stringify(lineItems) : null,
+    departmentId, BigInt(serviceChargeAmount), applyServiceCharge, BigInt(vatAmount));
+  return formatLink(rows[0]);
 }
 
 // ── Merchant: create a payment link ─────────────────────────────────────────
@@ -311,7 +341,7 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
   try {
     const linkRows = await prisma.$queryRawUnsafe(
       `SELECT id::text, merchant_id::text AS merchant_id, title, amount::text AS amount,
-              currency, charge_vat, status, expires_at
+              currency, charge_vat, status, expires_at, service_charge_amount::text AS service_charge_amount
          FROM payment_links WHERE slug = $1`,
       req.params.slug
     );
@@ -336,9 +366,10 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
         return fail(res, 'A valid amount (in kobo, ≥ 100) is required');
     }
 
-    // Optional merchant-charged 7.5% VAT, added on top of the face amount. The
-    // customer is charged (and the transaction is for) base + VAT.
-    const vat     = link.charge_vat ? merchantVat(amount) : 0n;
+    // Optional merchant-charged 7.5% VAT. Service charge (itemized links) is VAT-EXEMPT,
+    // so the VAT base is the face amount minus the stored service charge.
+    const svc     = link.amount !== null ? (Number(link.service_charge_amount) || 0) : 0;
+    const vat     = link.charge_vat ? merchantVat(amount - svc) : 0n;
     const charged = BigInt(amount) + vat;
 
     const merchant = await prisma.merchant.findUnique({
@@ -383,4 +414,7 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Router is the default export (mounted by the registry); the hook is attached for
+// invoicing's itemized-link builder (require('../routes/paymentLinks').createPaymentLink).
 module.exports = router;
+module.exports.createPaymentLink = createPaymentLink;
