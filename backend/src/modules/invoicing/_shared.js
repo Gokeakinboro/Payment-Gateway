@@ -36,6 +36,38 @@ function computeVat(amountKobo, chargeVat) {
   return amt * BigInt(Math.round(VAT_RATE * 1_000_000)) / 1_000_000n;
 }
 
+// Itemized-document money math (invoices / QR / payment links). ONE formula — the
+// service-charge `mode` only changes DISPLAY, both modes give the same total.
+// All kobo, integers. line_items store BASE amounts (unit×qty, pre-service):
+//   items_subtotal = Σ(unit_amount × quantity)
+//   service_charge = applyServiceCharge ? round(pct% × items_subtotal) : 0   (VAT-EXEMPT)
+//   vat_amount     = chargeVat ? computeVat(items_subtotal) : 0   ← VAT base EXCLUDES service
+//   amount(excl VAT) = items_subtotal + service_charge ; total = amount + vat_amount
+// Accepts new items {product_id?, name, unit_amount, quantity} or legacy {description, amount}.
+// Returns { error } on invalid input, else { lineItems, itemsSubtotal, serviceCharge, vatAmount, amount, total }.
+function computeInvoiceMoney({ items, serviceChargePct = 0, applyServiceCharge = false, chargeVat = false, maxItems = 15 }) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return { error: 'At least one line item is required' };
+  if (list.length > maxItems) return { error: `A maximum of ${maxItems} items is allowed` };
+  const lineItems = [];
+  for (const it of list) {
+    if (!it) continue;
+    const hasUnit = it.unit_amount != null && it.quantity != null;
+    const unit = parseInt(hasUnit ? it.unit_amount : it.amount, 10);
+    const qty  = hasUnit ? parseInt(it.quantity, 10) : 1;
+    const name = String(it.name || it.description || '').trim().slice(0, 200);
+    if (!name || !Number.isInteger(unit) || unit <= 0 || !Number.isInteger(qty) || qty <= 0)
+      return { error: 'Each item needs a name, a positive unit_amount (kobo) and a positive quantity' };
+    lineItems.push({ product_id: it.product_id || null, name, unit_amount: unit, quantity: qty, amount: unit * qty });
+  }
+  const itemsSubtotal = lineItems.reduce((s, it) => s + it.amount, 0);
+  const pct = applyServiceCharge ? (Number(serviceChargePct) || 0) : 0;
+  const serviceCharge = Math.round(itemsSubtotal * pct / 100);
+  const vatAmount = Number(computeVat(itemsSubtotal, !!chargeVat));  // VAT on items only (service is VAT-exempt)
+  const amount = itemsSubtotal + serviceCharge;   // face, excl VAT
+  return { lineItems, itemsSubtotal, serviceCharge, vatAmount, amount, total: amount + vatAmount };
+}
+
 const randToken = (bytes = 24) => crypto.randomBytes(bytes).toString('base64url');
 
 // Signed token for the recipient's cross-invoice view (no account/registration):
@@ -99,7 +131,7 @@ function tenantAuth(req, res, next) {
 
 module.exports = {
   prisma, VAT_RATE, CHECKOUT_BASE, APP_BASE,
-  isValidEmail, escapeHtml, getMerchant, computeVat,
+  isValidEmail, escapeHtml, getMerchant, computeVat, computeInvoiceMoney,
   randToken, signRecipient, verifyRecipient, koboToNairaStr,
   tenantAuth,
 };
