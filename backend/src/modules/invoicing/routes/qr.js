@@ -1,7 +1,7 @@
 'use strict';
 // QR Scan & Pay — Fixed / Open amount codes, downloadable (PNG/SVG) + shareable link.
 const router = require('express').Router();
-const { prisma, tenantAuth, randToken, escapeHtml, koboToNairaStr, isValidEmail } = require('../_shared');
+const { prisma, tenantAuth, randToken, escapeHtml, koboToNairaStr, isValidEmail, computeInvoiceMoney } = require('../_shared');
 const { ok, fail, created, notFound } = require('../../../utils/helpers');
 const { renderQr, qrPayUrl } = require('../services/qrService');
 const { sendEmail } = require('../../../services/emailService');
@@ -9,11 +9,14 @@ const { sendEmail } = require('../../../services/emailService');
 router.use(tenantAuth);
 
 const COLS = `id::text, qr_reference, access_token, label, type, amount::text AS amount,
-              charge_vat, is_active, department_id::text AS department_id, created_at`;
+              charge_vat, is_active, department_id::text AS department_id, created_at,
+              line_items, apply_service_charge, service_charge_amount::text AS service_charge_amount`;
 const shape = (r) => ({
   id: r.id, reference: r.qr_reference, label: r.label, type: r.type,
   amount: r.amount === null ? null : Number(r.amount), charge_vat: r.charge_vat,
   is_active: r.is_active, department_id: r.department_id, created_at: r.created_at,
+  line_items: r.line_items || null, apply_service_charge: !!r.apply_service_charge,
+  service_charge_amount: r.service_charge_amount === null ? 0 : Number(r.service_charge_amount),
   pay_url: qrPayUrl(r.access_token),
   image_png: `/api/v1/invoicing/qr/${r.id}/image?format=png`,
   image_svg: `/api/v1/invoicing/qr/${r.id}/image?format=svg`,
@@ -38,24 +41,38 @@ router.get('/', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const t = req.invTenant; const mid = t.merchantId; const b = req.body || {};
-    const type = b.type === 'open' ? 'open' : 'fixed';
-    let amount = null;
-    if (type === 'fixed') {
-      amount = parseInt(b.amount, 10);
-      if (!Number.isInteger(amount) || amount < 100) return fail(res, 'A fixed-amount QR needs amount in kobo (≥ 100)');
-    }
+    // Department + its service charge %.
     let departmentId = t.isDeptUser ? t.departmentId : (b.department_id || null);
-    if (departmentId && !t.isDeptUser) {
-      const d = await prisma.$queryRawUnsafe(`SELECT 1 FROM inv_departments WHERE id=$1::uuid AND merchant_id=$2::uuid`, departmentId, mid);
+    let deptPct = 0;
+    if (departmentId) {
+      const d = await prisma.$queryRawUnsafe(`SELECT service_charge_pct::float AS pct FROM inv_departments WHERE id=$1::uuid AND merchant_id=$2::uuid`, departmentId, mid);
       if (!d.length) return fail(res, 'Invalid department');
+      deptPct = Number(d[0].pct) || 0;
+    }
+    const chargeVat = !!b.charge_vat;
+
+    let type, amount = null, lineItemsJson = null, applyServiceCharge = false, serviceChargeAmount = 0;
+    if (Array.isArray(b.items) && b.items.length) {
+      // Itemized QR = a fixed amount = item subtotal + optional (VAT-exempt) service charge.
+      applyServiceCharge = !!b.apply_service_charge && deptPct > 0;
+      const money = computeInvoiceMoney({ items: b.items, serviceChargePct: deptPct, applyServiceCharge, chargeVat, maxItems: 6 });
+      if (money.error) return fail(res, money.error);
+      if (money.amount < 100) return fail(res, 'QR total must be at least 100 kobo');
+      type = 'fixed'; amount = money.amount; lineItemsJson = JSON.stringify(money.lineItems); serviceChargeAmount = money.serviceCharge;
+    } else {
+      type = b.type === 'open' ? 'open' : 'fixed';
+      if (type === 'fixed') {
+        amount = parseInt(b.amount, 10);
+        if (!Number.isInteger(amount) || amount < 100) return fail(res, 'A fixed-amount QR needs amount in kobo (≥ 100)');
+      }
     }
     const reference = 'QR-' + randToken(6).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
     const token = randToken(18);
     const rows = await prisma.$queryRawUnsafe(
-      `INSERT INTO inv_qr_codes (merchant_id, department_id, qr_reference, access_token, label, type, amount, charge_vat)
-       VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8) RETURNING ${COLS}`,
+      `INSERT INTO inv_qr_codes (merchant_id, department_id, qr_reference, access_token, label, type, amount, charge_vat, line_items, apply_service_charge, service_charge_amount)
+       VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11) RETURNING ${COLS}`,
       mid, departmentId, reference, token, b.label ? String(b.label).slice(0, 80) : null, type,
-      amount === null ? null : BigInt(amount), !!b.charge_vat);
+      amount === null ? null : BigInt(amount), chargeVat, lineItemsJson, applyServiceCharge, BigInt(serviceChargeAmount));
     return created(res, shape(rows[0]), 'QR code created');
   } catch (e) { next(e); }
 });
