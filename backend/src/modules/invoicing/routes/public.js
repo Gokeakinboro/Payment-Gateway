@@ -6,7 +6,8 @@
  */
 const router = require('express').Router();
 const { prisma, CHECKOUT_BASE, computeVat, verifyRecipient } = require('../_shared');
-const { ok, fail, notFound, created, generateRef, koboToNaira } = require('../../../utils/helpers');
+const { ok, fail, notFound, created, koboToNaira } = require('../../../utils/helpers');
+const { createCheckoutTransaction } = require('../../gateway-core/services/gatewayTxn');
 const compliance = require('../../../services/complianceService');
 
 function singleTxnLimitKobo(tier) {
@@ -79,14 +80,11 @@ router.post('/invoice/:token/pay', async (req, res, next) => {
     if (inv.currency === 'NGN' && BigInt(amount) > singleTxnLimitKobo(merchant.kycTier))
       return fail(res, 'Amount exceeds the merchant\'s per-transaction limit', 'KYC_LIMIT_EXCEEDED');
 
-    const ref = generateRef('TXNINV');
-    await prisma.transaction.create({ data: {
-      reference: ref, merchantId: merchant.id, customerEmail: email,
-      amount: BigInt(amount), currency: inv.currency, status: 'PENDING', channel: 'CARD',
-      authUrl: `${CHECKOUT_BASE}/checkout.html?ref=${ref}`, accessCode: ref, isSandbox: false,
-      metadata: { description: `Invoice ${inv.invoice_number}`, source: 'invoice', invoice_id: inv.id },
-    }});
-    return created(res, { reference: ref, redirect_url: `${CHECKOUT_BASE}/checkout.html?ref=${ref}` }, 'Transaction created');
+    const { reference, redirectUrl } = await createCheckoutTransaction({
+      merchantId: merchant.id, amount, currency: inv.currency, customerEmail: email, refPrefix: 'TXNINV',
+      source: 'invoice', metadata: { description: `Invoice ${inv.invoice_number}`, invoice_id: inv.id },
+    });
+    return created(res, { reference, redirect_url: redirectUrl }, 'Transaction created');
   } catch (e) { next(e); }
 });
 
@@ -158,15 +156,12 @@ router.post('/qr/:token/pay', async (req, res, next) => {
     if (BigInt(total) > singleTxnLimitKobo(merchant.kycTier))
       return fail(res, 'Amount exceeds the merchant\'s per-transaction limit', 'KYC_LIMIT_EXCEEDED');
 
-    const ref = generateRef('TXNQR');
-    await prisma.transaction.create({ data: {
-      reference: ref, merchantId: merchant.id, customerEmail: email,
-      amount: BigInt(total), currency: 'NGN', status: 'PENDING', channel: 'CARD',
-      authUrl: `${CHECKOUT_BASE}/checkout.html?ref=${ref}`, accessCode: ref, isSandbox: false,
-      metadata: { description: qr.label ? `QR: ${qr.label}` : 'QR payment', source: 'qr', qr_id: qr.id,
-                  invoice_vat: vat, buyer_note: req.body.note ? String(req.body.note).slice(0, 200) : null },
-    }});
-    return created(res, { reference: ref, redirect_url: `${CHECKOUT_BASE}/checkout.html?ref=${ref}` }, 'Transaction created');
+    const { reference, redirectUrl } = await createCheckoutTransaction({
+      merchantId: merchant.id, amount: total, currency: 'NGN', customerEmail: email, refPrefix: 'TXNQR',
+      source: 'qr', metadata: { description: qr.label ? `QR: ${qr.label}` : 'QR payment', qr_id: qr.id,
+        invoice_vat: vat, buyer_note: req.body.note ? String(req.body.note).slice(0, 200) : null },
+    });
+    return created(res, { reference, redirect_url: redirectUrl }, 'Transaction created');
   } catch (e) { next(e); }
 });
 

@@ -4,10 +4,9 @@
 // wallet is credited instantly on SUCCESS (see services/walletFund + payinFinalize).
 const router = require('express').Router();
 const { prisma, tenantAuth, requireWalletEnabled, getConfig } = require('../_shared');
-const { ok, fail, created, notFound, generateRef } = require('../../../utils/helpers');
+const { ok, fail, created, notFound } = require('../../../utils/helpers');
+const { createCheckoutTransaction } = require('../../gateway-core/services/gatewayTxn');
 const compliance = require('../../../services/complianceService');
-
-const CHECKOUT_BASE = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '');
 
 router.use(tenantAuth, requireWalletEnabled);
 
@@ -36,14 +35,11 @@ router.post('/:walletId', async (req, res, next) => {
     const gate = compliance.screenTransaction(merchant, { customerEmail: w.email || undefined });
     if (gate.decision === 'REJECT') return fail(res, gate.message, gate.reasonCode, 403);
 
-    const ref = generateRef('WLTFUND');
-    await prisma.transaction.create({ data: {
-      reference: ref, merchantId: mid, customerEmail: w.email || '',
-      amount: BigInt(amount), currency: 'NGN', status: 'PENDING', channel: 'CARD',
-      authUrl: `${CHECKOUT_BASE}/checkout.html?ref=${ref}`, accessCode: ref, isSandbox: false,
-      metadata: { description: `Wallet top-up for ${w.name}`, source: 'wallet_fund', wallet_id: w.wallet_id, member_id: w.member_id },
-    }});
-    return created(res, { reference: ref, redirect_url: `${CHECKOUT_BASE}/checkout.html?ref=${ref}` }, 'Funding started');
+    const { reference, redirectUrl } = await createCheckoutTransaction({
+      merchantId: mid, amount, currency: 'NGN', customerEmail: w.email || '', refPrefix: 'WLTFUND',
+      source: 'wallet_fund', metadata: { description: `Wallet top-up for ${w.name}`, wallet_id: w.wallet_id, member_id: w.member_id },
+    });
+    return created(res, { reference, redirect_url: redirectUrl }, 'Funding started');
   } catch (e) { next(e); }
 });
 

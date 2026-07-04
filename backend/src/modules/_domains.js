@@ -44,32 +44,36 @@ const CORE_MODELS = [
   'railRebalance', 'payoutBatch', 'payoutItem', 'nigerianBank', 'webhookDelivery',
 ];
 
-// The ONE sanctioned core→product path: gateway-core/services/payinFinalize.js
-// require()s these on a successful pay-in, keyed by txn.metadata.source. Not a raw
-// cross-domain query — an explicit function hook. Documented, allowed.
+// Sanctioned cross-domain interfaces (explicit function hooks, NOT raw cross-domain
+// queries). This is how a domain touches another's data — through the owner's code.
 const CORE_TO_PRODUCT_HOOKS = [
+  // core → product: on a successful pay-in, keyed by txn.metadata.source.
   { from: 'modules/gateway-core/services/payinFinalize.js', to: 'modules/invoicing/services/invoicingPay.js', on: "metadata.source in ('invoice','qr')" },
   { from: 'modules/gateway-core/services/payinFinalize.js', to: 'modules/wallet/services/walletFund.js',       on: "metadata.source == 'wallet_fund'" },
 ];
+const PRODUCT_TO_CORE_HOOKS = [
+  // product → gateway-core: products mint/read the core `transaction` via this
+  // interface instead of prisma.transaction directly (gatewayTxn owns the schema).
+  { hook: 'modules/gateway-core/services/gatewayTxn.js', exposes: 'createCheckoutTransaction, findSuccessfulTransactionsBySource', usedBy: 'invoicing (public, invoicingPay), wallet (fund, me, walletFund)' },
+];
+const PRODUCT_TO_PRODUCT_HOOKS = [
+  // wallet → invoicing: "pay an Invoice&Collect invoice from wallet balance" writes
+  // through invoicing's hooks (passed the wallet's tx) instead of raw inv_* SQL.
+  { hook: 'modules/invoicing/services/invoicePayHooks.js', exposes: 'lockInvoiceForUpdate, applyInvoicePayment', usedBy: 'wallet (walletInvoice)' },
+];
 
-// KNOWN, catalogued boundary exceptions. The lint PASSES on these (they're
-// pre-existing + reviewed) but keeps them visible. FOLLOW-UP (money-staged):
-// route the `transaction.create` writes through a gateway-core
-// `createGatewayTransaction` hook so products stop writing the core txn table.
+// KNOWN, catalogued boundary exceptions. The lint PASSES on these (reviewed) but
+// keeps them visible. The former transaction.create/findMany + walletInvoice inv_*
+// writes were removed by routing them through the hooks above (2026-07-03).
 const KNOWN_EXCEPTIONS = [
-  { where: 'modules/invoicing/routes/public.js',            access: 'prisma.transaction.create',   why: 'public invoice/QR checkout creates the gateway txn for the collection (money-staged: route via core hook)' },
-  { where: 'modules/invoicing/services/invoicingPay.js',    access: 'prisma.transaction.findMany',  why: 'reconciles a completed gateway payment against the invoice (read-only)' },
-  { where: 'modules/wallet/routes/fund.js',                 access: 'prisma.transaction.create',   why: 'member wallet SA-fund creates the gateway txn (money-staged: route via core hook)' },
-  { where: 'modules/wallet/routes/me.js',                   access: 'prisma.transaction.create',   why: 'member self wallet-load creates the gateway txn (money-staged: route via core hook)' },
-  { where: 'modules/wallet/services/walletFund.js',         access: 'prisma.transaction.findMany',  why: 'reconciles a completed gateway payment against the wallet load (read-only)' },
-  // wallet ↔ invoicing: "pay an Invoice&Collect invoice from wallet balance" feature.
-  // FOLLOW-UP (KIV): route these through an invoicing-provided hook (mirror the
-  // gateway-core→product payinFinalize pattern) so wallet stops writing inv_* directly.
-  { where: 'modules/wallet/services/walletInvoice.js',      access: 'raw:inv_',  why: 'pay-invoice-from-wallet: writes invoice payment + rolls up invoice status (wallet↔invoicing; future: invoicing hook)' },
-  { where: 'modules/wallet/routes/me.js',                   access: 'raw:inv_',  why: 'member app lists/pays invoicing invoices + QR from the wallet (wallet↔invoicing; future: invoicing read/pay hook)' },
+  // wallet member app READS invoicing invoice/QR tables for display (read-only —
+  // acceptable cross-product read; the WRITES go through invoicePayHooks). A future
+  // invoicing read-hook could remove even this, but reads don't risk the boundary.
+  { where: 'modules/wallet/routes/me.js', access: 'raw:inv_', why: 'member app lists/reads invoicing invoices + QR for display (read-only cross-product)' },
 ];
 
 module.exports = {
   DOMAINS, SHARED_READ_MODELS, SHARED_READ_TABLES, SHARED_WRITE_MODELS, SHARED_TABLES,
-  CORE_MODELS, CORE_TO_PRODUCT_HOOKS, KNOWN_EXCEPTIONS,
+  CORE_MODELS, CORE_TO_PRODUCT_HOOKS, PRODUCT_TO_CORE_HOOKS, PRODUCT_TO_PRODUCT_HOOKS,
+  KNOWN_EXCEPTIONS,
 };
