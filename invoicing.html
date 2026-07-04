@@ -64,7 +64,7 @@ async function api(path, opts={}) {
 }
 
 const TABS = [
-  ['invoices','Invoices'], ['contacts','Contacts'], ['lists','Lists'],
+  ['invoices','Invoices'], ['items','Items'], ['contacts','Contacts'], ['lists','Lists'],
   ['format','Invoice Format'], ['departments','Departments'], ['reports','Reports'],
 ];
 let active = 'invoices';
@@ -72,7 +72,61 @@ function renderTabs(){
   el('tabs').innerHTML = TABS.map(([k,l])=>`<button class="tab ${k===active?'active':''}" onclick="go('${k}')">${l}</button>`).join('');
 }
 function go(k){ active=k; renderTabs(); render(); }
-function render(){ ({invoices:tInvoices,qr:tQr,contacts:tContacts,lists:tLists,format:tFormat,departments:tDepartments,reports:tReports}[active])(); }
+function render(){ ({invoices:tInvoices,items:tItems,qr:tQr,contacts:tContacts,lists:tLists,format:tFormat,departments:tDepartments,reports:tReports}[active])(); }
+
+// Departments cache (incl. service-charge config) for the session.
+let DEPTS = [];
+async function loadDeptCache(){ const d = await api('/departments'); DEPTS = (d.status && d.data) ? d.data : []; return DEPTS; }
+function deptById(id){ return DEPTS.find(x=>x.id===id) || null; }
+
+// ── ITEMS (per-department catalogue) ─────────────────────────
+async function tItems(){
+  el('main').innerHTML = `
+   <div class="card"><h2>Add catalogue item</h2>
+     <div class="grid3">
+       <div><label>Name</label><input id="p_name" placeholder="e.g. Beer (bottle)"></div>
+       <div><label>Default price (₦)</label><input id="p_amt" type="number" min="0" step="0.01"></div>
+       <div><label>Department (optional)</label><select id="p_dept"><option value="">All departments</option></select></div>
+     </div>
+     <label>Description (optional)</label><input id="p_desc">
+     <button class="btn" onclick="saveItem()">Save item</button><div class="msg" id="p_msg"></div>
+   </div>
+   <div class="card"><h2>Catalogue</h2>
+     <div style="display:flex;gap:8px;margin-bottom:10px">
+       <input id="p_search" placeholder="Search items…" oninput="loadItems()" style="flex:2">
+       <select id="p_fdept" onchange="loadItems()" style="flex:1"><option value="">All departments</option></select>
+     </div>
+     <div id="p_list" class="muted">Loading…</div></div>`;
+  await loadDeptCache();
+  const opts = '<option value="">All departments</option>' + DEPTS.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
+  el('p_dept').innerHTML = opts; el('p_fdept').innerHTML = opts;
+  loadItems();
+}
+async function loadItems(){
+  const q=(el('p_search')&&el('p_search').value.trim())||''; const dept=(el('p_fdept')&&el('p_fdept').value)||'';
+  const qs=new URLSearchParams(); if(q) qs.set('q',q); if(dept) qs.set('department_id',dept);
+  const r=await api('/products'+(qs.toString()?`?${qs}`:''));
+  if(!r.status){ el('p_list').innerHTML=`<span class="msg err">${r.message}</span>`; return; }
+  if(!r.data.length){ el('p_list').innerHTML='<span class="muted">No items.</span>'; return; }
+  el('p_list').innerHTML = `<table><tr><th>Name</th><th class="right">Price</th><th>Department</th><th></th></tr>`+
+    r.data.map(p=>`<tr><td>${esc(p.name)}</td><td class="right">${p.default_amount==null?'—':ngn(p.default_amount)}</td>
+      <td>${p.department_id?esc((deptById(p.department_id)||{}).name||'—'):'All'}</td>
+      <td class="right"><button class="mini" onclick='editItem(${JSON.stringify(p)})'>Edit</button>
+        <button class="mini" onclick="delItem('${p.id}')">Delete</button></td></tr>`).join('')+`</table>`;
+}
+let _editItemId=null;
+function editItem(p){ _editItemId=p.id; el('p_name').value=p.name; el('p_amt').value=p.default_amount==null?'':(p.default_amount/100);
+  el('p_dept').value=p.department_id||''; el('p_desc').value=p.description||''; el('p_msg').textContent='Editing — Save to update.'; window.scrollTo(0,0); }
+async function saveItem(){
+  const name=el('p_name').value.trim(); if(!name) return setMsg('p_msg','Name is required.','err');
+  const amt=el('p_amt').value; const body={ name, default_amount: amt===''?null:Math.round(parseFloat(amt)*100),
+    department_id: el('p_dept').value||undefined, description: el('p_desc').value||undefined };
+  const r=_editItemId ? await api('/products/'+_editItemId,{method:'PUT',body:JSON.stringify(body)})
+                      : await api('/products',{method:'POST',body:JSON.stringify(body)});
+  setMsg('p_msg', r.message, r.status?'ok':'err');
+  if(r.status){ _editItemId=null; el('p_name').value=el('p_amt').value=el('p_desc').value=''; loadItems(); }
+}
+async function delItem(id){ if(!confirm('Delete this item?'))return; const r=await api('/products/'+id,{method:'DELETE'}); if(r.status) loadItems(); }
 
 // ── INVOICES ─────────────────────────────────────────────
 async function tInvoices(){
@@ -80,11 +134,14 @@ async function tInvoices(){
    <div class="card"><h2>Create invoice</h2>
      <div class="grid2">
        <div><label>Currency</label><select id="i_cur"><option>NGN</option><option>USD</option></select></div>
-       <div><label>Department (optional)</label><select id="i_dept"><option value="">—</option></select></div>
+       <div><label>Department (optional)</label><select id="i_dept" onchange="onInvDeptChange()"><option value="">—</option></select></div>
      </div>
-     <label>Line items</label>
+     <label>Line items <span class="muted" style="font-weight:400">(pick from catalogue or add custom · max 15)</span></label>
+     <input id="i_search" placeholder="Search catalogue to add an item…" oninput="searchCatalog()" style="margin-bottom:6px">
+     <div id="i_catalog"></div>
      <div id="i_items"></div>
-     <button type="button" class="btn sec" onclick="addItem()" style="margin-top:6px">+ Add item</button>
+     <button type="button" class="btn sec" onclick="addItem()" style="margin-top:6px">+ Add custom item</button>
+     <div id="i_svcwrap" style="margin-top:10px"></div>
      <div class="right" style="margin-top:8px;font-weight:700">Total: <span id="i_total">₦0.00</span></div>
      <label>Description / note (optional)</label><input id="i_desc" placeholder="Shown on the invoice">
      <div class="grid3">
@@ -106,8 +163,8 @@ async function tInvoices(){
      <div class="msg" id="i_msg"></div>
    </div>
    <div class="card"><h2>Invoices</h2><div id="i_list" class="muted">Loading…</div></div>`;
-  // departments dropdown
-  const d = await api('/departments'); if (d.status) el('i_dept').innerHTML = '<option value="">—</option>' + d.data.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
+  await loadDeptCache();
+  el('i_dept').innerHTML = '<option value="">—</option>' + DEPTS.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
   addItem();
   loadInvoices();
 }
@@ -117,33 +174,107 @@ async function loadInvoices(){
   if (!r.data.length) { el('i_list').innerHTML = '<span class="muted">No invoices yet.</span>'; return; }
   el('i_list').innerHTML = `<table><tr><th>Number</th><th>Recipient</th><th class="right">Total</th><th class="right">Paid</th><th>Status</th><th></th></tr>` +
     r.data.map(i=>`<tr><td>${esc(i.invoice_number)}</td><td>${esc(i.recipient_email||'—')}</td><td class="right">${ngn(i.total_amount)}</td><td class="right">${ngn(i.amount_paid)}</td><td>${badge(i.status,i.is_overdue)}</td>
-      <td class="right"><button class="mini" onclick="resend('${i.id}')">Resend</button>${i.status!=='paid'?`<button class="mini" onclick="cancelInv('${i.id}')">Cancel</button>`:''}</td></tr>`).join('') + `</table>`;
+      <td class="right"><button class="mini" onclick="shareInv('${i.id}')">Share</button>${(i.amount_paid===0 && ['draft','scheduled','sent','viewed'].indexOf(i.status)!==-1)?`<button class="mini" onclick="editInv('${i.id}')">Edit</button>`:''}<button class="mini" onclick="resend('${i.id}')">Resend</button>${i.status!=='paid'?`<button class="mini" onclick="cancelInv('${i.id}')">Cancel</button>`:''}</td></tr>`).join('') + `</table>`;
 }
+// Share an invoice as a link + QR (uses GET /invoices/:id/share).
+async function shareInv(id){
+  const r = await api(`/invoices/${id}/share`);
+  if(!r.status) return setMsg('i_msg', r.message, 'err');
+  el('i_msg').className='msg ok';
+  el('i_msg').innerHTML = `Share link: <a href="${r.data.link_url}" target="_blank">${esc(r.data.link_url)}</a>
+    <button class="mini" onclick="copyShare('${r.data.link_url}')">Copy</button>
+    <a class="mini" href="/api/v1/invoicing/invoices/${id}/share?format=png" target="_blank">QR PNG</a>
+    <div style="margin-top:6px"><img src="${r.data.qr_png}" alt="Invoice QR" style="width:150px;height:150px"></div>`;
+  window.scrollTo(0,0);
+}
+// Edit an unpaid invoice — load it into the form and switch Create → Save changes.
+let _editInvId=null;
+async function editInv(id){
+  const r = await api(`/invoices/${id}`); if(!r.status) return setMsg('i_msg', r.message, 'err');
+  const inv=r.data; _editInvId=id;
+  el('i_dept').value=inv.department_id||''; onInvDeptChange();
+  el('i_cur').value=inv.currency||'NGN'; el('i_desc').value=inv.description||'';
+  el('i_email').value=inv.recipient_email||''; el('i_name').value=inv.recipient_name||''; el('i_vat').checked=!!inv.charge_vat;
+  el('i_items').innerHTML='';
+  (inv.line_items||[]).forEach(it=>addItem(it.name||it.description||'', (it.unit_amount!=null?it.unit_amount:it.amount)/100, it.quantity||1));
+  if(!el('i_items').children.length) addItem();
+  if(inv.apply_service_charge && el('i_svc')) el('i_svc').checked=true;
+  calcTotal();
+  const btn=document.querySelector('button[onclick="createInvoice()"]'); if(btn) btn.textContent='Save changes';
+  setMsg('i_msg', `Editing ${esc(inv.invoice_number)} — make changes and Save.`, 'ok'); window.scrollTo(0,0);
+}
+function resetInvForm(){ _editInvId=null; el('i_items').innerHTML=''; addItem(); el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value='';
+  const btn=document.querySelector('button[onclick="createInvoice()"]'); if(btn) btn.textContent='Create & send'; }
 function badge(s,over){ const m={paid:'b-paid',sent:'b-sent',viewed:'b-sent',draft:'b-draft',part_paid:'b-part',cancelled:'b-cancel'}; const cls=over&&s!=='paid'?'b-over':(m[s]||'b-draft'); return `<span class="badge ${cls}">${over&&s!=='paid'?'overdue':s}</span>`; }
-function addItem(desc, amt){
+// Item row = name + unit price + quantity; amount = unit × qty.
+function addItem(name, unit, qty){
   const div = document.createElement('div');
-  div.className = 'i-row'; div.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
-  div.innerHTML = '<input class="i-desc" placeholder="Item description" style="flex:2" value="'+(desc?esc(desc):'')+'">'+
-    '<input class="i-amt" type="number" min="1" step="0.01" placeholder="Amount ₦" style="flex:1" oninput="calcTotal()" value="'+(amt||'')+'">'+
+  div.className = 'i-row'; div.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
+  div.innerHTML = '<input class="i-name" placeholder="Item" style="flex:2" value="'+(name?esc(name):'')+'">'+
+    '<input class="i-unit" type="number" min="1" step="0.01" placeholder="Unit ₦" style="flex:1" oninput="calcTotal()" value="'+(unit!=null&&unit!==''?unit:'')+'">'+
+    '<input class="i-qty" type="number" min="1" step="1" placeholder="Qty" style="width:74px" oninput="calcTotal()" value="'+(qty||1)+'">'+
     '<button type="button" class="mini" title="Remove" onclick="this.closest(\'.i-row\').remove();calcTotal()">✕</button>';
-  el('i_items').appendChild(div);
+  el('i_items').appendChild(div); calcTotal();
 }
-function calcTotal(){ let t=0; document.querySelectorAll('#i_items .i-amt').forEach(function(i){ const v=parseFloat(i.value); if(v>0) t+=v; }); el('i_total').textContent = ngn(Math.round(t*100)); }
-async function createInvoice(){
-  const items=[]; document.querySelectorAll('#i_items .i-row').forEach(function(row){
-    const desc=row.querySelector('.i-desc').value.trim(); const a=parseFloat(row.querySelector('.i-amt').value);
-    if(desc && a>0) items.push({ description:desc, amount:Math.round(a*100) });
+function invItems(){
+  const items=[];
+  document.querySelectorAll('#i_items .i-row').forEach(function(row){
+    const name=row.querySelector('.i-name').value.trim();
+    const unit=parseFloat(row.querySelector('.i-unit').value); const qty=parseInt(row.querySelector('.i-qty').value,10);
+    if(name && unit>0 && qty>0) items.push({ name, unit_amount:Math.round(unit*100), quantity:qty });
   });
-  if(!items.length) return setMsg('i_msg','Add at least one line item with a description and amount.','err');
+  return items;
+}
+function svcApplied(){ const c=el('i_svc'); return !!(c && c.checked); }
+function calcTotal(){
+  const items=invItems(); const sub=items.reduce((s,it)=>s+it.unit_amount*it.quantity,0);
+  const dep=deptById(el('i_dept')&&el('i_dept').value); const pct=(dep&&Number(dep.service_charge_pct))||0;
+  const svc=(svcApplied()&&pct>0)?Math.round(sub*pct/100):0;
+  const vat=(el('i_vat')&&el('i_vat').checked)?Math.round(sub*0.075):0;
+  const label=(dep&&dep.service_charge_label)||'Service charge';
+  el('i_total').innerHTML = ngn(sub+svc+vat) + ((svc||vat)?` <span class="muted" style="font-weight:400">(items ${ngn(sub)}${svc?` + ${esc(label)} ${ngn(svc)}`:''}${vat?` + VAT ${ngn(vat)}`:''})</span>`:'');
+}
+function onInvDeptChange(){
+  const dep=deptById(el('i_dept').value); const w=el('i_svcwrap');
+  w.innerHTML = (dep && Number(dep.service_charge_pct)>0)
+    ? `<label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="i_svc" style="width:auto" onchange="calcTotal()"> Apply ${esc(dep.service_charge_label||'Service charge')} (${dep.service_charge_pct}%)</label>`
+    : '';
+  calcTotal();
+}
+let _catTimer=null;
+function searchCatalog(){
+  const q=el('i_search').value.trim(); if(_catTimer) clearTimeout(_catTimer);
+  if(!q){ el('i_catalog').innerHTML=''; return; }
+  _catTimer=setTimeout(async ()=>{
+    const qs=new URLSearchParams({q}); const dept=el('i_dept').value; if(dept) qs.set('department_id',dept);
+    const r=await api('/products?'+qs);
+    if(!r.status||!r.data.length){ el('i_catalog').innerHTML='<div class="muted" style="font-size:12px">No matching items.</div>'; return; }
+    el('i_catalog').innerHTML = r.data.slice(0,8).map(p=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--line)"><span>${esc(p.name)} <span class="muted">${p.default_amount==null?'':ngn(p.default_amount)}</span></span><button type="button" class="mini" onclick='pickItem(${JSON.stringify(p)})'>+ Add</button></div>`).join('');
+  },200);
+}
+function pickItem(p){ addItem(p.name, p.default_amount==null?'':(p.default_amount/100), 1); el('i_search').value=''; el('i_catalog').innerHTML=''; }
+async function createInvoice(){
+  const items=invItems();
+  if(!items.length) return setMsg('i_msg','Add at least one item (name, unit price, quantity).','err');
+  if(items.length>15) return setMsg('i_msg','Maximum 15 items per invoice.','err');
+  if(_editInvId){
+    const eb={ items, charge_vat: el('i_vat').checked, apply_service_charge: svcApplied(),
+      department_id: el('i_dept').value||undefined, description: el('i_desc').value,
+      recipient_name: el('i_name').value||undefined, recipient_email: el('i_email').value||undefined };
+    const er=await api('/invoices/'+_editInvId,{method:'PATCH',body:JSON.stringify(eb)});
+    setMsg('i_msg', er.message, er.status?'ok':'err');
+    if(er.status){ resetInvForm(); loadInvoices(); }
+    return;
+  }
   const body = { items, currency: el('i_cur').value, description: el('i_desc').value,
-    charge_vat: el('i_vat').checked, allow_part_payment: el('i_part').checked,
+    charge_vat: el('i_vat').checked, apply_service_charge: svcApplied(), allow_part_payment: el('i_part').checked,
     department_id: el('i_dept').value || undefined,
     scheduled_at: el('i_sched').value || undefined, due_at: el('i_due').value || undefined,
     reminder_interval_days: el('i_rint').value || undefined, reminder_count: el('i_rcnt').value || undefined,
     recipients: el('i_target').value==='all' ? { all_contacts:true } : { email: el('i_email').value, name: el('i_name').value, phone: el('i_phone').value } };
   const r = await api('/invoices', { method:'POST', body: JSON.stringify(body) });
   setMsg('i_msg', r.message, r.status?'ok':'err');
-  if (r.status){ el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=''; el('i_items').innerHTML=''; addItem(); calcTotal(); loadInvoices(); }
+  if (r.status){ el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=''; el('i_items').innerHTML=''; addItem(); loadInvoices(); }
 }
 async function resend(id){ const r=await api(`/invoices/${id}/send`,{method:'POST'}); setMsg('i_msg',r.message,r.status?'ok':'err'); }
 async function cancelInv(id){ if(!confirm('Cancel this invoice?'))return; const r=await api(`/invoices/${id}/cancel`,{method:'POST'}); if(r.status) loadInvoices(); }
@@ -257,11 +388,23 @@ async function loadDepts(){
   if(!r.data.length){el('d_list').innerHTML='<span class="muted">No departments yet.</span>';return;}
   el('d_list').innerHTML = r.data.map(d=>`<div style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px">
      <div style="display:flex;justify-content:space-between"><strong>${esc(d.name)}</strong><span class="muted">${d.user_count} user(s)</span></div>
-     <div class="grid3" style="margin-top:8px"><input id="u_name_${d.id}" placeholder="User name"><input id="u_email_${d.id}" placeholder="Email"><input id="u_phone_${d.id}" placeholder="Phone"></div>
+     <div style="margin-top:8px;font-size:12px;color:var(--muted,#666)">Service / sales charge (a bar levies a sales charge, not VAT):</div>
+     <div class="grid3" style="margin-top:4px">
+       <input id="sc_pct_${d.id}" type="number" min="0" max="100" step="0.01" placeholder="Charge %" value="${d.service_charge_pct||''}">
+       <select id="sc_mode_${d.id}"><option value="total_line"${d.service_charge_mode!=='per_item'?' selected':''}>As one total line</option><option value="per_item"${d.service_charge_mode==='per_item'?' selected':''}>Baked into each item</option></select>
+       <input id="sc_label_${d.id}" placeholder="Label" value="${esc(d.service_charge_label||'Service charge')}">
+     </div>
+     <button class="mini" style="margin-top:6px" onclick="setSvcCharge('${d.id}')">Save charge</button>
+     <div class="grid3" style="margin-top:10px"><input id="u_name_${d.id}" placeholder="User name"><input id="u_email_${d.id}" placeholder="Email"><input id="u_phone_${d.id}" placeholder="Phone"></div>
      <button class="mini" style="margin-top:8px" onclick="addUser('${d.id}')">Add user</button>
      <button class="mini" onclick="loadUsers('${d.id}')">View users</button>
      <span class="msg" id="d_umsg_${d.id}"></span>
      <div id="d_users_${d.id}" style="margin-top:8px"></div></div>`).join('');
+}
+async function setSvcCharge(id){
+  const body={ service_charge_pct: el('sc_pct_'+id).value||0, service_charge_mode: el('sc_mode_'+id).value, service_charge_label: el('sc_label_'+id).value };
+  const r=await api(`/departments/${id}/service-charge`,{method:'PATCH',body:JSON.stringify(body)});
+  setMsg('d_umsg_'+id, r.message, r.status?'ok':'err'); if(r.status) loadDepts();
 }
 async function addDept(){ const r=await api('/departments',{method:'POST',body:JSON.stringify({name:el('d_name').value})}); setMsg('d_msg',r.message,r.status?'ok':'err'); if(r.status){el('d_name').value='';loadDepts();} }
 async function addUser(id){
