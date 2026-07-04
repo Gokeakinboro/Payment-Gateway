@@ -316,6 +316,36 @@ function statusBadge(s) {
 }
 function showModal(html) { document.getElementById('modal-inner').innerHTML = html; document.getElementById('modal').style.display = 'flex'; }
 function closeModal(e)   { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; }
+
+// Universal modal-close safety net: guarantees EVERY modal is closable and shows a
+// visible X — Escape closes it, and whenever the modal opens, if its content lacks
+// a .modal-close button we inject a floating one (covers both showModal() and the
+// direct modal-inner.innerHTML builders, current + future). Runs once on load.
+(function () {
+  function initModalSafety() {
+    var modal = document.getElementById('modal');
+    if (!modal) return;
+    document.addEventListener('keydown', function (e) {
+      if ((e.key === 'Escape' || e.keyCode === 27) && modal.style.display !== 'none') modal.style.display = 'none';
+    });
+    var ensureCloseX = function () {
+      if (modal.style.display === 'none') return;
+      var inner = document.getElementById('modal-inner');
+      if (!inner || inner.querySelector('.modal-close')) return;
+      var x = document.createElement('button');
+      x.className = 'modal-close';
+      x.setAttribute('aria-label', 'Close');
+      x.innerHTML = '&#10005;';
+      x.style.cssText = 'position:absolute;top:14px;right:14px;z-index:10';
+      x.onclick = function () { modal.style.display = 'none'; };
+      if (getComputedStyle(inner).position === 'static') inner.style.position = 'relative';
+      inner.insertBefore(x, inner.firstChild);
+    };
+    new MutationObserver(ensureCloseX).observe(modal, { attributes: true, attributeFilter: ['style'] });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initModalSafety);
+  else initModalSafety();
+})();
 function sdkTabState()   { return window.__sdkTab || 'js'; }
 function setSdkTab(t)    { window.__sdkTab = t; renderPage(); }
 
