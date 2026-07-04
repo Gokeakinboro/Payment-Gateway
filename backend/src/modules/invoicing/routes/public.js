@@ -131,7 +131,8 @@ router.get('/qr/:token', async (req, res, next) => {
 router.post('/qr/:token/pay', async (req, res, next) => {
   try {
     const rows = await prisma.$queryRawUnsafe(
-      `SELECT id::text, merchant_id::text AS merchant_id, type, amount::text AS amount, charge_vat, is_active, label
+      `SELECT id::text, merchant_id::text AS merchant_id, type, amount::text AS amount, charge_vat, is_active, label,
+              service_charge_amount::text AS service_charge_amount
          FROM inv_qr_codes WHERE access_token = $1`, req.params.token);
     if (!rows.length) return notFound(res, 'QR code');
     const qr = rows[0];
@@ -143,7 +144,9 @@ router.post('/qr/:token/pay', async (req, res, next) => {
       face = parseInt(req.body.amount, 10);
       if (!Number.isInteger(face) || face < 100) return fail(res, 'Enter a valid amount in kobo (≥ 100)');
     }
-    const vat = Number(computeVat(face, qr.charge_vat));
+    // Service charge is VAT-exempt: VAT base = face minus the (fixed-QR) service charge.
+    const svc = qr.type === 'fixed' ? (Number(qr.service_charge_amount) || 0) : 0;
+    const vat = Number(computeVat(face - svc, qr.charge_vat));
     const total = face + vat;
 
     const email = String(req.body.email || '').trim().toLowerCase();

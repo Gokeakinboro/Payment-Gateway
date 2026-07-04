@@ -15,6 +15,7 @@ router.use('/formats',     require('./routes/formats'));
 router.use('/products',    require('./routes/products'));
 router.use('/invoices',    require('./routes/invoices'));
 router.use('/qr',          require('./routes/qr'));
+router.use('/links',       require('./routes/links'));
 router.use('/departments', require('./routes/departments'));
 router.use('/reports',     require('./routes/reports'));
 router.use('/public',      require('./routes/public'));
