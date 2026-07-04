@@ -91,6 +91,14 @@ async function tItems(){
      <label>Description (optional)</label><input id="p_desc">
      <button class="btn" onclick="saveItem()">Save item</button><div class="msg" id="p_msg"></div>
    </div>
+   <div class="card"><h2>Import from CSV</h2>
+     <div class="muted" style="font-size:12px;margin-bottom:8px">Columns: <strong>Product Name, Category, Selling Price</strong> (price in naira). Only rows with a price are imported (max 1000). <a href="javascript:void(0)" onclick="downloadSample()">Download sample</a></div>
+     <div class="grid2">
+       <div><label>Import into department (optional)</label><select id="p_impdept"><option value="">All departments</option></select></div>
+       <div><label>CSV file</label><input type="file" id="p_impfile" accept=".csv,text/csv" onchange="importCsv(this)"></div>
+     </div>
+     <div class="msg" id="p_impmsg"></div>
+   </div>
    <div class="card"><h2>Catalogue</h2>
      <div style="display:flex;gap:8px;margin-bottom:10px">
        <input id="p_search" placeholder="Search items…" oninput="loadItems()" style="flex:2">
@@ -99,8 +107,49 @@ async function tItems(){
      <div id="p_list" class="muted">Loading…</div></div>`;
   await loadDeptCache();
   const opts = '<option value="">All departments</option>' + DEPTS.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
-  el('p_dept').innerHTML = opts; el('p_fdept').innerHTML = opts;
+  el('p_dept').innerHTML = opts; el('p_fdept').innerHTML = opts; el('p_impdept').innerHTML = opts;
   loadItems();
+}
+// Simple CSV parser (handles quoted fields + embedded commas/newlines).
+function parseCsv(text){
+  const rows=[]; let row=[], cur='', q=false;
+  for(let i=0;i<text.length;i++){ const c=text[i];
+    if(q){ if(c==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=c; }
+    else if(c==='"') q=true;
+    else if(c===',') { row.push(cur); cur=''; }
+    else if(c==='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; }
+    else if(c!=='\r') cur+=c;
+  }
+  if(cur!==''||row.length){ row.push(cur); rows.push(row); }
+  return rows.filter(r=>r.some(c=>c.trim()!==''));
+}
+function importCsv(input){
+  const file=input.files&&input.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=async ()=>{
+    const rows=parseCsv(String(reader.result||''));
+    if(rows.length<2){ setMsg('p_impmsg','CSV looks empty.','err'); return; }
+    const hdr=rows[0].map(h=>h.trim().toLowerCase());
+    const ni=hdr.findIndex(h=>h.includes('name')||h.includes('product'));
+    const pi=hdr.findIndex(h=>h.includes('price')||h.includes('selling')||h.includes('amount'));
+    const ci=hdr.findIndex(h=>h.includes('categor')||h.includes('description'));
+    if(ni<0||pi<0){ setMsg('p_impmsg','CSV needs a "Product Name" column and a "Selling Price" column.','err'); input.value=''; return; }
+    const items=[];
+    for(let r=1;r<rows.length;r++){ const row=rows[r]; const name=(row[ni]||'').trim(); const price=parseFloat(String(row[pi]||'').replace(/[^0-9.]/g,''));
+      if(!name||!(price>0)) continue;  // only products with a price
+      items.push({ name, default_amount:Math.round(price*100), description: ci>=0?((row[ci]||'').trim()||undefined):undefined }); }
+    if(!items.length){ setMsg('p_impmsg','No rows with a name and a positive price were found.','err'); input.value=''; return; }
+    if(items.length>1000){ setMsg('p_impmsg',`Too many priced rows (${items.length}); max 1000 per import.`,'err'); input.value=''; return; }
+    setMsg('p_impmsg',`Importing ${items.length} item(s)…`,'ok');
+    const res=await api('/products/import',{method:'POST',body:JSON.stringify({ department_id: el('p_impdept').value||undefined, items })});
+    setMsg('p_impmsg', res.message, res.status?'ok':'err');
+    if(res.status){ input.value=''; loadItems(); }
+  };
+  reader.readAsText(file);
+}
+function downloadSample(){
+  const csv='Product Name,Category,Selling Price\nBeer (bottle) 60cl,BEER,1000\nRed Wine 750ml,WINE,4800\nSoft drink 60cl,SOFT DRINKS,450\n';
+  const a=document.createElement('a'); a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv); a.download='paylode-catalogue-sample.csv'; a.click();
 }
 async function loadItems(){
   const q=(el('p_search')&&el('p_search').value.trim())||''; const dept=(el('p_fdept')&&el('p_fdept').value)||'';
