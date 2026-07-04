@@ -26,6 +26,7 @@ router.get('/', async (req, res, next) => {
   try {
     const rows = await prisma.$queryRawUnsafe(
       `SELECT d.id::text, d.name, d.created_at,
+              d.service_charge_pct::float AS service_charge_pct, d.service_charge_mode,
               (SELECT COUNT(*) FROM inv_department_users u WHERE u.department_id = d.id)::int AS user_count
          FROM inv_departments d WHERE d.merchant_id = $1::uuid ORDER BY d.created_at`, req.invTenant.merchantId);
     return ok(res, rows);
@@ -42,6 +43,24 @@ router.post('/', async (req, res, next) => {
       req.invTenant.merchantId, name);
     if (!rows.length) return fail(res, 'A department with that name already exists', 'DUPLICATE', 409);
     return created(res, rows[0], 'Department created');
+  } catch (e) { next(e); }
+});
+
+// Set the merchant-fixed service charge for a department (% + mode). Owner-only.
+router.patch('/:id/service-charge', async (req, res, next) => {
+  try {
+    let pct = req.body.service_charge_pct;
+    pct = (pct === undefined || pct === null || String(pct) === '') ? 0 : Number(pct);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return fail(res, 'service_charge_pct must be a number between 0 and 100');
+    pct = Math.round(pct * 100) / 100;  // numeric(5,2)
+    const mode = req.body.service_charge_mode === 'per_item' ? 'per_item' : 'total_line';
+    const rows = await prisma.$queryRawUnsafe(
+      `UPDATE inv_departments SET service_charge_pct=$1, service_charge_mode=$2, updated_at=now()
+       WHERE id=$3::uuid AND merchant_id=$4::uuid
+       RETURNING id::text, name, service_charge_pct::float AS service_charge_pct, service_charge_mode`,
+      pct, mode, req.params.id, req.invTenant.merchantId);
+    if (!rows.length) return notFound(res, 'Department');
+    return ok(res, rows[0], 'Service charge updated');
   } catch (e) { next(e); }
 });
 
