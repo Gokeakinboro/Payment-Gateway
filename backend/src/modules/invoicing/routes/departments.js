@@ -26,7 +26,7 @@ router.get('/', async (req, res, next) => {
   try {
     const rows = await prisma.$queryRawUnsafe(
       `SELECT d.id::text, d.name, d.created_at,
-              d.service_charge_pct::float AS service_charge_pct, d.service_charge_mode,
+              d.service_charge_pct::float AS service_charge_pct, d.service_charge_mode, d.service_charge_label,
               (SELECT COUNT(*) FROM inv_department_users u WHERE u.department_id = d.id)::int AS user_count
          FROM inv_departments d WHERE d.merchant_id = $1::uuid ORDER BY d.created_at`, req.invTenant.merchantId);
     return ok(res, rows);
@@ -54,11 +54,12 @@ router.patch('/:id/service-charge', async (req, res, next) => {
     if (!Number.isFinite(pct) || pct < 0 || pct > 100) return fail(res, 'service_charge_pct must be a number between 0 and 100');
     pct = Math.round(pct * 100) / 100;  // numeric(5,2)
     const mode = req.body.service_charge_mode === 'per_item' ? 'per_item' : 'total_line';
+    const label = (String(req.body.service_charge_label || '').trim() || 'Service charge').slice(0, 40);
     const rows = await prisma.$queryRawUnsafe(
-      `UPDATE inv_departments SET service_charge_pct=$1, service_charge_mode=$2, updated_at=now()
-       WHERE id=$3::uuid AND merchant_id=$4::uuid
-       RETURNING id::text, name, service_charge_pct::float AS service_charge_pct, service_charge_mode`,
-      pct, mode, req.params.id, req.invTenant.merchantId);
+      `UPDATE inv_departments SET service_charge_pct=$1, service_charge_mode=$2, service_charge_label=$3, updated_at=now()
+       WHERE id=$4::uuid AND merchant_id=$5::uuid
+       RETURNING id::text, name, service_charge_pct::float AS service_charge_pct, service_charge_mode, service_charge_label`,
+      pct, mode, label, req.params.id, req.invTenant.merchantId);
     if (!rows.length) return notFound(res, 'Department');
     return ok(res, rows[0], 'Service charge updated');
   } catch (e) { next(e); }

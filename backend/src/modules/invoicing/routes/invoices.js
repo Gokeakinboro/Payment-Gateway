@@ -1,10 +1,11 @@
 'use strict';
 // Invoices — create (single / checked / list / all), list, detail, send/resend, cancel.
 const router = require('express').Router();
-const { prisma, tenantAuth, computeVat, computeInvoiceMoney, randToken, isValidEmail } = require('../_shared');
+const { prisma, tenantAuth, computeVat, computeInvoiceMoney, randToken, isValidEmail, CHECKOUT_BASE } = require('../_shared');
 const { ok, fail, created, notFound } = require('../../../utils/helpers');
 const { nextInvoiceNumber } = require('../services/invoiceNumber');
 const { sendInvoice } = require('../services/invoiceSend');
+const { renderQrForUrl } = require('../services/qrService');
 
 router.use(tenantAuth);
 
@@ -145,6 +146,30 @@ router.post('/', async (req, res, next) => {
       scheduled: !!isScheduled,
       invoices: createdInvoices,
     }, isScheduled ? `Scheduled ${createdInvoices.length} invoice(s)` : `Created & sent ${createdInvoices.length} invoice(s)`);
+  } catch (e) { next(e); }
+});
+
+// ── Share: the invoice's public link + a QR of it (share as link / QR) ──────────
+// GET /:id/share        -> { link_url, qr_png (data URL) }
+// GET /:id/share?format=png|svg -> downloadable QR image of the invoice link
+router.get('/:id/share', async (req, res, next) => {
+  try {
+    const t = req.invTenant;
+    const scope = (t.isDeptUser && t.departmentId) ? ' AND department_id = $3::uuid' : '';
+    const p = [req.params.id, t.merchantId]; if (scope) p.push(t.departmentId);
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT access_token, invoice_number FROM inv_invoices WHERE id=$1::uuid AND merchant_id=$2::uuid${scope}`, ...p);
+    if (!rows.length) return notFound(res, 'Invoice');
+    const url = `${CHECKOUT_BASE}/invoice.html?t=${rows[0].access_token}`;
+    const fmt = req.query.format;
+    if (fmt === 'png' || fmt === 'svg') {
+      const img = await renderQrForUrl(url);
+      if (fmt === 'svg') { res.type('image/svg+xml').set('Content-Disposition', `attachment; filename="invoice-${rows[0].invoice_number}-qr.svg"`); return res.send(img.svg); }
+      res.type('image/png').set('Content-Disposition', `attachment; filename="invoice-${rows[0].invoice_number}-qr.png"`);
+      return res.send(Buffer.from(img.pngDataUrl.split(',')[1], 'base64'));
+    }
+    const img = await renderQrForUrl(url);
+    return ok(res, { link_url: url, qr_png: img.pngDataUrl });
   } catch (e) { next(e); }
 });
 
