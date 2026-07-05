@@ -421,9 +421,15 @@ async function tQr(){
   el('main').innerHTML = `
    <div class="card"><h2>Create QR code</h2>
      <div class="grid3">
-       <div><label>Type</label><select id="q_type" onchange="el('q_amtw').style.display=this.value==='fixed'?'block':'none'"><option value="fixed">Fixed amount</option><option value="open">Open amount</option></select></div>
+       <div><label>Type</label><select id="q_type" onchange="el('q_amtw').style.display=this.value==='fixed'?'block':'none';el('q_itemw').style.display=this.value==='fixed'?'block':'none'"><option value="fixed">Fixed amount</option><option value="open">Open amount</option></select></div>
        <div id="q_amtw"><label>Amount (₦)</label><input id="q_amt" type="number" min="1"></div>
-       <div><label>Department (optional)</label><select id="q_dept"><option value="">—</option></select></div>
+       <div><label>Department (optional)</label><select id="q_dept" onchange="qSearchCat()"><option value="">—</option></select></div>
+     </div>
+     <div id="q_itemw">
+       <label>Items from catalogue <span class="muted" style="font-weight:400">(optional · sets the amount · max 6)</span></label>
+       <input id="q_search" placeholder="Click to browse catalogue, or type to search — tick to add" oninput="qSearchCat()" onfocus="qSearchCat()" style="margin-bottom:6px">
+       <div id="q_catalog"></div>
+       <div id="q_items"></div>
      </div>
      <label>Label</label><input id="q_label" placeholder="e.g. Bar, Front Desk, Event Gate">
      <label style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="q_vat" style="width:auto"> Charge VAT (7.5%)</label>
@@ -443,10 +449,48 @@ async function loadQr(){
         <button class="mini" onclick="copyShare('${q.pay_url}')">Copy link</button>
         <button class="mini" onclick="toggleQr('${q.id}',${!q.is_active})">${q.is_active?'Disable':'Enable'}</button></td></tr>`).join('')+`</table>`;
 }
+// QR catalogue item picker (fixed QR only; items set the amount, backend re-computes).
+let _qCatTimer=null;
+function qSearchCat(){
+  if(el('q_type').value!=='fixed'){ el('q_catalog').innerHTML=''; return; }
+  const q=el('q_search').value.trim(); if(_qCatTimer) clearTimeout(_qCatTimer);
+  _qCatTimer=setTimeout(async ()=>{
+    const qs=new URLSearchParams(); if(q) qs.set('q',q); const dept=el('q_dept').value; if(dept) qs.set('department_id',dept);
+    const r=await api('/products?'+qs.toString());
+    if(!r.status){ el('q_catalog').innerHTML='<div class="muted" style="font-size:12px">'+esc(r.message||'Could not load catalogue')+'</div>'; return; }
+    if(!r.data.length){ el('q_catalog').innerHTML='<div class="muted" style="font-size:12px">'+(q?'No matching items.':'No catalogue items yet — add them under the Items tab.')+'</div>'; return; }
+    const added=new Set([...document.querySelectorAll('#q_items .q-row[data-pid]')].map(x=>x.dataset.pid));
+    el('q_catalog').innerHTML='<div style="max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:2px 8px;margin-bottom:6px">'+
+      r.data.slice(0,100).map(p=>`<label style="display:flex;justify-content:space-between;align-items:center;padding:5px 2px;border-bottom:1px solid var(--line);cursor:pointer">
+        <span><input type="checkbox" style="width:auto;margin-right:8px"${added.has(String(p.id))?' checked':''} onchange='qToggleItem(this,${JSON.stringify(p)})'>${esc(p.name)}</span>
+        <span class="muted">${p.default_amount==null?'':ngn(p.default_amount)}</span></label>`).join('')+'</div>';
+  },180);
+}
+function qToggleItem(cb,p){
+  if(cb.checked){
+    if(document.querySelectorAll('#q_items .q-row').length>=6){ cb.checked=false; return setMsg('q_msg','Maximum 6 items per QR.','err'); }
+    qAddItem(p.name, p.default_amount==null?'':(p.default_amount/100), 1, p.id);
+  } else { const row=document.querySelector('#q_items .q-row[data-pid="'+p.id+'"]'); if(row){ row.remove(); qCalc(); } }
+}
+function qAddItem(name,unit,qty,pid){
+  const div=document.createElement('div'); div.className='q-row'; div.style.cssText='display:flex;gap:6px;margin-bottom:6px;align-items:center'; if(pid!=null) div.dataset.pid=pid;
+  div.innerHTML='<input class="q-name" placeholder="Item" style="flex:2" value="'+(name?esc(name):'')+'">'+
+    '<input class="q-unit" type="number" min="1" step="0.01" placeholder="Unit ₦" style="flex:1" oninput="qCalc()" value="'+(unit!=null&&unit!==''?unit:'')+'">'+
+    '<input class="q-qty" type="number" min="1" step="1" placeholder="Qty" style="width:74px" oninput="qCalc()" value="'+(qty||1)+'">'+
+    '<button type="button" class="mini" title="Remove" onclick="this.closest(\'.q-row\').remove();qCalc()">✕</button>';
+  el('q_items').appendChild(div); qCalc();
+}
+function qItems(){ return [...document.querySelectorAll('#q_items .q-row')].map(r=>({ name:r.querySelector('.q-name').value.trim(), unit_amount:Math.round(parseFloat(r.querySelector('.q-unit').value||0)*100), quantity:parseInt(r.querySelector('.q-qty').value||1,10)||1 })).filter(x=>x.name&&x.unit_amount>0); }
+function qCalc(){ const items=qItems(); const amt=el('q_amt'); if(items.length){ amt.value=(items.reduce((s,i)=>s+i.unit_amount*i.quantity,0)/100).toFixed(2); amt.readOnly=true; } else { amt.readOnly=false; } }
 async function createQr(){
   const body={ type:el('q_type').value, label:el('q_label').value, charge_vat:el('q_vat').checked, department_id:el('q_dept').value||undefined };
-  if(body.type==='fixed'){ const a=parseFloat(el('q_amt').value); if(!a||a<1)return setMsg('q_msg','Enter an amount.','err'); body.amount=Math.round(a*100); }
-  const r=await api('/qr',{method:'POST',body:JSON.stringify(body)}); setMsg('q_msg',r.message,r.status?'ok':'err'); if(r.status) loadQr();
+  if(body.type==='fixed'){
+    const items=qItems();
+    if(items.length){ body.items=items; }   // backend computes the amount from items
+    else { const a=parseFloat(el('q_amt').value); if(!a||a<1) return setMsg('q_msg','Enter an amount or add items.','err'); body.amount=Math.round(a*100); }
+  }
+  const r=await api('/qr',{method:'POST',body:JSON.stringify(body)}); setMsg('q_msg',r.message,r.status?'ok':'err');
+  if(r.status){ el('q_items').innerHTML=''; el('q_catalog').innerHTML=''; el('q_search').value=''; el('q_amt').value=''; el('q_amt').readOnly=false; loadQr(); }
 }
 async function toggleQr(id,act){ const r=await api(`/qr/${id}`,{method:'PATCH',body:JSON.stringify({is_active:act})}); if(r.status) loadQr(); }
 function copyShare(u){ navigator.clipboard.writeText(u).then(()=>alert('Payment link copied:\n'+u)); }
