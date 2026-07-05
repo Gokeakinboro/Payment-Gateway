@@ -848,4 +848,50 @@ router.post('/email', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── GET /api/v1/reports/merchant-activity ─────────────────────────────────────
+// SA global overview of merchant CONNECTIONS + activity (sandbox vs live): when each
+// merchant's live/sandbox API key was last used, and their live/sandbox transaction
+// counts + last transaction. High-level (not a detailed per-request log).
+router.get('/merchant-activity', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT m.id::text AS merchant_id, m.business_name, m.merchant_code, m.is_active,
+             lk.live_last_used, sk.sandbox_last_used,
+             COALESCE(tx.live_txns,0)::int    AS live_txns,
+             COALESCE(tx.sandbox_txns,0)::int AS sandbox_txns,
+             tx.last_txn_at,
+             COALESCE(tx.live_volume,0)::text AS live_volume,
+             GREATEST(lk.live_last_used, sk.sandbox_last_used, tx.last_txn_at) AS last_seen
+      FROM merchants m
+      LEFT JOIN (SELECT merchant_id, max(last_used_at) live_last_used FROM api_keys WHERE key_prefix LIKE '%live%' GROUP BY 1) lk ON lk.merchant_id = m.id
+      LEFT JOIN (SELECT merchant_id, max(last_used_at) sandbox_last_used FROM api_keys WHERE is_sandbox GROUP BY 1) sk ON sk.merchant_id = m.id
+      LEFT JOIN (SELECT merchant_id,
+                        count(*) FILTER (WHERE NOT is_sandbox) live_txns,
+                        count(*) FILTER (WHERE is_sandbox)     sandbox_txns,
+                        max(created_at) last_txn_at,
+                        sum(amount) FILTER (WHERE NOT is_sandbox AND status = 'SUCCESS') live_volume
+                 FROM transactions GROUP BY 1) tx ON tx.merchant_id = m.id
+      ORDER BY GREATEST(COALESCE(lk.live_last_used,'epoch'), COALESCE(sk.sandbox_last_used,'epoch'), COALESCE(tx.last_txn_at,'epoch')) DESC
+      LIMIT 500`);
+
+    const now = Date.now();
+    const within = (d, days) => d && (now - new Date(d).getTime()) < days * 86400000;
+    const merchants = rows.map(r => ({
+      merchant_id: r.merchant_id, business_name: r.business_name, merchant_code: r.merchant_code,
+      is_active: r.is_active,
+      live_last_used: r.live_last_used, sandbox_last_used: r.sandbox_last_used,
+      last_seen: r.last_seen, last_txn_at: r.last_txn_at,
+      live_txns: r.live_txns, sandbox_txns: r.sandbox_txns,
+      live_volume_naira: koboToNaira(r.live_volume || 0),
+    }));
+    const summary = {
+      total_merchants: merchants.length,
+      live_active:     merchants.filter(m => m.live_txns > 0 || m.live_last_used).length,
+      sandbox_active:  merchants.filter(m => m.sandbox_txns > 0 || m.sandbox_last_used).length,
+      active_7d:       merchants.filter(m => within(m.last_seen, 7)).length,
+    };
+    ok(res, { summary, merchants });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
