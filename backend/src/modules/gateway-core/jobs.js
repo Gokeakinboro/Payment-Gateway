@@ -63,26 +63,26 @@ function startCoreJobs({ logger }) {
     logger.error({ err: e }, '  ✗ settlement firing job failed to start (continuing)');
   }
 
-  // Daily settlement GENERATION for the prior day, at 00:01 (server-local time), so
-  // settlements populate without a manual "Run Batch". Idempotent (skips days already
-  // settled) → the boot catch-up + the 00:01 fire can't duplicate. Worker 0 only.
-  // NOTE: server TZ = Europe/Berlin; "prior day" is the server-local calendar day.
+  // Daily settlement GENERATION for the prior NIGERIAN day, at 00:01 Africa/Lagos, so
+  // settlements populate without a manual "Run Batch". The day boundary is Lagos-keyed
+  // (see settlementProcess.js). Idempotent (skips days already settled) → the boot
+  // catch-up + the 00:01 fire can't duplicate. Worker 0 only.
   try {
     const { generateSettlements } = require('./services/settlementProcess');
     const runGen = (tag) => generateSettlements({ sandbox: false })
       .then(r => logger.info({ date: r.date, created: r.processed, skipped: r.skipped, tag }, 'daily settlement generation'))
       .catch(e => logger.error({ err: e }, 'daily settlement generation failed'));
 
-    // Self-correcting daily schedule at 00:01 local (recursive setTimeout, no drift).
+    // Self-correcting daily schedule at 23:01 UTC = 00:01 Africa/Lagos (UTC+1, no DST).
     const scheduleNext = () => {
-      const now = new Date();
-      const next = new Date(now);
-      next.setHours(0, 1, 0, 0);
-      if (next <= now) next.setDate(next.getDate() + 1); // past 00:01 today → tomorrow
-      setTimeout(() => { runGen('daily-0001'); scheduleNext(); }, next - now);
-      logger.info(`  Daily settlement generation @ 00:01 local — next ${next.toISOString()} (worker 0)`);
+      const now = Date.now();
+      const t = new Date(now);
+      const next = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), 23, 1, 0, 0));
+      if (next.getTime() <= now) next.setUTCDate(next.getUTCDate() + 1);
+      setTimeout(() => { runGen('daily-0001-WAT'); scheduleNext(); }, next.getTime() - now);
+      logger.info(`  Daily settlement generation @ 00:01 Africa/Lagos — next ${next.toISOString()} (worker 0)`);
     };
-    setTimeout(() => runGen('boot-catchup'), 45000); // catch up the prior day shortly after boot
+    setTimeout(() => runGen('boot-catchup'), 45000); // catch up the prior Lagos day shortly after boot
     scheduleNext();
   } catch (e) {
     logger.error({ err: e }, '  ✗ daily settlement generation failed to start (continuing)');
