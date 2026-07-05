@@ -59,7 +59,10 @@ rm -f "${TMP_SUDO}"
 echo "== 2. auditd (kernel-level access + command audit) =="
 if ! command -v auditctl >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq && apt-get install -y auditd audispd-plugins
+  # --allow-releaseinfo-change: some boxes have a 3rd-party PPA (e.g. ondrej/php)
+  # that changed its Label, which otherwise blocks apt-get update.
+  apt-get update -qq || apt-get update --allow-releaseinfo-change -qq || true
+  apt-get install -y auditd audispd-plugins
 else
   echo "   auditd already installed"
 fi
