@@ -324,6 +324,15 @@ model Settlement {
   settledAt      DateTime?        @map("settled_at")
   createdAt      DateTime         @default(now()) @map("created_at")
 
+  // SA-fired settlement (via a payout rail). See migration 20260705_settlement_fire.sql.
+  railId         String?          @map("rail_id") @db.Uuid
+  scheduledAt    DateTime?        @map("scheduled_at")
+  firedBy        String?          @map("fired_by") @db.Uuid
+  firedAt        DateTime?        @map("fired_at")
+  payoutOrderId  String?          @map("payout_order_id")
+  payoutRef      String?          @map("payout_ref")
+  failureReason  String?          @map("failure_reason")
+
   merchant Merchant @relation(fields: [merchantId], references: [id])
 
   @@index([merchantId])
