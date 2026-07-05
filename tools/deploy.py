@@ -31,6 +31,9 @@ FRONTEND = [
     ('api-wiring.js',                              '/var/www/paylode/api-wiring.js'),
     ('dashboard.html',                             '/var/www/paylode/dashboard.html'),
     ('sandbox.html',                               '/var/www/paylode/sandbox.html'),
+    ('invoicing.html',                             '/var/www/paylode/invoicing.html'),
+    ('invoice.html',                               '/var/www/paylode/invoice.html'),
+    ('qr.html',                                    '/var/www/paylode/qr.html'),
 ]
 
 # nginx config (176). Placed by the deploy so the router config is version-controlled,
