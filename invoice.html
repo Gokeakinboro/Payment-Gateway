@@ -54,8 +54,9 @@ async function load() {
       <div class="num">Invoice ${esc(d.invoice_number)} <span class="badge ${isPaid?'paid':'due'}">${isPaid?'Paid':'Due'}</span></div>
       ${d.description ? `<div class="muted" style="margin-bottom:10px">${esc(d.description)}</div>` : ''}
       ${(d.line_items&&d.line_items.length)
-        ? d.line_items.map(it=>`<div class="row"><span>${esc(it.description)}</span><span>${ngn(it.amount)}</span></div>`).join('') + `<div class="row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Subtotal</span><span>${ngn(d.amount)}</span></div>`
+        ? d.line_items.map(it=>{const q=Number(it.quantity||it.qty||1)||1;const u=it.unit_amount!=null?Number(it.unit_amount):(it.amount!=null?Math.round(Number(it.amount)/q):0);const a=it.amount!=null?Number(it.amount):u*q;const nm=esc(it.name||it.description||'Item');return `<div class="row"><span>${nm}<br><span class="muted" style="font-size:12px">${q} × ${ngn(u)}</span></span><span>${ngn(a)}</span></div>`;}).join('') + `<div class="row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Subtotal</span><span>${ngn(d.amount-(d.service_charge_amount||0))}</span></div>`
         : `<div class="row"><span>Amount</span><span>${ngn(d.amount)}</span></div>`}
+      ${d.service_charge_amount>0?`<div class="row"><span>${esc(d.service_charge_label||'Service charge')}</span><span>${ngn(d.service_charge_amount)}</span></div>`:''}
       ${d.vat_amount>0?`<div class="row"><span>VAT</span><span>${ngn(d.vat_amount)}</span></div>`:''}
       ${d.amount_paid>0?`<div class="row"><span>Paid so far</span><span>-${ngn(d.amount_paid)}</span></div>`:''}
       <div class="row total"><span>${isPaid?'Total':'Balance due'}</span><span>${ngn(isPaid?d.total_amount:balance)}</span></div>
