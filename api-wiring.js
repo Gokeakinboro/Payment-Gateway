@@ -1702,11 +1702,11 @@ async function loadReconciliation() {
 }
 function recMsg(m, cls){ var e = document.getElementById('rec-msg'); if (e) { e.textContent = m || ''; e.style.color = cls === 'err' ? '#dc2626' : (cls === 'ok' ? '#16a34a' : 'var(--gray-500)'); } }
 async function recLoad() {
-  var sel = document.getElementById('rec-merchant'); var mid = sel ? sel.value : '';
+  var sel = document.getElementById('rec-merchant'); var isSA = !!sel, mid = sel ? sel.value : '';
   var box = document.getElementById('rec-results'); if (!box) return;
-  if (!mid) { box.innerHTML = ''; return; }
+  if (isSA && !mid) { box.innerHTML = ''; return; }   // SA must pick a merchant; merchant uses own
   box.innerHTML = loading();
-  var r = await apiFetch('/reconciliation/results?merchant_id=' + encodeURIComponent(mid));
+  var r = await apiFetch('/reconciliation/results' + (mid ? '?merchant_id=' + encodeURIComponent(mid) : ''));
   if (!r || !r.status) { box.innerHTML = errorBox((r && r.message) || 'Failed to load reconciliation'); return; }
   var d = r.data || {}, s = d.summary || {};
   var esc = function(t){ return String(t==null?'':t).replace(/[<>&]/g, function(c){ return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c]; }); };
@@ -1721,11 +1721,11 @@ async function recLoad() {
     '<div class="card"><div class="card-header"><div class="card-title">Bank statement lines</div></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Narration</th><th class="right">Credit</th><th class="right">Debit</th><th>Match</th><th>Settlement</th></tr></thead><tbody>' + (lines || '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:16px">No statement uploaded yet — choose a CSV/Excel file above</td></tr>') + '</tbody></table></div></div>';
 }
 async function recUpload() {
-  var sel = document.getElementById('rec-merchant'); var mid = sel ? sel.value : '';
+  var sel = document.getElementById('rec-merchant'); var isSA = !!sel, mid = sel ? sel.value : '';
   var fileEl = document.getElementById('rec-file');
-  if (!mid) return recMsg('Select a merchant', 'err');
+  if (isSA && !mid) return recMsg('Select a merchant', 'err');
   if (!fileEl || !fileEl.files || !fileEl.files[0]) return recMsg('Choose a CSV or Excel file', 'err');
-  var fd = new FormData(); fd.append('file', fileEl.files[0]); fd.append('merchant_id', mid);
+  var fd = new FormData(); fd.append('file', fileEl.files[0]); if (mid) fd.append('merchant_id', mid);
   recMsg('Uploading & matching…');
   try {
     var res = await fetch(API_BASE + '/reconciliation/upload', { method:'POST', headers:{ Authorization:'Bearer ' + getToken() }, body: fd });
@@ -1735,11 +1735,25 @@ async function recUpload() {
   } catch (e) { recMsg('Upload failed: ' + e.message, 'err'); }
 }
 async function recAutoMatch() {
-  var sel = document.getElementById('rec-merchant'); var mid = sel ? sel.value : '';
-  if (!mid) return recMsg('Select a merchant', 'err');
-  var r = await apiFetch('/reconciliation/auto-match', { method:'POST', body: JSON.stringify({ merchant_id: mid }) });
+  var sel = document.getElementById('rec-merchant'); var isSA = !!sel, mid = sel ? sel.value : '';
+  if (isSA && !mid) return recMsg('Select a merchant', 'err');
+  var r = await apiFetch('/reconciliation/auto-match', { method:'POST', body: JSON.stringify(mid ? { merchant_id: mid } : {}) });
   recMsg((r && r.message) || 'Done', (r && r.status) ? 'ok' : 'err');
   if (r && r.status) recLoad();
+}
+// Merchant self-service reconciliation (no merchant picker — scoped to their own account).
+async function loadMerchReconciliation() {
+  var host = document.getElementById('main-content'); if (!host) return;
+  host.innerHTML =
+    '<div class="page-header"><div class="page-title">Bank Reconciliation</div>' +
+      '<div class="page-desc">Match your Paylode settlements against your own bank statement (CSV or Excel)</div></div>' +
+    '<div class="card" style="margin-bottom:14px">' +
+      '<div class="form-group"><label class="form-label">Upload your bank statement (CSV / Excel)</label><input class="form-input" type="file" id="rec-file" accept=".csv,.xlsx,.xls"></div>' +
+      '<div class="flex" style="gap:8px;margin-top:6px"><button class="btn btn-primary btn-sm" onclick="recUpload()">Upload &amp; match</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="recAutoMatch()">Re-run match</button></div>' +
+      '<div id="rec-msg" style="margin-top:8px;font-size:12px"></div>' +
+    '</div><div id="rec-results"></div>';
+  recLoad();
 }
 
 // ── MERCHANT SETTLEMENTS (merchant role) ──────────────────────────────────────
@@ -4513,6 +4527,7 @@ function loadPageData(page) {
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
     case 'merch_settlements':   loadMerchSettlements(); break;
+    case 'merch_reconciliation': loadMerchReconciliation(); break;
     case 'merch_apikeys':       loadMerchApiKeys(); break;
     case 'merch_webhooks':      loadMerchWebhooks(); break;
     case 'merch_profile':       loadMerchProfile(); break;
