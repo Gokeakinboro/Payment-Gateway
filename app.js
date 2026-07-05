@@ -121,7 +121,7 @@ var NAV = {
   ],
   merchant: [
     { section:'Dashboard',    items:[{id:'merch_overview',icon:'◉',label:'Dashboard'}]},
-    { section:'Transactions', items:[{id:'merch_transactions',icon:'↕',label:'Transactions'},{id:'merch_settlements',icon:'✓',label:'Settlements'}]},
+    { section:'Transactions', items:[{id:'merch_transactions',icon:'↕',label:'Transactions'},{id:'merch_settlements',icon:'✓',label:'Settlements'},{id:'merch_reconciliation',icon:'⇄',label:'Reconciliation'}]},
     { section:'Payment Links & QR Code', items:[{id:'merch_payments',icon:'🔗',label:'Payment Links & QR Code'}]},
     { section:'Invoice & Collect', items:[{id:'merch_invoicing',icon:'🧾',label:'Invoice & Collect'}]},
     { section:'Billspay', items:[{id:'merch_wallet',icon:'👛',label:'Billspay'}]},
@@ -215,7 +215,7 @@ var NAV_PERM = {
   payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', vat_report:'view_reports', reports_hub:'view_reports', cbn_report:'view_reports', compliance:'view_compliance', compliance_centre:'view_compliance', compliance_exceptions:'view_compliance',
   onboarding_apps:'view_onboarding', invite_tracking:'view_audit_log', fee_config:'view_fees', rails:'view_rails', service_providers:'view_rails',
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
-  activity_log:'view_audit_log', sa_connections:'view_audit_log', sa_reconciliation:'view_settlements',
+  activity_log:'view_audit_log', sa_connections:'view_audit_log', sa_reconciliation:'view_settlements', merch_reconciliation:'view_settlements',
 };
 // Does the logged-in user hold this permission? (SUPER_ADMIN bypasses everything.)
 // Self-healing: a user whose stored permissions predate the view_/edit_ vocab
