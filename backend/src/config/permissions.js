@@ -18,6 +18,7 @@ const FUNCTIONALITIES = [
   { id: 'compliance',       label: 'Compliance / KYC Review',            edit: true,  editLabel: 'Approve / reject' },
   { id: 'doc_referrals',    label: 'Document Referrals',                 edit: true,  editLabel: 'Request / resolve' },
   { id: 'settlements',      label: 'Settlements',                        edit: true,  editLabel: 'Approve / process' },
+  { id: 'settlement_fire',  label: 'Fire Settlements (release money)',   edit: true,  editLabel: 'Fire' },
   { id: 'payouts',          label: 'Payouts',                            edit: true,  editLabel: 'Process / mark paid' },
   { id: 'wallets',          label: 'Merchant Wallets / Credit',          edit: true,  editLabel: 'Fund / adjust' },
   { id: 'chargebacks',      label: 'Chargebacks',                        edit: true,  editLabel: 'Resolve' },

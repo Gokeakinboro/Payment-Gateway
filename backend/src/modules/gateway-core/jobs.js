@@ -45,6 +45,23 @@ function startCoreJobs({ logger }) {
   } catch (e) {
     logger.error({ err: e }, '  ✗ payout reconciliation failed to start (continuing)');
   }
+
+  // Settlement firing — run DUE scheduled settlements + reconcile fired settlements
+  // stuck PROCESSING (the dedicated settlement dispatch has no rail_disbursement leg,
+  // so the payout webhook can't finalize them; we poll the rail instead). Worker 0 only.
+  try {
+    const { processScheduledSettlements, reconcileFiredSettlements } = require('./services/settlementFire');
+    const SET_MS = Number(process.env.SETTLEMENT_FIRE_MS || 60 * 1000); // 1 min
+    const run = () => {
+      processScheduledSettlements().catch(e => logger.error({ err: e }, 'scheduled settlement firing failed'));
+      reconcileFiredSettlements().catch(e => logger.error({ err: e }, 'settlement fire reconciliation failed'));
+    };
+    setTimeout(run, 35000);           // once shortly after boot
+    setInterval(run, SET_MS);         // then on a schedule
+    logger.info(`  Settlement firing/reconcile every ${Math.round(SET_MS / 1000)}s (worker 0)`);
+  } catch (e) {
+    logger.error({ err: e }, '  ✗ settlement firing job failed to start (continuing)');
+  }
 }
 
 module.exports = { startCoreJobs };
