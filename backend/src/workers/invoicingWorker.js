@@ -20,7 +20,10 @@ async function processScheduledSends() {
     `SELECT id::text FROM inv_invoices
       WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= now() LIMIT 200`);
   for (const r of due) {
-    try { await sendInvoice(r.id); } catch (e) { logger.warn({ err: e.message, id: r.id }, 'scheduled invoice send failed'); }
+    try {
+      const rr = await sendInvoice(r.id);
+      if (!rr.sent) logger.warn({ reason: rr.error, id: r.id }, 'scheduled invoice not sent');
+    } catch (e) { logger.warn({ err: e.message, id: r.id }, 'scheduled invoice send failed'); }
   }
   return due.length;
 }
@@ -41,7 +44,10 @@ async function processOverdueReminders() {
         AND (last_reminder_at IS NULL OR last_reminder_at < now() - (reminder_interval_days || ' days')::interval)
       LIMIT 200`);
   for (const r of due) {
-    try { await sendInvoice(r.id, { isReminder: true }); } catch (e) { logger.warn({ err: e.message, id: r.id }, 'reminder send failed'); }
+    try {
+      const rr = await sendInvoice(r.id, { isReminder: true });
+      if (!rr.sent) logger.warn({ reason: rr.error, id: r.id }, 'reminder not sent');
+    } catch (e) { logger.warn({ err: e.message, id: r.id }, 'reminder send failed'); }
   }
   return due.length;
 }
