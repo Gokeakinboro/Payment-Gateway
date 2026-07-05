@@ -1,8 +1,9 @@
 'use strict';
 const router = require('express').Router();
 const { prisma } = require('../../../utils/db');
-const { requireAuth, requireCompliance } = require('../../../middleware/auth');
+const { requireAuth, requireCompliance, requirePermission } = require('../../../middleware/auth');
 const { ok, fail, notFound, koboToNaira, generateRef } = require('../../../utils/helpers');
+const settlementFire = require('../services/settlementFire');
 
 // Format a minor-unit amount in its currency (kobo→₦, cents→$)
 function fmtMinor(minor, ccy) {
@@ -140,6 +141,39 @@ router.post('/process', requireAuth, requireCompliance, async (req, res, next) =
       results,
       message: `${processed} settlement batch(es) created across ${Object.keys(byCurrency).length} currenc(ies)`,
     });
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/settlements/:id/fire ─────────────────────────────────────────
+// SUPER_ADMIN (always) or an admin SA has granted `edit_settlement_fire` releases a
+// settlement's NET to the merchant's settlement bank via a chosen payout rail.
+// body: { rail_id, scheduled_at? }. scheduled_at in the future → the worker fires it
+// then; blank/near-now → fire immediately. FAILED settlements can be re-fired.
+router.post('/:id/fire', requireAuth, requirePermission('edit_settlement_fire'), async (req, res, next) => {
+  try {
+    const { rail_id, scheduled_at } = req.body || {};
+    if (!rail_id) return fail(res, 'A payout rail is required', 'RAIL_REQUIRED');
+    const s = await prisma.settlement.findUnique({ where: { id: req.params.id } });
+    if (!s) return notFound(res, 'Settlement');
+    if (!['PENDING', 'FAILED'].includes(s.status)) return fail(res, `Settlement is ${s.status} — cannot fire`, 'NOT_FIREABLE', 409);
+
+    // Validate the rail up-front for a clean error (before scheduling / sending money).
+    const rr = await settlementFire.resolveFireRail(rail_id);
+    if (rr.error) return fail(res, rr.error, 'RAIL_INVALID');
+
+    if (scheduled_at) {
+      const when = new Date(scheduled_at);
+      if (isNaN(when.getTime())) return fail(res, 'Invalid schedule time');
+      if (when.getTime() > Date.now() + 30000) {
+        const okScheduled = await settlementFire.scheduleSettlement(s.id, { railId: rail_id, when, actorId: req.user.id });
+        if (!okScheduled) return fail(res, 'Could not schedule (settlement no longer PENDING/FAILED)', 'NOT_FIREABLE', 409);
+        return ok(res, { id: s.id, scheduled_at: when, rail_id }, `Settlement scheduled for ${when.toISOString()}`);
+      }
+    }
+
+    const out = await settlementFire.fireSettlement(s.id, { railId: rail_id, actorId: req.user.id });
+    if (out.ok) return ok(res, out, out.message);
+    return fail(res, out.message, out.status || 'FIRE_FAILED', 400);
   } catch (e) { next(e); }
 });
 
