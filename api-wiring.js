@@ -1678,6 +1678,70 @@ async function loadMerchantActivity() {
   }
 }
 
+// ── SA: BANK RECONCILIATION (settlements vs merchant bank statement) ──────────
+async function loadReconciliation() {
+  var host = document.getElementById('main-content'); if (!host) return;
+  host.innerHTML = loading();
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var mres = await apiFetch('/merchants');
+  var list = (mres && mres.data) ? (Array.isArray(mres.data) ? mres.data : (mres.data.merchants || mres.data.items || [])) : [];
+  var opts = list.map(function(m){ return '<option value="' + m.id + '">' + esc(m.businessName || m.business_name || m.merchantCode || m.merchant_code || m.id) + '</option>'; }).join('');
+  host.innerHTML =
+    '<div class="page-header"><div class="page-title">Bank Reconciliation</div>' +
+      '<div class="page-desc">Match Paylode settlements against the merchant\'s bank statement (CSV or Excel)</div></div>' +
+    '<div class="card" style="margin-bottom:14px">' +
+      '<div class="form-grid">' +
+        '<div class="form-group"><label class="form-label">Merchant</label><select class="form-input" id="rec-merchant" onchange="recLoad()">' + (opts || '<option value="">No merchants</option>') + '</select></div>' +
+        '<div class="form-group"><label class="form-label">Bank statement (CSV / Excel)</label><input class="form-input" type="file" id="rec-file" accept=".csv,.xlsx,.xls"></div>' +
+      '</div>' +
+      '<div class="flex" style="gap:8px;margin-top:6px"><button class="btn btn-primary btn-sm" onclick="recUpload()">Upload &amp; match</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="recAutoMatch()">Re-run match</button></div>' +
+      '<div id="rec-msg" style="margin-top:8px;font-size:12px"></div>' +
+    '</div><div id="rec-results"></div>';
+  recLoad();
+}
+function recMsg(m, cls){ var e = document.getElementById('rec-msg'); if (e) { e.textContent = m || ''; e.style.color = cls === 'err' ? '#dc2626' : (cls === 'ok' ? '#16a34a' : 'var(--gray-500)'); } }
+async function recLoad() {
+  var sel = document.getElementById('rec-merchant'); var mid = sel ? sel.value : '';
+  var box = document.getElementById('rec-results'); if (!box) return;
+  if (!mid) { box.innerHTML = ''; return; }
+  box.innerHTML = loading();
+  var r = await apiFetch('/reconciliation/results?merchant_id=' + encodeURIComponent(mid));
+  if (!r || !r.status) { box.innerHTML = errorBox((r && r.message) || 'Failed to load reconciliation'); return; }
+  var d = r.data || {}, s = d.summary || {};
+  var esc = function(t){ return String(t==null?'':t).replace(/[<>&]/g, function(c){ return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c]; }); };
+  var money = function(nn){ return '₦' + Number(nn||0).toLocaleString(undefined,{minimumFractionDigits:2}); };
+  var card = function(l,v,c){ return '<div class="card" style="flex:1;min-width:115px"><div style="font-size:11px;color:var(--gray-400);text-transform:uppercase">' + l + '</div><div style="font-size:20px;font-weight:700' + (c?';color:'+c:'') + '">' + v + '</div></div>'; };
+  var chip = function(st){ var c = st==='matched'?'#16a34a':st==='partial'?'#d97706':'#64748b'; return '<span style="color:'+c+';font-weight:600;font-size:11px">' + st + '</span>'; };
+  var lines = (d.bank_lines||[]).map(function(l){ return '<tr><td style="font-size:11px">' + (l.txn_date?String(l.txn_date).slice(0,10):'—') + '</td><td style="font-size:11px">' + esc(l.narration) + '</td><td class="mono" style="text-align:right">' + (l.credit>0?money(l.credit_naira):'') + '</td><td class="mono" style="text-align:right;color:#dc2626">' + (l.debit>0?money(l.debit_naira):'') + '</td><td>' + chip(l.match_status) + '</td><td class="mono" style="font-size:10px">' + (l.settlement_ref||'') + '</td></tr>'; }).join('');
+  var exSet = ((d.exceptions||{}).settlements_not_in_bank||[]).map(function(x){ return '<tr><td class="mono" style="font-size:10px">' + (x.settlement_ref||'—') + '</td><td style="font-size:11px">' + (x.period_start?String(x.period_start).slice(0,10):'—') + '</td><td class="mono" style="text-align:right">' + money(x.net_naira) + '</td><td style="font-size:11px">' + (x.status||'') + '</td></tr>'; }).join('');
+  box.innerHTML =
+    '<div class="flex" style="gap:12px;margin-bottom:14px;flex-wrap:wrap">' + card('Bank lines', s.bank_lines||0) + card('Matched', s.matched||0, '#16a34a') + card('Partial', s.partial||0, '#d97706') + card('Unmatched credits', s.unmatched_credits||0) + card('Not in bank', s.settlements_not_in_bank||0, (s.settlements_not_in_bank>0?'#dc2626':'')) + '</div>' +
+    '<div class="card" style="margin-bottom:14px"><div class="card-header"><div class="card-title">⚠ Exceptions — settlements paid but not found in the bank</div></div><div class="table-wrap"><table><thead><tr><th>Settlement</th><th>Period</th><th class="right">Net</th><th>Status</th></tr></thead><tbody>' + (exSet || '<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:16px">None — all settlements accounted for 🎉</td></tr>') + '</tbody></table></div></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">Bank statement lines</div></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Narration</th><th class="right">Credit</th><th class="right">Debit</th><th>Match</th><th>Settlement</th></tr></thead><tbody>' + (lines || '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:16px">No statement uploaded yet — choose a CSV/Excel file above</td></tr>') + '</tbody></table></div></div>';
+}
+async function recUpload() {
+  var sel = document.getElementById('rec-merchant'); var mid = sel ? sel.value : '';
+  var fileEl = document.getElementById('rec-file');
+  if (!mid) return recMsg('Select a merchant', 'err');
+  if (!fileEl || !fileEl.files || !fileEl.files[0]) return recMsg('Choose a CSV or Excel file', 'err');
+  var fd = new FormData(); fd.append('file', fileEl.files[0]); fd.append('merchant_id', mid);
+  recMsg('Uploading & matching…');
+  try {
+    var res = await fetch(API_BASE + '/reconciliation/upload', { method:'POST', headers:{ Authorization:'Bearer ' + getToken() }, body: fd });
+    var d = await res.json();
+    recMsg((d && d.message) || (res.ok ? 'Done' : ('HTTP ' + res.status)), (res.ok && d.status) ? 'ok' : 'err');
+    if (res.ok && d.status) recLoad();
+  } catch (e) { recMsg('Upload failed: ' + e.message, 'err'); }
+}
+async function recAutoMatch() {
+  var sel = document.getElementById('rec-merchant'); var mid = sel ? sel.value : '';
+  if (!mid) return recMsg('Select a merchant', 'err');
+  var r = await apiFetch('/reconciliation/auto-match', { method:'POST', body: JSON.stringify({ merchant_id: mid }) });
+  recMsg((r && r.message) || 'Done', (r && r.status) ? 'ok' : 'err');
+  if (r && r.status) recLoad();
+}
+
 // ── MERCHANT SETTLEMENTS (merchant role) ──────────────────────────────────────
 async function loadMerchSettlements() {
   var el = document.getElementById('main-content');
@@ -4445,6 +4509,7 @@ function loadPageData(page) {
     case 'revenue':          loadRevenueReport(); break;
     case 'settlement':       loadSettlements(); break;
     case 'sa_connections':   loadMerchantActivity(); break;
+    case 'sa_reconciliation': loadReconciliation(); break;
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
     case 'merch_settlements':   loadMerchSettlements(); break;

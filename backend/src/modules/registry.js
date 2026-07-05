@@ -30,6 +30,7 @@ const MODULES = [
   { name: 'admin',           basePath: '/api/v1/admin',                load: () => require('../routes/admin'),             enabledEnv: 'MODULE_ADMIN_ENABLED',           category: 'core' },
   { name: 'kyc',             basePath: '/api/v1/kyc',                  load: () => require('../routes/kyc'),               enabledEnv: 'MODULE_KYC_ENABLED',             category: 'core' },
   { name: 'settlements',     basePath: '/api/v1/settlements',          load: () => require('./gateway-core/routes/settlements'),       enabledEnv: 'MODULE_SETTLEMENTS_ENABLED',     category: 'money' },
+  { name: 'reconciliation',  basePath: '/api/v1/reconciliation',       load: () => require('./gateway-core/routes/reconciliation'),    enabledEnv: 'MODULE_RECONCILIATION_ENABLED',  category: 'money' },
   { name: 'reports',         basePath: '/api/v1/reports',              load: () => require('./gateway-core/routes/reports'),           enabledEnv: 'MODULE_REPORTS_ENABLED',         category: 'core' },
   { name: 'rails',           basePath: '/api/v1/rails',                load: () => require('./gateway-core/routes/rails'),             enabledEnv: 'MODULE_RAILS_ENABLED',           category: 'money' },
   { name: 'checkout',        basePath: '/api/v1/checkout',             load: () => require('./gateway-core/routes/checkout'),          enabledEnv: 'MODULE_CHECKOUT_ENABLED',        category: 'money' },
