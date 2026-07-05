@@ -673,6 +673,7 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
                       <div class="acct-value" id="virtual-name">—</div>
                     </div>
                   </div>
+                  <div id="va-note" style="display:none;color:#dc2626;font-size:13px;margin-top:12px"></div>
                 </div>
               </div>
             </div>
@@ -1031,7 +1032,9 @@ async function fetchVirtualAccount() {
   const acctEl = document.getElementById('virtual-account');
   const bankEl = document.getElementById('virtual-bank');
   const nameEl = document.getElementById('virtual-name');
+  const noteEl = document.getElementById('va-note');
   acctEl.textContent = 'Loading…'; bankEl.textContent = '—'; nameEl.textContent = '—';
+  if (noteEl) { noteEl.style.display = 'none'; noteEl.textContent = ''; }
   try {
     const res  = await fetch(`${API_URL}/checkout/${state.reference}/virtual-account`);
     const data = await res.json();
@@ -1051,6 +1054,9 @@ async function fetchVirtualAccount() {
     throw new Error((data && data.message) || 'VA unavailable');
   } catch (e) {
     acctEl.textContent = 'Unavailable'; bankEl.textContent = '—'; nameEl.textContent = '—';
+    // Surface the actual reason (e.g. "Minimum bank-transfer amount is ₦100") so the
+    // payer knows what to do instead of a dead-end "Unavailable".
+    if (noteEl) { noteEl.textContent = e.message || 'Bank transfer is temporarily unavailable. Please try card, or try again shortly.'; noteEl.style.display = 'block'; }
   }
 }
 

@@ -27,7 +27,7 @@ router.get('/invoice/:token', async (req, res, next) => {
          FROM inv_invoices i JOIN merchants m ON m.id = i.merchant_id
          LEFT JOIN inv_formats f ON f.merchant_id = i.merchant_id
          LEFT JOIN inv_departments d ON d.id = i.department_id
-        WHERE i.access_token = $1`, req.params.token);
+        WHERE i.access_token = $1 AND i.deleted_at IS NULL`, req.params.token);
     if (!rows.length) return notFound(res, 'Invoice');
     const r = rows[0];
     // First view → stamp viewed (don't downgrade a paid/part-paid status).

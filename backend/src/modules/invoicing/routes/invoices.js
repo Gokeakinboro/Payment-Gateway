@@ -29,7 +29,7 @@ router.get('/', async (req, res, next) => {
     const mid = req.invTenant.merchantId;
     const status = String(req.query.status || '').trim();
     const df = deptFilter(req);
-    let sql = `SELECT ${LIST_COLS} FROM inv_invoices i WHERE merchant_id = $1::uuid`;
+    let sql = `SELECT ${LIST_COLS} FROM inv_invoices i WHERE merchant_id = $1::uuid AND deleted_at IS NULL`;
     const vals = [mid]; let i = 2;
     if (status) { sql += ` AND status = $${i++}`; vals.push(status); }
     if (df.clause) { sql += df.clause.replace('$DEPT', `$${i}`); vals.push(df.dept); i++; }
@@ -46,7 +46,7 @@ router.get('/:id', async (req, res, next) => {
     const rows = await prisma.$queryRawUnsafe(
       `SELECT ${LIST_COLS}, access_token, reminder_interval_days, reminder_count, reminders_sent,
               line_items, apply_service_charge, service_charge_amount::text AS service_charge_amount
-         FROM inv_invoices i WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.params.id, mid);
+         FROM inv_invoices i WHERE id=$1::uuid AND merchant_id=$2::uuid AND deleted_at IS NULL`, req.params.id, mid);
     if (!rows.length) return notFound(res, 'Invoice');
     const inv = rows[0];
     if (req.invTenant.isDeptUser && req.invTenant.departmentId && inv.department_id !== req.invTenant.departmentId)
@@ -277,6 +277,22 @@ router.post('/:id/cancel', async (req, res, next) => {
       req.params.id, req.invTenant.merchantId);
     if (!rows.length) return fail(res, 'Invoice not found or already paid', 'NOT_CANCELLABLE', 404);
     return ok(res, { id: rows[0].id }, 'Invoice cancelled');
+  } catch (e) { next(e); }
+});
+
+// ── Delete (soft) ─────────────────────────────────────────────────────────────
+// Merchants may delete an UNPAID invoice; the row is retained (deleted_at) for
+// audit and hidden from all views. Paid / part-paid invoices (money received)
+// are protected and can never be deleted.
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `UPDATE inv_invoices SET deleted_at=now(), updated_at=now()
+        WHERE id=$1::uuid AND merchant_id=$2::uuid AND deleted_at IS NULL
+          AND amount_paid = 0 AND status NOT IN ('paid','part_paid') RETURNING id::text`,
+      req.params.id, req.invTenant.merchantId);
+    if (!rows.length) return fail(res, 'Invoice not found, already deleted, or has a payment — paid/part-paid invoices cannot be deleted', 'NOT_DELETABLE', 404);
+    return ok(res, { id: rows[0].id }, 'Invoice deleted');
   } catch (e) { next(e); }
 });
 
