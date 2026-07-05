@@ -1608,6 +1608,11 @@ async function loadSettlements() {
         '<tbody>' +
         (settlements.length ? settlements.map(function(s) {
           var ccy = s.currency || 'NGN';
+          var st  = (s.status||'').toUpperCase();
+          // Fire = release money via a payout rail (auto). Only unpaid NGN settlements.
+          var fireBtn = ((st === 'PENDING' || st === 'FAILED') && ccy === 'NGN')
+            ? '<button class="btn btn-primary btn-sm" onclick="fireSettlementModal(\'' + s.id + '\',\'' + (s.settlementRef||'') + '\',' + (s.net_major||0) + ',\'' + ccy + '\')">Fire</button> '
+            : '';
           var markPaid = (s.status !== 'COMPLETED' && s.status !== 'SETTLED')
             ? '<button class="btn btn-lime btn-sm" onclick="markSettlementPaid(\'' + s.id + '\',\'' + (s.merchant && s.merchant.businessName ? s.merchant.businessName.replace(/'/g,'') : '') + '\',' + (s.net_major||0) + ')">Mark Paid</button>'
             : '<span style="color:var(--green);font-size:12px">&#10003; Paid</span>';
@@ -1621,7 +1626,7 @@ async function loadSettlements() {
             '<td class="mono text-red" style="font-size:12px">' + (s.fees_display || fmtMajor(s.fees_major||0, ccy)) + '</td>' +
             '<td class="mono" style="font-size:12px;font-weight:700">' + (s.net_display || fmtMajor(s.net_major||0, ccy)) + '</td>' +
             '<td>' + statusBadge((s.status||'pending').toLowerCase()) + '</td>' +
-            '<td>' + markPaid + '</td>' +
+            '<td>' + fireBtn + markPaid + '</td>' +
           '</tr>';
         }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--gray-400);padding:24px">No settlement records yet — run a batch to generate</td></tr>') +
         '</tbody>' +
@@ -2107,6 +2112,57 @@ async function submitSettlementPaid(id) {
   } else {
     alert('Error: ' + ((res && res.message) || 'Payment recording failed'));
   }
+}
+
+// ── FIRE SETTLEMENT (auto payout to the merchant's settlement bank) ────────────
+// SA (or an SA-granted admin) releases a settlement's NET to the merchant's bank
+// via a chosen payout rail — now, or scheduled. Shows the per-channel breakdown
+// (+ margin, if SA) so the SA sees what they're paying before firing.
+async function fireSettlementModal(id, ref, net, ccy) {
+  var m = document.getElementById('modal'); m.style.display = 'flex';
+  var inner = document.getElementById('modal-inner');
+  var head = '<div class="modal-header"><div class="modal-title">Fire settlement ' + (ref||'') + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>';
+  inner.innerHTML = head + '<div style="padding:16px;color:var(--gray-500)">Loading…</div>';
+  if (ccy && ccy !== 'NGN') {
+    inner.innerHTML = head + '<div class="warn-box">Only NGN settlements can be fired to a Nigerian bank rail.</div>' +
+      '<div class="flex-between" style="margin-top:8px"><button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Close</button></div>';
+    return;
+  }
+  var bres = null, rres = null;
+  try { bres = await apiFetch('/settlements/' + id + '/breakdown'); } catch (e) {}
+  try { rres = await apiFetch('/payouts/admin/payout-rails'); } catch (e) {}
+  var chans = (bres && bres.data && bres.data.channels) ? bres.data.channels : [];
+  var hasMargin = chans.length && chans[0].margin != null;
+  var money = function(k){ return '₦' + (Number(k||0)/100).toLocaleString(undefined,{minimumFractionDigits:2}); };
+  var brk = chans.length
+    ? '<table style="width:100%;font-size:12px;margin:6px 0"><tr><th style="text-align:left">Channel</th><th style="text-align:center">Txns</th><th style="text-align:right">Net</th>' + (hasMargin?'<th style="text-align:right">Margin</th>':'') + '</tr>' +
+      chans.map(function(c){ return '<tr><td>' + c.channel + '</td><td style="text-align:center">' + c.txn_count + '</td><td style="text-align:right" class="mono">' + money(c.net) + '</td>' + (hasMargin?'<td style="text-align:right" class="mono text-lime">' + money(c.margin) + '</td>':'') + '</tr>'; }).join('') + '</table>'
+    : '<div class="form-hint">No per-channel data for this period.</div>';
+  var rails = (rres && rres.data ? rres.data : []).filter(function(r){ return String(r.status).toUpperCase() === 'LIVE' && /palmpay/i.test(r.name||''); });
+  var railOpts = rails.map(function(r){ return '<option value="' + r.id + '">' + r.name + '</option>'; }).join('');
+  inner.innerHTML = head +
+    '<div class="rev-row"><span class="rev-label">Net to pay</span><span class="rev-value" style="font-weight:700">' + money((net||0)*100) + '</span></div>' +
+    brk +
+    (rails.length
+      ? '<div class="form-group"><label class="form-label">Payout rail <span style="color:var(--red)">*</span></label><select class="form-input" id="fire-rail">' + railOpts + '</select></div>'
+      : '<div class="warn-box">No LIVE PalmPay payout rail available — cannot fire.</div>') +
+    '<div class="form-group"><label class="form-label">Schedule (optional — blank = fire now)</label><input class="form-input" type="datetime-local" id="fire-when"></div>' +
+    '<div class="warn-box" style="font-size:12px">This releases <strong>real money</strong> to the merchant\'s settlement bank via the chosen rail.</div>' +
+    '<div class="flex-between" style="margin-top:8px"><button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    (rails.length ? '<button class="btn btn-primary" onclick="submitFireSettlement(\'' + id + '\')">Fire settlement</button>' : '') + '</div>';
+}
+
+async function submitFireSettlement(id) {
+  var railEl = document.getElementById('fire-rail');
+  if (!railEl || !railEl.value) { alert('Please select a payout rail'); return; }
+  var when = document.getElementById('fire-when').value;
+  var body = { rail_id: railEl.value };
+  if (when) body.scheduled_at = new Date(when).toISOString();
+  if (!confirm(when ? 'Schedule this settlement payout?' : 'Fire this settlement now? Real money will be sent to the merchant.')) return;
+  var res = await apiFetch('/settlements/' + id + '/fire', { method: 'POST', body: JSON.stringify(body) });
+  alert((res && res.message) ? res.message : (res && res.status ? 'Done' : 'Failed'));
+  if (res && res.status) { document.getElementById('modal').style.display = 'none'; loadSettlements(); }
 }
 
 async function runSandboxSettlement() {
