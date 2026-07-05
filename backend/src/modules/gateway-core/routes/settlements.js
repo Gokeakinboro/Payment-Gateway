@@ -4,6 +4,7 @@ const { prisma } = require('../../../utils/db');
 const { requireAuth, requireCompliance, requirePermission } = require('../../../middleware/auth');
 const { ok, fail, notFound, koboToNaira, generateRef } = require('../../../utils/helpers');
 const settlementFire = require('../services/settlementFire');
+const { generateSettlements } = require('../services/settlementProcess');
 
 // Format a minor-unit amount in its currency (kobo→₦, cents→$)
 function fmtMinor(minor, ccy) {
@@ -88,44 +89,10 @@ router.get('/:id/breakdown', requireAuth, async (req, res, next) => {
 router.post('/process', requireAuth, requireCompliance, async (req, res, next) => {
   try {
     const sandbox = req.body.sandbox === true;
-    const target  = req.body.date ? new Date(req.body.date) : (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d; })();
-    target.setHours(0, 0, 0, 0);
-    const periodStart = new Date(target);
-    const periodEnd   = new Date(target); periodEnd.setHours(23, 59, 59, 999);
+    // Idempotent shared generator (same one the daily cron uses) — safe to re-run.
+    const out = await generateSettlements({ date: req.body.date, sandbox });
+    const results = out.results.map(r => ({ ...r, net_display: fmtMinor(r.net_kobo, r.currency) }));
 
-    // Group successful txns by merchant + currency for the day
-    const groups = await prisma.transaction.groupBy({
-      by: ['merchantId', 'currency'],
-      where: { status: 'SUCCESS', isSandbox: sandbox, createdAt: { gte: periodStart, lte: periodEnd } },
-      _count: true,
-      _sum: { amount: true, merchantFee: true },
-    });
-
-    let processed = 0;
-    const results = [];
-    for (const g of groups) {
-      if (!g._count) continue;
-      const ccy   = g.currency || 'NGN';
-      const gross = g._sum.amount || 0n;
-      const fees  = g._sum.merchantFee || 0n;
-      const net   = gross - fees;
-      const s = await prisma.settlement.create({ data: {
-        merchantId:   g.merchantId,
-        currency:     ccy,
-        periodStart, periodEnd,
-        grossAmount:  gross,
-        feesDeducted: fees,
-        netSettled:   net,
-        txnCount:     g._count,
-        status:       'PENDING',
-        settlementRef: generateRef(ccy === 'USD' ? 'SETUSD' : 'SET'),
-      }});
-      processed++;
-      results.push({ merchant_id: g.merchantId, currency: ccy, txn_count: g._count,
-        net_display: fmtMinor(net, ccy), net_major: Number(net) / 100 });
-    }
-
-    // Summary split by currency
     const byCurrency = results.reduce((acc, r) => {
       acc[r.currency] = acc[r.currency] || { batches: 0, net_major: 0 };
       acc[r.currency].batches += 1;
@@ -134,12 +101,13 @@ router.post('/process', requireAuth, requireCompliance, async (req, res, next) =
     }, {});
 
     ok(res, {
-      processed,
-      date: periodStart.toISOString().split('T')[0],
+      processed: out.processed,
+      skipped:   out.skipped,
+      date:      out.date,
       sandbox,
       by_currency: byCurrency,
       results,
-      message: `${processed} settlement batch(es) created across ${Object.keys(byCurrency).length} currenc(ies)`,
+      message: `${out.processed} settlement batch(es) created` + (out.skipped ? `, ${out.skipped} already existed` : ''),
     });
   } catch (e) { next(e); }
 });
