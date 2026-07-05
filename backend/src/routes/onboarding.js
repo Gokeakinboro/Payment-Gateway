@@ -251,6 +251,14 @@ router.post('/submit', async (req, res, next) => {
 
     if (!form_type) return fail(res, 'form_type is required');
 
+    // Settlement bank is COMPULSORY for merchant onboarding — we must know where to
+    // remit collections. (Aggregators configure settlement separately.)
+    if (form_type === 'merchant') {
+      const bank = (data && data.np_business) || {};
+      const missing = ['bank_name', 'account_number', 'account_name'].filter((k) => !String(bank[k] || '').trim());
+      if (missing.length) return fail(res, 'Settlement bank details are required to onboard: ' + missing.join(', ').replace(/_/g, ' '), 'SETTLEMENT_BANK_REQUIRED');
+    }
+
     const reference = genReference();
     const destDir = path.join(UPLOAD_DIR, reference);
 

@@ -2,7 +2,7 @@
 const router = require('express').Router();
 const { prisma } = require('../../../utils/db');
 const { requireAuth, requireCompliance } = require('../../../middleware/auth');
-const { ok, fail, koboToNaira, generateRef } = require('../../../utils/helpers');
+const { ok, fail, notFound, koboToNaira, generateRef } = require('../../../utils/helpers');
 
 // Format a minor-unit amount in its currency (kobo→₦, cents→$)
 function fmtMinor(minor, ccy) {
@@ -35,6 +35,50 @@ router.get('/', requireAuth, async (req, res, next) => {
       gross_naira:   koboToNaira(s.grossAmount),
       net_naira:     koboToNaira(s.netSettled),
     })));
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/settlements/:id/breakdown ─────────────────────────────────────
+// Per-CHANNEL report for one settlement (CARD / BANK_TRANSFER / USSD / DIRECT_DEBIT):
+// txn count, gross, fee, net for the settlement's (merchant, currency, period).
+// SUPER_ADMIN additionally sees our **margin** per channel (profitability):
+//   margin = Σ(merchant_fee − vat_output) − Σ(rail_cost − vat_input)
+// Merchants see only their own settlement and never the margin fields.
+router.get('/:id/breakdown', requireAuth, async (req, res, next) => {
+  try {
+    const s = await prisma.settlement.findUnique({ where: { id: req.params.id } });
+    if (!s) return notFound(res, 'Settlement');
+    if (req.user.role === 'MERCHANT' && s.merchantId !== req.user.merchant.id) return notFound(res, 'Settlement');
+    const isSA = req.user.role === 'SUPER_ADMIN';
+
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT channel::text AS channel,
+              COUNT(*)::int                                                   AS txn_count,
+              COALESCE(SUM(amount),0)                                          AS gross,
+              COALESCE(SUM(merchant_fee),0)                                    AS fee,
+              COALESCE(SUM(amount - merchant_fee),0)                           AS net,
+              COALESCE(SUM((merchant_fee - vat_output) - (rail_cost - vat_input)),0) AS margin
+         FROM transactions
+        WHERE merchant_id = $1::uuid AND currency = $2 AND status = 'SUCCESS' AND is_sandbox = false
+          AND created_at >= $3 AND created_at < ($4::date + interval '1 day')
+        GROUP BY channel ORDER BY channel`,
+      s.merchantId, s.currency, s.periodStart, s.periodEnd);
+
+    const channels = rows.map((r) => {
+      const o = { channel: r.channel, txn_count: r.txn_count, gross: Number(r.gross), fee: Number(r.fee), net: Number(r.net) };
+      if (isSA) o.margin = Number(r.margin);
+      return o;
+    });
+    const totals = channels.reduce((t, c) => ({
+      gross: t.gross + c.gross, fee: t.fee + c.fee, net: t.net + c.net, margin: t.margin + (c.margin || 0),
+    }), { gross: 0, fee: 0, net: 0, margin: 0 });
+
+    return ok(res, {
+      settlement_id: s.id, currency: s.currency, status: s.status,
+      period_start: s.periodStart, period_end: s.periodEnd,
+      channels,
+      totals: isSA ? totals : { gross: totals.gross, fee: totals.fee, net: totals.net },
+    });
   } catch (e) { next(e); }
 });
 
