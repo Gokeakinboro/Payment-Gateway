@@ -1636,6 +1636,48 @@ async function loadSettlements() {
   }
 }
 
+// ── SA: CONNECTIONS / merchant activity overview (sandbox vs live) ─────────────
+async function loadMerchantActivity() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/reports/merchant-activity');
+    var d = (res && res.data) || {};
+    var s = d.summary || {};
+    var rows = d.merchants || [];
+    var when = function(x){ return x ? new Date(x).toLocaleString() : '—'; };
+    var card = function(label, val){ return '<div class="card" style="flex:1;min-width:130px"><div style="font-size:11px;color:var(--gray-400);text-transform:uppercase;letter-spacing:.4px">' + label + '</div><div style="font-size:22px;font-weight:700">' + val + '</div></div>'; };
+    var body = rows.length ? rows.map(function(m){
+      var mode = '';
+      if (m.live_txns > 0 || m.live_last_used)       mode += '<span style="color:var(--green,#16a34a);font-weight:600;font-size:11px">Live</span> ';
+      if (m.sandbox_txns > 0 || m.sandbox_last_used) mode += '<span style="color:var(--gray-500,#64748b);font-size:11px">Sandbox</span>';
+      return '<tr>' +
+        '<td style="font-weight:500;font-size:12px">' + (m.business_name || '—') + '</td>' +
+        '<td>' + (mode || '<span style="color:var(--gray-400)">—</span>') + '</td>' +
+        '<td style="font-size:11px">' + when(m.last_seen) + '</td>' +
+        '<td style="text-align:center">' + (m.live_txns || 0) + '</td>' +
+        '<td style="text-align:center">' + (m.sandbox_txns || 0) + '</td>' +
+        '<td style="font-size:11px">' + when(m.live_last_used) + '</td>' +
+        '<td style="font-size:11px">' + when(m.sandbox_last_used) + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:24px">No merchant activity yet</td></tr>';
+    el.innerHTML =
+      '<div class="page-header"><div class="page-title">Connections</div>' +
+        '<div class="page-desc">Who connected, when, and what they\'ve done — sandbox vs live (global overview)</div></div>' +
+      '<div class="flex" style="gap:12px;margin-bottom:14px;flex-wrap:wrap">' +
+        card('Merchants', s.total_merchants || 0) + card('Live-active', s.live_active || 0) +
+        card('Sandbox-active', s.sandbox_active || 0) + card('Active (7d)', s.active_7d || 0) +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Merchant</th><th>Mode</th><th>Last seen</th><th>Live txns</th><th>Sandbox txns</th><th>Live key used</th><th>Sandbox key used</th></tr></thead>' +
+        '<tbody>' + body + '</tbody>' +
+      '</table></div></div>';
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load connections: ' + e.message);
+  }
+}
+
 // ── MERCHANT SETTLEMENTS (merchant role) ──────────────────────────────────────
 async function loadMerchSettlements() {
   var el = document.getElementById('main-content');
@@ -4402,6 +4444,7 @@ function loadPageData(page) {
     case 'compliance':       loadCompliance(); break;
     case 'revenue':          loadRevenueReport(); break;
     case 'settlement':       loadSettlements(); break;
+    case 'sa_connections':   loadMerchantActivity(); break;
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
     case 'merch_settlements':   loadMerchSettlements(); break;
