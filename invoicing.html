@@ -186,7 +186,7 @@ async function tInvoices(){
        <div><label>Department (optional)</label><select id="i_dept" onchange="onInvDeptChange()"><option value="">—</option></select></div>
      </div>
      <label>Line items <span class="muted" style="font-weight:400">(pick from catalogue or add custom · max 15)</span></label>
-     <input id="i_search" placeholder="Search catalogue to add an item…" oninput="searchCatalog()" style="margin-bottom:6px">
+     <input id="i_search" placeholder="Click to browse catalogue, or type to search — tick items to add" oninput="searchCatalog()" onfocus="searchCatalog()" style="margin-bottom:6px">
      <div id="i_catalog"></div>
      <div id="i_items"></div>
      <button type="button" class="btn sec" onclick="addItem()" style="margin-top:6px">+ Add custom item</button>
@@ -256,9 +256,10 @@ function resetInvForm(){ _editInvId=null; el('i_items').innerHTML=''; addItem();
   const btn=document.querySelector('button[onclick="createInvoice()"]'); if(btn) btn.textContent='Create & send'; }
 function badge(s,over){ const m={paid:'b-paid',sent:'b-sent',viewed:'b-sent',draft:'b-draft',part_paid:'b-part',cancelled:'b-cancel'}; const cls=over&&s!=='paid'?'b-over':(m[s]||'b-draft'); return `<span class="badge ${cls}">${over&&s!=='paid'?'overdue':s}</span>`; }
 // Item row = name + unit price + quantity; amount = unit × qty.
-function addItem(name, unit, qty){
+function addItem(name, unit, qty, pid){
   const div = document.createElement('div');
   div.className = 'i-row'; div.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
+  if(pid!=null) div.dataset.pid = pid;
   div.innerHTML = '<input class="i-name" placeholder="Item" style="flex:2" value="'+(name?esc(name):'')+'">'+
     '<input class="i-unit" type="number" min="1" step="0.01" placeholder="Unit ₦" style="flex:1" oninput="calcTotal()" value="'+(unit!=null&&unit!==''?unit:'')+'">'+
     '<input class="i-qty" type="number" min="1" step="1" placeholder="Qty" style="width:74px" oninput="calcTotal()" value="'+(qty||1)+'">'+
@@ -291,17 +292,34 @@ function onInvDeptChange(){
   calcTotal();
 }
 let _catTimer=null;
+// Browse/search the (department-scoped) catalogue and render it as a tick-box list.
+// Empty query = browse ALL items in the department; typing filters. Ticking a box
+// adds the item as a line-item row (qty editable below); unticking removes it.
 function searchCatalog(){
   const q=el('i_search').value.trim(); if(_catTimer) clearTimeout(_catTimer);
-  if(!q){ el('i_catalog').innerHTML=''; return; }
   _catTimer=setTimeout(async ()=>{
-    const qs=new URLSearchParams({q}); const dept=el('i_dept').value; if(dept) qs.set('department_id',dept);
-    const r=await api('/products?'+qs);
-    if(!r.status||!r.data.length){ el('i_catalog').innerHTML='<div class="muted" style="font-size:12px">No matching items.</div>'; return; }
-    el('i_catalog').innerHTML = r.data.slice(0,8).map(p=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--line)"><span>${esc(p.name)} <span class="muted">${p.default_amount==null?'':ngn(p.default_amount)}</span></span><button type="button" class="mini" onclick='pickItem(${JSON.stringify(p)})'>+ Add</button></div>`).join('');
-  },200);
+    const qs=new URLSearchParams(); if(q) qs.set('q',q);
+    const dept=el('i_dept').value; if(dept) qs.set('department_id',dept);
+    const r=await api('/products?'+qs.toString());
+    if(!r.status){ el('i_catalog').innerHTML='<div class="muted" style="font-size:12px">'+esc(r.message||'Could not load catalogue')+'</div>'; return; }
+    if(!r.data.length){ el('i_catalog').innerHTML='<div class="muted" style="font-size:12px">'+(q?'No matching items.':'No catalogue items yet — add them under the Items tab, or use “+ Add custom item” below.')+'</div>'; return; }
+    const added=new Set([...document.querySelectorAll('#i_items .i-row[data-pid]')].map(x=>x.dataset.pid));
+    el('i_catalog').innerHTML = '<div style="max-height:210px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:2px 8px;margin-bottom:6px">'+
+      r.data.slice(0,100).map(p=>`<label style="display:flex;justify-content:space-between;align-items:center;padding:5px 2px;border-bottom:1px solid var(--line);cursor:pointer">
+        <span><input type="checkbox" style="width:auto;margin-right:8px"${added.has(String(p.id))?' checked':''} onchange='toggleCatItem(this,${JSON.stringify(p)})'>${esc(p.name)}</span>
+        <span class="muted">${p.default_amount==null?'':ngn(p.default_amount)}</span></label>`).join('')+'</div>';
+  },180);
 }
-function pickItem(p){ addItem(p.name, p.default_amount==null?'':(p.default_amount/100), 1); el('i_search').value=''; el('i_catalog').innerHTML=''; }
+// Tick → add the catalogue item (tagged with its id); untick → remove that row.
+function toggleCatItem(cb, p){
+  if(cb.checked){
+    if(document.querySelectorAll('#i_items .i-row').length>=15){ cb.checked=false; return setMsg('i_msg','Maximum 15 items per invoice.','err'); }
+    addItem(p.name, p.default_amount==null?'':(p.default_amount/100), 1, p.id);
+  } else {
+    const row=document.querySelector('#i_items .i-row[data-pid="'+p.id+'"]');
+    if(row){ row.remove(); calcTotal(); }
+  }
+}
 async function createInvoice(){
   const items=invItems();
   if(!items.length) return setMsg('i_msg','Add at least one item (name, unit price, quantity).','err');
@@ -311,7 +329,8 @@ async function createInvoice(){
       department_id: el('i_dept').value||undefined, description: el('i_desc').value,
       recipient_name: el('i_name').value||undefined, recipient_email: el('i_email').value||undefined };
     const er=await api('/invoices/'+_editInvId,{method:'PATCH',body:JSON.stringify(eb)});
-    setMsg('i_msg', er.message, er.status?'ok':'err');
+    const eBad = er.status && er.data && er.data.resend_error;
+    setMsg('i_msg', er.message, (er.status && !eBad)?'ok':'err');
     if(er.status){ resetInvForm(); loadInvoices(); }
     return;
   }
@@ -322,10 +341,17 @@ async function createInvoice(){
     reminder_interval_days: el('i_rint').value || undefined, reminder_count: el('i_rcnt').value || undefined,
     recipients: el('i_target').value==='all' ? { all_contacts:true } : { email: el('i_email').value, name: el('i_name').value, phone: el('i_phone').value } };
   const r = await api('/invoices', { method:'POST', body: JSON.stringify(body) });
-  setMsg('i_msg', r.message, r.status?'ok':'err');
+  // Green only when it truly sent (or was scheduled). A "created but not sent" is shown red so it's not missed.
+  const bad = r.status && r.data && !r.data.scheduled && r.data.failed_count>0;
+  setMsg('i_msg', r.message, (r.status && !bad)?'ok':'err');
   if (r.status){ el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=''; el('i_items').innerHTML=''; addItem(); loadInvoices(); }
 }
-async function resend(id){ const r=await api(`/invoices/${id}/send`,{method:'POST'}); setMsg('i_msg',r.message,r.status?'ok':'err'); }
+async function resend(id){
+  const r=await api(`/invoices/${id}/send`,{method:'POST'});
+  const bad = r.status && r.data && r.data.sent===false;
+  setMsg('i_msg', r.message, (r.status && !bad)?'ok':'err');
+  loadInvoices();
+}
 async function cancelInv(id){ if(!confirm('Cancel this invoice?'))return; const r=await api(`/invoices/${id}/cancel`,{method:'POST'}); if(r.status) loadInvoices(); }
 
 // ── QR ─────────────────────────────────────────────
