@@ -193,6 +193,9 @@ async function tInvoices(){
      <div id="i_svcwrap" style="margin-top:10px"></div>
      <div class="right" style="margin-top:8px;font-weight:700">Total: <span id="i_total">₦0.00</span></div>
      <label>Description / note (optional)</label><input id="i_desc" placeholder="Shown on the invoice">
+     <label>Recipient — pick from address book <span class="muted" style="font-weight:400">(optional)</span></label>
+     <input id="i_csearch" placeholder="Click to browse saved contacts, or type a name/email — pick to fill below" oninput="searchInvContacts()" onfocus="searchInvContacts()">
+     <div id="i_clist"></div>
      <div class="grid3">
        <div><label>Recipient email</label><input id="i_email" type="email" placeholder="single recipient"></div>
        <div><label>Recipient name</label><input id="i_name"></div>
@@ -223,7 +226,7 @@ async function loadInvoices(){
   if (!r.data.length) { el('i_list').innerHTML = '<span class="muted">No invoices yet.</span>'; return; }
   el('i_list').innerHTML = `<table><tr><th>Number</th><th>Recipient</th><th class="right">Total</th><th class="right">Paid</th><th>Status</th><th></th></tr>` +
     r.data.map(i=>`<tr><td>${esc(i.invoice_number)}</td><td>${esc(i.recipient_email||'—')}</td><td class="right">${ngn(i.total_amount)}</td><td class="right">${ngn(i.amount_paid)}</td><td>${badge(i.status,i.is_overdue)}</td>
-      <td class="right"><button class="mini" onclick="shareInv('${i.id}')">Share</button>${(i.amount_paid===0 && ['draft','scheduled','sent','viewed'].indexOf(i.status)!==-1)?`<button class="mini" onclick="editInv('${i.id}')">Edit</button>`:''}<button class="mini" onclick="resend('${i.id}')">Resend</button>${i.status!=='paid'?`<button class="mini" onclick="cancelInv('${i.id}')">Cancel</button>`:''}</td></tr>`).join('') + `</table>`;
+      <td class="right"><button class="mini" onclick="shareInv('${i.id}')">Share</button>${(i.amount_paid===0 && ['draft','scheduled','sent','viewed'].indexOf(i.status)!==-1)?`<button class="mini" onclick="editInv('${i.id}')">Edit</button>`:''}<button class="mini" onclick="resend('${i.id}')">Resend</button>${i.status!=='paid'?`<button class="mini" onclick="cancelInv('${i.id}')">Cancel</button>`:''}${(i.amount_paid===0 && i.status!=='paid' && i.status!=='part_paid')?`<button class="mini" onclick="delInv('${i.id}')">Delete</button>`:''}</td></tr>`).join('') + `</table>`;
 }
 // Share an invoice as a link + QR (uses GET /invoices/:id/share).
 async function shareInv(id){
@@ -344,15 +347,54 @@ async function createInvoice(){
   // Green only when it truly sent (or was scheduled). A "created but not sent" is shown red so it's not missed.
   const bad = r.status && r.data && !r.data.scheduled && r.data.failed_count>0;
   setMsg('i_msg', r.message, (r.status && !bad)?'ok':'err');
-  if (r.status){ el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=''; el('i_items').innerHTML=''; addItem(); loadInvoices(); }
+  showBanner(r.message, (r.status && !bad)?'ok':'err');
+  if (r.status){ el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=el('i_csearch').value=''; el('i_clist').innerHTML=''; el('i_items').innerHTML=''; addItem(); loadInvoices(); }
 }
 async function resend(id){
   const r=await api(`/invoices/${id}/send`,{method:'POST'});
   const bad = r.status && r.data && r.data.sent===false;
   setMsg('i_msg', r.message, (r.status && !bad)?'ok':'err');
+  showBanner(r.message, (r.status && !bad)?'ok':'err');
   loadInvoices();
 }
-async function cancelInv(id){ if(!confirm('Cancel this invoice?'))return; const r=await api(`/invoices/${id}/cancel`,{method:'POST'}); if(r.status) loadInvoices(); }
+async function cancelInv(id){ if(!confirm('Cancel this invoice?'))return; const r=await api(`/invoices/${id}/cancel`,{method:'POST'}); showBanner(r.message, r.status?'ok':'err'); if(r.status) loadInvoices(); }
+// Soft-delete an UNPAID invoice (paid/part-paid are protected server-side too).
+async function delInv(id){
+  if(!confirm('Delete this invoice? It will be removed from your list.'))return;
+  const r=await api('/invoices/'+id,{method:'DELETE'});
+  showBanner(r.message, r.status?'ok':'err');
+  if(r.status) loadInvoices();
+}
+// ── Address-book picker for the invoice recipient ─────────────────────────────
+// Browse/search saved contacts; picking one fills the recipient email/name/phone.
+let _invCTimer=null;
+function searchInvContacts(){
+  const q=el('i_csearch').value.trim(); if(_invCTimer) clearTimeout(_invCTimer);
+  _invCTimer=setTimeout(async ()=>{
+    const qs=new URLSearchParams(); if(q) qs.set('q',q);
+    const r=await api('/contacts?'+qs.toString());
+    if(!r.status){ el('i_clist').innerHTML='<div class="muted" style="font-size:12px">'+esc(r.message||'Could not load contacts')+'</div>'; return; }
+    if(!r.data.length){ el('i_clist').innerHTML='<div class="muted" style="font-size:12px">'+(q?'No matching contacts.':'No saved contacts yet — add them under the Contacts tab.')+'</div>'; return; }
+    el('i_clist').innerHTML='<div style="max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:8px">'+
+      r.data.slice(0,50).map(c=>`<div style="padding:6px 8px;border-bottom:1px solid var(--line);cursor:pointer" onclick='pickInvContact(${JSON.stringify(c)})'>${esc(c.name)} <span class="muted">${esc(c.email||c.phone||'')}</span></div>`).join('')+'</div>';
+  },180);
+}
+function pickInvContact(c){
+  el('i_email').value=c.email||''; el('i_name').value=c.name||''; el('i_phone').value=c.phone||'';
+  el('i_target').value='';           // ensure "This recipient" (not "All contacts")
+  el('i_csearch').value=c.name||''; el('i_clist').innerHTML='';
+}
+// Prominent, self-dismissing page banner for create/send/cancel/delete outcomes.
+function showBanner(msg, cls){
+  if(!msg) return;
+  let b=el('pl_toast');
+  if(!b){ b=document.createElement('div'); b.id='pl_toast';
+    b.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;padding:12px 22px;border-radius:10px;font-weight:600;color:#fff;box-shadow:0 8px 28px rgba(0,0,0,.20);max-width:92vw;text-align:center';
+    document.body.appendChild(b); }
+  b.style.background = cls==='ok' ? '#16a34a' : (cls==='err' ? '#dc2626' : '#334155');
+  b.textContent=msg; b.style.display='block';
+  clearTimeout(b._t); b._t=setTimeout(()=>{ b.style.display='none'; }, 4500);
+}
 
 // ── QR ─────────────────────────────────────────────
 async function tQr(){
