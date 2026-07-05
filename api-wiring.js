@@ -2058,10 +2058,14 @@ async function submitAddrCheck(submissionId, action) {
 
 // ── SETTLEMENT BATCH ──────────────────────────────────────────────────────────
 async function runSettlement() {
-  if (!confirm('Run settlement batch for yesterday? This will create settlement records for all active merchants.')) return;
-  const res = await apiFetch('/settlements/process', { method: 'POST' });
+  // Default to yesterday, but let the SA pick any date (so a day that actually has
+  // successful transactions can be settled — then each PENDING NGN row gets a Fire button).
+  var def = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+  var d = prompt('Run settlement batch for which date? (YYYY-MM-DD)\nCreates settlement records from that day\'s successful live transactions.', def);
+  if (!d) return;
+  const res = await apiFetch('/settlements/process', { method: 'POST', body: JSON.stringify({ date: d }) });
   if (res?.status) {
-    alert(`Settlement complete: ${res.data.processed} batches created`);
+    alert('Settlement complete for ' + d + ': ' + res.data.processed + ' batch(es) created.' + (res.data.processed === 0 ? '\n(No successful transactions on that date.)' : ''));
     loadSettlements();
   } else {
     alert('Error: ' + (res?.message || 'Settlement failed'));
@@ -2167,10 +2171,11 @@ async function submitFireSettlement(id) {
 
 async function runSandboxSettlement() {
   var today = new Date().toISOString().split('T')[0];
-  if (!confirm('Run sandbox settlement batch for ' + today + '?\nThis processes isSandbox=true transactions only.')) return;
+  var day = prompt('Run SANDBOX settlement batch for which date? (YYYY-MM-DD)\nProcesses isSandbox=true transactions only.', today);
+  if (!day) return;
   var res = await apiFetch('/settlements/process', {
     method: 'POST',
-    body:   JSON.stringify({ sandbox: true, date: today }),
+    body:   JSON.stringify({ sandbox: true, date: day }),
   });
   if (res && res.status) {
     var d = res.data;
