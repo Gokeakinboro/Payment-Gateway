@@ -2813,6 +2813,11 @@ function showCreatePaymentLinkModal() {
         '<input class="form-input" id="pl-f-phone" type="tel" placeholder="for WhatsApp/SMS delivery (coming soon)"></div>' +
       '<div class="form-group"><label class="form-label">Amount (₦) — leave blank to let the customer enter it</label>' +
         '<input class="form-input" id="pl-f-amount" type="number" min="1" step="0.01" placeholder="e.g. 5000"></div>' +
+      '<div class="form-group"><label class="form-label">…or build from catalogue items (optional — sets the amount, max 6)</label>' +
+        '<select class="form-input" id="pl-f-dept" onchange="plSearchCat()" style="margin-bottom:6px"><option value="">— no department —</option></select>' +
+        '<input class="form-input" id="pl-f-itemsearch" placeholder="Click to browse catalogue or type to search — tick to add" oninput="plSearchCat()" onfocus="plSearchCat()" style="margin-bottom:6px">' +
+        '<div id="pl-f-catalog"></div><div id="pl-f-items"></div>' +
+        '<label style="font-size:12px;display:flex;align-items:center;gap:6px;margin-top:4px"><input type="checkbox" id="pl-f-svc"> Apply the department service charge (if the department has one set)</label></div>' +
       '<div class="form-group"><label style="font-size:13px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="pl-f-vat"> Charge 7.5% VAT — added on top of the amount the customer pays.</label></div>' +
       '<div class="form-group"><label style="font-size:13px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="pl-f-reusable" checked> Reusable (uncheck for a one-time link). Ignored when you add recipients below — those are always one-off.</label></div>' +
       '<div class="form-group"><label class="form-label">Expires (optional)</label>' +
@@ -2829,6 +2834,53 @@ function showCreatePaymentLinkModal() {
       '<button class="btn btn-lime" style="width:100%;margin-top:8px" onclick="submitCreatePaymentLink()">Create Link</button>' +
     '</div>'
   );
+  plLoadDepts();
+}
+// ── Itemized payment-link catalogue picker (routes to /invoicing/links) ───────
+async function plLoadDepts() {
+  var sel = document.getElementById('pl-f-dept'); if (!sel) return;
+  var r = await apiFetch('/invoicing/departments');
+  if (r && r.status && r.data && r.data.length)
+    sel.innerHTML = '<option value="">— no department —</option>' + r.data.map(function(d){ return '<option value="' + d.id + '">' + _escA(d.name) + '</option>'; }).join('');
+}
+var _plCatTimer = null;
+function plSearchCat() {
+  var box = document.getElementById('pl-f-catalog'); if (!box) return;
+  var q = (document.getElementById('pl-f-itemsearch').value || '').trim();
+  if (_plCatTimer) clearTimeout(_plCatTimer);
+  _plCatTimer = setTimeout(async function() {
+    var qs = new URLSearchParams(); if (q) qs.set('q', q);
+    var dept = document.getElementById('pl-f-dept').value; if (dept) qs.set('department_id', dept);
+    var r = await apiFetch('/invoicing/products?' + qs.toString());
+    if (!r || !r.status) { box.innerHTML = '<div style="font-size:12px;color:var(--gray-500)">' + ((r && r.message) || 'Could not load catalogue') + '</div>'; return; }
+    if (!r.data.length) { box.innerHTML = '<div style="font-size:12px;color:var(--gray-500)">' + (q ? 'No matching items.' : 'No catalogue items yet — add them in Invoice & Collect → Items.') + '</div>'; return; }
+    var added = new Set([].map.call(document.querySelectorAll('#pl-f-items .pl-row[data-pid]'), function(x){ return x.dataset.pid; }));
+    box.innerHTML = '<div style="max-height:170px;overflow:auto;border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;padding:2px 8px;margin-bottom:6px">' +
+      r.data.slice(0,100).map(function(p){ return '<label style="display:flex;justify-content:space-between;align-items:center;padding:5px 2px;border-bottom:1px solid var(--gray-100,#f1f5f9);cursor:pointer"><span><input type="checkbox" style="width:auto;margin-right:8px"' + (added.has(String(p.id))?' checked':'') + " onchange='plToggleItem(this," + JSON.stringify(p) + ")'>" + _escA(p.name) + '</span><span style="color:var(--gray-500);font-size:12px">' + (p.default_amount==null?'':('₦'+(p.default_amount/100).toLocaleString())) + '</span></label>'; }).join('') + '</div>';
+  }, 180);
+}
+function plToggleItem(cb, p) {
+  if (cb.checked) {
+    if (document.querySelectorAll('#pl-f-items .pl-row').length >= 6) { cb.checked = false; return alert('Maximum 6 items per link.'); }
+    plAddItem(p.name, p.default_amount==null?'':(p.default_amount/100), 1, p.id);
+  } else { var row = document.querySelector('#pl-f-items .pl-row[data-pid="' + p.id + '"]'); if (row) { row.remove(); plCalcAmount(); } }
+}
+function plAddItem(name, unit, qty, pid) {
+  var div = document.createElement('div'); div.className = 'pl-row'; div.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center'; if (pid != null) div.dataset.pid = pid;
+  div.innerHTML = '<input class="form-input pl-name" placeholder="Item" style="flex:2" value="' + (name?_escA(name):'') + '">' +
+    '<input class="form-input pl-unit" type="number" min="1" step="0.01" placeholder="Unit ₦" style="flex:1" oninput="plCalcAmount()" value="' + (unit!=null&&unit!==''?unit:'') + '">' +
+    '<input class="form-input pl-qty" type="number" min="1" step="1" placeholder="Qty" style="width:70px" oninput="plCalcAmount()" value="' + (qty||1) + '">' +
+    '<button type="button" class="btn btn-outline btn-sm" onclick="this.closest(\'.pl-row\').remove();plCalcAmount()">✕</button>';
+  document.getElementById('pl-f-items').appendChild(div); plCalcAmount();
+}
+function plItems() {
+  return [].map.call(document.querySelectorAll('#pl-f-items .pl-row'), function(r){ return { name:(r.querySelector('.pl-name').value||'').trim(), unit_amount:Math.round(parseFloat(r.querySelector('.pl-unit').value||0)*100), quantity:parseInt(r.querySelector('.pl-qty').value||1,10)||1 }; })
+    .filter(function(x){ return x.name && x.unit_amount > 0; });
+}
+function plCalcAmount() {
+  var items = plItems(); var amt = document.getElementById('pl-f-amount');
+  if (items.length) { amt.value = (items.reduce(function(s,i){ return s + i.unit_amount*i.quantity; }, 0)/100).toFixed(2); amt.readOnly = true; }
+  else { amt.readOnly = false; }
 }
 
 // Recipient helpers — single or bulk emails, validated client-side.
@@ -2878,6 +2930,28 @@ async function submitCreatePaymentLink() {
   errEl.style.display = 'none';
   var title = (document.getElementById('pl-f-title').value || '').trim();
   if (!title) return show('A title is required.');
+
+  // Itemized link → the invoicing itemized-link builder (resolves catalogue + service
+  // charge, computes the amount). One-off/single link (no per-recipient batch yet).
+  var plit = plItems();
+  if (plit.length) {
+    var recEl0 = document.getElementById('pl-f-recipients');
+    if (recEl0 && plParseEmails(recEl0.value).length) return show('Itemized links don\'t support per-recipient batch yet — remove recipients, or use a simple amount link.');
+    var ibody = { title: title, items: plit,
+      description: (document.getElementById('pl-f-desc').value || '').trim() || undefined,
+      customer_phone: (document.getElementById('pl-f-phone').value || '').trim() || undefined,
+      charge_vat: document.getElementById('pl-f-vat').checked,
+      apply_service_charge: !!(document.getElementById('pl-f-svc') && document.getElementById('pl-f-svc').checked),
+      reusable: document.getElementById('pl-f-reusable').checked,
+      department_id: (document.getElementById('pl-f-dept') && document.getElementById('pl-f-dept').value) || undefined };
+    var iexp = (document.getElementById('pl-f-expires').value || '').trim(); if (iexp) ibody.expires_at = iexp;
+    var ires = await apiFetch('/invoicing/links', { method: 'POST', body: JSON.stringify(ibody) });
+    if (!ires || !ires.status) return show((ires && ires.message) || 'Could not create the itemized link.');
+    document.getElementById('modal').style.display = 'none';
+    loadMerchPaymentLinks();
+    return;
+  }
+
   var body = { title: title, reusable: document.getElementById('pl-f-reusable').checked,
                charge_vat: document.getElementById('pl-f-vat').checked };
   var desc = (document.getElementById('pl-f-desc').value || '').trim();
