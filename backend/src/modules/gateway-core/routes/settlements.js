@@ -62,9 +62,10 @@ router.get('/:id/breakdown', requireAuth, async (req, res, next) => {
               COALESCE(SUM((merchant_fee - vat_output) - (rail_cost - vat_input)),0) AS margin
          FROM transactions
         WHERE merchant_id = $1::uuid AND currency = $2 AND status = 'SUCCESS' AND is_sandbox = false
-          AND created_at >= $3 AND created_at < ($4::date + interval '1 day')
+          AND created_at >= $3::timestamptz - interval '1 hour'
+          AND created_at <  $3::timestamptz + interval '23 hours'
         GROUP BY channel ORDER BY channel`,
-      s.merchantId, s.currency, s.periodStart, s.periodEnd);
+      s.merchantId, s.currency, s.periodStart);
 
     const channels = rows.map((r) => {
       const o = { channel: r.channel, txn_count: r.txn_count, gross: Number(r.gross), fee: Number(r.fee), net: Number(r.net) };

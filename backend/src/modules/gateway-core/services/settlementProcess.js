@@ -1,28 +1,43 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
 //  Settlement generation for one day, grouped by (merchant, currency).
-//  Used by BOTH the /settlements/process route AND the daily cron (jobs.js), so
-//  cron + manual runs can NEVER create duplicate settlements: a (merchant,
-//  currency, day) that already has a settlement is skipped (idempotent).
+//  Days are keyed to the NIGERIAN calendar day (Africa/Lagos = UTC+1, no DST):
+//  a settlement for day D covers transactions from Lagos D 00:00 → 23:59:59.
+//  Used by BOTH the /settlements/process route AND the daily cron (jobs.js), and
+//  IDEMPOTENT (skips a (merchant, currency, day) already settled) so cron +
+//  manual runs can never duplicate.
 // ─────────────────────────────────────────────────────────────────────────────
 const { prisma } = require('../../../utils/db');
 const { generateRef } = require('../../../utils/helpers');
 
-// Default = yesterday (the prior day). Times set so the whole day is covered.
+const WAT_MS = 60 * 60 * 1000; // Africa/Lagos = UTC+1, no DST
+
+// Target Lagos calendar day parts (m is 0-based): an explicit 'YYYY-MM-DD', else
+// the PRIOR Lagos day (for the daily cron).
+function lagosDayParts(date) {
+  if (date) { const [Y, M, D] = String(date).split('-').map(Number); return { y: Y, m: M - 1, d: D }; }
+  const lagosNow = new Date(Date.now() + WAT_MS); // shift so UTC fields read as Lagos wall-clock
+  const prior = new Date(Date.UTC(lagosNow.getUTCFullYear(), lagosNow.getUTCMonth(), lagosNow.getUTCDate()) - 24 * 60 * 60 * 1000);
+  return { y: prior.getUTCFullYear(), m: prior.getUTCMonth(), d: prior.getUTCDate() };
+}
+
 function dayWindow(date) {
-  const target = date ? new Date(date) : (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d; })();
-  target.setHours(0, 0, 0, 0);
-  const periodStart = new Date(target);
-  const periodEnd = new Date(target); periodEnd.setHours(23, 59, 59, 999);
-  return { periodStart, periodEnd };
+  const { y, m, d } = lagosDayParts(date);
+  // Stored period (@db.Date) = the Lagos calendar day D (its UTC date-part reads as D).
+  const periodStart = new Date(Date.UTC(y, m, d));
+  const periodEnd = periodStart;
+  // Transaction window in UTC = Lagos D 00:00 .. 23:59:59.999 (Lagos = UTC+1).
+  const gte = new Date(Date.UTC(y, m, d) - WAT_MS);
+  const lte = new Date(Date.UTC(y, m, d) + 24 * 60 * 60 * 1000 - WAT_MS - 1);
+  return { periodStart, periodEnd, gte, lte };
 }
 
 async function generateSettlements({ date, sandbox = false } = {}) {
-  const { periodStart, periodEnd } = dayWindow(date);
+  const { periodStart, periodEnd, gte, lte } = dayWindow(date);
 
   const groups = await prisma.transaction.groupBy({
     by: ['merchantId', 'currency'],
-    where: { status: 'SUCCESS', isSandbox: sandbox, createdAt: { gte: periodStart, lte: periodEnd } },
+    where: { status: 'SUCCESS', isSandbox: sandbox, createdAt: { gte, lte } },
     _count: true,
     _sum: { amount: true, merchantFee: true },
   });
