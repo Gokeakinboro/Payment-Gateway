@@ -137,15 +137,39 @@ router.post('/', async (req, res, next) => {
         isScheduled ? 'scheduled' : 'draft', scheduledAt, dueAt, remInterval, remCount, token, lineItemsJson,
         applyServiceCharge, BigInt(money.serviceCharge));
       const id = rows[0].id;
-      createdInvoices.push({ id, invoice_number: number, recipient_email: r.email });
-      if (!isScheduled) { try { await sendInvoice(id); } catch (e) { /* best-effort email */ } }
+      let outcome = { sent: false, error: null };
+      if (!isScheduled) {
+        try { outcome = await sendInvoice(id); }
+        catch (e) { outcome = { sent: false, error: (e && e.message) || 'Send failed' }; }
+      }
+      createdInvoices.push({ id, invoice_number: number, recipient_email: r.email,
+        sent: !!outcome.sent, send_error: outcome.error || null });
+    }
+
+    // Build an accurate summary so the UI can show what actually happened.
+    const sentCount = createdInvoices.filter((i) => i.sent).length;
+    const failed = createdInvoices.filter((i) => !i.sent);
+    let message;
+    if (isScheduled) {
+      message = `Scheduled ${createdInvoices.length} invoice(s)`;
+    } else if (createdInvoices.length === 1) {
+      const only = createdInvoices[0];
+      message = only.sent
+        ? `Invoice created & sent to ${only.recipient_email}`
+        : `Invoice created, but not sent: ${only.send_error || 'unknown error'}`;
+    } else {
+      message = failed.length === 0
+        ? `Created & sent ${sentCount} invoice(s)`
+        : `Created ${createdInvoices.length} invoice(s) — sent ${sentCount}, ${failed.length} could not be sent`;
     }
 
     return created(res, {
       count: createdInvoices.length,
       scheduled: !!isScheduled,
+      sent_count: sentCount,
+      failed_count: failed.length,
       invoices: createdInvoices,
-    }, isScheduled ? `Scheduled ${createdInvoices.length} invoice(s)` : `Created & sent ${createdInvoices.length} invoice(s)`);
+    }, message);
   } catch (e) { next(e); }
 });
 
@@ -220,9 +244,14 @@ router.patch('/:id', async (req, res, next) => {
       description, allowPart, rName, rEmail, rPhone, req.params.id, mid);
 
     // If the invoice was already shared, re-send so the correction reaches the recipient.
-    let resent = false;
-    if (inv.status === 'sent' || inv.status === 'viewed') { try { await sendInvoice(req.params.id); resent = true; } catch (e) { /* best-effort */ } }
-    return ok(res, { id: req.params.id, total_amount: money.total, resent }, resent ? 'Invoice updated & re-sent' : 'Invoice updated');
+    let resent = false, resendError = null;
+    if (inv.status === 'sent' || inv.status === 'viewed') {
+      let rr; try { rr = await sendInvoice(req.params.id); } catch (e) { rr = { sent: false, error: (e && e.message) || 'Send failed' }; }
+      resent = !!rr.sent; resendError = rr.sent ? null : (rr.error || 'unknown error');
+    }
+    const msg = resent ? 'Invoice updated & re-sent'
+      : (resendError ? `Invoice updated, but re-send failed: ${resendError}` : 'Invoice updated');
+    return ok(res, { id: req.params.id, total_amount: money.total, resent, resend_error: resendError }, msg);
   } catch (e) { next(e); }
 });
 
@@ -231,8 +260,11 @@ router.post('/:id/send', async (req, res, next) => {
   try {
     const own = await prisma.$queryRawUnsafe(`SELECT id::text FROM inv_invoices WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.params.id, req.invTenant.merchantId);
     if (!own.length) return notFound(res, 'Invoice');
-    const emailed = await sendInvoice(req.params.id);
-    return ok(res, { id: req.params.id, emailed }, emailed ? 'Invoice sent' : 'Invoice has no email recipient');
+    const rr = await sendInvoice(req.params.id);
+    const msg = rr.sent ? `Invoice sent to ${rr.email}`
+      : (!rr.recipient ? (rr.error || 'Invoice has no email recipient')
+                       : `Could not send invoice: ${rr.error}`);
+    return ok(res, { id: req.params.id, sent: !!rr.sent, recipient: !!rr.recipient, email: rr.email || null, error: rr.error || null }, msg);
   } catch (e) { next(e); }
 });
 
