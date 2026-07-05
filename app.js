@@ -284,7 +284,7 @@ function renderSectionHub(sectionName) {
 function switchRole(role) { currentRole = role; currentPage = ROLE_META[role].defaultPage; renderNav(); renderPage(); closeSidebar(); }
 var __navHistory = [];
 // Nav ids that live on a standalone static page rather than an in-app view.
-var EXTERNAL_PAGES = { merch_invoicing: 'invoicing.html?v=20260705', merch_wallet: 'wallet-admin.html', sa_wallet: 'wallet-sa.html' };
+var EXTERNAL_PAGES = { merch_invoicing: 'invoicing.html?v=20260705b', merch_wallet: 'wallet-admin.html', sa_wallet: 'wallet-sa.html' };
 function navigate(page)   {
   if (EXTERNAL_PAGES[page]) { window.location.href = EXTERNAL_PAGES[page]; return; }
   if (currentPage && currentPage !== page && String(page).indexOf('hub::') !== 0) __navHistory.push(currentPage);

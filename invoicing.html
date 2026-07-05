@@ -193,15 +193,16 @@ async function tInvoices(){
      <div id="i_svcwrap" style="margin-top:10px"></div>
      <div class="right" style="margin-top:8px;font-weight:700">Total: <span id="i_total">₦0.00</span></div>
      <label>Description / note (optional)</label><input id="i_desc" placeholder="Shown on the invoice">
-     <label>Recipient — pick from address book <span class="muted" style="font-weight:400">(optional)</span></label>
-     <input id="i_csearch" placeholder="Click to browse saved contacts, or type a name/email — pick to fill below" oninput="searchInvContacts()" onfocus="searchInvContacts()">
+     <label>Recipients — from address book <span class="muted" style="font-weight:400">(optional · tick each, or Pick all)</span></label>
+     <input id="i_csearch" placeholder="Click to browse saved contacts, or type a name/email to filter" oninput="searchInvContacts()" onfocus="searchInvContacts()">
+     <label style="display:flex;gap:6px;align-items:center;margin:6px 0 4px;font-weight:600"><input type="checkbox" id="i_call" style="width:auto" onchange="pickAllContacts(this)"> Pick all contacts</label>
+     <div id="i_csel" class="muted" style="font-size:12px;margin-bottom:4px"></div>
      <div id="i_clist"></div>
      <div class="grid3">
        <div><label>Recipient email</label><input id="i_email" type="email" placeholder="single recipient"></div>
        <div><label>Recipient name</label><input id="i_name"></div>
        <div><label>Recipient phone</label><input id="i_phone" placeholder="for WhatsApp/SMS (optional)"></div>
      </div>
-     <div><label>Or send to</label><select id="i_target"><option value="">This recipient</option><option value="all">All contacts</option></select></div>
      <div class="grid3">
        <div><label>Schedule send (optional)</label><input id="i_sched" type="datetime-local"></div>
        <div><label>Due date (optional)</label><input id="i_due" type="date"></div>
@@ -255,7 +256,7 @@ async function editInv(id){
   const btn=document.querySelector('button[onclick="createInvoice()"]'); if(btn) btn.textContent='Save changes';
   setMsg('i_msg', `Editing ${esc(inv.invoice_number)} — make changes and Save.`, 'ok'); window.scrollTo(0,0);
 }
-function resetInvForm(){ _editInvId=null; el('i_items').innerHTML=''; addItem(); el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value='';
+function resetInvForm(){ _editInvId=null; el('i_items').innerHTML=''; addItem(); el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=''; clearInvRecipients();
   const btn=document.querySelector('button[onclick="createInvoice()"]'); if(btn) btn.textContent='Create & send'; }
 function badge(s,over){ const m={paid:'b-paid',sent:'b-sent',viewed:'b-sent',draft:'b-draft',part_paid:'b-part',cancelled:'b-cancel'}; const cls=over&&s!=='paid'?'b-over':(m[s]||'b-draft'); return `<span class="badge ${cls}">${over&&s!=='paid'?'overdue':s}</span>`; }
 // Item row = name + unit price + quantity; amount = unit × qty.
@@ -342,13 +343,15 @@ async function createInvoice(){
     department_id: el('i_dept').value || undefined,
     scheduled_at: el('i_sched').value || undefined, due_at: el('i_due').value || undefined,
     reminder_interval_days: el('i_rint').value || undefined, reminder_count: el('i_rcnt').value || undefined,
-    recipients: el('i_target').value==='all' ? { all_contacts:true } : { email: el('i_email').value, name: el('i_name').value, phone: el('i_phone').value } };
+    recipients: _invPickAll ? { all_contacts:true }
+              : (_invSel.size ? { contact_ids:[..._invSel.keys()] }
+              : { email: el('i_email').value, name: el('i_name').value, phone: el('i_phone').value }) };
   const r = await api('/invoices', { method:'POST', body: JSON.stringify(body) });
   // Green only when it truly sent (or was scheduled). A "created but not sent" is shown red so it's not missed.
   const bad = r.status && r.data && !r.data.scheduled && r.data.failed_count>0;
   setMsg('i_msg', r.message, (r.status && !bad)?'ok':'err');
   showBanner(r.message, (r.status && !bad)?'ok':'err');
-  if (r.status){ el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=el('i_csearch').value=''; el('i_clist').innerHTML=''; el('i_items').innerHTML=''; addItem(); loadInvoices(); }
+  if (r.status){ el('i_desc').value=el('i_email').value=el('i_name').value=el('i_phone').value=''; clearInvRecipients(); el('i_items').innerHTML=''; addItem(); loadInvoices(); }
 }
 async function resend(id){
   const r=await api(`/invoices/${id}/send`,{method:'POST'});
@@ -367,7 +370,7 @@ async function delInv(id){
 }
 // ── Address-book picker for the invoice recipient ─────────────────────────────
 // Browse/search saved contacts; picking one fills the recipient email/name/phone.
-let _invCTimer=null;
+let _invCTimer=null, _invSel=new Map(), _invPickAll=false;
 function searchInvContacts(){
   const q=el('i_csearch').value.trim(); if(_invCTimer) clearTimeout(_invCTimer);
   _invCTimer=setTimeout(async ()=>{
@@ -375,14 +378,31 @@ function searchInvContacts(){
     const r=await api('/contacts?'+qs.toString());
     if(!r.status){ el('i_clist').innerHTML='<div class="muted" style="font-size:12px">'+esc(r.message||'Could not load contacts')+'</div>'; return; }
     if(!r.data.length){ el('i_clist').innerHTML='<div class="muted" style="font-size:12px">'+(q?'No matching contacts.':'No saved contacts yet — add them under the Contacts tab.')+'</div>'; return; }
-    el('i_clist').innerHTML='<div style="max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:8px">'+
-      r.data.slice(0,50).map(c=>`<div style="padding:6px 8px;border-bottom:1px solid var(--line);cursor:pointer" onclick='pickInvContact(${JSON.stringify(c)})'>${esc(c.name)} <span class="muted">${esc(c.email||c.phone||'')}</span></div>`).join('')+'</div>';
+    // Each contact gets a checkbox; ticking adds it (selection persists across filtering).
+    // When "Pick all" is on, rows show checked + disabled (the whole book is included).
+    el('i_clist').innerHTML='<div style="max-height:210px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:8px">'+
+      r.data.slice(0,200).map(c=>`<label style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--line);cursor:pointer">
+        <input type="checkbox" style="width:auto"${(_invPickAll||_invSel.has(String(c.id)))?' checked':''}${_invPickAll?' disabled':''} onchange='toggleInvContact(this,${JSON.stringify(c)})'>
+        <span>${esc(c.name)} <span class="muted">${esc(c.email||c.phone||'')}</span></span></label>`).join('')+'</div>';
   },180);
 }
-function pickInvContact(c){
-  el('i_email').value=c.email||''; el('i_name').value=c.name||''; el('i_phone').value=c.phone||'';
-  el('i_target').value='';           // ensure "This recipient" (not "All contacts")
-  el('i_csearch').value=c.name||''; el('i_clist').innerHTML='';
+function toggleInvContact(cb,c){
+  if(cb.checked) _invSel.set(String(c.id),{name:c.name,email:c.email,phone:c.phone});
+  else _invSel.delete(String(c.id));
+  updateInvSel();
+}
+function pickAllContacts(cb){
+  _invPickAll=cb.checked;
+  if(_invPickAll) _invSel.clear();     // "all" supersedes individual ticks
+  updateInvSel(); searchInvContacts();  // re-render list to reflect checked/disabled state
+}
+function updateInvSel(){
+  const s=el('i_csel'); if(s) s.textContent = _invPickAll ? 'All contacts selected.' : (_invSel.size ? _invSel.size+' contact(s) selected.' : '');
+}
+function clearInvRecipients(){
+  _invSel.clear(); _invPickAll=false;
+  const ca=el('i_call'); if(ca) ca.checked=false;
+  if(el('i_csel')) el('i_csel').textContent=''; if(el('i_clist')) el('i_clist').innerHTML=''; if(el('i_csearch')) el('i_csearch').value='';
 }
 // Prominent, self-dismissing page banner for create/send/cancel/delete outcomes.
 function showBanner(msg, cls){
