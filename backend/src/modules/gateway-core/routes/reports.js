@@ -768,7 +768,9 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
         volume_major: Number(r.volume || 0) / 100,
         fee_revenue_major: Number(r.fee_revenue || 0) / 100,
         rail_cost_major:   Number(r.rail_cost || 0) / 100,
-        margin_major:      Number(r.paylode_margin || 0) / 100,
+        // Margin is ALWAYS fee revenue − rail cost (both ex-VAT), computed here — not
+        // the stored paylode_margin column (which could be stale/inconsistent).
+        margin_major:      (Number(r.fee_revenue || 0) - Number(r.rail_cost || 0)) / 100,
       };
     };
 
@@ -779,7 +781,7 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
         volume_major:      f.reduce((s, r) => s + Number(r.volume || 0), 0) / 100,
         fee_revenue_major: f.reduce((s, r) => s + Number(r.fee_revenue || 0), 0) / 100,
         rail_cost_major:   f.reduce((s, r) => s + Number(r.rail_cost || 0), 0) / 100,
-        margin_major:      f.reduce((s, r) => s + Number(r.paylode_margin || 0), 0) / 100,
+        margin_major:      f.reduce((s, r) => s + (Number(r.fee_revenue || 0) - Number(r.rail_cost || 0)), 0) / 100,
       };
     };
 
@@ -790,8 +792,8 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
         COALESCE(NULLIF(t.metadata->>'card_scheme', ''), 'UNSPECIFIED') AS scheme,
         COUNT(*)::int                  AS txn_count,
         SUM(t.amount)::bigint          AS volume,
-        SUM(t.merchant_fee)::bigint    AS fee_revenue,
-        SUM(t.paylode_margin)::bigint  AS paylode_margin
+        SUM(t.merchant_fee - COALESCE(t.vat_output,0))::bigint AS fee_revenue,
+        SUM(t.rail_cost - COALESCE(t.vat_input,0))::bigint     AS rail_cost
       FROM transactions t
       WHERE t.status = 'SUCCESS'
         AND t.is_sandbox = false
@@ -810,7 +812,7 @@ router.get('/rail-settlement', requireAuth, requireCompliance, async (req, res, 
       txn_count:         Number(r.txn_count || 0),
       volume_major:      Number(r.volume || 0) / 100,
       fee_revenue_major: Number(r.fee_revenue || 0) / 100,
-      margin_major:      Number(r.paylode_margin || 0) / 100,
+      margin_major:      (Number(r.fee_revenue || 0) - Number(r.rail_cost || 0)) / 100,
     }));
 
     ok(res, {
