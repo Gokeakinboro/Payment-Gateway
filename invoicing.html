@@ -5,10 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Invoice & Collect — Paylode</title>
 <link rel="stylesheet" href="paylode-ui.css?v=3">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono&display=swap">
 <style>
-  :root { --g:#16a34a; --p:#1a2744; --lime:#7dc534; --ink:#111827; --muted:#6b7280; --line:#cbd5e1; --bg:#f6f7f9; }
+  :root { --g:#16a34a; --p:#1a2744; --lime:#7dc534; --lime-light:#9ed44f; --ink:#1e293b; --muted:#64748b; --line:#cbd5e1; --bg:#f8fafc; --gray-50:#f8fafc; --gray-100:#f1f5f9; --gray-500:#64748b; --gray-700:#334155; }
   * { box-sizing:border-box; }
-  body { font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif; margin:0; background:var(--bg); color:var(--ink); }
+  body { font-family:'DM Sans',system-ui,-apple-system,Segoe UI,Arial,sans-serif; margin:0; background:var(--bg); color:var(--ink); }
   header { background:#fff; border-bottom:1px solid var(--line); padding:14px 22px; display:flex; align-items:center; justify-content:space-between; }
   header h1 { font-size:17px; margin:0; }
   header a { font-size:13px; color:var(--p); text-decoration:none; }
@@ -27,8 +28,9 @@
   button.btn.sec { background:#fff; color:var(--ink); border:1px solid var(--line); }
   button.mini { font-size:12px; padding:5px 9px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; margin-right:4px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
-  th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); }
-  th { color:var(--muted); font-weight:600; }
+  th,td { text-align:left; padding:11px 14px; border-bottom:1px solid var(--gray-100); }
+  th { color:var(--gray-500); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.5px; background:var(--gray-50); }
+  td { color:var(--gray-700); }
   .badge { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
   .b-paid{background:#dcfce7;color:#15803d}.b-sent{background:#dbeafe;color:#1d4ed8}.b-draft{background:#f3f4f6;color:#374151}
   .b-part{background:#fef9c3;color:#854d0e}.b-over{background:#fee2e2;color:#b91c1c}.b-cancel{background:#f3f4f6;color:#9ca3af}
