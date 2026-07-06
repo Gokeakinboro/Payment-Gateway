@@ -824,22 +824,24 @@ router.post('/batches/:id/retry-failed', requireAuth, async (req, res, next) => 
 // single total (GET /payouts/wallet).
 router.get('/admin/wallets', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
+    // Every ACTIVATED merchant appears here so SA can fund any of them (even a brand-new
+    // merchant with no wallet yet). Deactivated / suspended merchants (isActive=false)
+    // drop off. Wallet balances (per rail) are zero until first funded.
+    const merchants = await prisma.merchant.findMany({
+      where: { isActive: true },
+      select: { id: true, businessName: true, merchantCode: true },
+    });
     const wallets = await prisma.merchantWallet.findMany({
-      include: {
-        merchant: { select: { businessName: true, merchantCode: true } },
-        rail:     { select: { id: true, name: true } },
-      },
-      orderBy: { balance: 'desc' },
+      include: { rail: { select: { id: true, name: true } } },
     });
     const byMerchant = new Map();
+    for (const mm of merchants) {
+      byMerchant.set(mm.id, { merchant_id: mm.id, business_name: mm.businessName,
+        merchant_code: mm.merchantCode, total: 0n, rails: [], last_funded_at: null, last_used_at: null });
+    }
     for (const w of wallets) {
-      let m = byMerchant.get(w.merchantId);
-      if (!m) {
-        m = { merchant_id: w.merchantId, business_name: w.merchant.businessName,
-              merchant_code: w.merchant.merchantCode, total: 0n, rails: [],
-              last_funded_at: null, last_used_at: null };
-        byMerchant.set(w.merchantId, m);
-      }
+      const m = byMerchant.get(w.merchantId);
+      if (!m) continue; // wallet belongs to a non-active merchant → skip
       m.total += w.balance;
       if (w.railId) m.rails.push({ rail_id: w.railId, rail_name: w.rail ? w.rail.name : 'rail',
         balance: Number(w.balance), balance_naira: koboToNaira(w.balance) });
