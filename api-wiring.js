@@ -1756,6 +1756,43 @@ async function loadMerchReconciliation() {
   recLoad();
 }
 
+// ── SA: COLLECTION (settlement) WALLETS — separate from payout wallets ─────────
+async function loadCollectionWallets() {
+  var host = document.getElementById('main-content'); if (!host) return;
+  host.innerHTML = loading();
+  try {
+    var res = await apiFetch('/settlements/admin/collection-wallets');
+    var d = (res && res.data) || {}; var t = d.totals || {};
+    var money = function(n){ return '₦' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2}); };
+    var card = function(l,v,c){ return '<div class="card" style="flex:1;min-width:150px"><div style="font-size:11px;color:var(--gray-400);text-transform:uppercase">'+l+'</div><div style="font-size:22px;font-weight:700'+(c?';color:'+c:'')+'">'+v+'</div></div>'; };
+    var rows = (d.merchants||[]).map(function(m){ return '<tr><td style="font-weight:500;font-size:12px">'+(m.business_name||'—')+'</td><td class="mono" style="text-align:right">'+money(m.collected_naira)+'</td><td class="mono" style="text-align:right;color:#16a34a">'+money(m.settled_naira)+'</td><td class="mono" style="text-align:right;font-weight:700">'+money(m.pending_naira)+'</td></tr>'; }).join('');
+    host.innerHTML =
+      '<div class="page-header"><div class="page-title">Collection Wallets</div><div class="page-desc">Money collected on behalf of merchants, awaiting settlement to their bank. A reporting balance — NOT the pre-funded payout wallet — that reduces when you fire a settlement.</div></div>' +
+      '<div class="flex" style="gap:12px;margin-bottom:14px;flex-wrap:wrap">' + card('Total collected', money((t.collected||0)/100)) + card('Total settled to bank', money((t.settled||0)/100), '#16a34a') + card('Pending settlement', money((t.pending||0)/100), '#d97706') + '</div>' +
+      '<div class="card"><div class="table-wrap"><table><thead><tr><th>Merchant</th><th class="right">Collected (net)</th><th class="right">Settled to bank</th><th class="right">Pending (wallet)</th></tr></thead><tbody>' + (rows||'<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:24px">No collections yet</td></tr>') + '</tbody></table></div></div>';
+  } catch(e) { host.innerHTML = errorBox('Failed to load collection wallets: ' + e.message); }
+}
+
+// ── SA: PAYOUTS — total / by merchant / by batch ──────────────────────────────
+async function loadPayoutsBreakdown() {
+  var host = document.getElementById('main-content'); if (!host) return;
+  host.innerHTML = loading();
+  try {
+    var res = await apiFetch('/payouts/admin/report');
+    var d = (res && res.data) || {}; var s = d.summary || {}; var byM = d.by_merchant || []; var batches = d.batches || [];
+    var money = function(n){ return '₦' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2}); };
+    var card = function(l,v){ return '<div class="card" style="flex:1;min-width:130px"><div style="font-size:11px;color:var(--gray-400);text-transform:uppercase">'+l+'</div><div style="font-size:22px;font-weight:700">'+v+'</div></div>'; };
+    var hasMargin = byM[0] && byM[0].margin_naira != null;
+    var mRows = byM.map(function(m){ return '<tr><td style="font-size:12px;font-weight:500">'+(m.business_name||'—')+'</td><td style="text-align:center">'+(m.total_items||0)+'</td><td style="text-align:center">'+(m.success_items||0)+'</td><td class="mono" style="text-align:right">'+money(m.total_amount_naira)+'</td><td class="mono" style="text-align:right">'+money(m.fee_earned_naira)+'</td>'+(hasMargin?'<td class="mono text-lime" style="text-align:right">'+money(m.margin_naira)+'</td>':'')+'</tr>'; }).join('');
+    var bRows = batches.map(function(b){ return '<tr><td class="mono" style="font-size:10px">'+(b.batch_ref||'')+'</td><td style="font-size:11px">'+(b.business_name||'')+'</td><td style="text-align:center">'+(b.total_items||0)+'</td><td style="text-align:center">'+(b.processed_items||0)+'</td><td>'+(b.status||'')+'</td><td class="mono" style="text-align:right">'+money(b.total_amount_naira)+'</td></tr>'; }).join('');
+    host.innerHTML =
+      '<div class="page-header"><div class="page-title">Payouts</div><div class="page-desc">Total, by merchant, and by batch (current month).</div></div>' +
+      '<div class="flex" style="gap:12px;margin-bottom:14px;flex-wrap:wrap">' + card('Batches', s.batch_count||0) + card('Merchants', s.active_merchants||0) + card('Total paid', money(s.total_amount_naira)) + card('Fee earned', money(s.fee_earned_naira)) + (s.margin_naira!=null?card('Margin', money(s.margin_naira)):'') + '</div>' +
+      '<div class="card" style="margin-bottom:14px"><div class="card-header"><div class="card-title">By merchant</div></div><div class="table-wrap"><table><thead><tr><th>Merchant</th><th>Items</th><th>Success</th><th class="right">Amount</th><th class="right">Fee</th>'+(hasMargin?'<th class="right">Margin</th>':'')+'</tr></thead><tbody>'+(mRows||'<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:16px">No payouts</td></tr>')+'</tbody></table></div></div>' +
+      '<div class="card"><div class="card-header"><div class="card-title">By batch</div></div><div class="table-wrap"><table><thead><tr><th>Batch</th><th>Merchant</th><th>Items</th><th>Done</th><th>Status</th><th class="right">Amount</th></tr></thead><tbody>'+(bRows||'<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:16px">No batches</td></tr>')+'</tbody></table></div></div>';
+  } catch(e) { host.innerHTML = errorBox('Failed to load payouts: ' + e.message); }
+}
+
 // ── MERCHANT SETTLEMENTS (merchant role) ──────────────────────────────────────
 async function loadMerchSettlements() {
   var el = document.getElementById('main-content');
@@ -4598,6 +4635,8 @@ function loadPageData(page) {
     case 'settlement':       loadSettlements(); break;
     case 'sa_connections':   loadMerchantActivity(); break;
     case 'sa_reconciliation': loadReconciliation(); break;
+    case 'sa_collection_wallets': loadCollectionWallets(); break;
+    case 'sa_payouts':        loadPayoutsBreakdown(); break;
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
     case 'merch_settlements':   loadMerchSettlements(); break;
