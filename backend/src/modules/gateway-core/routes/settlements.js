@@ -146,4 +146,34 @@ router.post('/:id/fire', requireAuth, requirePermission('edit_settlement_fire'),
   } catch (e) { next(e); }
 });
 
+// ── GET /api/v1/settlements/admin/collection-wallets ──────────────────────────
+// The COLLECTION (settlement) wallet per merchant — a reporting balance, NOT a held
+// fund and entirely separate from the pre-funded PAYOUT wallet. It goes UP as
+// collections come in and DOWN as settlements are paid to the merchant's bank:
+//   pending = collected_net (Σ SUCCESS pay-ins: amount − merchant_fee) − settled (Σ COMPLETED settlement net)
+router.get('/admin/collection-wallets', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT m.id::text AS merchant_id, m.business_name, m.merchant_code,
+             COALESCE(c.collected_net,0)::text AS collected_net,
+             COALESCE(s.settled,0)::text       AS settled,
+             (COALESCE(c.collected_net,0) - COALESCE(s.settled,0))::text AS pending
+      FROM merchants m
+      LEFT JOIN (SELECT merchant_id, SUM(amount - merchant_fee) collected_net
+                   FROM transactions WHERE status='SUCCESS' AND is_sandbox=false GROUP BY 1) c ON c.merchant_id = m.id
+      LEFT JOIN (SELECT merchant_id, SUM(net_settled) settled
+                   FROM settlements WHERE status='COMPLETED' GROUP BY 1) s ON s.merchant_id = m.id
+      WHERE m.is_active = true
+      ORDER BY (COALESCE(c.collected_net,0) - COALESCE(s.settled,0)) DESC`);
+    const n = (x) => Number(x || 0);
+    const merchants = rows.map(r => ({
+      merchant_id: r.merchant_id, business_name: r.business_name, merchant_code: r.merchant_code,
+      collected_net: n(r.collected_net), settled: n(r.settled), pending: n(r.pending),
+      collected_naira: koboToNaira(r.collected_net), settled_naira: koboToNaira(r.settled), pending_naira: koboToNaira(r.pending),
+    }));
+    const totals = merchants.reduce((t, m) => ({ collected: t.collected + m.collected_net, settled: t.settled + m.settled, pending: t.pending + m.pending }), { collected: 0, settled: 0, pending: 0 });
+    return ok(res, { merchants, totals });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
