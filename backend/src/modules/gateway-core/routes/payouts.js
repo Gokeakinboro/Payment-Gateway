@@ -1300,6 +1300,17 @@ router.get('/admin/report', requireAuth, requireSuperAdmin, async (req, res, nex
       })),
       status_breakdown: statusBreakdown,
       top_failure_reasons: failureReasons,
+      batches: (await prisma.$queryRawUnsafe(`
+        SELECT pb.batch_ref, pb.status, pb.total_items, pb.processed_items, pb.failed_items,
+               pb.total_amount::text AS total_amount, pb.created_at, m.business_name
+        FROM payout_batches pb JOIN merchants m ON m.id = pb.merchant_id
+        WHERE pb.created_at >= $1 AND pb.created_at <= $2 ${merchantFilter}
+        ORDER BY pb.created_at DESC LIMIT 200`, fromDate, toDate)).map(b => ({
+          batch_ref: b.batch_ref, status: b.status, business_name: b.business_name,
+          total_items: Number(b.total_items || 0), processed_items: Number(b.processed_items || 0),
+          failed_items: Number(b.failed_items || 0), created_at: b.created_at,
+          total_amount_naira: koboToNaira(b.total_amount || 0),
+        })),
     });
   } catch (e) { next(e); }
 });
