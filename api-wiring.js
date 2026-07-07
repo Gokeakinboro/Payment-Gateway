@@ -1845,6 +1845,45 @@ async function saveDefaultRoute() {
   else alert('Error: ' + ((res&&res.message)||'Could not update default'));
 }
 
+// ── SA: BATCH ROUTING — release queued payout batches (per-batch rail override) ─
+async function loadBatchRouting() {
+  var host = document.getElementById('main-content'); if (!host) return;
+  host.innerHTML = loading();
+  try {
+    var res = await apiFetch('/payouts/admin/routing-queue');
+    var queue = (res && res.data) || [];
+    var floats = (queue[0] && queue[0].rail_floats) || [];
+    var liveRails = floats.filter(function(r){ return r.status === 'LIVE'; });
+    var money = function(n){ return '₦' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2}); };
+    var floatChips = liveRails.map(function(r){ return r.rail_name + ': <strong>' + money(r.balance_naira) + '</strong>'; }).join(' · ') || '<span style="color:var(--gray-400)">no live rail float</span>';
+    var rows = queue.map(function(b){
+      var opts = liveRails.map(function(r){ return '<option value="'+r.rail_id+'"'+(b.route_rail_id===r.rail_id?' selected':'')+'>'+r.rail_name+'</option>'; }).join('');
+      return '<tr>'+
+        '<td class="mono" style="font-size:10px">'+(b.batch_ref||'')+'</td>'+
+        '<td style="font-size:12px">'+(b.business_name||'—')+'</td>'+
+        '<td style="text-align:center">'+(b.total_items||0)+'</td>'+
+        '<td class="mono" style="text-align:right">'+money(b.total_amount_naira)+'</td>'+
+        '<td><select id="br-'+b.batch_id+'" class="input" style="font-size:12px;padding:4px 6px">'+opts+'</select></td>'+
+        '<td><button class="btn btn-lime btn-sm" onclick="releaseBatch(\''+b.batch_id+'\')">Release</button></td>'+
+      '</tr>';
+    }).join('');
+    host.innerHTML =
+      '<div class="page-header"><div class="page-title">Batch Routing</div><div class="page-desc">Payout batches awaiting release. Each is pre-set to its merchant\'s route — override the rail here for this one batch, then Release to disburse. Merchant balance is already debited.</div></div>' +
+      '<div class="card" style="margin-bottom:14px;font-size:12px"><strong>Live rail floats (ours):</strong> '+floatChips+'</div>' +
+      '<div class="card"><div class="table-wrap"><table><thead><tr><th>Batch</th><th>Merchant</th><th>Items</th><th class="right">Amount</th><th>Route rail</th><th></th></tr></thead><tbody>' +
+        (rows||'<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:24px">No batches awaiting routing</td></tr>') +
+      '</tbody></table></div></div>';
+  } catch(e) { host.innerHTML = errorBox('Failed to load batch routing: ' + e.message); }
+}
+async function releaseBatch(batchId) {
+  var sel = document.getElementById('br-'+batchId);
+  var railId = sel ? sel.value : null;
+  if (!confirm('Release this batch and disburse now'+(railId?' via the selected rail?':'?'))) return;
+  var res = await apiFetch('/payouts/admin/batches/'+batchId+'/route', { method:'POST', body: JSON.stringify(railId?{ rail_id: railId }:{}) });
+  if (res && res.success !== false) { toast ? toast(res.message||'Batch released') : alert(res.message||'Batch released'); loadBatchRouting(); }
+  else alert('Error: ' + ((res&&res.message)||'Could not release batch'));
+}
+
 // ── MERCHANT SETTLEMENTS (merchant role) ──────────────────────────────────────
 async function loadMerchSettlements() {
   var el = document.getElementById('main-content');
@@ -4690,6 +4729,7 @@ function loadPageData(page) {
     case 'sa_collection_wallets': loadCollectionWallets(); break;
     case 'sa_payouts':        loadPayoutsBreakdown(); break;
     case 'sa_merchant_routing': loadMerchantRouting(); break;
+    case 'sa_batch_routing':  loadBatchRouting(); break;
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
     case 'merch_settlements':   loadMerchSettlements(); break;
