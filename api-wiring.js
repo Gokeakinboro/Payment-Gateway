@@ -1794,122 +1794,77 @@ async function loadPayoutsBreakdown() {
 }
 
 // ── SA: MERCHANT ROUTING — global default + per-merchant payout route ──────────
-async function loadMerchantRouting() {
-  var host = document.getElementById('main-content'); if (!host) return;
-  host.innerHTML = loading();
-  try {
-    var res = await apiFetch('/payouts/admin/merchant-routing');
-    var d = (res && res.data) || {};
-    window.__routingLiveRails = d.live_rails || [];
-    var def = d.default_rail;
-    var railOpts = function(sel, includeDefault){
-      var o = includeDefault ? '<option value="">Use default'+(def?' ('+def.name+')':'')+'</option>' : '';
-      (d.live_rails||[]).forEach(function(r){ o += '<option value="'+r.id+'"'+(sel===r.id?' selected':'')+'>'+r.name+'</option>'; });
-      return o;
-    };
-    var rows = (d.merchants||[]).map(function(m){
-      return '<tr>'+
-        '<td style="font-weight:500;font-size:12px">'+(m.business_name||'—')+'<div class="mono" style="font-size:10px;color:var(--gray-400)">'+(m.merchant_code||'')+'</div></td>'+
-        '<td style="font-size:11px;color:var(--gray-500)">'+(m.funded_rails||'<span style="color:var(--gray-400)">no rail funded</span>')+'</td>'+
-        '<td style="font-size:12px">'+(m.uses_default?'<span style="color:var(--gray-400)">'+m.route_rail_name+'</span>':'<strong>'+m.route_rail_name+'</strong>')+'</td>'+
-        '<td><select id="rt-'+m.merchant_id+'" class="input" style="font-size:12px;padding:4px 6px">'+railOpts(m.route_rail_id, true)+'</select> '+
-        '<button class="btn btn-lime btn-sm" onclick="saveMerchantRoute(\''+m.merchant_id+'\')">Route</button></td>'+
-      '</tr>';
-    }).join('');
-    host.innerHTML =
-      '<div class="page-header"><div class="page-title">Merchant Routing</div><div class="page-desc">Which rail each merchant\'s payouts disburse through. Set a merchant\'s route each time they fund a rail — SA may pick any live rail. No override = the global default below.</div></div>' +
-      '<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
-        '<div><div style="font-size:11px;color:var(--gray-400);text-transform:uppercase">Default route (all merchants)</div>' +
-        '<div style="font-size:18px;font-weight:700">'+(def?def.name:'<span style="color:#d97706">not set</span>')+'</div></div>' +
-        '<div style="margin-left:auto;display:flex;gap:6px;align-items:center">' +
-          '<select id="rt-default" class="input" style="font-size:12px;padding:5px 8px">'+railOpts(def?def.id:'', false)+'</select>' +
-          '<button class="btn btn-outline btn-sm" onclick="saveDefaultRoute()">Change default</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="card"><div class="table-wrap"><table><thead><tr><th>Merchant</th><th>Funded rail(s)</th><th>Current route</th><th>Set route</th></tr></thead><tbody>' +
-        (rows||'<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:24px">No active merchants</td></tr>') +
-      '</tbody></table></div></div>';
-  } catch(e) { host.innerHTML = errorBox('Failed to load merchant routing: ' + e.message); }
-}
-async function saveMerchantRoute(mid) {
-  var sel = document.getElementById('rt-'+mid); if (!sel) return;
-  var res = await apiFetch('/payouts/admin/merchant-routing/'+mid, { method:'PUT', body: JSON.stringify({ rail_id: sel.value || null }) });
-  if (res && res.success !== false) { toast ? toast(res.message||'Route updated') : alert(res.message||'Route updated'); loadMerchantRouting(); }
-  else alert('Error: ' + ((res&&res.message)||'Could not update route'));
-}
-async function saveDefaultRoute() {
-  var sel = document.getElementById('rt-default'); if (!sel || !sel.value) return alert('Pick a rail');
-  if (!confirm('Change the DEFAULT payout route for ALL merchants (those without their own route)?')) return;
-  var res = await apiFetch('/payouts/admin/default-rail', { method:'PUT', body: JSON.stringify({ rail_id: sel.value }) });
-  if (res && res.success !== false) { toast ? toast(res.message||'Default updated') : alert(res.message||'Default updated'); loadMerchantRouting(); }
-  else alert('Error: ' + ((res&&res.message)||'Could not update default'));
-}
-
-// ── SA: MERCHANT FUNDING — standalone credit/debit of a merchant's balance ─────
+// ── SA: MERCHANT FUNDING & ROUTING (one page) ─────────────────────────────────
+// Fund a merchant (a payout ROUTE must be chosen to fund) + set each merchant's
+// route + the global default route. Batch release lives on the Merchant Wallet page.
 async function loadMerchantFunding() {
   var host = document.getElementById('main-content'); if (!host) return;
   host.innerHTML = loading();
   try {
-    var wRes = await apiFetch('/payouts/admin/wallets');
-    var rRes = await apiFetch('/payouts/admin/payout-rails');
-    var wallets = (wRes && wRes.data) || [];
-    window.__payoutRails = (rRes && rRes.data) || [];
-    window.__merchantRails = {};
-    var rows = wallets.map(function(w){
-      window.__merchantRails[w.merchant_id] = w.rails || [];
-      var nm = (w.business_name||'').replace(/'/g,'');
+    var results = await Promise.all([
+      apiFetch('/payouts/admin/merchant-routing'),
+      apiFetch('/payouts/admin/wallets'),
+      apiFetch('/payouts/admin/payout-rails'),
+    ]);
+    var d = (results[0] && results[0].data) || {};
+    var wallets = (results[1] && results[1].data) || [];
+    window.__payoutRails = (results[2] && results[2].data) || [];
+    window.__routingLiveRails = d.live_rails || [];
+    var def = d.default_rail;
+    var balById = {}; window.__merchantRails = {}; window.__merchantRoute = {};
+    wallets.forEach(function(w){ balById[w.merchant_id] = w.total; window.__merchantRails[w.merchant_id] = w.rails || []; });
+    var railOpt = function(sel){ return (d.live_rails||[]).map(function(r){ return '<option value="'+r.id+'"'+(sel===r.id?' selected':'')+'>'+r.name+'</option>'; }).join(''); };
+    var rows = (d.merchants||[]).map(function(m){
+      window.__merchantRoute[m.merchant_id] = m.route_rail_id || (def ? def.id : '');
+      var nm = (m.business_name||'').replace(/'/g,'');
+      var bal = balById[m.merchant_id] || 0;
       return '<tr>'+
-        '<td style="font-weight:500;font-size:12px">'+(w.business_name||'—')+'<div class="mono" style="font-size:10px;color:var(--gray-400)">'+(w.merchant_code||'')+'</div></td>'+
-        '<td class="mono" style="text-align:right;font-weight:700;color:'+(w.total>0?'var(--green)':'var(--gray-400)')+'">'+fmtNaira(w.total)+'</td>'+
-        '<td><button class="btn btn-lime btn-sm" onclick="fundWallet(\''+w.merchant_id+'\',\''+nm+'\')">Credit / Debit</button> '+
-        '<button class="btn btn-outline btn-sm" onclick="viewLedger(\''+w.merchant_id+'\')">Ledger</button></td>'+
+        '<td style="font-weight:500;font-size:12px">'+(m.business_name||'—')+'<div class="mono" style="font-size:10px;color:var(--gray-400)">'+(m.merchant_code||'')+'</div></td>'+
+        '<td class="mono" style="text-align:right;font-weight:700;color:'+(bal>0?'var(--green)':'var(--gray-400)')+'">'+fmtNaira(bal)+'</td>'+
+        '<td><select id="rt-'+m.merchant_id+'" class="input" style="font-size:12px;padding:4px 6px">'+
+          '<option value="">Default'+(def?' ('+def.name+')':'')+'</option>'+railOpt(m.route_rail_id)+'</select> '+
+          '<button class="btn btn-outline btn-sm" onclick="saveMerchantRoute(\''+m.merchant_id+'\')">Set</button></td>'+
+        '<td><button class="btn btn-lime btn-sm" onclick="fundWallet(\''+m.merchant_id+'\',\''+nm+'\')">Fund</button> '+
+          '<button class="btn btn-outline btn-sm" onclick="viewLedger(\''+m.merchant_id+'\')">Ledger</button></td>'+
       '</tr>';
     }).join('');
     host.innerHTML =
-      '<div class="page-header"><div class="page-title">Merchant Funding</div><div class="page-desc">Credit a merchant\'s balance after you confirm their deposit landed in our bank/rail. Balance is pooled (rail-agnostic) — payouts disburse on the merchant\'s route (SA → Merchant Routing).</div></div>' +
-      '<div class="card"><div class="table-wrap"><table id="mf-table"><thead><tr><th>Merchant</th><th class="right">Balance</th><th>Fund</th></tr></thead><tbody>' +
-        (rows||'<tr><td colspan="3" style="text-align:center;color:var(--gray-400);padding:24px">No activated merchants</td></tr>') +
+      '<div class="page-header"><div class="page-title">Merchant Funding &amp; Routing</div><div class="page-desc">Fund a merchant (a payout <strong>route must be chosen</strong> to fund) and set which rail their payouts disburse through. Balance is pooled (rail-agnostic).</div></div>' +
+      '<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+        '<div><div style="font-size:11px;color:var(--gray-400);text-transform:uppercase">Default route (all merchants)</div>' +
+        '<div style="font-size:18px;font-weight:700">'+(def?def.name:'<span style="color:#d97706">not set</span>')+'</div></div>' +
+        '<div style="margin-left:auto;display:flex;gap:6px;align-items:center">' +
+          '<select id="rt-default" class="input" style="font-size:12px;padding:5px 8px">'+railOpt(def?def.id:'')+'</select>' +
+          '<button class="btn btn-outline btn-sm" onclick="saveDefaultRoute()">Change default</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table id="mf-table"><thead><tr><th>Merchant</th><th class="right">Balance</th><th>Route</th><th>Fund</th></tr></thead><tbody>' +
+        (rows||'<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:24px">No active merchants</td></tr>') +
       '</tbody></table></div></div>';
-  } catch(e) { host.innerHTML = errorBox('Failed to load merchant funding: ' + e.message); }
+  } catch(e) { host.innerHTML = errorBox('Failed to load merchant funding &amp; routing: ' + e.message); }
+}
+async function saveMerchantRoute(mid) {
+  var sel = document.getElementById('rt-'+mid); if (!sel) return;
+  var res = await apiFetch('/payouts/admin/merchant-routing/'+mid, { method:'PUT', body: JSON.stringify({ rail_id: sel.value || null }) });
+  if (res && res.success !== false) { toast(res.message||'Route updated','success'); loadMerchantFunding(); }
+  else toast((res&&res.message)||'Could not update route','error');
+}
+async function saveDefaultRoute() {
+  var sel = document.getElementById('rt-default'); if (!sel || !sel.value) return toast('Pick a rail first','error');
+  if (!confirm('Change the DEFAULT payout route for ALL merchants (those without their own route)?')) return;
+  var res = await apiFetch('/payouts/admin/default-rail', { method:'PUT', body: JSON.stringify({ rail_id: sel.value }) });
+  if (res && res.success !== false) { toast(res.message||'Default route updated','success'); loadMerchantFunding(); }
+  else toast((res&&res.message)||'Could not update default','error');
 }
 
-// ── SA: BATCH ROUTING — release queued payout batches (per-batch rail override) ─
-async function loadBatchRouting() {
-  var host = document.getElementById('main-content'); if (!host) return;
-  host.innerHTML = loading();
-  try {
-    var res = await apiFetch('/payouts/admin/routing-queue');
-    var queue = (res && res.data) || [];
-    var floats = (queue[0] && queue[0].rail_floats) || [];
-    var liveRails = floats.filter(function(r){ return r.status === 'LIVE'; });
-    var money = function(n){ return '₦' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2}); };
-    var floatChips = liveRails.map(function(r){ return r.rail_name + ': <strong>' + money(r.balance_naira) + '</strong>'; }).join(' · ') || '<span style="color:var(--gray-400)">no live rail float</span>';
-    var rows = queue.map(function(b){
-      var opts = liveRails.map(function(r){ return '<option value="'+r.rail_id+'"'+(b.route_rail_id===r.rail_id?' selected':'')+'>'+r.rail_name+'</option>'; }).join('');
-      return '<tr>'+
-        '<td class="mono" style="font-size:10px">'+(b.batch_ref||'')+'</td>'+
-        '<td style="font-size:12px">'+(b.business_name||'—')+'</td>'+
-        '<td style="text-align:center">'+(b.total_items||0)+'</td>'+
-        '<td class="mono" style="text-align:right">'+money(b.total_amount_naira)+'</td>'+
-        '<td><select id="br-'+b.batch_id+'" class="input" style="font-size:12px;padding:4px 6px">'+opts+'</select></td>'+
-        '<td><button class="btn btn-lime btn-sm" onclick="releaseBatch(\''+b.batch_id+'\')">Release</button></td>'+
-      '</tr>';
-    }).join('');
-    host.innerHTML =
-      '<div class="page-header"><div class="page-title">Batch Routing</div><div class="page-desc">Payout batches awaiting release. Each is pre-set to its merchant\'s route — override the rail here for this one batch, then Release to disburse. Merchant balance is already debited.</div></div>' +
-      '<div class="card" style="margin-bottom:14px;font-size:12px"><strong>Live rail floats (ours):</strong> '+floatChips+'</div>' +
-      '<div class="card"><div class="table-wrap"><table><thead><tr><th>Batch</th><th>Merchant</th><th>Items</th><th class="right">Amount</th><th>Route rail</th><th></th></tr></thead><tbody>' +
-        (rows||'<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:24px">No batches awaiting routing</td></tr>') +
-      '</tbody></table></div></div>';
-  } catch(e) { host.innerHTML = errorBox('Failed to load batch routing: ' + e.message); }
-}
+// Release a queued batch (per-batch rail override). Lives on the Merchant Wallet page.
 async function releaseBatch(batchId) {
   var sel = document.getElementById('br-'+batchId);
   var railId = sel ? sel.value : null;
   if (!confirm('Release this batch and disburse now'+(railId?' via the selected rail?':'?'))) return;
   var res = await apiFetch('/payouts/admin/batches/'+batchId+'/route', { method:'POST', body: JSON.stringify(railId?{ rail_id: railId }:{}) });
-  if (res && res.success !== false) { toast ? toast(res.message||'Batch released') : alert(res.message||'Batch released'); loadBatchRouting(); }
-  else alert('Error: ' + ((res&&res.message)||'Could not release batch'));
+  if (res && res.success !== false) { toast(res.message||'Batch released — disbursing','success'); loadWallets(); }
+  else toast((res&&res.message)||'Could not release batch','error');
 }
 
 // ── MERCHANT SETTLEMENTS (merchant role) ──────────────────────────────────────
@@ -4756,8 +4711,6 @@ function loadPageData(page) {
     case 'sa_reconciliation': loadReconciliation(); break;
     case 'sa_collection_wallets': loadCollectionWallets(); break;
     case 'sa_payouts':        loadPayoutsBreakdown(); break;
-    case 'sa_merchant_routing': loadMerchantRouting(); break;
-    case 'sa_batch_routing':  loadBatchRouting(); break;
     case 'sa_merchant_funding': loadMerchantFunding(); break;
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
@@ -5518,13 +5471,37 @@ async function loadWallets() {
   const el = document.getElementById('main-content');
   el.innerHTML = loading();
   try {
-    const [wRes, rRes] = await Promise.all([
+    const [wRes, rRes, qRes] = await Promise.all([
       apiFetch('/payouts/admin/wallets'),
       apiFetch('/payouts/admin/payout-rails'),
+      apiFetch('/payouts/admin/routing-queue'),
     ]);
     const wallets = wRes?.data || [];
     __payoutRails = rRes?.data || [];
+    const queue = qRes?.data || [];
     const enabledCount = __payoutRails.filter(r => r.payoutEnabled && r.status === 'LIVE').length;
+
+    // Batches awaiting release (visible right here on the wallet page).
+    const qFloats = (queue[0] && queue[0].rail_floats || []).filter(r => r.status === 'LIVE');
+    const qMoney = n => '₦' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2});
+    const batchRows = queue.map(b => {
+      const opts = qFloats.map(r => `<option value="${r.rail_id}"${b.route_rail_id===r.rail_id?' selected':''}>${r.rail_name}</option>`).join('');
+      return `<tr>
+        <td class="mono" style="font-size:10px">${b.batch_ref||''}</td>
+        <td style="font-size:12px">${b.business_name||'—'}</td>
+        <td style="text-align:center">${b.total_items||0}</td>
+        <td class="mono" style="text-align:right">${qMoney(b.total_amount_naira)}</td>
+        <td><select id="br-${b.batch_id}" class="input" style="font-size:12px;padding:4px 6px">${opts}</select></td>
+        <td><button class="btn btn-lime btn-sm" onclick="releaseBatch('${b.batch_id}')">Release</button></td>
+      </tr>`;
+    }).join('');
+    const batchCard = `
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-header flex-between"><div class="card-title">Batches awaiting release${queue.length?` <span class="badge badge-amber">${queue.length}</span>`:''}</div>
+        <div style="font-size:11px;color:var(--gray-500)">Live floats: ${qFloats.map(r=>r.rail_name+': <strong>'+qMoney(r.balance_naira)+'</strong>').join(' · ')||'—'}</div></div>
+      <div class="table-wrap"><table><thead><tr><th>Batch</th><th>Merchant</th><th>Items</th><th class="right">Amount</th><th>Route rail</th><th></th></tr></thead>
+      <tbody>${batchRows||'<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:16px">No batches awaiting release</td></tr>'}</tbody></table></div>
+    </div>`;
 
     window.__merchantRails = {};
     const rows = wallets.length ? wallets.map(w => {
@@ -5543,13 +5520,14 @@ async function loadWallets() {
 
     el.innerHTML = `
     <div class="page-header flex-between">
-      <div><div class="page-title">Merchant Balances</div><div class="page-desc">Each merchant's pooled payout balance (rail-agnostic). Fund it on <strong>Merchant Funding</strong>; set the disbursing rail on <strong>Merchant Routing</strong>; release batches on <strong>Batch Routing</strong>. Rails &amp; our float are internal.</div></div>
+      <div><div class="page-title">Merchant Wallet</div><div class="page-desc">Pooled payout balances (rail-agnostic) and batches awaiting release. Fund merchants &amp; set routes on <strong>Merchant Funding &amp; Routing</strong>. Rails &amp; our float are internal.</div></div>
       <div class="flex" style="gap:6px">
         <button class="btn btn-outline btn-sm" onclick="managePayoutRails()">Rail Floats &amp; Status</button>
         <button class="btn btn-outline btn-sm" onclick="loadPendingRebalances()">Pending Transfers</button>
       </div>
     </div>
-    <div class="card"><div class="table-wrap"><table>
+    ${batchCard}
+    <div class="card"><div class="card-header"><div class="card-title">Merchant balances</div></div><div class="table-wrap"><table>
       <thead><tr><th>Merchant</th><th>Balance</th><th>Actions</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div></div>`;
@@ -5557,15 +5535,18 @@ async function loadWallets() {
 }
 
 function fundWallet(merchantId, name) {
-  const rails = (window.__payoutRails||[]).filter(r => r.payoutEnabled);
-  const railOpts = rails.map(r => `<option value="${r.id}">${r.name}${r.status==='LIVE'?'':' ('+r.status+')'}</option>`).join('');
+  // A payout ROUTE must be chosen to fund — the rail chosen here is BOTH the merchant's
+  // route (where their payouts disburse) and where this deposit landed. Live rails only.
+  const rails = (window.__payoutRails||[]).filter(r => r.payoutEnabled && r.status === 'LIVE');
+  const cur = (window.__merchantRoute||{})[merchantId] || '';
+  const railOpts = rails.map(r => `<option value="${r.id}"${cur===r.id?' selected':''}>${r.name}</option>`).join('');
   showModal(
-    `<div class="modal-header"><div class="modal-title">Credit / Debit — ${name}</div>
+    `<div class="modal-header"><div class="modal-title">Fund — ${name}</div>
      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
-     <div class="info-box" style="font-size:12px;margin-bottom:12px">Credit <strong>after</strong> you confirm the merchant's deposit landed in our bank/rail. The rail here records where the money physically landed (our float) — the merchant's spendable balance is <strong>pooled</strong>, and payouts disburse on the merchant's <strong>route</strong> (SA &rarr; Merchant Routing), not necessarily this rail.</div>
+     <div class="info-box" style="font-size:12px;margin-bottom:12px">Credit <strong>after</strong> you confirm the merchant's deposit landed. Pick the <strong>payout route</strong> — this sets the rail their payouts disburse through and records where the deposit landed. A route is required to fund. Balance is pooled (rail-agnostic).</div>
      <div class="form-grid">
-       <div class="form-group"><label class="form-label">Rail / bank funded *</label>
-         <select class="form-input form-select" id="fw-rail">${railOpts||'<option value="">No payout-enabled rail</option>'}</select></div>
+       <div class="form-group"><label class="form-label">Payout route (rail) *</label>
+         <select class="form-input form-select" id="fw-rail">${railOpts||'<option value="">No live payout rail</option>'}</select></div>
        <div class="form-group"><label class="form-label">Direction</label>
          <select class="form-input form-select" id="fw-dir"><option value="credit">Credit (add)</option><option value="debit">Debit (remove)</option></select></div>
      </div>
@@ -5584,14 +5565,18 @@ async function submitFundWallet(merchantId, name) {
   const reference = (document.getElementById('fw-ref').value||'').trim();
   const description = (document.getElementById('fw-desc').value||'').trim();
   const msg = document.getElementById('fw-msg');
-  if (!railId) { msg.innerHTML = '<div class="warn-box" style="font-size:12px">Pick the rail the merchant funded.</div>'; return; }
+  if (!railId) { msg.innerHTML = '<div class="warn-box" style="font-size:12px">Choose a payout route to fund this merchant.</div>'; return; }
   if (!amt || amt <= 0 || !reference) { msg.innerHTML = '<div class="warn-box" style="font-size:12px">Amount and reference are required.</div>'; return; }
   const btn = document.getElementById('fw-btn'); btn.disabled = true; btn.textContent = 'Applying...';
+  // route_rail_id = railId → sets/confirms the merchant's route as part of funding.
   const res = await apiFetch('/payouts/wallet/fund', { method:'POST', body: JSON.stringify({
-    merchant_id: merchantId, rail_id: railId, direction: dir, amount: Math.round(amt*100), reference, description,
+    merchant_id: merchantId, rail_id: railId, route_rail_id: railId, direction: dir, amount: Math.round(amt*100), reference, description,
   })});
-  if (res?.status) { document.getElementById('modal').style.display='none'; (document.getElementById('mf-table') ? loadMerchantFunding() : loadWallets()); }
-  else { msg.innerHTML = '<div class="warn-box" style="font-size:12px">'+((res&&res.message)||'Failed')+'</div>'; btn.disabled=false; btn.textContent='Apply'; }
+  if (res?.status) {
+    document.getElementById('modal').style.display='none';
+    toast((dir==='debit'?'Debited ':'Credited ')+'₦'+Number(amt).toLocaleString()+' — '+name, 'success');
+    (document.getElementById('mf-table') ? loadMerchantFunding() : loadWallets());
+  } else { msg.innerHTML = '<div class="warn-box" style="font-size:12px">'+((res&&res.message)||'Failed')+'</div>'; btn.disabled=false; btn.textContent='Apply'; }
 }
 
 // SA: move a merchant's pre-funded balance between rails (logical move now + a
@@ -5631,7 +5616,7 @@ async function submitRebalance(merchantId) {
   const res = await apiFetch('/payouts/admin/wallet/rebalance', { method:'POST', body: JSON.stringify({
     merchant_id: merchantId, moves: [{ from_rail_id: from, to_rail_id: to, amount: Math.round(amt*100) }], reference: ref || undefined,
   })});
-  if (res?.status) { document.getElementById('modal').style.display='none'; (document.getElementById('mf-table') ? loadMerchantFunding() : loadWallets()); }
+  if (res?.status) { document.getElementById('modal').style.display='none'; toast(res.message||'Rebalance recorded — settle the treasury transfer','success'); (document.getElementById('mf-table') ? loadMerchantFunding() : loadWallets()); }
   else { msg.innerHTML = '<div class="warn-box" style="font-size:12px">'+((res&&res.message)||'Failed')+'</div>'; btn.disabled=false; btn.textContent='Rebalance'; }
 }
 
@@ -5733,10 +5718,8 @@ async function syncRailFloat(id) {
   else alert((res&&res.message)||'Could not sync this rail.');
 }
 
-// SA: routing queue for payouts no single rail could cover
-// (Old Routing Queue modal removed 2026-07-07 — superseded by the dedicated
-// Operations → Batch Routing page (loadBatchRouting), which also supports the
-// per-batch rail override.)
+// (Batch release + per-batch rail override now live inline on the Merchant Wallet
+// page (loadWallets → "Batches awaiting release" section, releaseBatch()).)
 
 async function viewLedger(merchantId) {
   const res = await apiFetch(`/payouts/wallet/ledger?merchant_id=${merchantId}`);

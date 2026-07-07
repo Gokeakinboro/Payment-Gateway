@@ -191,6 +191,21 @@ router.post('/wallet/fund', requireAuth, requireSuperAdmin,
       const merchant = await prisma.merchant.findUnique({ where: { id: merchant_id } });
       if (!merchant) return notFound(res, 'Merchant');
 
+      // A payout ROUTE must be chosen before funding lands. The funding UI passes the
+      // chosen route as route_rail_id; set it here (any LIVE payout rail). After that,
+      // the merchant MUST have a route (own override or the global default) or we reject.
+      if (req.body.route_rail_id) {
+        const rr = await prisma.paymentRail.findUnique({ where: { id: req.body.route_rail_id }, select: { id: true, name: true, status: true, payoutEnabled: true } });
+        if (!rr) return fail(res, 'Unknown route rail.');
+        if (rr.status !== 'LIVE' || !rr.payoutEnabled) return fail(res, `${rr.name} is not a live payout rail — cannot route to it.`, 'RAIL_NOT_LIVE');
+        await prisma.merchant.update({ where: { id: merchant_id }, data: { payoutRailId: rr.id } });
+        merchant.payoutRailId = rr.id;
+      }
+      if (!merchant.payoutRailId) {
+        const def = await prisma.paymentRail.findFirst({ where: { isDefaultPayout: true }, select: { id: true } });
+        if (!def) return fail(res, 'Choose a payout route for this merchant before funding.', 'ROUTE_REQUIRED');
+      }
+
       // Rails must exist and be payout-enabled (you can't pre-fund a rail we can't send through).
       const railIds = [...new Set(moves.map(m => m.rail_id))];
       const rails = await prisma.paymentRail.findMany({
