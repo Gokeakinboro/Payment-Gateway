@@ -45,105 +45,105 @@ var TRANSACTIONS = [
 // Shared Developer/SDK nav block — shown to SA, merchants and aggregators (#4).
 // All sdk_* pages are static (renderSdk*); loadPageData no-ops them.
 var DEV_SDK_ITEMS = [
-  {id:'sdk_start',    icon:'▶', label:'Quick Start'    },
-  {id:'sdk_payments', icon:'₦', label:'Card Payments'  },
-  {id:'sdk_va',       icon:'⇆', label:'Virtual Accounts'},
-  {id:'sdk_payouts',  icon:'⇄', label:'Payouts (Send)' },
-  {id:'sdk_verify',   icon:'✓', label:'Verify Payment' },
-  {id:'sdk_webhook',  icon:'⇀', label:'Webhooks'       },
-  {id:'sdk_mobile',   icon:'□', label:'Published SDKs' },
-  {id:'sdk_errors',   icon:'!', label:'Error Codes'    },
-  {id:'sdk_test',     icon:'⚡', label:'Test Cards'     },
+  {id:'sdk_start',    icon:'rocket',        label:'Quick Start'    },
+  {id:'sdk_payments', icon:'credit-card',   label:'Card Payments'  },
+  {id:'sdk_va',       icon:'landmark',      label:'Virtual Accounts'},
+  {id:'sdk_payouts',  icon:'send',          label:'Payouts (Send)' },
+  {id:'sdk_verify',   icon:'search-check',  label:'Verify Payment' },
+  {id:'sdk_webhook',  icon:'webhook',       label:'Webhooks'       },
+  {id:'sdk_mobile',   icon:'smartphone',    label:'Published SDKs' },
+  {id:'sdk_errors',   icon:'circle-alert',  label:'Error Codes'    },
+  {id:'sdk_test',     icon:'flask-conical', label:'Test Cards'     },
 ];
 
 // Sidebar = section entries. Single-item sections link straight to the page
 // (e.g. Dashboard stays a direct analytics link); multi-item sections open a
 // card HUB (renderSectionHub). Icons per section below.
 var SECTION_ICON = {
-  'Dashboard':'◉', 'Users':'▦', 'Operations':'⚙', 'Reports':'▤', 'System Config':'⚙',
-  'Developer':'▶', 'Management':'▦', 'Finance':'₦', 'Merchants':'▦', 'Transactions':'↕',
-  'Payouts':'⇄', 'Integration':'⚿', 'Account':'⊙', 'System':'⊕', 'SDK':'▶', 'Reference':'!',
-  'Payment Links & QR Code':'🔗',
+  'Dashboard':'layout-dashboard', 'Users':'users', 'Operations':'activity', 'Reports':'file-text', 'System Config':'settings',
+  'Developer':'code', 'Management':'briefcase', 'Finance':'banknote', 'Merchants':'store', 'Transactions':'arrow-right-left',
+  'Payouts':'send', 'Integration':'plug', 'Account':'circle-user', 'System':'settings', 'SDK':'code', 'Reference':'book-open',
+  'Payment Links & QR Code':'qr-code',
 };
 var NAV = {
   superadmin: [
-    { section:'Dashboard', items:[ {id:'overview', icon:'◉', label:'Dashboard'} ]},
+    { section:'Dashboard', items:[ {id:'overview', icon:'layout-dashboard', label:'Dashboard'} ]},
     { section:'Users', items:[
-      {id:'merchants',     icon:'▦', label:'Merchants'       },
-      {id:'aggregators',   icon:'⬡', label:'Aggregators'     },
-      {id:'admin_onboard', icon:'+', label:'Onboard Merchant'},
-      {id:'users',         icon:'⊕', label:'Users & Permissions'},
+      {id:'merchants',     icon:'store', label:'Merchants'       },
+      {id:'aggregators',   icon:'building-2', label:'Aggregators'     },
+      {id:'admin_onboard', icon:'user-plus', label:'Onboard Merchant'},
+      {id:'users',         icon:'users', label:'Users & Permissions'},
     ]},
     { section:'Operations', items:[
-      {id:'transactions',    icon:'↕', label:'Transactions'    },
-      {id:'settlement',      icon:'✓', label:'Settlements'     },
-      {id:'wallets',         icon:'◈', label:'Merchant Wallet'  },
-      {id:'sa_merchant_funding', icon:'💰', label:'Merchant Funding & Routing'},
-      {id:'compliance',      icon:'⚖', label:'KYC Review'      },
-      {id:'deferrals',       icon:'⧗', label:'KYC Docs & Deferrals'},
-      {id:'compliance_exceptions', icon:'⚑', label:'Intl / Mastercard Compliance'},
-      {id:'compliance_centre', icon:'▣', label:'Compliance Centre'},
-      {id:'onboarding_apps', icon:'▤', label:'Applications'    },
+      {id:'transactions',    icon:'arrow-right-left', label:'Transactions'    },
+      {id:'settlement',      icon:'circle-check', label:'Settlements'     },
+      {id:'wallets',         icon:'wallet', label:'Merchant Wallet'  },
+      {id:'sa_merchant_funding', icon:'landmark', label:'Merchant Funding & Routing'},
+      {id:'compliance',      icon:'scale', label:'KYC Review'      },
+      {id:'deferrals',       icon:'file-clock', label:'KYC Docs & Deferrals'},
+      {id:'compliance_exceptions', icon:'flag', label:'Intl / Mastercard Compliance'},
+      {id:'compliance_centre', icon:'shield-check', label:'Compliance Centre'},
+      {id:'onboarding_apps', icon:'file-text', label:'Applications'    },
     ]},
     { section:'Reports', items:[
-      {id:'revenue',         icon:'₦', label:'Revenue Report'  },
-      {id:'vat_report',      icon:'⊟', label:'VAT Report'      },
-      {id:'cbn_report',      icon:'⊡', label:'CBN Report'      },
-      {id:'payout_report',   icon:'⇄', label:'Payout Report'   },
-      {id:'rail_settlement', icon:'⊞', label:'Rail Settlement' },
+      {id:'revenue',         icon:'banknote', label:'Revenue Report'  },
+      {id:'vat_report',      icon:'receipt-text', label:'VAT Report'      },
+      {id:'cbn_report',      icon:'file-spreadsheet', label:'CBN Report'      },
+      {id:'payout_report',   icon:'send', label:'Payout Report'   },
+      {id:'rail_settlement', icon:'route', label:'Rail Settlement' },
     ]},
     { section:'System Config', items:[
-      {id:'service_providers',   icon:'◈', label:'Service Providers'},
-      {id:'fee_config',          icon:'₦', label:'Merchant Pricing'},
-      {id:'rails',               icon:'⊞', label:'Rail Configuration'},
-      {id:'settle_verification', icon:'⊙', label:'Bank Verification'},
-      {id:'email_tpl',           icon:'✉', label:'Email Templates'  },
-      {id:'activity_log',        icon:'☰', label:'Activity Log'     },
-      {id:'sa_connections',      icon:'📡', label:'Connections'      },
-      {id:'sa_reconciliation',   icon:'⇄', label:'Reconciliation'   },
-      {id:'sa_collection_wallets',icon:'🏦', label:'Collection Wallets'},
-      {id:'sa_payouts',          icon:'💸', label:'Payouts'          },
-      {id:'invite_tracking',     icon:'✉', label:'Invite Tracking'  },
-      {id:'sa_wallet',           icon:'👛', label:'Wallet Approvals' },
-      {id:'settings',            icon:'⚙', label:'Settings'         },
+      {id:'service_providers',   icon:'server', label:'Service Providers'},
+      {id:'fee_config',          icon:'tags', label:'Merchant Pricing'},
+      {id:'rails',               icon:'waypoints', label:'Rail Configuration'},
+      {id:'settle_verification', icon:'badge-check', label:'Bank Verification'},
+      {id:'email_tpl',           icon:'mail', label:'Email Templates'  },
+      {id:'activity_log',        icon:'history', label:'Activity Log'     },
+      {id:'sa_connections',      icon:'radio-tower', label:'Connections'      },
+      {id:'sa_reconciliation',   icon:'git-compare', label:'Reconciliation'   },
+      {id:'sa_collection_wallets',icon:'wallet-cards', label:'Collection Wallets'},
+      {id:'sa_payouts',          icon:'hand-coins', label:'Payouts'          },
+      {id:'invite_tracking',     icon:'mail-check', label:'Invite Tracking'  },
+      {id:'sa_wallet',           icon:'clipboard-check', label:'Wallet Approvals' },
+      {id:'settings',            icon:'settings', label:'Settings'         },
     ]},
     { section:'Developer', items:DEV_SDK_ITEMS },
   ],
   admin: [
-    { section:'Dashboard',  items:[{id:'overview',icon:'◉',label:'Dashboard'}]},
-    { section:'Management',  items:[{id:'transactions',icon:'↕',label:'All Transactions'},{id:'merchants',icon:'▦',label:'Merchants'},{id:'aggregators',icon:'⬡',label:'Aggregators'},{id:'admin_onboard',icon:'+',label:'Onboard Merchant'}]},
-    { section:'Operations',  items:[{id:'settlement',icon:'✓',label:'Settlement'},{id:'wallets',icon:'◈',label:'Merchant Wallets'},{id:'compliance',icon:'⚖',label:'KYC Review'},{id:'deferrals',icon:'⧗',label:'KYC Docs & Deferrals'},{id:'compliance_exceptions',icon:'⚑',label:'Intl / Mastercard Compliance'},{id:'compliance_centre',icon:'▣',label:'Compliance Centre'},{id:'onboarding_apps',icon:'▤',label:'Applications'},{id:'revenue',icon:'₦',label:'Revenue (Read-Only)'}]},
-    { section:'System',      items:[{id:'users',icon:'⊕',label:'Invite Users'},{id:'activity_log',icon:'☰',label:'Activity Log'},{id:'invite_tracking',icon:'✉',label:'Invite Tracking'}]},
+    { section:'Dashboard',  items:[{id:'overview',icon:'layout-dashboard',label:'Dashboard'}]},
+    { section:'Management',  items:[{id:'transactions',icon:'arrow-right-left',label:'All Transactions'},{id:'merchants',icon:'store',label:'Merchants'},{id:'aggregators',icon:'building-2',label:'Aggregators'},{id:'admin_onboard',icon:'user-plus',label:'Onboard Merchant'}]},
+    { section:'Operations',  items:[{id:'settlement',icon:'circle-check',label:'Settlement'},{id:'wallets',icon:'wallet',label:'Merchant Wallets'},{id:'compliance',icon:'scale',label:'KYC Review'},{id:'deferrals',icon:'file-clock',label:'KYC Docs & Deferrals'},{id:'compliance_exceptions',icon:'flag',label:'Intl / Mastercard Compliance'},{id:'compliance_centre',icon:'shield-check',label:'Compliance Centre'},{id:'onboarding_apps',icon:'file-text',label:'Applications'},{id:'revenue',icon:'banknote',label:'Revenue (Read-Only)'}]},
+    { section:'System',      items:[{id:'users',icon:'users',label:'Invite Users'},{id:'activity_log',icon:'history',label:'Activity Log'},{id:'invite_tracking',icon:'mail-check',label:'Invite Tracking'}]},
     { section:'Developer',   items:DEV_SDK_ITEMS },
   ],
   aggregator: [
-    { section:'Dashboard',  items:[{id:'agg_overview',icon:'◉',label:'Dashboard'}]},
-    { section:'Merchants',  items:[{id:'agg_merchants',icon:'▦',label:'My Merchants'},{id:'agg_onboard',icon:'+',label:'Onboard Merchant'}]},
-    { section:'Finance',    items:[{id:'agg_revenue',icon:'₦',label:'Revenue Share'},{id:'agg_transactions',icon:'↕',label:'Transactions'}]},
+    { section:'Dashboard',  items:[{id:'agg_overview',icon:'layout-dashboard',label:'Dashboard'}]},
+    { section:'Merchants',  items:[{id:'agg_merchants',icon:'store',label:'My Merchants'},{id:'agg_onboard',icon:'user-plus',label:'Onboard Merchant'}]},
+    { section:'Finance',    items:[{id:'agg_revenue',icon:'banknote',label:'Revenue Share'},{id:'agg_transactions',icon:'arrow-right-left',label:'Transactions'}]},
     { section:'Developer',  items:DEV_SDK_ITEMS },
   ],
   merchant: [
-    { section:'Dashboard',    items:[{id:'merch_overview',icon:'◉',label:'Dashboard'}]},
-    { section:'Transactions', items:[{id:'merch_transactions',icon:'↕',label:'Transactions'},{id:'merch_settlements',icon:'✓',label:'Settlements'},{id:'merch_reconciliation',icon:'⇄',label:'Reconciliation'}]},
-    { section:'Payment Links & QR Code', items:[{id:'merch_payments',icon:'🔗',label:'Payment Links & QR Code'}]},
-    { section:'Invoice & Collect', items:[{id:'merch_invoicing',icon:'🧾',label:'Invoice & Collect'}]},
-    { section:'Billspay', items:[{id:'merch_wallet',icon:'👛',label:'Billspay'}]},
-    { section:'Payouts',      items:[{id:'payouts',icon:'⇄',label:'Send Payouts'},{id:'payout_logs',icon:'≡',label:'Payout Logs'}]},
-    { section:'Integration',  items:[{id:'merch_apikeys',icon:'⚿',label:'API Keys'},{id:'merch_webhooks',icon:'⇀',label:'Webhooks'}]},
+    { section:'Dashboard',    items:[{id:'merch_overview',icon:'layout-dashboard',label:'Dashboard'}]},
+    { section:'Transactions', items:[{id:'merch_transactions',icon:'arrow-right-left',label:'Transactions'},{id:'merch_settlements',icon:'circle-check',label:'Settlements'},{id:'merch_reconciliation',icon:'git-compare',label:'Reconciliation'}]},
+    { section:'Payment Links & QR Code', items:[{id:'merch_payments',icon:'qr-code',label:'Payment Links & QR Code'}]},
+    { section:'Invoice & Collect', items:[{id:'merch_invoicing',icon:'receipt',label:'Invoice & Collect'}]},
+    { section:'Billspay', items:[{id:'merch_wallet',icon:'wallet',label:'Billspay'}]},
+    { section:'Payouts',      items:[{id:'payouts',icon:'send',label:'Send Payouts'},{id:'payout_logs',icon:'scroll-text',label:'Payout Logs'}]},
+    { section:'Integration',  items:[{id:'merch_apikeys',icon:'key-round',label:'API Keys'},{id:'merch_webhooks',icon:'webhook',label:'Webhooks'}]},
     { section:'Developer',    items:DEV_SDK_ITEMS },
-    { section:'Account',      items:[{id:'merch_profile',icon:'⊙',label:'Business Profile'}]},
+    { section:'Account',      items:[{id:'merch_profile',icon:'circle-user',label:'Business Profile'}]},
   ],
   developer: [
     { section:'SDK',       items:[
-      {id:'sdk_start',    icon:'▶',label:'Quick Start'       },
-      {id:'sdk_payments', icon:'₦',label:'Card Payments'     },
-      {id:'sdk_va',       icon:'⇆',label:'Virtual Accounts'  },
-      {id:'sdk_payouts',  icon:'⇄',label:'Payouts (Send)'    },
-      {id:'sdk_verify',   icon:'✓',label:'Verify Payment'    },
-      {id:'sdk_webhook',  icon:'⇀',label:'Webhooks'          },
-      {id:'sdk_mobile',   icon:'□',label:'Published SDKs'    },
+      {id:'sdk_start',    icon:'rocket',label:'Quick Start'       },
+      {id:'sdk_payments', icon:'credit-card',label:'Card Payments'     },
+      {id:'sdk_va',       icon:'landmark',label:'Virtual Accounts'  },
+      {id:'sdk_payouts',  icon:'send',label:'Payouts (Send)'    },
+      {id:'sdk_verify',   icon:'search-check',label:'Verify Payment'    },
+      {id:'sdk_webhook',  icon:'webhook',label:'Webhooks'          },
+      {id:'sdk_mobile',   icon:'smartphone',label:'Published SDKs'    },
     ]},
-    { section:'Reference', items:[{id:'sdk_errors',icon:'!',label:'Error Codes'},{id:'sdk_test',icon:'⚡',label:'Test Cards'}]},
+    { section:'Reference', items:[{id:'sdk_errors',icon:'circle-alert',label:'Error Codes'},{id:'sdk_test',icon:'flask-conical',label:'Test Cards'}]},
   ],
 };
 
@@ -261,11 +261,12 @@ function renderNav() {
     var single   = sec.items.length === 1 ? sec.items[0] : null;
     var targetId = single ? single.id : ('hub::' + sec.section);
     var active   = (currentPage === targetId) || sec.items.some(function(i){ return i.id === currentPage; });
-    var icon     = single ? single.icon : (SECTION_ICON[sec.section] || '▦');
+    var icon     = single ? single.icon : (SECTION_ICON[sec.section] || 'circle');
     var label    = single ? single.label : sec.section;
     return '<div class="nav-item ' + (active ? 'active' : '') + '" onclick="navigate(\'' + targetId.replace(/'/g,"\\'") + '\')">' +
-           '<span class="nav-icon">' + icon + '</span>' + label + '</div>';
+           '<span class="nav-icon"><i data-lucide="' + icon + '"></i></span>' + label + '</div>';
   }).join('');
+  if (window.lucide) lucide.createIcons();
   document.querySelectorAll('.role-btn').forEach(function(btn, i) {
     btn.classList.toggle('active', ['superadmin','admin','aggregator','merchant','developer'][i] === currentRole);
   });
@@ -280,7 +281,7 @@ function renderSectionHub(sectionName) {
     return '<div class="card" style="cursor:pointer;text-align:center;transition:box-shadow .15s" ' +
       'onclick="navigate(\'' + i.id.replace(/'/g,"\\'") + '\')" ' +
       'onmouseover="this.style.boxShadow=\'0 4px 16px rgba(0,0,0,.10)\'" onmouseout="this.style.boxShadow=\'\'">' +
-      '<div style="font-size:30px;margin-bottom:10px">' + i.icon + '</div>' +
+      '<div style="margin-bottom:10px"><i data-lucide="' + i.icon + '" width="30" height="30" style="color:var(--navy,#0b1437)"></i></div>' +
       '<div style="font-weight:600;font-size:14px">' + i.label + '</div></div>';
   }).join('');
   return '<div class="page-header"><div class="page-title">' + sectionName + '</div>' +
@@ -428,6 +429,7 @@ function renderPage() {
   };
   if (currentPage && currentPage.indexOf('hub::') === 0) {
     document.getElementById('main-content').innerHTML = renderSectionHub(currentPage.slice(5));
+    if (window.lucide) lucide.createIcons();
     return;
   }
   document.getElementById('main-content').innerHTML = (pages[currentPage] || renderSuperOverview)();
