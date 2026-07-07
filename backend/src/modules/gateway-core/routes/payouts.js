@@ -1218,7 +1218,13 @@ router.get('/admin/report', requireAuth, requireSuperAdmin, async (req, res, nex
                     JOIN payout_items pi2 ON rd.payout_item_id = pi2.id
                     JOIN payout_batches pb2 ON pi2.batch_id = pb2.id
                    WHERE pb2.merchant_id = m.id AND rd.status = 'success'
-                     AND pb2.created_at >= $1 AND pb2.created_at <= $2), 0)::bigint AS rail_cost_net
+                     AND pb2.created_at >= $1 AND pb2.created_at <= $2), 0)::bigint AS rail_cost_net,
+        COALESCE((SELECT SUM(pi3.item_fee - COALESCE(pi3.item_vat,0))
+                    FROM rail_disbursements rd3
+                    JOIN payout_items pi3 ON rd3.payout_item_id = pi3.id
+                    JOIN payout_batches pb3 ON pi3.batch_id = pb3.id
+                   WHERE pb3.merchant_id = m.id AND rd3.status = 'success'
+                     AND pb3.created_at >= $1 AND pb3.created_at <= $2), 0)::bigint AS realized_fee_net
       FROM payout_batches pb
       JOIN merchants m ON pb.merchant_id = m.id
       WHERE pb.created_at >= $1 AND pb.created_at <= $2
@@ -1243,7 +1249,13 @@ router.get('/admin/report', requireAuth, requireSuperAdmin, async (req, res, nex
                     JOIN payout_items pi2 ON rd.payout_item_id = pi2.id
                     JOIN payout_batches pb2 ON pi2.batch_id = pb2.id
                    WHERE rd.status = 'success'
-                     AND pb2.created_at >= $1 AND pb2.created_at <= $2), 0)::bigint AS rail_cost_net
+                     AND pb2.created_at >= $1 AND pb2.created_at <= $2), 0)::bigint AS rail_cost_net,
+        COALESCE((SELECT SUM(pi3.item_fee - COALESCE(pi3.item_vat,0))
+                    FROM rail_disbursements rd3
+                    JOIN payout_items pi3 ON rd3.payout_item_id = pi3.id
+                    JOIN payout_batches pb3 ON pi3.batch_id = pb3.id
+                   WHERE rd3.status = 'success'
+                     AND pb3.created_at >= $1 AND pb3.created_at <= $2), 0)::bigint AS realized_fee_net
       FROM payout_batches pb
       WHERE pb.created_at >= $1 AND pb.created_at <= $2
         ${merchantFilter}
@@ -1285,8 +1297,9 @@ router.get('/admin/report', requireAuth, requireSuperAdmin, async (req, res, nex
         fee_earned_naira:   koboToNaira(t.total_fee_earned || 0),
         vat_collected_naira:koboToNaira(t.total_vat_collected || 0),
         rail_cost_naira:    koboToNaira(t.rail_cost_net || 0),
-        // Our profit on payouts = fee (ex-VAT) − rail cost (ex-VAT). SA-only report.
-        margin_naira:       koboToNaira(Number(t.total_fee_earned || 0) - Number(t.total_vat_collected || 0) - Number(t.rail_cost_net || 0)),
+        // REALIZED profit = fee − rail cost, both over SUCCESSFULLY-disbursed legs only.
+        // A pending/un-routed payout contributes 0 (its rail cost isn't known until sent).
+        margin_naira:       koboToNaira(Number(t.realized_fee_net || 0) - Number(t.rail_cost_net || 0)),
       },
       by_merchant: byMerchant.map(r => ({
         ...r,
@@ -1294,7 +1307,7 @@ router.get('/admin/report', requireAuth, requireSuperAdmin, async (req, res, nex
         fee_earned_naira:    koboToNaira(r.total_fee_earned || 0),
         vat_collected_naira: koboToNaira(r.total_vat_collected || 0),
         rail_cost_naira:     koboToNaira(r.rail_cost_net || 0),
-        margin_naira:        koboToNaira(Number(r.total_fee_earned || 0) - Number(r.total_vat_collected || 0) - Number(r.rail_cost_net || 0)),
+        margin_naira:        koboToNaira(Number(r.realized_fee_net || 0) - Number(r.rail_cost_net || 0)),
         total_deducted_naira:koboToNaira(r.total_deducted || 0),
         success_rate:        r.total_items > 0 ? Math.round(r.success_items / r.total_items * 100) + '%' : '—',
       })),
