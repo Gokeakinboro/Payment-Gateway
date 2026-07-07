@@ -1793,6 +1793,58 @@ async function loadPayoutsBreakdown() {
   } catch(e) { host.innerHTML = errorBox('Failed to load payouts: ' + e.message); }
 }
 
+// ── SA: MERCHANT ROUTING — global default + per-merchant payout route ──────────
+async function loadMerchantRouting() {
+  var host = document.getElementById('main-content'); if (!host) return;
+  host.innerHTML = loading();
+  try {
+    var res = await apiFetch('/payouts/admin/merchant-routing');
+    var d = (res && res.data) || {};
+    window.__routingLiveRails = d.live_rails || [];
+    var def = d.default_rail;
+    var railOpts = function(sel, includeDefault){
+      var o = includeDefault ? '<option value="">Use default'+(def?' ('+def.name+')':'')+'</option>' : '';
+      (d.live_rails||[]).forEach(function(r){ o += '<option value="'+r.id+'"'+(sel===r.id?' selected':'')+'>'+r.name+'</option>'; });
+      return o;
+    };
+    var rows = (d.merchants||[]).map(function(m){
+      return '<tr>'+
+        '<td style="font-weight:500;font-size:12px">'+(m.business_name||'—')+'<div class="mono" style="font-size:10px;color:var(--gray-400)">'+(m.merchant_code||'')+'</div></td>'+
+        '<td style="font-size:11px;color:var(--gray-500)">'+(m.funded_rails||'<span style="color:var(--gray-400)">no rail funded</span>')+'</td>'+
+        '<td style="font-size:12px">'+(m.uses_default?'<span style="color:var(--gray-400)">'+m.route_rail_name+'</span>':'<strong>'+m.route_rail_name+'</strong>')+'</td>'+
+        '<td><select id="rt-'+m.merchant_id+'" class="input" style="font-size:12px;padding:4px 6px">'+railOpts(m.route_rail_id, true)+'</select> '+
+        '<button class="btn btn-lime btn-sm" onclick="saveMerchantRoute(\''+m.merchant_id+'\')">Route</button></td>'+
+      '</tr>';
+    }).join('');
+    host.innerHTML =
+      '<div class="page-header"><div class="page-title">Merchant Routing</div><div class="page-desc">Which rail each merchant\'s payouts disburse through. Set a merchant\'s route each time they fund a rail — SA may pick any live rail. No override = the global default below.</div></div>' +
+      '<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+        '<div><div style="font-size:11px;color:var(--gray-400);text-transform:uppercase">Default route (all merchants)</div>' +
+        '<div style="font-size:18px;font-weight:700">'+(def?def.name:'<span style="color:#d97706">not set</span>')+'</div></div>' +
+        '<div style="margin-left:auto;display:flex;gap:6px;align-items:center">' +
+          '<select id="rt-default" class="input" style="font-size:12px;padding:5px 8px">'+railOpts(def?def.id:'', false)+'</select>' +
+          '<button class="btn btn-outline btn-sm" onclick="saveDefaultRoute()">Change default</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table><thead><tr><th>Merchant</th><th>Funded rail(s)</th><th>Current route</th><th>Set route</th></tr></thead><tbody>' +
+        (rows||'<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:24px">No active merchants</td></tr>') +
+      '</tbody></table></div></div>';
+  } catch(e) { host.innerHTML = errorBox('Failed to load merchant routing: ' + e.message); }
+}
+async function saveMerchantRoute(mid) {
+  var sel = document.getElementById('rt-'+mid); if (!sel) return;
+  var res = await apiFetch('/payouts/admin/merchant-routing/'+mid, { method:'PUT', body: JSON.stringify({ rail_id: sel.value || null }) });
+  if (res && res.success !== false) { toast ? toast(res.message||'Route updated') : alert(res.message||'Route updated'); loadMerchantRouting(); }
+  else alert('Error: ' + ((res&&res.message)||'Could not update route'));
+}
+async function saveDefaultRoute() {
+  var sel = document.getElementById('rt-default'); if (!sel || !sel.value) return alert('Pick a rail');
+  if (!confirm('Change the DEFAULT payout route for ALL merchants (those without their own route)?')) return;
+  var res = await apiFetch('/payouts/admin/default-rail', { method:'PUT', body: JSON.stringify({ rail_id: sel.value }) });
+  if (res && res.success !== false) { toast ? toast(res.message||'Default updated') : alert(res.message||'Default updated'); loadMerchantRouting(); }
+  else alert('Error: ' + ((res&&res.message)||'Could not update default'));
+}
+
 // ── MERCHANT SETTLEMENTS (merchant role) ──────────────────────────────────────
 async function loadMerchSettlements() {
   var el = document.getElementById('main-content');
@@ -4637,6 +4689,7 @@ function loadPageData(page) {
     case 'sa_reconciliation': loadReconciliation(); break;
     case 'sa_collection_wallets': loadCollectionWallets(); break;
     case 'sa_payouts':        loadPayoutsBreakdown(); break;
+    case 'sa_merchant_routing': loadMerchantRouting(); break;
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
     case 'merch_settlements':   loadMerchSettlements(); break;
