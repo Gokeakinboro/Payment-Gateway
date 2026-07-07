@@ -5506,15 +5506,18 @@ async function loadWallets() {
     window.__merchantRails = {};
     const rows = wallets.length ? wallets.map(w => {
       window.__merchantRails[w.merchant_id] = w.rails || [];
+      const nm = (w.business_name||'').replace(/'/g,'');
       const railBits = (w.rails||[]).length
         ? (w.rails||[]).map(r => `${r.rail_name}: <strong>${fmtNaira(r.balance)}</strong>`).join(' · ')
         : '<span style="color:var(--gray-400)">no rail funded</span>';
       return `<tr>
         <td style="font-weight:500">${w.business_name}<div class="mono" style="font-size:11px;color:var(--gray-400)">${w.merchant_code||''}</div></td>
         <td style="font-weight:600;color:${w.total>0?'var(--green)':'var(--gray-400)'}">${fmtNaira(w.total)}<div style="font-size:10px;color:var(--gray-400);font-weight:400">${railBits}</div></td>
-        <td><button class="btn btn-lime btn-sm" onclick="fundWallet('${w.merchant_id}','${(w.business_name||'').replace(/'/g,'')}')">Credit / Debit</button>
-        <button class="btn btn-outline btn-sm" onclick="rebalanceWallet('${w.merchant_id}','${(w.business_name||'').replace(/'/g,'')}')">Rebalance</button>
-        <button class="btn btn-outline btn-sm" onclick="viewLedger('${w.merchant_id}')">Ledger</button></td>
+        <td style="white-space:nowrap"><button class="btn btn-lime btn-sm" onclick="fundWallet('${w.merchant_id}','${nm}')">Credit / Debit</button>
+        <button class="btn btn-outline btn-sm" onclick="rebalanceWallet('${w.merchant_id}','${nm}')">Rebalance</button>
+        <button class="btn btn-outline btn-sm" onclick="viewLedger('${w.merchant_id}')">Ledger</button>
+        <button class="btn btn-outline btn-sm" onclick="merchantRails('${w.merchant_id}','${nm}')">Rail Floats &amp; Status</button>
+        <button class="btn btn-outline btn-sm" onclick="merchantPending('${w.merchant_id}','${nm}')">Pending Transfers</button></td>
       </tr>`;
     }).join('') : '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--gray-400)">No merchant balances yet</td></tr>';
 
@@ -5622,6 +5625,7 @@ async function submitRebalance(merchantId) {
 
 // SA: pending treasury-transfer obligations created by rebalances.
 async function loadPendingRebalances() {
+  window.__pendingScope = null;
   const res = await apiFetch('/payouts/admin/wallet/rebalances?status=pending');
   const list = res?.data || [];
   const rows = list.length ? list.map(r => `<tr style="border-bottom:1px solid var(--gray-100)">
@@ -5641,8 +5645,51 @@ async function loadPendingRebalances() {
 }
 async function settleRebalance(id) {
   const res = await apiFetch('/payouts/admin/wallet/rebalance/'+id+'/settle', { method:'POST' });
-  if (res?.status) loadPendingRebalances();
-  else alert('Error: '+((res&&res.message)||'Failed'));
+  if (res?.status) { toast('Transfer marked settled','success'); const s = window.__pendingScope; if (s) merchantPending(s.mid, s.name); else loadPendingRebalances(); }
+  else toast((res&&res.message)||'Could not settle transfer','error');
+}
+
+// SA (per merchant): this merchant's balance per rail + each rail's live status and OUR float.
+function merchantRails(merchantId, name) {
+  window.__pendingScope = null;
+  const mr = (window.__merchantRails||{})[merchantId] || [];
+  const pr = {}; (window.__payoutRails||[]).forEach(r => { pr[r.id] = r; });
+  const rows = mr.length ? mr.map(r => {
+    const cfg = pr[r.rail_id] || {};
+    return `<tr style="border-bottom:1px solid var(--gray-100)">
+      <td style="padding:8px">${r.rail_name}</td>
+      <td style="padding:8px;font-weight:600">${fmtNaira(r.balance)}</td>
+      <td style="padding:8px"><span class="badge ${cfg.status==='LIVE'?'badge-green':'badge-gray'}">${cfg.status||'—'}</span> ${cfg.payoutEnabled?'<span class="badge badge-green">on</span>':'<span class="badge badge-gray">off</span>'}</td>
+      <td style="padding:8px;color:var(--gray-500)">${cfg.float_balance!=null?fmtNaira(cfg.float_balance):'—'}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--gray-400)">No rail balances for this merchant</td></tr>';
+  showModal(
+    `<div class="modal-header"><div class="modal-title">Rail Floats &amp; Status — ${name}</div>
+     <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+     <div class="info-box" style="font-size:12px;margin-bottom:12px">This merchant's balance per rail, with each rail's live status and OUR float on it (internal — never shown to the merchant).</div>
+     <div class="table-wrap"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)">
+       <th style="text-align:left;padding:8px">Rail</th><th style="text-align:left;padding:8px">Merchant balance</th><th style="text-align:left;padding:8px">Rail status</th><th style="text-align:left;padding:8px">Our float</th></tr></thead>
+       <tbody>${rows}</tbody></table></div>`, 'lg');
+}
+
+// SA (per merchant): pending treasury transfers for THIS merchant only.
+async function merchantPending(merchantId, name) {
+  window.__pendingScope = { mid: merchantId, name: name };
+  const res = await apiFetch('/payouts/admin/wallet/rebalances?status=pending');
+  const list = (res?.data || []).filter(r => r.merchant_id === merchantId);
+  const rows = list.length ? list.map(r => `<tr style="border-bottom:1px solid var(--gray-100)">
+    <td style="padding:8px;font-size:12px">${r.from_rail} &rarr; ${r.to_rail}<div class="mono" style="font-size:11px;color:var(--gray-400)">${r.reference||''}</div></td>
+    <td style="padding:8px;font-weight:600">${fmtNaira(r.amount)}</td>
+    <td style="padding:8px;font-size:11px;color:var(--gray-400)">${new Date(r.created_at).toLocaleString()}</td>
+    <td style="padding:8px"><button class="btn btn-lime btn-sm" onclick="settleRebalance('${r.id}')">Mark Settled</button></td>
+  </tr>`).join('') : '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--gray-400)">No pending transfers for this merchant</td></tr>';
+  showModal(
+    `<div class="modal-header"><div class="modal-title">Pending Transfers — ${name}</div>
+     <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+     <div class="info-box" style="font-size:12px;margin-bottom:12px">This merchant's rebalances awaiting a physical transfer between rail bank accounts. Mark settled once the funds land.</div>
+     <div class="table-wrap"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)">
+       <th style="text-align:left;padding:8px">Move</th><th style="text-align:left;padding:8px">Amount</th><th style="text-align:left;padding:8px">Created</th><th></th></tr></thead>
+       <tbody>${rows}</tbody></table></div>`, 'lg');
 }
 
 // SA: enable/disable payout rails + set LIVE status
