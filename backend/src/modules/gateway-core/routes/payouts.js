@@ -28,17 +28,6 @@ const isOnUsBank = (code) => ON_US_BANK_CODES.has(String(code || '').trim());
 // (b) that rail's remaining DAILY send-out cap. These run inside a tx so the read
 // and the guarded debit see a consistent snapshot.
 
-// Per-rail payout balances for a merchant (payout-enabled rails with a row).
-async function railBalancesForMerchant(tx, merchantId) {
-  return tx.$queryRaw`
-    SELECT mw.rail_id, mw.balance, pr.name AS rail_name, pr.daily_value_cap
-    FROM merchant_wallets mw
-    JOIN payment_rails pr ON pr.id = mw.rail_id
-    WHERE mw.merchant_id = ${merchantId}::uuid AND mw.rail_id IS NOT NULL
-      AND pr.payout_enabled = true
-    ORDER BY mw.balance DESC`;
-}
-
 // Remaining daily send-out capacity on a rail (cap − today's non-failed
 // disbursements, in beneficiary kobo). null cap = unlimited.
 async function remainingDailyCap(tx, railId, cap) {
@@ -49,35 +38,6 @@ async function remainingDailyCap(tx, railId, cap) {
       AND status NOT IN ('failed','reversed')`;
   const rem = BigInt(cap) - BigInt(rows[0].u);
   return rem > 0n ? rem : 0n;
-}
-
-// Greedy per-item assignment of payout items to a merchant's funded rails.
-//   rails: [{ rail_id, rail_name, balance(BigInt), remainingCap(BigInt|null) }]
-//   items: each needs `total` (beneficiary+fee+VAT — debited from the rail wallet)
-//          and `amount` (beneficiary — counts against the rail's daily cap).
-// A single beneficiary goes through ONE rail (you can't split one transfer), so an
-// item must fit entirely in one rail's balance. Largest beneficiary first; picks the
-// rail with the most spare balance that can also fit the beneficiary under its cap.
-// Returns { ok, assignments:[{item, rail_id}] } or { ok:false, reason }.
-function allocateItemsAcrossRails(rails, items) {
-  const work = rails.map(r => ({ ...r, spend: 0n, capUsed: 0n }));
-  const assignments = [];
-  const ordered = [...items].sort((a, b) => (BigInt(b.amount) > BigInt(a.amount) ? 1 : -1));
-  for (const it of ordered) {
-    const total = BigInt(it.total), amt = BigInt(it.amount);
-    const candidates = work.filter(r =>
-      (r.balance - r.spend) >= total &&
-      (r.remainingCap == null || (r.remainingCap - r.capUsed) >= amt));
-    if (!candidates.length) {
-      const balanceOk = work.some(r => (r.balance - r.spend) >= total);
-      return { ok: false, reason: balanceOk ? 'daily_cap' : 'insufficient' };
-    }
-    candidates.sort((a, b) => ((b.balance - b.spend) > (a.balance - a.spend) ? 1 : -1));
-    const pick = candidates[0];
-    pick.spend += total; pick.capUsed += amt;
-    assignments.push({ item: it, rail_id: pick.rail_id });
-  }
-  return { ok: true, assignments };
 }
 
 // The DISBURSING rail for a merchant = their route override (merchants.payout_rail_id)
