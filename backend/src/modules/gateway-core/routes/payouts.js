@@ -884,6 +884,87 @@ router.get('/admin/payout-rails', requireAuth, requireSuperAdmin, async (req, re
   } catch (e) { next(e); }
 });
 
+// ── MERCHANT ROUTING (SA) ─────────────────────────────────────────────────────
+// Two-tier payout route: ONE global default rail for all merchants, plus an
+// optional per-merchant override. SA sets a merchant's route each time they fund;
+// null override → the global default. SA may pick ANY live rail. This layer is
+// CONFIG ONLY — it records the intended route; disbursement wiring is separate.
+
+// GET — every active merchant with its funded rail(s), current route, plus the
+// global default + the list of LIVE rails available to route to.
+router.get('/admin/merchant-routing', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const liveRails = await prisma.paymentRail.findMany({
+      where: { status: 'LIVE', payoutEnabled: true },
+      select: { id: true, name: true, isDefaultPayout: true },
+      orderBy: { name: 'asc' },
+    });
+    const defaultRail = liveRails.find(r => r.isDefaultPayout) || null;
+
+    // Per-merchant: current route + which rails they have funded (balance > 0).
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT m.id::text AS merchant_id, m.business_name, m.merchant_code,
+             m.payout_rail_id::text AS route_rail_id, pr.name AS route_rail_name,
+             COALESCE((
+               SELECT string_agg(r2.name || ' (₦' || to_char(w.balance/100.0,'FM999,999,990.00') || ')', ', ' ORDER BY r2.name)
+               FROM merchant_wallets w JOIN payment_rails r2 ON w.rail_id = r2.id
+               WHERE w.merchant_id = m.id AND w.balance > 0
+             ), '') AS funded_rails
+      FROM merchants m
+      LEFT JOIN payment_rails pr ON m.payout_rail_id = pr.id
+      WHERE m.is_active = true
+      ORDER BY m.business_name ASC`);
+
+    const merchants = rows.map(r => ({
+      merchant_id: r.merchant_id, business_name: r.business_name, merchant_code: r.merchant_code,
+      route_rail_id: r.route_rail_id,                                   // null = uses default
+      route_rail_name: r.route_rail_name || (defaultRail ? defaultRail.name + ' (default)' : '— none —'),
+      uses_default: !r.route_rail_id,
+      funded_rails: r.funded_rails || '',
+    }));
+
+    ok(res, {
+      default_rail: defaultRail ? { id: defaultRail.id, name: defaultRail.name } : null,
+      live_rails: liveRails.map(r => ({ id: r.id, name: r.name })),
+      merchants,
+    });
+  } catch (e) { next(e); }
+});
+
+// PUT — set/clear ONE merchant's route. body { rail_id } — any LIVE rail, or null
+// (clears the override so the merchant falls back to the global default).
+router.put('/admin/merchant-routing/:merchantId', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { rail_id } = req.body || {};
+    const m = await prisma.merchant.findUnique({ where: { id: req.params.merchantId }, select: { id: true } });
+    if (!m) return notFound(res, 'Merchant');
+    if (rail_id) {
+      const rail = await prisma.paymentRail.findUnique({ where: { id: rail_id }, select: { id: true, name: true, status: true, payoutEnabled: true } });
+      if (!rail) return notFound(res, 'Rail');
+      if (rail.status !== 'LIVE' || !rail.payoutEnabled) return fail(res, `${rail.name} is not a live payout rail`, 'RAIL_NOT_LIVE');
+    }
+    await prisma.merchant.update({ where: { id: m.id }, data: { payoutRailId: rail_id || null } });
+    ok(res, { merchant_id: m.id, rail_id: rail_id || null }, rail_id ? 'Merchant route updated' : 'Merchant route reset to default');
+  } catch (e) { next(e); }
+});
+
+// PUT — change the GLOBAL default route for all merchants. body { rail_id } — any
+// LIVE rail. Flips the single is_default_payout flag atomically.
+router.put('/admin/default-rail', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { rail_id } = req.body || {};
+    if (!rail_id) return fail(res, 'A rail is required', 'RAIL_REQUIRED');
+    const rail = await prisma.paymentRail.findUnique({ where: { id: rail_id }, select: { id: true, name: true, status: true, payoutEnabled: true } });
+    if (!rail) return notFound(res, 'Rail');
+    if (rail.status !== 'LIVE' || !rail.payoutEnabled) return fail(res, `${rail.name} is not a live payout rail`, 'RAIL_NOT_LIVE');
+    await prisma.$transaction([
+      prisma.paymentRail.updateMany({ where: { isDefaultPayout: true }, data: { isDefaultPayout: false } }),
+      prisma.paymentRail.update({ where: { id: rail_id }, data: { isDefaultPayout: true } }),
+    ]);
+    ok(res, { rail_id, name: rail.name }, `Default payout route set to ${rail.name}`);
+  } catch (e) { next(e); }
+});
+
 // ── POST /api/v1/payouts/admin/rails/:id/sync-float — SA refreshes OUR balance ─
 // Pulls the live balance from the rail's API (if its adapter exposes getBalance)
 // and stores it as the rail float. Internal-only.

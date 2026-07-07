@@ -165,6 +165,9 @@ model Merchant {
   pendingSettlementAccountName String?   @map("pending_settlement_account_name")
   pendingSettlementAt          DateTime? @map("pending_settlement_at")
   settlementCycle       String    @default("t1") @map("settlement_cycle")
+  // Per-merchant payout route override (null = use the global default rail).
+  // SA sets this on the Merchant Routing page each time a merchant funds a rail.
+  payoutRailId          String?   @map("payout_rail_id") @db.Uuid
   isActive          Boolean   @default(false) @map("is_active") // false until KYC done
   webhookUrl        String?   @map("webhook_url")
   webhookSecret     String?   @map("webhook_secret")
@@ -190,6 +193,7 @@ model Merchant {
   wallets        MerchantWallet[]
   payoutBatches  PayoutBatch[]
   payoutItems    PayoutItem[]
+  payoutRail     PaymentRail?   @relation("MerchantPayoutRoute", fields: [payoutRailId], references: [id])
 
   @@index([kycStatus])
   @@index([isActive])
@@ -229,6 +233,10 @@ model PaymentRail {
   // #payout twist: a rail Paylode can send payouts through (internal only —
   // never shown to merchants). SA toggles this + status (LIVE) to route traffic.
   payoutEnabled Boolean    @default(false) @map("payout_enabled")
+  // The single GLOBAL default payout route for all merchants (exactly one rail
+  // true). SA changes it on the Merchant Routing page; overridden per-merchant
+  // by Merchant.payoutRailId. Seed = PalmPay.
+  isDefaultPayout Boolean  @default(false) @map("is_default_payout")
   // OUR float balance held with this rail (kobo) — internal only, never shown to
   // merchants. Polled from the rail's balance API; SA allocates payouts against it.
   floatBalance  BigInt     @default(0) @map("float_balance")
@@ -246,6 +254,7 @@ model PaymentRail {
   costs        RailCost[]
   transactions Transaction[]
   wallets      MerchantWallet[]
+  routedMerchants Merchant[]  @relation("MerchantPayoutRoute")
 
   @@map("payment_rails")
 }
