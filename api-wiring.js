@@ -5518,14 +5518,12 @@ async function loadWallets() {
   const el = document.getElementById('main-content');
   el.innerHTML = loading();
   try {
-    const [wRes, rRes, qRes] = await Promise.all([
+    const [wRes, rRes] = await Promise.all([
       apiFetch('/payouts/admin/wallets'),
       apiFetch('/payouts/admin/payout-rails'),
-      apiFetch('/payouts/admin/routing-queue'),
     ]);
     const wallets = wRes?.data || [];
     __payoutRails = rRes?.data || [];
-    const queue = qRes?.data || [];
     const enabledCount = __payoutRails.filter(r => r.payoutEnabled && r.status === 'LIVE').length;
 
     window.__merchantRails = {};
@@ -5545,14 +5543,12 @@ async function loadWallets() {
 
     el.innerHTML = `
     <div class="page-header flex-between">
-      <div><div class="page-title">Merchant Balances</div><div class="page-desc">Each merchant pre-funds payouts PER RAIL (the bank/rail we told them to fund). Rails &amp; our float are internal — merchants only ever see their single total.</div></div>
+      <div><div class="page-title">Merchant Balances</div><div class="page-desc">Each merchant's pooled payout balance (rail-agnostic). Fund it on <strong>Merchant Funding</strong>; set the disbursing rail on <strong>Merchant Routing</strong>; release batches on <strong>Batch Routing</strong>. Rails &amp; our float are internal.</div></div>
       <div class="flex" style="gap:6px">
         <button class="btn btn-outline btn-sm" onclick="managePayoutRails()">Rail Floats &amp; Status</button>
         <button class="btn btn-outline btn-sm" onclick="loadPendingRebalances()">Pending Transfers</button>
-        <button class="btn btn-outline btn-sm" onclick="loadRoutingQueue()">Routing Queue${queue.length?` <span class="badge badge-amber">${queue.length}</span>`:''}</button>
       </div>
     </div>
-    ${queue.length ? `<div class="info-box" style="margin-bottom:14px;font-size:12px">${queue.length} payout(s) awaiting your rail-routing decision. Open <strong>Routing Queue</strong>.</div>` : ''}
     <div class="card"><div class="table-wrap"><table>
       <thead><tr><th>Merchant</th><th>Balance</th><th>Actions</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -5738,31 +5734,9 @@ async function syncRailFloat(id) {
 }
 
 // SA: routing queue for payouts no single rail could cover
-async function loadRoutingQueue() {
-  const res = await apiFetch('/payouts/admin/routing-queue');
-  const q = res?.data || [];
-  const rows = q.length ? q.map(b => `<tr style="border-bottom:1px solid var(--gray-100)">
-    <td style="padding:8px">${b.business_name}<div class="mono" style="font-size:11px;color:var(--gray-400)">${b.batch_ref}</div></td>
-    <td style="padding:8px;font-weight:600">${fmtNaira(b.total_amount)}<div style="font-size:10px;color:var(--gray-400);font-weight:400">to beneficiaries</div></td>
-    <td style="padding:8px;font-size:11px">${(b.rail_floats||[]).map(r=>r.rail_name+': '+fmtNaira(r.balance)).join('<br>')||'—'}</td>
-    <td style="padding:8px"><button class="btn btn-lime btn-sm" onclick="routeBatchPrompt('${b.batch_id}',${b.total_amount},${JSON.stringify(b.rail_floats).replace(/"/g,'&quot;')})">Route</button></td>
-  </tr>`).join('') : '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--gray-400)">Nothing awaiting routing</td></tr>';
-  showModal(
-    `<div class="modal-header"><div class="modal-title">Payout Routing Queue</div>
-     <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
-     <div class="info-box" style="font-size:12px;margin-bottom:12px">Each payout is already tied to the rail(s) the merchant pre-funded — <strong>Route</strong> simply disburses it. To change the rail mix, <strong>Rebalance</strong> the merchant's funds first. Our float is shown for reference.</div>
-     <div class="table-wrap"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)">
-       <th style="text-align:left;padding:8px">Merchant / Batch</th><th style="text-align:left;padding:8px">Total</th><th style="text-align:left;padding:8px">Our Rail Floats</th><th></th></tr></thead>
-       <tbody>${rows}</tbody></table></div>`);
-}
-async function routeBatchPrompt(batchId, totalKobo, railFloats) {
-  // The per-rail split was decided when the merchant created the payout — each item
-  // is tied to the rail they pre-funded. Routing just executes that split.
-  if (!confirm(`Disburse this payout (${fmtNaira(totalKobo)}) now? Funds go out through the rail(s) the merchant pre-funded.`)) return;
-  const res = await apiFetch('/payouts/admin/batches/'+batchId+'/route', { method:'POST', body: JSON.stringify({}) });
-  if (res?.status) { alert(res.message||'Routed and processing.'); document.getElementById('modal').style.display='none'; loadWallets(); }
-  else alert('Error: '+((res&&res.message)||'Failed'));
-}
+// (Old Routing Queue modal removed 2026-07-07 — superseded by the dedicated
+// Operations → Batch Routing page (loadBatchRouting), which also supports the
+// per-batch rail override.)
 
 async function viewLedger(merchantId) {
   const res = await apiFetch(`/payouts/wallet/ledger?merchant_id=${merchantId}`);
