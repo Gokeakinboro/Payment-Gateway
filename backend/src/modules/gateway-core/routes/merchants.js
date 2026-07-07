@@ -270,7 +270,7 @@ router.delete('/:id/outlets/:outletId', requireAuth, requireSuperAdmin, async (r
 //  path is the documents /defer endpoint, which is SUPER_ADMIN only.)
 router.put('/:id/suspend', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
   try {
-    const m = await prisma.merchant.update({ where:{id:req.params.id}, data:{kycStatus:'SUSPENDED',isActive:false} });
+    const m = await prisma.merchant.update({ where:{id:req.params.id}, data:{kycStatus:'SUSPENDED',isActive:false,liveEnabled:false} });
     await logAudit(req.user.id, 'MERCHANT_SUSPENDED', 'merchants', m.id, {isActive:true}, {isActive:false}, req.body.reason);
     ok(res, { message:'Merchant suspended' });
   } catch (e) { next(e); }
@@ -300,9 +300,30 @@ router.put('/:id/activate', requireAuth, requireAdminOrCompliance, async (req, r
 // Close (off-board) a merchant — SA + Admin only. Deactivates and marks closed.
 router.put('/:id/close', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const m = await prisma.merchant.update({ where:{id:req.params.id}, data:{kycStatus:'SUSPENDED',isActive:false} });
+    const m = await prisma.merchant.update({ where:{id:req.params.id}, data:{kycStatus:'SUSPENDED',isActive:false,liveEnabled:false} });
     await logAudit(req.user.id, 'MERCHANT_CLOSED', 'merchants', m.id, {isActive:true}, {isActive:false, closed:true}, req.body.reason || 'Account closed');
     ok(res, { message:'Merchant account closed' });
+  } catch (e) { next(e); }
+});
+
+// ── Go-Live / back to Sandbox — SA + Admin only ───────────────────────────────
+// Activation (is_active) grants portal + SANDBOX access only. Live processing —
+// live keys for BOTH collections and payouts — additionally requires live_enabled,
+// flipped here. So "activated" != "can move real money". Body: { enabled?:bool,
+// reason?:string }; default enabled=true (go live).
+router.post('/:id/go-live', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const enabled = req.body.enabled !== false;
+    const m = await prisma.merchant.findUnique({ where:{ id:req.params.id }, select:{ id:true, isActive:true, liveEnabled:true, businessName:true } });
+    if (!m) return notFound(res, 'Merchant');
+    if (enabled && !m.isActive)
+      return fail(res, 'Activate the merchant (complete KYC) before enabling live.', 'NOT_ACTIVE');
+    await prisma.merchant.update({ where:{ id:m.id }, data:{ liveEnabled: enabled } });
+    await logAudit(req.user.id, enabled ? 'MERCHANT_GO_LIVE' : 'MERCHANT_SET_SANDBOX', 'merchants', m.id,
+      { liveEnabled: m.liveEnabled }, { liveEnabled: enabled }, req.body.reason || null, req.ip);
+    ok(res, { live_enabled: enabled,
+      message: enabled ? `${m.businessName} is now LIVE — live transactions enabled.`
+                       : `${m.businessName} moved back to Sandbox — live transactions disabled.` });
   } catch (e) { next(e); }
 });
 

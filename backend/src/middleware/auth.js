@@ -58,14 +58,18 @@ async function requireApiKey(req, res, next) {
   if (!apiKey || !apiKey.isActive)
     return unauthorized(res, 'Invalid API key');
 
-  // Sandbox/test keys work immediately (so developers can integrate before KYC);
-  // only LIVE keys require the merchant to be KYC-active — EXCEPT the payout route,
-  // which lets a merchant still in KYC run LIVE payouts as long as their prepaid
-  // wallet is funded (the funded balance is the safeguard). That route opts in via
-  // req.allowInactiveLivePayout; a SUSPENDED/REJECTED account is still blocked in
-  // the payout handler.
-  if (!apiKey.isSandbox && !apiKey.merchant.isActive && !req.allowInactiveLivePayout)
-    return unauthorized(res, 'Merchant account is not active. Complete KYC to enable live payments.');
+  // Sandbox/test keys work immediately (so developers can integrate before KYC).
+  // LIVE keys require BOTH: the account is active (not suspended/closed) AND it has
+  // been explicitly taken live by an SA/Admin (Go-Live). Activation alone only grants
+  // portal + sandbox access — it does NOT enable live money movement (collections OR
+  // payouts). This is the guard that stops an "activated, still testing" merchant
+  // (e.g. Bucksnostar) from processing real transactions before we flip them live.
+  if (!apiKey.isSandbox) {
+    if (!apiKey.merchant.isActive)
+      return unauthorized(res, 'Merchant account is not active. Complete KYC / contact support.');
+    if (!apiKey.merchant.liveEnabled)
+      return unauthorized(res, 'Live mode is not enabled for this account yet. Keep integrating with your sandbox (sk_test) keys — an admin must switch the account to live.');
+  }
 
   // Update last used (non-blocking)
   prisma.apiKey.update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
