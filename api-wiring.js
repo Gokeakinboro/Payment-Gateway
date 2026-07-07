@@ -1887,6 +1887,16 @@ async function releaseBatch(batchId) {
   else toast((res&&res.message)||'Could not release batch','error');
 }
 
+// Cancel an un-dispatched (needs_routing) batch: reverses the full deduction
+// (beneficiary + fee + VAT) back to the merchant's wallet without contacting the
+// rail. Merchant Wallet page, next to Release.
+async function cancelPayoutBatch(batchId, name) {
+  if (!confirm('Cancel this queued batch for '+(name||'this merchant')+'?\n\nThe full amount (beneficiary + fee + VAT) is reversed to their wallet. Nothing is sent to the rail.')) return;
+  var res = await apiFetch('/payouts/admin/batches/'+batchId+'/cancel', { method:'POST', body: JSON.stringify({}) });
+  if (res && res.status) { toast(res.message||'Batch cancelled — reversed to wallet','success'); loadWallets(); }
+  else toast((res&&res.message)||'Could not cancel batch','error');
+}
+
 // ── MERCHANT SETTLEMENTS (merchant role) ──────────────────────────────────────
 async function loadMerchSettlements() {
   var el = document.getElementById('main-content');
@@ -5598,7 +5608,7 @@ async function loadWallets() {
         <td style="text-align:center">${b.total_items||0}</td>
         <td class="mono" style="text-align:right">${qMoney(b.total_amount_naira)}</td>
         <td><select id="br-${b.batch_id}" class="input" style="font-size:12px;padding:4px 6px">${opts}</select></td>
-        <td><button class="btn btn-lime btn-sm" onclick="releaseBatch('${b.batch_id}')">Release</button></td>
+        <td><button class="btn btn-lime btn-sm" onclick="releaseBatch('${b.batch_id}')">Release</button> <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="cancelPayoutBatch('${b.batch_id}','${(b.business_name||'').replace(/'/g,'')}')">Cancel</button></td>
       </tr>`;
     }).join('');
     const batchCard = `
