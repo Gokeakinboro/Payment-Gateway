@@ -2,10 +2,29 @@
 const router = require('express').Router();
 const https  = require('https');
 const http   = require('http');
+const crypto = require('crypto');
 const { URL } = require('url');
 const { prisma } = require('../utils/db');
 const { requireAuth } = require('../middleware/auth');
 const { ok, fail } = require('../utils/helpers');
+const { reauthenticate } = require('../services/reauth');
+const { logAudit } = require('../services/auditService');
+
+// Signing secret = 64-char hex (matches how it's minted at KYC approval).
+const genWebhookSecret = () => crypto.randomBytes(32).toString('hex');
+// Show only the first/last 4 chars so a shoulder-surfer can't read a live page.
+const maskSecret = (s) => (s ? s.slice(0, 4) + '•'.repeat(12) + s.slice(-4) : null);
+// A reveal/rotate needs the caller to prove it's really them. Returns true if
+// handled the response (caller should stop); false if re-auth passed.
+async function stepUpFailed(req, res) {
+  const r = await reauthenticate(req.user.id, req.body || {});
+  if (r.ok) return false;
+  if (r.code === 'TWOFA_REQUIRED') { ok(res, { twofa_required: true }); return true; }
+  // 403 (not 401) on purpose: the SESSION is valid, only the step-up failed. A 401
+  // would trip the frontend's global auto-logout and boot the user to /login.
+  fail(res, r.error, r.code, 403);
+  return true;
+}
 
 // ── GET /api/v1/webhooks/config ───────────────────────────────────────────────
 router.get('/config', requireAuth, async (req, res, next) => {
@@ -94,6 +113,46 @@ router.post('/test', requireAuth, async (req, res, next) => {
       reqH.write(payload);
       reqH.end();
     });
+  } catch(e){ next(e); }
+});
+
+// ── GET /api/v1/webhooks/secret — masked signing secret + existence ───────────
+// Safe to load on the page: never returns the raw value. Reveal is a separate,
+// step-up-gated call.
+router.get('/secret', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const m = await prisma.merchant.findUnique({ where:{ id: merchantId }, select:{ webhookSecret:true } });
+    ok(res, { has_secret: !!m?.webhookSecret, masked: maskSecret(m?.webhookSecret) });
+  } catch(e){ next(e); }
+});
+
+// ── POST /api/v1/webhooks/secret/reveal — returns the raw secret (step-up) ─────
+// Body: { password, code? }. Requires password re-entry (+ TOTP if 2FA on).
+router.post('/secret/reveal', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    if (await stepUpFailed(req, res)) return;
+    const m = await prisma.merchant.findUnique({ where:{ id: merchantId }, select:{ webhookSecret:true } });
+    if (!m?.webhookSecret) return fail(res, 'No signing secret set yet — rotate to generate one.', 'NO_SECRET');
+    logAudit(req.user.id, 'WEBHOOK_SECRET_REVEALED', 'merchants', merchantId, null, null, null, req.ip).catch(()=>{});
+    ok(res, { secret: m.webhookSecret });
+  } catch(e){ next(e); }
+});
+
+// ── POST /api/v1/webhooks/secret/rotate — mint a new secret (step-up) ──────────
+// Body: { password, code? }. Invalidates the old secret; returns the new one once.
+router.post('/secret/rotate', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    if (await stepUpFailed(req, res)) return;
+    const secret = genWebhookSecret();
+    await prisma.merchant.update({ where:{ id: merchantId }, data:{ webhookSecret: secret } });
+    logAudit(req.user.id, 'WEBHOOK_SECRET_ROTATED', 'merchants', merchantId, null, { rotated: true }, null, req.ip).catch(()=>{});
+    ok(res, { secret, message: 'Signing secret rotated. Update your server now — the previous secret no longer signs events.' });
   } catch(e){ next(e); }
 });
 

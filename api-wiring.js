@@ -3371,6 +3371,29 @@ async function loadMerchWebhooks() {
     var webhookUrl = cfg?.data?.webhook_url || null;
     var events     = cfg?.data?.events || [];
 
+    var sec = await apiFetch('/webhooks/secret');
+    var hasSecret = !!(sec && sec.data && sec.data.has_secret);
+    var maskedSecret = (sec && sec.data && sec.data.masked) || '';
+    var secretBody = hasSecret
+      ? '<div class="rev-row" style="padding:14px 0"><div style="flex:1;min-width:0">' +
+          '<div class="mono" id="wh-secret-val" style="font-size:12px;word-break:break-all">' + maskedSecret + '</div>' +
+          '<div class="form-hint">Used to sign every event (HMAC-SHA256) so you can verify it came from Paylode.</div>' +
+        '</div>' +
+        '<div class="flex" style="gap:6px;margin-left:12px">' +
+          '<button class="btn btn-outline btn-sm" onclick="showWebhookSecretModal(\'reveal\')">Reveal</button>' +
+          '<button class="btn btn-outline btn-sm" id="wh-secret-copy" onclick="copyRevealedSecret()" style="display:none">Copy</button>' +
+          '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="showWebhookSecretModal(\'rotate\')">Rotate</button>' +
+        '</div></div>'
+      : '<div style="text-align:center;padding:24px;color:var(--gray-400)">' +
+          '<div style="font-size:14px;font-weight:500;margin-bottom:8px">No signing secret yet</div>' +
+          '<button class="btn btn-lime btn-sm" onclick="showWebhookSecretModal(\'rotate\')">Generate Secret</button>' +
+        '</div>';
+    var secretHtml =
+      '<div class="card" style="margin-bottom:16px">' +
+        '<div class="card-header"><div class="card-title">Signing Secret</div></div>' +
+        secretBody +
+      '</div>';
+
     var endpointHtml = webhookUrl
       ? '<div class="rev-row" style="padding:14px 0"><div style="flex:1;min-width:0">' +
           '<div class="flex" style="gap:8px;margin-bottom:4px"><span class="badge badge-green">Active</span><span style="font-weight:600;font-size:13px">' + webhookUrl + '</span></div>' +
@@ -3395,6 +3418,7 @@ async function loadMerchWebhooks() {
         '<div class="card-header"><div class="card-title">Configured Endpoint</div></div>' +
         endpointHtml +
       '</div>' +
+      secretHtml +
       '<div class="card"><div class="card-header"><div class="card-title">Supported Events</div></div>' +
         events.map(function(e) { return '<div class="rev-row"><code style="font-size:12px;background:var(--gray-100);padding:2px 8px;border-radius:4px">' + e + '</code><span style="font-size:12px;color:var(--gray-400)">' + ({
           'payment.success':'Payment completed successfully',
@@ -3471,6 +3495,68 @@ async function removeWebhook() {
   var res = await apiFetch('/webhooks/config', { method: 'PUT', body: JSON.stringify({ webhook_url: null }) });
   if (res && res.status) loadMerchWebhooks();
   else alert('Error: ' + ((res && res.message) || 'Failed to remove endpoint'));
+}
+
+// ── Signing secret: step-up reveal / rotate ───────────────────────────────────
+var _revealedWebhookSecret = null;
+
+function showWebhookSecretModal(action) {
+  _revealedWebhookSecret = null;
+  var isRotate = action === 'rotate';
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">' + (isRotate ? 'Rotate Signing Secret' : 'Reveal Signing Secret') + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    (isRotate
+      ? '<div class="warn-box" style="margin-bottom:16px;font-size:12px">&#9888; This generates a NEW secret and immediately invalidates the current one. Update your server before events resume verifying.</div>'
+      : '<div class="info-box" style="margin-bottom:16px;font-size:12px">For your security, confirm your password to reveal the secret.</div>') +
+    '<div class="form-group"><label class="form-label">Password</label>' +
+    '<input class="form-input" id="wh-sec-pw" type="password" placeholder="Your account password"></div>' +
+    '<div class="form-group" id="wh-sec-2fa-group" style="display:none"><label class="form-label">2FA Code</label>' +
+    '<input class="form-input" id="wh-sec-2fa" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code"></div>' +
+    '<div id="wh-sec-alert"></div><div id="wh-sec-result"></div>' +
+    '<div class="flex-between" id="wh-sec-actions">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn ' + (isRotate ? 'btn-lime' : 'btn-primary') + '" id="wh-sec-submit" onclick="submitWebhookSecretAuth(\'' + action + '\')">' + (isRotate ? 'Rotate Secret' : 'Reveal') + '</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function submitWebhookSecretAuth(action) {
+  var pw = (document.getElementById('wh-sec-pw').value || '').trim();
+  var codeEl = document.getElementById('wh-sec-2fa');
+  var code = codeEl ? (codeEl.value || '').trim() : '';
+  var alertEl = document.getElementById('wh-sec-alert');
+  if (!pw) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Password is required</div>'; return; }
+  var btn = document.getElementById('wh-sec-submit');
+  var label = btn.textContent; btn.textContent = 'Verifying...'; btn.disabled = true;
+  var res = await apiFetch('/webhooks/secret/' + action, { method: 'POST', body: JSON.stringify({ password: pw, code: code }) });
+  btn.textContent = label; btn.disabled = false;
+  if (res && res.data && res.data.twofa_required) {
+    document.getElementById('wh-sec-2fa-group').style.display = '';
+    alertEl.innerHTML = '<div class="info-box" style="margin-bottom:12px;font-size:12px">Enter your 2FA code to continue.</div>';
+    return;
+  }
+  if (res && res.status && res.data && res.data.secret) {
+    _revealedWebhookSecret = res.data.secret;
+    alertEl.innerHTML = '';
+    document.getElementById('wh-sec-actions').style.display = 'none';
+    document.getElementById('wh-sec-result').innerHTML =
+      (action === 'rotate' ? '<div class="info-box" style="margin-bottom:8px;font-size:12px">' + ((res.data.message) || 'Secret rotated.') + '</div>' : '') +
+      '<div class="form-group"><label class="form-label">' + (action === 'rotate' ? 'New signing secret' : 'Signing secret') + '</label>' +
+      '<div class="mono" style="font-size:12px;word-break:break-all;background:var(--gray-100);padding:10px;border-radius:6px">' + _revealedWebhookSecret + '</div>' +
+      '<div class="form-hint">Copy it now and store it in your server config.</div></div>' +
+      '<div class="flex-between"><button class="btn btn-outline" onclick="copyRevealedSecret()">Copy</button>' +
+      '<button class="btn btn-primary" onclick="document.getElementById(\'modal\').style.display=\'none\';loadMerchWebhooks()">Done</button></div>';
+    return;
+  }
+  alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + ((res && res.message) || 'Verification failed') + '</div>';
+}
+
+function copyRevealedSecret() {
+  if (!_revealedWebhookSecret) return;
+  navigator.clipboard.writeText(_revealedWebhookSecret)
+    .then(function(){ if (typeof toast === 'function') toast('Signing secret copied'); })
+    .catch(function(){});
 }
 
 // ── USER MANAGEMENT ───────────────────────────────────────────────────────────
