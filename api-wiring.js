@@ -442,6 +442,7 @@ async function viewMerchant(id) {
     '<div class="rev-row"><span class="rev-label">Merchant Code</span><span class="rev-value mono" style="font-size:12px">' + (m.merchantCode || '—') + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">Category</span><span class="rev-value">' + (m.category || '—') + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">KYC Status</span><span class="rev-value">' + statusBadge(m.kycStatus) + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Processing Mode</span><span class="rev-value">' + (m.liveEnabled ? '<span class="badge badge-green">&#9679; LIVE</span>' : '<span class="badge badge-amber">Sandbox — testing only</span>') + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">KYC Tier</span><span class="rev-value">' + (m.kycTier ? 'Tier ' + m.kycTier : '—') + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">Compliance / PEP</span><span class="rev-value">' + _mComplianceBadge(m) + '</span></div>' +
     '<div class="rev-row"><span class="rev-label">Card Scope</span><span class="rev-value">' + (m.cardAcceptanceScope === 'international' ? '<span class="badge badge-blue">International (USD/Mastercard)</span>' : '<span class="badge badge-gray">Domestic (Naira)</span>') + '</span></div>' +
@@ -467,6 +468,9 @@ async function viewMerchant(id) {
         (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')">&#128196; KYC Documents</button>' : '') +
         (canViewApp ? '<button class="btn btn-outline" onclick="loadMerchantApplication(\'' + id + '\')">&#128203; Application Form</button>' : '') +
         (canReview ? '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\';resendSandbox(\'' + id + '\',\'' + nameEsc + '\')">&#128231; Resend Sandbox</button>' : '') +
+        (canManage && m.isActive ? (m.liveEnabled
+          ? '<button class="btn btn-outline" style="color:#b45309;border-color:#f59e0b" onclick="document.getElementById(\'modal\').style.display=\'none\';goLiveMerchant(\'' + id + '\',\'' + nameEsc + '\',false)">Switch to Sandbox</button>'
+          : '<button class="btn btn-lime" onclick="document.getElementById(\'modal\').style.display=\'none\';goLiveMerchant(\'' + id + '\',\'' + nameEsc + '\',true)">&#128640; Go Live</button>') : '') +
         (canReview ? (m.isActive
           ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';suspendMerchant(\'' + id + '\',\'' + nameEsc + '\')">Suspend</button>'
           : '<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="document.getElementById(\'modal\').style.display=\'none\';activateMerchant(\'' + id + '\',\'' + nameEsc + '\')">Activate</button>') : '') +
@@ -811,13 +815,29 @@ async function suspendMerchant(id, name) {
 }
 
 async function activateMerchant(id, name) {
-  if (!confirm('Reactivate ' + name + '? They will be able to process payments again.')) return;
+  if (!confirm('Reactivate ' + name + '? They will regain portal + sandbox access. (Live transactions still require a separate "Go Live".)')) return;
   var res = await apiFetch('/merchants/' + id + '/activate', { method: 'PUT' });
   if (res && res.status) {
     alert(name + ' has been reactivated.');
     loadMerchants();
   } else {
     alert('Error: ' + ((res && res.message) || 'Activate failed'));
+  }
+}
+
+// Flip a merchant between LIVE and SANDBOX. Activation only grants sandbox; this is
+// the explicit switch that lets live keys move real money (collections AND payouts).
+async function goLiveMerchant(id, name, enable) {
+  var msg = enable
+    ? 'Enable LIVE transactions for ' + name + '?\n\nTheir live keys (sk_live/pk_live) will start processing REAL money — both collections and payouts. Only do this once they have finished testing.'
+    : 'Move ' + name + ' back to SANDBOX?\n\nTheir live keys will immediately STOP working. They can keep testing with sandbox (sk_test) keys.';
+  if (!confirm(msg)) return;
+  var res = await apiFetch('/merchants/' + id + '/go-live', { method: 'POST', body: JSON.stringify({ enabled: !!enable }) });
+  if (res && res.status) {
+    alert((res.data && res.data.message) || (enable ? name + ' is now LIVE.' : name + ' moved to Sandbox.'));
+    viewMerchant(id);
+  } else {
+    alert('Error: ' + ((res && res.message) || 'Could not update live status'));
   }
 }
 

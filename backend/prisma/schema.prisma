@@ -169,6 +169,7 @@ model Merchant {
   // SA sets this on the Merchant Routing page each time a merchant funds a rail.
   payoutRailId          String?   @map("payout_rail_id") @db.Uuid
   isActive          Boolean   @default(false) @map("is_active") // false until KYC done
+  liveEnabled       Boolean   @default(false) @map("live_enabled") // false until SA clicks Go-Live — activation != live processing
   webhookUrl        String?   @map("webhook_url")
   webhookSecret     String?   @map("webhook_secret")
   createdAt         DateTime  @default(now()) @map("created_at")
