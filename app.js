@@ -78,6 +78,7 @@ var NAV = {
       {id:'transactions',    icon:'↕', label:'Transactions'    },
       {id:'settlement',      icon:'✓', label:'Settlements'     },
       {id:'wallets',         icon:'◈', label:'Merchant Wallets'},
+      {id:'sa_merchant_funding', icon:'💰', label:'Merchant Funding'},
       {id:'sa_merchant_routing', icon:'🧭', label:'Merchant Routing'},
       {id:'sa_batch_routing',    icon:'🚏', label:'Batch Routing'  },
       {id:'compliance',      icon:'⚖', label:'KYC Review'      },
@@ -221,7 +222,7 @@ var NAV_PERM = {
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
   activity_log:'view_audit_log', sa_connections:'view_audit_log', sa_reconciliation:'view_settlements', merch_reconciliation:'view_settlements',
   sa_collection_wallets:'view_settlements', sa_payouts:'view_payouts',
-  sa_merchant_routing:'view_payouts', sa_batch_routing:'view_payouts',
+  sa_merchant_routing:'view_payouts', sa_batch_routing:'view_payouts', sa_merchant_funding:'view_wallets',
 };
 // Does the logged-in user hold this permission? (SUPER_ADMIN bypasses everything.)
 // Self-healing: a user whose stored permissions predate the view_/edit_ vocab
