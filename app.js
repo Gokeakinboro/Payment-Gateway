@@ -77,10 +77,8 @@ var NAV = {
     { section:'Operations', items:[
       {id:'transactions',    icon:'↕', label:'Transactions'    },
       {id:'settlement',      icon:'✓', label:'Settlements'     },
-      {id:'wallets',         icon:'◈', label:'Merchant Wallets'},
-      {id:'sa_merchant_funding', icon:'💰', label:'Merchant Funding'},
-      {id:'sa_merchant_routing', icon:'🧭', label:'Merchant Routing'},
-      {id:'sa_batch_routing',    icon:'🚏', label:'Batch Routing'  },
+      {id:'wallets',         icon:'◈', label:'Merchant Wallet'  },
+      {id:'sa_merchant_funding', icon:'💰', label:'Merchant Funding & Routing'},
       {id:'compliance',      icon:'⚖', label:'KYC Review'      },
       {id:'deferrals',       icon:'⧗', label:'KYC Docs & Deferrals'},
       {id:'compliance_exceptions', icon:'⚑', label:'Intl / Mastercard Compliance'},
@@ -222,7 +220,7 @@ var NAV_PERM = {
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
   activity_log:'view_audit_log', sa_connections:'view_audit_log', sa_reconciliation:'view_settlements', merch_reconciliation:'view_settlements',
   sa_collection_wallets:'view_settlements', sa_payouts:'view_payouts',
-  sa_merchant_routing:'view_payouts', sa_batch_routing:'view_payouts', sa_merchant_funding:'view_wallets',
+  sa_merchant_funding:'view_wallets',
 };
 // Does the logged-in user hold this permission? (SUPER_ADMIN bypasses everything.)
 // Self-healing: a user whose stored permissions predate the view_/edit_ vocab
@@ -325,6 +323,30 @@ function statusBadge(s) {
 }
 function showModal(html) { document.getElementById('modal-inner').innerHTML = html; document.getElementById('modal').style.display = 'flex'; }
 function closeModal(e)   { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; }
+
+// Transient action feedback. toast(msg, 'success'|'error'|'info'). Every action
+// button should call this so the user always gets confirmation of what happened.
+function toast(msg, type) {
+  try {
+    var host = document.getElementById('toast-host');
+    if (!host) {
+      host = document.createElement('div'); host.id = 'toast-host';
+      host.style.cssText = 'position:fixed;top:18px;right:18px;z-index:99999;display:flex;flex-direction:column;gap:8px;max-width:360px';
+      document.body.appendChild(host);
+    }
+    var colors = { success:'#16a34a', error:'#dc2626', info:'#334155' };
+    var bg = colors[type] || colors.info;
+    var el = document.createElement('div');
+    el.setAttribute('role','status');
+    el.style.cssText = 'background:'+bg+';color:#fff;padding:11px 14px;border-radius:8px;font-size:13px;font-weight:500;'+
+      'box-shadow:0 6px 20px rgba(0,0,0,.18);opacity:0;transform:translateY(-6px);transition:opacity .18s,transform .18s;line-height:1.35';
+    el.textContent = (type === 'error' ? '⚠ ' : type === 'success' ? '✓ ' : '') + String(msg || '');
+    host.appendChild(el);
+    requestAnimationFrame(function(){ el.style.opacity = '1'; el.style.transform = 'translateY(0)'; });
+    setTimeout(function(){ el.style.opacity = '0'; el.style.transform = 'translateY(-6px)'; setTimeout(function(){ el.remove(); }, 220); }, type === 'error' ? 5200 : 3200);
+  } catch (_) { try { alert(msg); } catch (__) {} }
+}
+window.toast = toast;
 
 // Universal modal-close safety net: guarantees EVERY modal is closable and shows a
 // visible X — Escape closes it, and whenever the modal opens, if its content lacks
