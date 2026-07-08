@@ -153,7 +153,13 @@ async function handlePayin(b, res) {
         await autoReverse(b.orderId, r.paid);
       }
     } else if (status === 'failed') {
-      await failPayin({ reference: b.orderId, failureReason: b.errorMsg || 'PalmPay payment failed' });
+      // orderStatus 4 = PalmPay CLOSED/EXPIRED the order (no payment received before it
+      // expired) — distinct from a payment that was attempted and rejected. Give the
+      // merchant a clear reason instead of the generic "payment failed".
+      const reason = String(b.orderStatus) === '4'
+        ? 'Expired — payment not completed'
+        : (b.errorMsg || 'PalmPay payment failed');
+      await failPayin({ reference: b.orderId, failureReason: reason });
     }
     return res.status(200).send('success');
   } catch (e) {
