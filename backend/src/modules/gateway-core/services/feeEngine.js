@@ -203,19 +203,25 @@ function computeFeesForTxn(amount, merchant, rateConfig = null, channel = 'CARD'
   const railRate     = cfg.railRate     != null ? cfg.railRate     : DEFAULT_RAIL_RATE;
   const flatFee      = BigInt(cfg.flatFee || 0);
   const mCap         = BigInt(cfg.merchantCap || 0);
+  const mMin         = BigInt(cfg.merchantMinCharge || 0);
+  const railFlat     = BigInt(cfg.railFlatFee || 0);
   const rCap         = BigInt(cfg.railCap || 0);
+  const rMin         = BigInt(cfg.railMinCharge || 0);
   const aggSplitPct  = Number(cfg.aggSplitPct || 0);
 
-  // Our charge to the customer (+ VAT)
+  // Our charge to the customer (+ VAT): rate×amt + flat, then cap (ceiling), then min (floor).
   let feeRaw = principal * BigInt(Math.round(merchantRate * 1_000_000)) / BASE + flatFee;
   if (mCap > 0n && feeRaw > mCap) feeRaw = mCap;
+  if (mMin > 0n && feeRaw < mMin) feeRaw = mMin;
   const vatOnFee   = feeRaw * vat / BASE;
   const feePlusVat = feeRaw + vatOnFee;
 
-  // Rail cost (+ VAT) — Paylode's cost to move the money. The VAT the rail charges
-  // us is INPUT VAT (recoverable), netted off the output VAT we charge on our fee.
-  let railRaw = principal * BigInt(Math.round(railRate * 1_000_000)) / BASE;
+  // Rail cost (+ VAT) — Paylode's cost to move the money: rate×amt + rail flat, then
+  // cap, then min (supports FLAT-only rail costs). The VAT the rail charges us is
+  // INPUT VAT (recoverable), netted off the output VAT we charge on our fee.
+  let railRaw = principal * BigInt(Math.round(railRate * 1_000_000)) / BASE + railFlat;
   if (rCap > 0n && railRaw > rCap) railRaw = rCap;
+  if (rMin > 0n && railRaw < rMin) railRaw = rMin;
   const vatOnRail   = railRaw * vat / BASE;   // input VAT (rail's VAT to us)
   const railPlusVat = railRaw + vatOnRail;
 
@@ -248,8 +254,8 @@ function computeFeesForTxn(amount, merchant, rateConfig = null, channel = 'CARD'
  * see resolvePayinRateConfig).
  *
  * @param amount  face amount / principal (kobo) — what the merchant is selling for
- * @param cfg     { merchantRate, merchantCap, flatFee, vatRate,
- *                  railRate, railCap, railVatRate, aggSplitPct }
+ * @param cfg     { merchantRate, merchantCap, flatFee, merchantMinCharge, vatRate,
+ *                  railRate, railCap, railFlatFee, railMinCharge, railVatRate, aggSplitPct }
  */
 function computeFeesForPayin(amount, cfg = {}) {
   const BASE = 1_000_000n;
@@ -260,21 +266,28 @@ function computeFeesForPayin(amount, cfg = {}) {
   const railRate     = Number(cfg.railRate || 0);
   const flatFee      = BigInt(cfg.flatFee || 0);
   const mCap         = BigInt(cfg.merchantCap || 0);
+  const mMin         = BigInt(cfg.merchantMinCharge || 0);
+  const railFlat     = BigInt(cfg.railFlatFee || 0);
   const rCap         = BigInt(cfg.railCap || 0);
+  const rMin         = BigInt(cfg.railMinCharge || 0);
   const aggSplitPct  = Number(cfg.aggSplitPct || 0);
 
-  // Our fee on the FACE amount (+ VAT), capped.
+  // Our fee on the FACE amount (+ VAT): rate×face + flat, then cap (ceiling), then
+  // min charge (floor) — e.g. VA 1% capped ₦1500 with a ₦12 minimum.
   let feeRaw = principal * BigInt(Math.round(merchantRate * 1_000_000)) / BASE + flatFee;
   if (mCap > 0n && feeRaw > mCap) feeRaw = mCap;
+  if (mMin > 0n && feeRaw < mMin) feeRaw = mMin;
   const vatOnFee   = feeRaw * vatM / BASE;
   const feePlusVat = feeRaw + vatOnFee;
 
   // Gross the customer transfers = face + our fee + VAT.
   const chargeAmount = principal + feePlusVat;
 
-  // PalmPay's cost is charged on the GROSS collected (+ VAT), capped.
-  let railRaw = chargeAmount * BigInt(Math.round(railRate * 1_000_000)) / BASE;
+  // The rail's cost on the GROSS collected (+ VAT): rate×gross + rail flat, then cap,
+  // then min — supports FLAT-only rail costs (e.g. Parallex VA ₦8/call, rate 0).
+  let railRaw = chargeAmount * BigInt(Math.round(railRate * 1_000_000)) / BASE + railFlat;
   if (rCap > 0n && railRaw > rCap) railRaw = rCap;
+  if (rMin > 0n && railRaw < rMin) railRaw = rMin;
   const railPlusVat = railRaw + (railRaw * vatR / BASE);
 
   const merchantSettlement = principal;   // merchant receives the full face amount
@@ -352,14 +365,17 @@ async function resolvePayinRateConfig(prisma, merchant, railId = null, product =
   const rc = mOv || plat;
   const rr = railRows && railRows[0];
   return {
-    merchantRate: rc ? Number(rc.rate)    : Number(merchant.processingRate || 0.015),
-    flatFee:      rc ? Number(rc.flatFee) : 0,
-    merchantCap:  rc ? Number(rc.cap)     : 0,
-    vatRate:      rc && rc.vatRate != null ? Number(rc.vatRate) : VAT_RATE,
-    railRate:     rr ? Number(rr.rate)    : 0,
-    railCap:      rr ? Number(rr.cap)     : 0,
-    railVatRate:  rr && rr.vat_rate != null ? Number(rr.vat_rate) : VAT_RATE,
-    aggSplitPct:  merchant.aggregator ? Number(merchant.aggregator.revenueSplitPct) : 0,
+    merchantRate:      rc ? Number(rc.rate)      : Number(merchant.processingRate || 0.015),
+    flatFee:           rc ? Number(rc.flatFee)   : 0,
+    merchantCap:       rc ? Number(rc.cap)       : 0,
+    merchantMinCharge: rc ? Number(rc.minCharge) : 0,
+    vatRate:           rc && rc.vatRate != null ? Number(rc.vatRate) : VAT_RATE,
+    railRate:          rr ? Number(rr.rate)       : 0,
+    railFlatFee:       rr ? Number(rr.flat_fee)   : 0,
+    railCap:           rr ? Number(rr.cap)        : 0,
+    railMinCharge:     rr ? Number(rr.min_charge) : 0,
+    railVatRate:       rr && rr.vat_rate != null ? Number(rr.vat_rate) : VAT_RATE,
+    aggSplitPct:       merchant.aggregator ? Number(merchant.aggregator.revenueSplitPct) : 0,
   };
 }
 
