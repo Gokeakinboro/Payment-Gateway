@@ -4,15 +4,15 @@
 // payment_rails.float_balance; the SA routing panel + payout guard read it.
 const { prisma } = require('../../../utils/db');
 const { logger } = require('../../../utils/logger');
-const palmpay = require('./palmpayService');
+const { payoutAdapterForName } = require('./payoutRailAdapter');
 const { checkRailBalanceAndAlert } = require('./railHealth');
 
 // Map a rail to an adapter that reports OUR balance with it, or null if the rail
-// has no balance API yet. Add new rails here as they're integrated.
+// has no balance API yet / isn't configured. Rails are registered centrally in
+// payoutRailAdapter.js (PalmPay, Parallex, …).
 function adapterFor(rail) {
-  const name = (rail.name || '').toLowerCase();
-  if (name === 'palmpay' && palmpay.isConfigured()) return palmpay.getBalance;
-  return null;
+  const adapter = payoutAdapterForName(rail && rail.name);
+  return adapter ? adapter.getBalance : null;
 }
 
 // Pull the live balance for one rail and persist it. Returns BigInt kobo, or

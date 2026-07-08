@@ -102,18 +102,27 @@ async function applyPayoutResult({ orderId, orderNo, sessionId, orderStatus, err
 // the result. Only rails with a query adapter are polled (PalmPay today). Legs are
 // given a grace period so we don't race a webhook that's about to arrive.
 async function reconcileSentPayouts({ olderThanMs = 120000, limit = 100 } = {}) {
-  const palmpay = require('./palmpayService');
+  const { payoutAdapterForName } = require('./payoutRailAdapter');
   const cutoff = new Date(Date.now() - olderThanMs);
   const legs = await prisma.$queryRaw`
-    SELECT rd.rail_order_id, pr.name AS rail_name
-    FROM rail_disbursements rd JOIN payment_rails pr ON rd.rail_id = pr.id
+    SELECT rd.rail_order_id, rd.amount, pr.name AS rail_name,
+           pi.account_number, pi.bank_code
+    FROM rail_disbursements rd
+    JOIN payment_rails pr ON rd.rail_id = pr.id
+    JOIN payout_items pi ON rd.payout_item_id = pi.id
     WHERE rd.status = 'sent' AND rd.updated_at < ${cutoff}
     ORDER BY rd.updated_at ASC LIMIT ${limit}`;
   let checked = 0, settled = 0, failed = 0;
   for (const leg of legs) {
-    if (!/palmpay/i.test(leg.rail_name || '') || !palmpay.isConfigured()) continue;
+    const adapter = payoutAdapterForName(leg.rail_name);
+    if (!adapter || !adapter.queryPayoutResult) continue;   // rail has no query API / not configured
     let r;
-    try { r = await palmpay.queryPayoutResult({ orderId: leg.rail_order_id }); }
+    try {
+      r = await adapter.queryPayoutResult({
+        orderId: leg.rail_order_id, amount: leg.amount,
+        accountNumber: leg.account_number, bankCode: leg.bank_code,
+      });
+    }
     catch (e) { logger.error({ err: e, orderId: leg.rail_order_id }, 'payout recon query failed'); continue; }
     if (!r || !r.ok) continue;                       // query itself failed → retry next cycle
     checked++;
