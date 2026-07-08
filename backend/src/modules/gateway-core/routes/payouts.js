@@ -10,6 +10,7 @@ const { logAudit } = require('../../../services/auditService');
 const { notifyRailIncident, recordRailResult, checkRailBalanceAndAlert } = require('../services/railHealth');
 const { BANKS, resolveBank } = require('../../../data/nibssBanks');
 const { syncRailFloat } = require('../services/railFloat');
+const { logger } = require('../../../utils/logger');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -616,6 +617,15 @@ router.post('/batches', requireAuthOrApiKey,
         wallet_balance_after: koboToNaira(walletAfterTotal),
         fee_rate_pct:         (feeRate * 100).toFixed(2) + '%',
       }, `Payout received — ${items.length} beneficiaries, ₦${koboToNaira(totalAmount).toLocaleString('en-NG')} (fee: ₦${koboToNaira(totalFee).toLocaleString('en-NG')})`);
+
+      // Funded + a rail is chosen → fire IMMEDIATELY (async, after the response).
+      // Future-dated batches are left for the scheduled-payout worker to fire when due.
+      // A dispatch that can't complete (rail down / no float) stays 'needs_routing' →
+      // the merchant/SA exception queue.
+      if (!isScheduled) {
+        dispatchBatch({ batchId, actorId: req.user.id, ip: req.ip })
+          .catch(e => { if (!e || !e._client) logger.error({ err: e, batchId }, 'immediate payout dispatch failed'); });
+      }
     } catch (e) { next(e); }
   }
 );
@@ -1039,20 +1049,17 @@ router.get('/admin/routing-queue', requireAuth, requireSuperAdmin, async (req, r
   } catch (e) { next(e); }
 });
 
-// ── POST /api/v1/payouts/admin/batches/:id/route — SA disburses a queued batch ─
-// The per-rail split was decided at batch creation: each payout_item carries its
-// rail_id and the merchant's per-rail wallet was already debited there. Routing
-// just EXECUTES that split — debit the rail float + disburse each leg. To change
-// the rail mix, SA rebalances the merchant's funds first (POST /admin/wallet/
-// rebalance) and recreates. No allocations body needed. Guarded against float + cap.
-router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (req, res, next) => {
-  try {
-    const batchId = req.params.id;
-
+// ── Core payout dispatch — shared by the SA /route endpoint, the immediate auto-
+// fire on batch creation, and the scheduled-payout worker. Disburses a
+// 'needs_routing' batch through its route rail. Returns { batch_id, status, settled,
+// pending, failed }, or throws Error with ._client for client-facing stops (no float
+// / rail down / cap / unassigned). Never holds a DB tx across the external rail call;
+// on a leg failure it refunds float + merchant wallet.
+async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, ip = null }) {
     const batchRows = await prisma.$queryRaw`SELECT * FROM payout_batches WHERE id = ${batchId}::uuid`;
     const batch = batchRows[0];
-    if (!batch) return notFound(res, 'Batch');
-    if (batch.status !== 'needs_routing') return fail(res, `Batch is not awaiting routing (status: ${batch.status})`);
+    if (!batch) throw Object.assign(new Error('Batch not found'), { _client: true, _code: 'NOT_FOUND' });
+    if (batch.status !== 'needs_routing') throw Object.assign(new Error(`Batch is not awaiting routing (status: ${batch.status})`), { _client: true });
 
     // Items carry the merchant's route rail (set at creation). SA may OVERRIDE the
     // rail for this one batch here (per-batch routing): body { rail_id } forces the
@@ -1060,12 +1067,11 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
     const items = await prisma.$queryRaw`
       SELECT id, amount, bank_code, rail_id FROM payout_items WHERE batch_id = ${batchId}::uuid ORDER BY amount DESC`;
     if (items.some(it => !it.rail_id))
-      return fail(res, 'This batch has unassigned items — it predates rail routing. Recreate the payout.');
-    const overrideRailId = (req.body && req.body.rail_id) || null;
+      throw Object.assign(new Error('This batch has unassigned items — it predates rail routing. Recreate the payout.'), { _client: true });
     if (overrideRailId) {
       const orr = await prisma.paymentRail.findUnique({ where: { id: overrideRailId }, select: { id: true, name: true, status: true, payoutEnabled: true } });
-      if (!orr) return notFound(res, 'Override rail');
-      if (orr.status !== 'LIVE' || !orr.payoutEnabled) return fail(res, `${orr.name} is not a live payout rail`, 'RAIL_NOT_LIVE');
+      if (!orr) throw Object.assign(new Error('Override rail not found'), { _client: true, _code: 'NOT_FOUND' });
+      if (orr.status !== 'LIVE' || !orr.payoutEnabled) throw Object.assign(new Error(`${orr.name} is not a live payout rail`), { _client: true, _code: 'RAIL_NOT_LIVE' });
       items.forEach(it => { it.rail_id = overrideRailId; });   // route the whole batch through the chosen rail
     }
     const byRailId = new Map();
@@ -1085,7 +1091,7 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
     const railById = Object.fromEntries(rails.map(r => [r.id, r]));
     for (const t of used) {
       const r = railById[t.rail_id];
-      if (!r || !r.payoutEnabled) return fail(res, 'A selected rail is not payout-enabled.');
+      if (!r || !r.payoutEnabled) throw Object.assign(new Error('A selected rail is not payout-enabled.'), { _client: true, _code: 'RAIL_NOT_LIVE' });
     }
 
     await prisma.$transaction(async (tx) => {
@@ -1208,12 +1214,37 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
         updated_at      = NOW()
       WHERE pb.id = ${batchId}::uuid`;
 
-    await logAudit(req.user.id, 'PAYOUT_BATCH_DISBURSED', 'payout_batches', batchId, {},
-      { rails_used: used.length, settled: nOk, pending: nPending, failed: nFail, status: finalStatus }, null, req.ip);
-    ok(res, { batch_id: batchId, status: finalStatus, settled: nOk, pending: nPending, failed: nFail },
-      `Payout ${finalStatus} — ${nOk} settled${nPending ? `, ${nPending} processing` : ''}${nFail ? `, ${nFail} failed (refunded)` : ''}`);
+    await logAudit(actorId, 'PAYOUT_BATCH_DISBURSED', 'payout_batches', batchId, {},
+      { rails_used: used.length, settled: nOk, pending: nPending, failed: nFail, status: finalStatus, auto: !actorId }, null, ip).catch(() => {});
+    return { batch_id: batchId, status: finalStatus, settled: nOk, pending: nPending, failed: nFail };
+}
+
+// Auto-fire DUE payouts: dispatch every 'needs_routing' batch whose scheduled_at is
+// due (immediate batches carry scheduled_at = creation time). A client-stop (no float
+// / rail down / cap) leaves the batch in needs_routing → the merchant/SA exception queue.
+async function autoDispatchDuePayouts({ limit = 25 } = {}) {
+  const due = await prisma.$queryRaw`
+    SELECT id FROM payout_batches
+    WHERE status = 'needs_routing' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+    ORDER BY scheduled_at ASC NULLS FIRST LIMIT ${Number(limit)}`;
+  let fired = 0, held = 0;
+  for (const b of due) {
+    try { await dispatchBatch({ batchId: b.id }); fired++; }
+    catch (e) { held++; if (!e || !e._client) logger.error({ err: e, batchId: b.id }, 'auto-dispatch payout failed'); }
+  }
+  return { considered: due.length, fired, held };
+}
+
+// ── POST /api/v1/payouts/admin/batches/:id/route — SA manual disburse (exceptions) ─
+// Kept for the EXCEPTION queue (batches the auto-dispatcher HELD: rail down / no
+// float) and per-batch rail override. Normal payouts auto-fire on creation (see the
+// dispatch worker), so SA no longer releases each one.
+router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const r = await dispatchBatch({ batchId: req.params.id, overrideRailId: (req.body && req.body.rail_id) || null, actorId: req.user.id, ip: req.ip });
+    ok(res, r, `Payout ${r.status} — ${r.settled} settled${r.pending ? `, ${r.pending} processing` : ''}${r.failed ? `, ${r.failed} failed (refunded)` : ''}`);
   } catch (e) {
-    if (e && e._client) return fail(res, e.message);
+    if (e && e._client) return fail(res, e.message, e._code);
     next(e);
   }
 });
@@ -1497,3 +1528,7 @@ router.get('/wallet/ledger', requireAuth, async (req, res, next) => {
 });
 
 module.exports = router;
+// Exposed for the scheduled/auto-dispatch worker (jobs.js) — dispatch is the same
+// money code the SA /route endpoint uses.
+module.exports.dispatchBatch = dispatchBatch;
+module.exports.autoDispatchDuePayouts = autoDispatchDuePayouts;

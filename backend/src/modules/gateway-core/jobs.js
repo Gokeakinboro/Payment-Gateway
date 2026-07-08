@@ -63,6 +63,23 @@ function startCoreJobs({ logger }) {
     logger.error({ err: e }, '  ✗ settlement firing job failed to start (continuing)');
   }
 
+  // Auto-dispatch DUE payouts — normal payouts auto-fire (no manual SA release); this
+  // also fires SCHEDULED payouts when their time arrives + backstops any immediate
+  // batch whose post-response fire didn't complete. HELD batches (rail down / no float)
+  // stay in the exception queue for SA. Worker 0 only.
+  try {
+    const { autoDispatchDuePayouts } = require('./routes/payouts');
+    const PAYOUT_MS = Number(process.env.PAYOUT_DISPATCH_MS || 30 * 1000); // 30s
+    const run = () => autoDispatchDuePayouts()
+      .then(r => { if (r.fired || r.held) logger.info(r, 'auto-dispatched due payouts'); })
+      .catch(e => logger.error({ err: e }, 'payout auto-dispatch failed'));
+    setTimeout(run, 30000);          // once shortly after boot
+    setInterval(run, PAYOUT_MS);     // then on a schedule
+    logger.info(`  Payout auto-dispatch every ${Math.round(PAYOUT_MS / 1000)}s (worker 0)`);
+  } catch (e) {
+    logger.error({ err: e }, '  ✗ payout auto-dispatch failed to start (continuing)');
+  }
+
   // Daily settlement GENERATION for the prior NIGERIAN day, at 00:01 Africa/Lagos, so
   // settlements populate without a manual "Run Batch". The day boundary is Lagos-keyed
   // (see settlementProcess.js). Idempotent (skips days already settled) → the boot
