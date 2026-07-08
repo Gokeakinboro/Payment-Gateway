@@ -259,6 +259,46 @@ router.post('/submit', async (req, res, next) => {
       if (missing.length) return fail(res, 'Settlement bank details are required to onboard: ' + missing.join(', ').replace(/_/g, ' '), 'SETTLEMENT_BANK_REQUIRED');
     }
 
+    // Compulsory KYC identity fields — enforced SERVER-SIDE so the API can't be
+    // bypassed (mirrors the onboarding form): NAME, ADDRESS, PHONE, EMAIL, BVN, NIN.
+    // A company has no BVN/NIN — they're collected per director/owner (principals).
+    if (form_type === 'merchant') {
+      const miss = (obj, fields) => fields.filter((f) => !String((obj || {})[f] || '').trim());
+      const idOk = (v) => /^\d{11}$/.test(String(v || '').trim());
+      if (applicant_type === 'natural') {
+        const np = (data && data.np_identity) || {};
+        const m = miss(np, ['first_name', 'surname', 'address', 'phone', 'email', 'bvn', 'nin']);
+        if (m.length) return fail(res, 'Required fields missing: ' + m.join(', ').replace(/_/g, ' '), 'REQUIRED_FIELDS_MISSING');
+        if (!idOk(np.bvn)) return fail(res, 'A valid 11-digit BVN is required.', 'INVALID_BVN');
+        if (!idOk(np.nin)) return fail(res, 'A valid 11-digit NIN is required.', 'INVALID_NIN');
+      } else if (applicant_type === 'entity') {
+        const ent = (data && data.entity_details) || {};
+        const m = miss(ent, ['registered_name', 'registered_address', 'business_email', 'business_phone']);
+        if (m.length) return fail(res, 'Required company fields missing: ' + m.join(', ').replace(/_/g, ' '), 'REQUIRED_FIELDS_MISSING');
+        if (!Array.isArray(principals) || !principals.length)
+          return fail(res, 'At least one director/owner (with BVN & NIN) is required.', 'PRINCIPAL_REQUIRED');
+        for (let i = 0; i < principals.length; i++) {
+          const p = principals[i] || {};
+          const pm = miss(p, ['first_name', 'surname', 'address', 'phone', 'email']);
+          if (pm.length) return fail(res, `Director/owner #${i + 1} is missing: ` + pm.join(', ').replace(/_/g, ' '), 'REQUIRED_FIELDS_MISSING');
+          if (!idOk(p.bvn)) return fail(res, `Director/owner #${i + 1} needs a valid 11-digit BVN.`, 'INVALID_BVN');
+          if (!idOk(p.nin)) return fail(res, `Director/owner #${i + 1} needs a valid 11-digit NIN.`, 'INVALID_NIN');
+        }
+      }
+    }
+
+    // Same compulsory identity fields for aggregator onboarding (institution form).
+    if (form_type === 'aggregator') {
+      const miss = (obj, fields) => fields.filter((f) => !String((obj || {})[f] || '').trim());
+      const idOk = (v) => /^\d{11}$/.test(String(v || '').trim());
+      const inst = (data && data.institution) || {};
+      const contact = (data && data.contact) || {};
+      const m = miss(inst, ['business_name', 'address', 'bvn', 'nin']).concat(miss(contact, ['mobile', 'business_email']));
+      if (m.length) return fail(res, 'Required fields missing: ' + m.join(', ').replace(/_/g, ' '), 'REQUIRED_FIELDS_MISSING');
+      if (!idOk(inst.bvn)) return fail(res, 'A valid 11-digit BVN is required.', 'INVALID_BVN');
+      if (!idOk(inst.nin)) return fail(res, 'A valid 11-digit NIN is required.', 'INVALID_NIN');
+    }
+
     const reference = genReference();
     const destDir = path.join(UPLOAD_DIR, reference);
 
