@@ -1249,48 +1249,94 @@ router.post('/admin/batches/:id/route', requireAuth, requireSuperAdmin, async (r
   }
 });
 
+// ── Reverse an un-dispatched (needs_routing) batch — shared by SA cancel + merchant
+// self-cancel. REVERSES the full deduction (beneficiary + fee + VAT) to the
+// merchant's pooled wallet (route-rail row else largest), REVERSAL ledger entry,
+// marks batch + queued items 'reversed'. Never contacts the rail (no float debited
+// pre-dispatch). scopeMerchantId (when set) enforces ownership (merchant self-cancel).
+async function reverseBatch({ batchId, scopeMerchantId = null, actorId = null, ip = null, by = 'admin' }) {
+  const rows = await prisma.$queryRaw`SELECT * FROM payout_batches WHERE id = ${batchId}::uuid`;
+  const batch = rows[0];
+  if (!batch) throw Object.assign(new Error('Batch not found'), { _client: true, _code: 'NOT_FOUND' });
+  if (scopeMerchantId && batch.merchant_id !== scopeMerchantId)
+    throw Object.assign(new Error('This payout does not belong to your account.'), { _client: true, _code: 'FORBIDDEN' });
+  if (batch.status !== 'needs_routing')
+    throw Object.assign(new Error(`Only an un-sent payout (scheduled or awaiting dispatch) can be cancelled — this one is '${batch.status}'.`), { _client: true, _code: 'NOT_CANCELLABLE' });
+
+  const refund = BigInt(batch.total_amount) + BigInt(batch.total_fee) + BigInt(batch.total_vat);
+  await prisma.$transaction(async (tx) => {
+    const pooledRow = await tx.$queryRaw`SELECT COALESCE(SUM(balance),0) AS b FROM merchant_wallets WHERE merchant_id = ${batch.merchant_id}::uuid`;
+    const pooled = BigInt(pooledRow[0].b);
+    const upd = await tx.$queryRaw`
+      UPDATE merchant_wallets SET balance = balance + ${refund}, updated_at = NOW()
+      WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id = ${batch.merchant_id}::uuid
+                  ORDER BY (rail_id = ${batch.rail_id}::uuid) DESC, balance DESC LIMIT 1)
+      RETURNING id`;
+    if (!upd.length) throw Object.assign(new Error('No wallet to refund into.'), { _client: true });
+    await tx.$executeRaw`
+      INSERT INTO wallet_ledger
+        (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
+      VALUES
+        (${batch.merchant_id}::uuid, ${batch.rail_id}::uuid, 'REVERSAL', ${refund}, ${pooled}, ${pooled + refund}, ${batch.batch_ref},
+         ${'Payout batch ' + batch.batch_ref + ' cancelled — reversed to wallet'}, ${actorId}::uuid, NOW())`;
+    await tx.$executeRaw`UPDATE payout_items SET status = 'reversed', failure_reason = ${'Batch cancelled by ' + by} WHERE batch_id = ${batchId}::uuid AND status IN ('queued','pending')`;
+    await tx.$executeRaw`UPDATE payout_batches SET status = 'reversed', updated_at = NOW() WHERE id = ${batchId}::uuid`;
+  });
+  await logAudit(actorId, by === 'merchant' ? 'PAYOUT_BATCH_CANCELLED_BY_MERCHANT' : 'PAYOUT_BATCH_CANCELLED', 'payout_batches', batchId,
+    { status: 'needs_routing' }, { status: 'reversed', refunded: Number(refund) }, null, ip).catch(() => {});
+  return { batch_id: batchId, status: 'reversed', refunded: Number(refund), refunded_naira: koboToNaira(refund) };
+}
+
 // ── POST /api/v1/payouts/admin/batches/:id/cancel — SA cancel a queued batch ──
-// Clean counterpart to /route: cancels a batch that has NOT yet been dispatched
-// (status 'needs_routing') and REVERSES the full deduction (beneficiary + fee +
-// VAT) taken from the merchant's pooled wallet at creation — crediting the route-
-// rail row if present else their largest row, and writing a REVERSAL ledger entry.
-// Never contacts the rail (no rail float was debited before dispatch). Marks the
-// batch + its queued items 'reversed'.
 router.post('/admin/batches/:id/cancel', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
-    const batchId = req.params.id;
-    const rows = await prisma.$queryRaw`SELECT * FROM payout_batches WHERE id = ${batchId}::uuid`;
-    const batch = rows[0];
-    if (!batch) return notFound(res, 'Batch');
-    if (batch.status !== 'needs_routing')
-      return fail(res, `Only an un-dispatched batch (awaiting routing) can be cancelled — this one is '${batch.status}'.`, 'NOT_CANCELLABLE');
-
-    const refund = BigInt(batch.total_amount) + BigInt(batch.total_fee) + BigInt(batch.total_vat);
-    await prisma.$transaction(async (tx) => {
-      const pooledRow = await tx.$queryRaw`SELECT COALESCE(SUM(balance),0) AS b FROM merchant_wallets WHERE merchant_id = ${batch.merchant_id}::uuid`;
-      const pooled = BigInt(pooledRow[0].b);
-      // Pooled refund → the route-rail wallet row if it exists, else the largest.
-      const upd = await tx.$queryRaw`
-        UPDATE merchant_wallets SET balance = balance + ${refund}, updated_at = NOW()
-        WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id = ${batch.merchant_id}::uuid
-                    ORDER BY (rail_id = ${batch.rail_id}::uuid) DESC, balance DESC LIMIT 1)
-        RETURNING id`;
-      if (!upd.length) throw Object.assign(new Error('Merchant has no wallet to refund into.'), { _client: true });
-      await tx.$executeRaw`
-        INSERT INTO wallet_ledger
-          (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
-        VALUES
-          (${batch.merchant_id}::uuid, ${batch.rail_id}::uuid, 'REVERSAL', ${refund}, ${pooled}, ${pooled + refund}, ${batch.batch_ref},
-           ${'Payout batch ' + batch.batch_ref + ' cancelled — reversed to wallet'}, ${req.user.id}::uuid, NOW())`;
-      await tx.$executeRaw`UPDATE payout_items SET status = 'reversed', failure_reason = 'Batch cancelled by admin' WHERE batch_id = ${batchId}::uuid AND status IN ('queued','pending')`;
-      await tx.$executeRaw`UPDATE payout_batches SET status = 'reversed', updated_at = NOW() WHERE id = ${batchId}::uuid`;
-    });
-    await logAudit(req.user.id, 'PAYOUT_BATCH_CANCELLED', 'payout_batches', batchId,
-      { status: 'needs_routing' }, { status: 'reversed', refunded: Number(refund) }, req.body.reason || null, req.ip);
-    ok(res, { batch_id: batchId, status: 'reversed', refunded: Number(refund), refunded_naira: koboToNaira(refund) },
-      `Batch cancelled — ₦${koboToNaira(refund).toLocaleString('en-NG')} reversed to the merchant's wallet.`);
+    const r = await reverseBatch({ batchId: req.params.id, actorId: req.user.id, ip: req.ip, by: 'admin' });
+    ok(res, r, `Batch cancelled — ₦${r.refunded_naira.toLocaleString('en-NG')} reversed to the merchant's wallet.`);
   } catch (e) {
-    if (e && e._client) return fail(res, e.message);
+    if (e && e._client) return fail(res, e.message, e._code);
+    next(e);
+  }
+});
+
+// ── GET /api/v1/payouts/queue — MERCHANT: their own pending/scheduled payouts ──
+// Shows un-sent payouts (status 'needs_routing') with a merchant-facing reason —
+// scheduled (future) or processing (awaiting dispatch). Rails are NEVER exposed.
+router.get('/queue', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const rows = await prisma.$queryRaw`
+      SELECT id, batch_ref, total_amount, total_fee, total_vat, total_items, scheduled_at, created_at
+      FROM payout_batches WHERE merchant_id = ${merchantId}::uuid AND status = 'needs_routing'
+      ORDER BY scheduled_at ASC NULLS FIRST, created_at ASC`;
+    const now = Date.now();
+    const out = rows.map(b => {
+      const isScheduled = b.scheduled_at && new Date(b.scheduled_at).getTime() > now + 1000;
+      return {
+        batch_id: b.id, batch_ref: b.batch_ref,
+        total_amount:   koboToNaira(b.total_amount),
+        total_deducted: koboToNaira(BigInt(b.total_amount) + BigInt(b.total_fee) + BigInt(b.total_vat)),
+        total_items: b.total_items, scheduled_at: b.scheduled_at, created_at: b.created_at,
+        queue_status: isScheduled ? 'scheduled' : 'processing',
+        reason: isScheduled
+          ? `Scheduled — sends ${new Date(b.scheduled_at).toLocaleString('en-NG')}`
+          : 'Processing — will send shortly',
+        cancellable: true,
+      };
+    });
+    ok(res, out);
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/payouts/batches/:id/cancel — MERCHANT: cancel own un-sent payout ──
+router.post('/batches/:id/cancel', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const r = await reverseBatch({ batchId: req.params.id, scopeMerchantId: merchantId, actorId: req.user.id, ip: req.ip, by: 'merchant' });
+    ok(res, r, `Payout cancelled — ₦${r.refunded_naira.toLocaleString('en-NG')} returned to your wallet.`);
+  } catch (e) {
+    if (e && e._client) return fail(res, e.message, e._code);
     next(e);
   }
 });
