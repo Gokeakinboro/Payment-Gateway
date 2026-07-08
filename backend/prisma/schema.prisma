@@ -168,6 +168,10 @@ model Merchant {
   // Per-merchant payout route override (null = use the global default rail).
   // SA sets this on the Merchant Routing page each time a merchant funds a rail.
   payoutRailId          String?   @map("payout_rail_id") @db.Uuid
+  // Per-merchant PAY-IN (collection) rail override (null = use the global cheapest
+  // LIVE rail). Set only for controlled routing (e.g. a single test merchant → a new
+  // rail in sandbox) so live merchants are NEVER affected. See feeEngine.resolvePayinRail.
+  payinRailId           String?   @map("payin_rail_id") @db.Uuid
   isActive          Boolean   @default(false) @map("is_active") // false until KYC done
   liveEnabled       Boolean   @default(false) @map("live_enabled") // false until SA clicks Go-Live — activation != live processing
   webhookUrl        String?   @map("webhook_url")
@@ -195,6 +199,7 @@ model Merchant {
   payoutBatches  PayoutBatch[]
   payoutItems    PayoutItem[]
   payoutRail     PaymentRail?   @relation("MerchantPayoutRoute", fields: [payoutRailId], references: [id])
+  payinRail      PaymentRail?   @relation("MerchantPayinRoute", fields: [payinRailId], references: [id])
 
   @@index([kycStatus])
   @@index([isActive])
@@ -256,6 +261,7 @@ model PaymentRail {
   transactions Transaction[]
   wallets      MerchantWallet[]
   routedMerchants Merchant[]  @relation("MerchantPayoutRoute")
+  payinMerchants  Merchant[]  @relation("MerchantPayinRoute")
 
   @@map("payment_rails")
 }
