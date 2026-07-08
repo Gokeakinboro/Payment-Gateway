@@ -22,11 +22,16 @@ async function handleInflow(req, res) {
   const reference = b.referenceID || b.referenceId || null;
   const expected = process.env.PARALLEX_VA_WEBHOOK_SECRET || '';
 
-  // Verify the shared secret. If we haven't stored one yet (webhook not registered),
-  // reject rather than trust an unverified inflow.
-  if (!expected || !parallex.verifyInflow(b, expected)) {
-    logger.warn({ referenceID: reference }, 'Parallex inflow: bad or missing secret — rejected');
-    return res.status(401).json({ responseCode: '34', responseDescription: 'Authentication Failed.' });
+  // Verify the shared secret when we have one. In scaffold/sandbox mode (no secret
+  // set — Parallex returned an empty webHookSecret), accept + warn (mirrors PalmPay).
+  // Once PARALLEX_VA_WEBHOOK_SECRET is set, verification is ENFORCED.
+  if (expected) {
+    if (!parallex.verifyInflow(b, expected)) {
+      logger.warn({ referenceID: reference }, 'Parallex inflow: bad secret — rejected');
+      return res.status(401).json({ responseCode: '34', responseDescription: 'Authentication Failed.' });
+    }
+  } else {
+    logger.warn({ referenceID: reference }, 'Parallex inflow: no PARALLEX_VA_WEBHOOK_SECRET set — accepting in SCAFFOLD mode (set the secret to enforce)');
   }
 
   const status = String(b.status || '').toUpperCase();
