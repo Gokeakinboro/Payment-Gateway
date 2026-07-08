@@ -46,6 +46,7 @@ const MODULES = [
   // ── Provider webhooks (specific sub-paths — must stay AFTER /webhooks) ────
   { name: 'youverify-webhook', basePath: '/api/v1/webhooks/youverify', load: () => require('../routes/youverify-webhook'), enabledEnv: 'MODULE_YOUVERIFY_WEBHOOK_ENABLED', category: 'webhook' },
   { name: 'palmpay-webhook',   basePath: '/api/v1/webhooks/palmpay',   load: () => require('./gateway-core/routes/palmpay-webhook'),   enabledEnv: 'MODULE_PALMPAY_WEBHOOK_ENABLED',   category: 'money' },
+  { name: 'parallex-webhook',  basePath: '/api/v1/webhooks/parallex',  load: () => require('./gateway-core/routes/parallex-webhook'),  enabledEnv: 'MODULE_PARALLEX_WEBHOOK_ENABLED', category: 'money' },
 
   // ── More core ────────────────────────────────────────────────────────────
   { name: 'deferrals',     basePath: '/api/v1/deferrals',      load: () => require('./gateway-core/routes/deferrals'),    enabledEnv: 'MODULE_DEFERRALS_ENABLED',     category: 'core' },

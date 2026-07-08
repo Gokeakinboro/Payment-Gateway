@@ -26,7 +26,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const crypto = require('crypto');
 
-const BASE_URL      = (process.env.PARALLEX_VA_BASE_URL || 'http://testapi.parallexbank.com/VirtualAccount/V2/VirtualAccount').replace(/\/$/, '');
+const BASE_URL      = (process.env.PARALLEX_VA_BASE_URL || 'https://parallex-apim.azure-api.net/VirtualAccount/v1/VirtualAccount').replace(/\/$/, '');
 const USERNAME      = process.env.PARALLEX_VA_USERNAME || '';
 const PASSWORD      = process.env.PARALLEX_VA_PASSWORD || '';
 const SUBKEY        = process.env.PARALLEX_VA_SUBKEY || '';
