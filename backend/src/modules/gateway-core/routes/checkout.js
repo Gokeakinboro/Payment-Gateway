@@ -72,7 +72,7 @@ router.get('/:reference', async (req, res, next) => {
     let amountToPay = Number(txn.amount);
     if (!txn.isSandbox && palmpay.isConfigured()) {
       try {
-        const rail = await resolvePayinRail(prisma);
+        const rail = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', txn.merchant);
         const cfg  = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id);
         amountToPay = Number(computeFeesForPayin(BigInt(txn.amount), cfg).chargeAmount);
       } catch (e) { /* fall back to face amount */ }
@@ -172,7 +172,7 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
     // Pay-in pricing (PAYER-FUNDED, config-driven). Pick the collecting rail (cheapest
     // LIVE rail with a collection cost), cost against it, and stamp it on the txn.
     // Customer pays the GROSS = face + our fee + VAT; the VA is minted for that gross.
-    const rail   = await resolvePayinRail(prisma);
+    const rail   = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', txn.merchant);
     const payCfg = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id);
     const fees   = computeFeesForPayin(BigInt(txn.amount), payCfg);
     const chargeKobo = Number(fees.chargeAmount);
@@ -662,7 +662,7 @@ router.post('/:reference/charge/palmpay', async (req, res, next) => {
 
     // PAYER-FUNDED (same as bank transfer): the customer's wallet is charged the GROSS
     // (face + our fee + VAT); the merchant settles the full face. Config-driven rail.
-    const rail   = await resolvePayinRail(prisma);
+    const rail   = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', txn.merchant);
     const payCfg = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id);
     const fees   = computeFeesForPayin(BigInt(txn.amount), payCfg);
 
