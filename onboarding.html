@@ -1606,11 +1606,13 @@ function validateStep(stepId) {
   }
 
   if (stepId === 'institution') {
-    const required = ['business_name','business_type','rc_number','address','city','state','account_number','account_name','bank_name','bvn','expected_monthly_vol'];
+    const required = ['business_name','business_type','rc_number','address','city','state','account_number','account_name','bank_name','bvn','nin','expected_monthly_vol'];
     for (const f of required) {
       const el = document.querySelector(`[name="${f}"]`);
       if (!el?.value) { showAlert(`Please complete all required fields. Missing: ${f.replace(/_/g,' ')}`); el?.classList.add('err'); el?.focus(); return false; }
     }
+    if (!/^\d{11}$/.test(document.querySelector('[name="bvn"]')?.value||'')) { showAlert('BVN must be 11 digits.'); return false; }
+    if (!/^\d{11}$/.test(document.querySelector('[name="nin"]')?.value||'')) { showAlert('NIN must be 11 digits.'); return false; }
     if (!document.querySelector('[name="is_pep"]:checked')) { showAlert('Please indicate whether you are a Politically Exposed Person.'); return false; }
   }
 
