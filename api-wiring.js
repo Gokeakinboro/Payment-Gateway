@@ -4983,16 +4983,32 @@ async function loadPayouts() {
   const el = document.getElementById('main-content');
   el.innerHTML = loading();
   try {
-    const [wallet, batches, banks] = await Promise.all([
+    const [wallet, batches, banks, queue] = await Promise.all([
       apiFetch('/payouts/wallet'),
       apiFetch('/payouts/batches'),
       apiFetch('/payouts/banks'),
+      apiFetch('/payouts/queue'),
     ]);
     const w = wallet?.data || {};
     const batchList = batches?.data || [];
     const bankList  = banks?.data  || [];
+    const queueList = (queue && queue.data) || [];
     const bankMap   = {};
     bankList.forEach(b => bankMap[b.bank_code] = b.bank_name);
+    const queueCard = queueList.length ? `
+    <div class="card" style="margin-bottom:16px;border-left:3px solid #f59e0b">
+      <div class="card-header"><div class="card-title">Pending &amp; scheduled payouts <span class="badge badge-amber">${queueList.length}</span></div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Reference</th><th>Amount (deducted)</th><th>Items</th><th>Status</th><th></th></tr></thead>
+        <tbody>${queueList.map(q=>`<tr>
+          <td class="mono" style="font-size:11px">${q.batch_ref}</td>
+          <td style="font-weight:600">${fmtMajor(q.total_deducted,'NGN')}</td>
+          <td>${q.total_items}</td>
+          <td><span class="badge ${q.queue_status==='scheduled'?'badge-blue':'badge-amber'}">${q.queue_status==='scheduled'?'Scheduled':'Processing'}</span><div style="font-size:11px;color:var(--gray-500);margin-top:2px">${q.reason}</div></td>
+          <td>${q.cancellable?`<button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="cancelMyPayout('${q.batch_id}')">Cancel</button>`:''}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>` : '';
 
     el.innerHTML = `
     <div class="page-header flex-between">
@@ -5006,6 +5022,8 @@ async function loadPayouts() {
         <button class="btn btn-lime" onclick="showPayoutUpload()">+ New Payout Batch</button>
       </div>
     </div>
+
+    ${queueCard}
 
     <div class="card" style="margin-bottom:16px">
       <div class="card-header"><div class="card-title">Payout Batches</div></div>
@@ -5030,6 +5048,14 @@ async function loadPayouts() {
 
     <div id="payout-form-area"></div>`;
   } catch(e){ el.innerHTML = errorBox('Failed to load payouts: '+e.message); }
+}
+
+// Merchant self-cancel of a pending/scheduled payout → full amount back to wallet.
+async function cancelMyPayout(batchId) {
+  if (!confirm('Cancel this pending payout?\n\nThe full amount (including fee + VAT) is returned to your wallet.')) return;
+  var res = await apiFetch('/payouts/batches/' + batchId + '/cancel', { method: 'POST', body: JSON.stringify({}) });
+  if (res && res.status) { alert(res.message || 'Payout cancelled — returned to your wallet.'); loadPayouts(); }
+  else alert('Error: ' + ((res && res.message) || 'Could not cancel payout'));
 }
 
 async function showPayoutUpload() {
