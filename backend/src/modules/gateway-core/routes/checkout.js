@@ -378,7 +378,7 @@ router.post('/:reference/charge/card', async (req, res, next) => {
     // (NOT hardcoded). Defaults to Interswitch when no rail is set; a configured rail
     // with no card adapter yet (e.g. MPGS) is reported cleanly instead of charging. ──
     const cardProduct = txn.currency === 'USD' ? 'CARD_INTL' : 'CARD_LOCAL';
-    const proc = await resolveCardProcessor(prisma, cardProduct);
+    const proc = await resolveCardProcessor(prisma, cardProduct, txn.merchant);
     if (!proc.adapter) {
       await prisma.transaction.update({
         where: { id: txn.id },
@@ -519,7 +519,7 @@ router.post('/:reference/charge/card/otp', async (req, res, next) => {
 
     // Stay on the same processor that started the charge (resolved from config).
     const otpProduct = txn.currency === 'USD' ? 'CARD_INTL' : 'CARD_LOCAL';
-    const otpProc = await resolveCardProcessor(prisma, otpProduct);
+    const otpProc = await resolveCardProcessor(prisma, otpProduct, txn.merchant);
     if (!otpProc.adapter) return fail(res, 'Card payments are temporarily unavailable.', 'NO_CARD_PROCESSOR', 503);
 
     let iswResp;

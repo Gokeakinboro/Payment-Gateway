@@ -1877,6 +1877,75 @@ async function saveDefaultRoute() {
   else toast((res&&res.message)||'Could not update default','error');
 }
 
+// ── SA: RAIL ROUTING MATRIX (per-channel: CARDS / VA / PAYOUT) ─────────────────
+// SA-chosen GLOBAL default rail per channel + per-merchant per-channel override.
+// Routing is a traffic-TYPE decision (not just cost) — SA MUST set each default.
+var ROUTING_CHANNELS = [
+  { key:'CARDS',  label:'Cards' },
+  { key:'VA',     label:'Virtual Account' },
+  { key:'PAYOUT', label:'Payout' },
+];
+async function loadRailRoutingMatrix() {
+  var host = document.getElementById('main-content'); if (!host) return;
+  host.innerHTML = loading();
+  try {
+    var results = await Promise.all([ apiFetch('/routing/matrix'), apiFetch('/routing/merchants') ]);
+    var mtx = (results[0] && results[0].data) || {};
+    var rails = mtx.rails || [];
+    var defByCh = {}; (mtx.channels||[]).forEach(function(c){ defByCh[c.channel] = c; });
+    var merchants = (results[1] && results[1].data && results[1].data.merchants) || [];
+
+    // eligible-rail <option>s for a channel (LIVE first; non-live flagged).
+    var optsFor = function(channel, selId){
+      return rails.filter(function(r){ return r.eligible && r.eligible[channel]; })
+        .map(function(r){ return '<option value="'+r.id+'"'+(selId===r.id?' selected':'')+'>'+r.name+(r.status!=='LIVE'?' ('+r.status+')':'')+'</option>'; }).join('');
+    };
+
+    // Channel-defaults card.
+    var defRows = ROUTING_CHANNELS.map(function(c){
+      var d = defByCh[c.key] || {};
+      var cur = d.rail_name ? '<strong>'+d.rail_name+'</strong>' : '<span style="color:#d97706;font-weight:600">not set — SA must choose</span>';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--gray-100)">'+
+        '<div style="width:150px;font-weight:600">'+c.label+'</div>'+
+        '<div style="flex:1;font-size:12px;color:var(--gray-500)">Default: '+cur+'</div>'+
+        '<select id="cd-'+c.key+'" class="input" style="font-size:12px;padding:5px 8px;min-width:170px"><option value="">— choose rail —</option>'+optsFor(c.key, d.rail_id)+'</select>'+
+        '<button class="btn btn-outline btn-sm" onclick="saveChannelDefault(\''+c.key+'\')">Set default</button>'+
+      '</div>';
+    }).join('');
+
+    // Per-merchant per-channel override table.
+    var mrows = merchants.map(function(m){
+      var cells = ROUTING_CHANNELS.map(function(c){
+        var ov = (m.overrides||{})[c.key];
+        var defName = (defByCh[c.key]||{}).rail_name;
+        return '<td><select class="input" style="font-size:11px;padding:3px 5px;min-width:140px" onchange="saveMerchantChannelRoute(\''+m.merchant_id+'\',\''+c.key+'\',this)">'+
+          '<option value="">Default'+(defName?' ('+defName+')':'')+'</option>'+optsFor(c.key, ov?ov.rail_id:'')+'</select></td>';
+      }).join('');
+      return '<tr><td style="font-weight:500;font-size:12px">'+(m.business_name||'—')+
+        '<div class="mono" style="font-size:10px;color:var(--gray-400)">'+(m.merchant_code||'')+'</div></td>'+cells+'</tr>';
+    }).join('');
+
+    host.innerHTML =
+      '<div class="page-header"><div class="page-title">Rail Routing Matrix</div><div class="page-desc">Choose the <strong>default rail per channel</strong> (Cards / Virtual Account / Payout) and <strong>override per merchant per channel</strong>. Routing is a traffic-type decision, not just cost — there is no automatic cheapest-rail fallback. Rails are internal and never shown to merchants.</div></div>' +
+      '<div class="card" style="margin-bottom:14px"><div style="font-size:11px;color:var(--gray-400);text-transform:uppercase;margin-bottom:4px">Channel defaults (all merchants without an override)</div>'+defRows+'</div>' +
+      '<div class="card"><div class="table-wrap"><table><thead><tr><th>Merchant</th><th>Cards</th><th>Virtual Account</th><th>Payout</th></tr></thead><tbody>' +
+        (mrows||'<tr><td colspan="4" style="text-align:center;color:var(--gray-400);padding:24px">No active merchants</td></tr>') +
+      '</tbody></table></div></div>';
+  } catch(e) { host.innerHTML = errorBox('Failed to load rail routing matrix: ' + e.message); }
+}
+async function saveChannelDefault(ch) {
+  var sel = document.getElementById('cd-'+ch); if (!sel || !sel.value) return toast('Pick a rail first','error');
+  if (!confirm('Set the DEFAULT '+ch+' rail for ALL merchants without an override?')) return;
+  var res = await apiFetch('/routing/defaults/'+ch, { method:'PUT', body: JSON.stringify({ rail_id: sel.value }) });
+  if (res && res.success !== false) { toast(res.message||'Default updated','success'); loadRailRoutingMatrix(); }
+  else toast((res&&res.message)||'Could not update default','error');
+}
+async function saveMerchantChannelRoute(mid, ch, sel) {
+  var res = await apiFetch('/routing/merchant/'+mid+'/'+ch, { method:'PUT', body: JSON.stringify({ rail_id: sel.value || null }) });
+  if (res && res.success !== false) { toast(res.message||'Route updated','success'); }
+  else { toast((res&&res.message)||'Could not update','error'); loadRailRoutingMatrix(); }
+}
+
 // Release a queued batch (per-batch rail override). Lives on the Merchant Wallet page.
 async function releaseBatch(batchId) {
   var sel = document.getElementById('br-'+batchId);
@@ -4828,6 +4897,7 @@ function loadPageData(page) {
     case 'sa_collection_wallets': loadCollectionWallets(); break;
     case 'sa_payouts':        loadPayoutsBreakdown(); break;
     case 'sa_merchant_funding': loadMerchantFunding(); break;
+    case 'sa_rail_routing':     loadRailRoutingMatrix(); break;
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
     case 'merch_settlements':   loadMerchSettlements(); break;

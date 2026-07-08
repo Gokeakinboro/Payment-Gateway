@@ -36,6 +36,7 @@ const MODULES = [
   { name: 'checkout',        basePath: '/api/v1/checkout',             load: () => require('./gateway-core/routes/checkout'),          enabledEnv: 'MODULE_CHECKOUT_ENABLED',        category: 'money' },
   { name: 'onboarding',      basePath: '/api/v1/onboarding',           load: () => require('../routes/onboarding'),        enabledEnv: 'MODULE_ONBOARDING_ENABLED',      category: 'core' },
   { name: 'payouts',         basePath: '/api/v1/payouts',              load: () => require('./gateway-core/routes/payouts'),           enabledEnv: 'MODULE_PAYOUTS_ENABLED',         category: 'money' },
+  { name: 'routing',         basePath: '/api/v1/routing',              load: () => require('./gateway-core/routes/rail-routing'),      enabledEnv: 'MODULE_ROUTING_ENABLED',         category: 'money' },
   { name: 'users',           basePath: '/api/v1/users',                load: () => require('../routes/users'),             enabledEnv: 'MODULE_USERS_ENABLED',           category: 'core' },
   { name: 'chargebacks',     basePath: '/api/v1/chargebacks',          load: () => require('./gateway-core/routes/chargebacks'),       enabledEnv: 'MODULE_CHARGEBACKS_ENABLED',     category: 'money' },
   { name: 'compliance',      basePath: '/api/v1/compliance',           load: () => require('../routes/compliance'),        enabledEnv: 'MODULE_COMPLIANCE_ENABLED',      category: 'core' },

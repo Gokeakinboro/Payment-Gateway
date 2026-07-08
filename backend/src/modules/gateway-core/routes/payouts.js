@@ -11,6 +11,7 @@ const { notifyRailIncident, recordRailResult, checkRailBalanceAndAlert } = requi
 const { BANKS, resolveBank } = require('../../../data/nibssBanks');
 const { syncRailFloat } = require('../services/railFloat');
 const { logger } = require('../../../utils/logger');
+const railRouting = require('../services/railRouting');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -41,24 +42,15 @@ async function remainingDailyCap(tx, railId, cap) {
   return rem > 0n ? rem : 0n;
 }
 
-// The DISBURSING rail for a merchant = their route override (merchants.payout_rail_id)
-// else the single global default (payment_rails.is_default_payout). Must be LIVE +
-// payout-enabled. Returns { rail_id, rail_name, daily_value_cap } or null.
+// The DISBURSING rail for a merchant = their PAYOUT route from the routing matrix
+// (per-merchant override → SA-chosen PAYOUT default; railRouting.js). Must be
+// payout-enabled. Returns { rail_id, rail_name, daily_value_cap } or null (no
+// route configured → caller leaves the batch in needs_routing for SA).
 async function resolveRouteRail(tx, merchantId) {
-  const rows = await tx.$queryRaw`
-    SELECT COALESCE(mr.id, dr.id)                                   AS rail_id,
-           COALESCE(mr.name, dr.name)                               AS rail_name,
-           COALESCE(mr.daily_value_cap, dr.daily_value_cap)         AS daily_value_cap,
-           COALESCE(mr.status, dr.status)::text                     AS status,
-           COALESCE(mr.payout_enabled, dr.payout_enabled)           AS payout_enabled
-    FROM merchants m
-    LEFT JOIN payment_rails mr ON mr.id = m.payout_rail_id
-    LEFT JOIN payment_rails dr ON dr.is_default_payout = true
-    WHERE m.id = ${merchantId}::uuid`;
-  const r = rows[0];
-  if (!r || !r.rail_id) return null;
-  if (r.status !== 'LIVE' || !r.payout_enabled) return null;
-  return { rail_id: r.rail_id, rail_name: r.rail_name, daily_value_cap: r.daily_value_cap };
+  const rail = await railRouting.resolveRail(tx, 'PAYOUT', { id: merchantId });
+  if (!rail || !rail.payout_enabled) return null;
+  const cap = await tx.$queryRaw`SELECT daily_value_cap FROM payment_rails WHERE id = ${rail.id}::uuid`;
+  return { rail_id: rail.id, rail_name: rail.name, daily_value_cap: cap[0] ? cap[0].daily_value_cap : null };
 }
 
 // ── Dual-auth middleware: accepts JWT Bearer token OR sk_live_/sk_test_ API key ──
@@ -159,7 +151,8 @@ router.post('/wallet/fund', requireAuth, requireSuperAdmin,
         const rr = await prisma.paymentRail.findUnique({ where: { id: req.body.route_rail_id }, select: { id: true, name: true, status: true, payoutEnabled: true } });
         if (!rr) return fail(res, 'Unknown route rail.');
         if (rr.status !== 'LIVE' || !rr.payoutEnabled) return fail(res, `${rr.name} is not a live payout rail — cannot route to it.`, 'RAIL_NOT_LIVE');
-        await prisma.merchant.update({ where: { id: merchant_id }, data: { payoutRailId: rr.id } });
+        // Write the PAYOUT route through the routing matrix (also syncs payout_rail_id).
+        await railRouting.setMerchantRoute(prisma, merchant_id, 'PAYOUT', rr.id, req.user.id);
         merchant.payoutRailId = rr.id;
       }
       if (!merchant.payoutRailId) {
@@ -936,14 +929,12 @@ router.put('/admin/merchant-routing/:merchantId', requireAuth, requireSuperAdmin
     const { rail_id } = req.body || {};
     const m = await prisma.merchant.findUnique({ where: { id: req.params.merchantId }, select: { id: true } });
     if (!m) return notFound(res, 'Merchant');
-    if (rail_id) {
-      const rail = await prisma.paymentRail.findUnique({ where: { id: rail_id }, select: { id: true, name: true, status: true, payoutEnabled: true } });
-      if (!rail) return notFound(res, 'Rail');
-      if (rail.status !== 'LIVE' || !rail.payoutEnabled) return fail(res, `${rail.name} is not a live payout rail`, 'RAIL_NOT_LIVE');
-    }
-    await prisma.merchant.update({ where: { id: m.id }, data: { payoutRailId: rail_id || null } });
+    await railRouting.setMerchantRoute(prisma, m.id, 'PAYOUT', rail_id || null, req.user.id);
     ok(res, { merchant_id: m.id, rail_id: rail_id || null }, rail_id ? 'Merchant route updated' : 'Merchant route reset to default');
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (e && e._client) return fail(res, e.message, e._code);
+    next(e);
+  }
 });
 
 // PUT — change the GLOBAL default route for all merchants. body { rail_id } — any
@@ -952,15 +943,13 @@ router.put('/admin/default-rail', requireAuth, requireSuperAdmin, async (req, re
   try {
     const { rail_id } = req.body || {};
     if (!rail_id) return fail(res, 'A rail is required', 'RAIL_REQUIRED');
-    const rail = await prisma.paymentRail.findUnique({ where: { id: rail_id }, select: { id: true, name: true, status: true, payoutEnabled: true } });
-    if (!rail) return notFound(res, 'Rail');
-    if (rail.status !== 'LIVE' || !rail.payoutEnabled) return fail(res, `${rail.name} is not a live payout rail`, 'RAIL_NOT_LIVE');
-    await prisma.$transaction([
-      prisma.paymentRail.updateMany({ where: { isDefaultPayout: true }, data: { isDefaultPayout: false } }),
-      prisma.paymentRail.update({ where: { id: rail_id }, data: { isDefaultPayout: true } }),
-    ]);
-    ok(res, { rail_id, name: rail.name }, `Default payout route set to ${rail.name}`);
-  } catch (e) { next(e); }
+    // Set the PAYOUT channel default via the matrix (also syncs is_default_payout).
+    const r = await railRouting.setChannelDefault(prisma, 'PAYOUT', rail_id, req.user.id);
+    ok(res, { rail_id, name: r.rail_name }, `Default payout route set to ${r.rail_name}`);
+  } catch (e) {
+    if (e && e._client) return fail(res, e.message, e._code);
+    next(e);
+  }
 });
 
 // ── POST /api/v1/payouts/admin/rails/:id/sync-float — SA refreshes OUR balance ─
