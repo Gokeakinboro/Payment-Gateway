@@ -13,6 +13,7 @@ const { computeFeesForTxn, channelToServiceType, computeFeesForPayin, resolvePay
 const { resolveCardProcessor } = require('../services/cardRouter');
 const compliance = require('../../../services/complianceService');
 const palmpay = require('../services/palmpayService');
+const parallex = require('../services/parallexService');
 const { finalizePayinSuccess } = require('../services/payinFinalize');
 const { sendCustomerReceipt } = require('../services/receiptEmail');
 
@@ -134,6 +135,20 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
         expires_at:     displayExp,
       });
     }
+    // Cached Parallex VA (same behaviour as the PalmPay cache above).
+    const pxCachedVa = txn.metadata?.parallex_va_no;
+    const pxOrderExp = txn.metadata?.parallex_va_order_expires_at;
+    if (pxCachedVa && pxOrderExp && new Date(pxOrderExp) > new Date()) {
+      const displayExp = new Date(Math.min(Date.now() + 15 * 60 * 1000, new Date(pxOrderExp).getTime())).toISOString();
+      return ok(res, {
+        account_number: pxCachedVa,
+        account_name:   txn.metadata.parallex_va_name || ('PAYLODE/' + txn.merchantId.slice(0, 8).toUpperCase()),
+        bank_name:      'Parallex Bank',
+        amount:         Number(txn.metadata?.payin?.charge ?? txn.amount),
+        reference:      txn.reference,
+        expires_at:     displayExp,
+      });
+    }
 
     // ── SANDBOX / not-yet-configured: deterministic stub VA (no PalmPay call) ──
     if (txn.isSandbox || !palmpay.isConfigured()) {
@@ -166,6 +181,49 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
     // window to the customer (a slightly-late transfer still settles via webhook).
     const ORDER_TTL_MS   = 30 * 60 * 1000;   // real PalmPay order life (expireSeconds 1800)
     const DISPLAY_TTL_MS = 15 * 60 * 1000;   // customer-facing countdown
+
+    // ── Parallex VA rail — used ONLY when the resolved pay-in rail is Parallex AND
+    // the adapter is configured; otherwise the default PalmPay path below runs. The
+    // Parallex INFLOW webhook (keyed by referenceId = txn.reference) finalizes it.
+    if (rail && /parallex/i.test(rail.name || '') && parallex.isConfigured()) {
+      let va;
+      try {
+        va = await parallex.createTimedAccount({
+          firstName:     (txn.merchant.businessName || 'Customer').slice(0, 50),
+          lastName:      'Payment',
+          amountKobo:    chargeKobo,            // customer transfers the gross
+          referenceId:   txn.reference,
+          expiryMinutes: 30,
+          feeBearer:     'Customer',
+        });
+      } catch (e) {
+        return fail(res, 'Could not generate a bank-transfer account. Please try again.', 'PARALLEX_ERROR', 502);
+      }
+      if (!va.ok || !va.accountNumber)
+        return fail(res, va.reason || 'Bank transfer is temporarily unavailable', 'PARALLEX_DECLINED');
+      const pxOrderExpiresAt = new Date(Date.now() + ORDER_TTL_MS).toISOString();
+      await prisma.transaction.update({
+        where: { id: txn.id },
+        data: {
+          channel: 'BANK_TRANSFER', railId: rail.id,
+          metadata: { ...txn.metadata,
+            method:                       'parallex_va',
+            parallex_va_no:               va.accountNumber,
+            parallex_va_name:             va.accountName,
+            parallex_va_order_expires_at: pxOrderExpiresAt,
+            payin: payinMetaFrom(fees) },
+        },
+      });
+      return ok(res, {
+        account_number: va.accountNumber,
+        account_name:   va.accountName || ('PAYLODE/' + txn.merchantId.slice(0, 8).toUpperCase()),
+        bank_name:      'Parallex Bank',
+        amount:         chargeKobo,
+        reference:      txn.reference,
+        expires_at:     new Date(Date.now() + DISPLAY_TTL_MS).toISOString(),
+      });
+    }
+
     let order;
     try {
       order = await palmpay.createBankTransferOrder({
