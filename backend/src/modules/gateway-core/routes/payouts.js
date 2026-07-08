@@ -1142,8 +1142,8 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     // Never hold a DB transaction open across an external HTTP call. On failure we
     // refund BOTH our rail float AND the merchant's wallet for that item, and mark
     // the item failed. rail_fee/sessionId are read live from the rail response.
-    const palmpay = require('../services/palmpayService');
-    const railAdapter = (name) => (/palmpay/i.test(name || '') ? palmpay : null);
+    const { payoutAdapterForName } = require('../services/payoutRailAdapter');
+    const railAdapter = (name) => payoutAdapterForName(name);
     const legs = await prisma.$queryRaw`
       SELECT rd.id AS leg_id, rd.rail_id, rd.amount, rd.rail_cost, rd.rail_vat, rd.rail_order_id,
              pi.id AS item_id, pi.account_number, pi.account_name, pi.bank_code, pi.narration,
