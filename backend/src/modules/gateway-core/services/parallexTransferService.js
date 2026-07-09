@@ -124,8 +124,11 @@ async function getBalance() {
 // ── Bank list & name enquiry ──────────────────────────────────────────────────
 async function getBanks() {
   const r = await call('GET', '/api/ThirdPartyTransfer/GetBanks');
-  const banks = Array.isArray(r) ? r : (r && r.data) || [];
-  return { ok: Array.isArray(r) || codeOf(r) === '00', banks, raw: r };
+  // Transfer wraps the list under `banks` (VA-style `data`/`data.banks` and a bare
+  // array are handled as fallbacks). Each row: { institutionCode, institutionName, cbnCode }.
+  const banks = Array.isArray(r) ? r
+    : (r && (r.banks || (r.data && (r.data.banks || r.data)))) || [];
+  return { ok: banks.length > 0 || codeOf(r) === '00', banks, raw: r };
 }
 // GET /NameEnquiry → { responseCode, accountName, requestId }. requestId doubles as
 // the nameEnquirySessionID required by InterbankTransfer (TODO-CONFIRM with Parallex).
