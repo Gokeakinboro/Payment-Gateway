@@ -1143,13 +1143,20 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     // refund BOTH our rail float AND the merchant's wallet for that item, and mark
     // the item failed. rail_fee/sessionId are read live from the rail response.
     const palmpay = require('../services/palmpayService');
+    const { firePayoutWebhook } = require('../services/payoutSettle');
     const railAdapter = (name) => (/palmpay/i.test(name || '') ? palmpay : null);
     const legs = await prisma.$queryRaw`
       SELECT rd.id AS leg_id, rd.rail_id, rd.amount, rd.rail_cost, rd.rail_vat, rd.rail_order_id,
-             pi.id AS item_id, pi.account_number, pi.account_name, pi.bank_code, pi.narration,
+             pi.id AS item_id, pi.account_number, pi.account_name, pi.bank_code, pi.bank_name, pi.narration,
              pi.item_fee, pi.item_vat
       FROM rail_disbursements rd JOIN payout_items pi ON rd.payout_item_id = pi.id
       WHERE rd.batch_id = ${batchId}::uuid AND rd.status = 'pending'`;
+    // Beneficiary/reference fields for the merchant payout webhook (batch is loaded above).
+    const hookLeg = (leg) => ({
+      batch_ref: batch.batch_ref, merchant_id: batch.merchant_id, amount: leg.amount,
+      account_number: leg.account_number, account_name: leg.account_name,
+      bank_code: leg.bank_code, bank_name: leg.bank_name, narration: leg.narration,
+    });
     let nOk = 0, nFail = 0, nPending = 0;
     for (const leg of legs) {
       const rail = railById[leg.rail_id];
@@ -1177,6 +1184,7 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         await prisma.$executeRaw`UPDATE payout_items SET status='success', provider_ref=${r.providerRef || null}, processed_at=NOW() WHERE id=${leg.item_id}::uuid`;
         nOk++;
         await recordRailResult(rail, { ok: true });   // accepted+settled → reset the rail's fail streak
+        firePayoutWebhook(hookLeg(leg), 'payout.success', { orderNo: r.providerRef, sessionId: sess });
       } else if (r.ok && (os === '' || os === '1' || os === '0')) {   // ACCEPTED, in flight
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='sent', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
         await prisma.$executeRaw`UPDATE payout_items SET status='processing', provider_ref=${r.providerRef || null} WHERE id=${leg.item_id}::uuid`;
@@ -1200,6 +1208,7 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         // threshold, or immediately if the rail signals a low/insufficient balance.
         await recordRailResult(rail, { ok: false, reason, isLowBalance: /insufficient|balance|fund|limit/i.test(String(reason)) },
           { railId: leg.rail_id, railName: rail && rail.name, merchant: batch.merchant_id });
+        firePayoutWebhook(hookLeg(leg), 'payout.failed', { orderNo: r.providerRef, sessionId: sess, errorMsg: reason });
       }
     }
     // Batch is terminal only once nothing is still in flight; pending → 'processing'.
