@@ -600,6 +600,16 @@ router.post('/:reference/confirm', async (req, res, next) => {
                       merchant_settlement: Number(fees.merchantSettlement) },
         },
       });
+      // Fire the payment.success webhook (sandbox) — mirrors the sandbox card path;
+      // without this, sandbox VA / bank-transfer confirms marked SUCCESS but never
+      // notified the merchant (they couldn't test their pay-in webhook integration).
+      if (merchant.webhookUrl) {
+        dispatchWebhook(merchant.id, 'payment.success', {
+          reference: txn.reference, status: 'SUCCESS', channel, sandbox: true,
+          principal: Number(txn.amount), charge_amount: Number(fees.chargeAmount),
+          merchant_settlement: Number(fees.merchantSettlement), fee: Number(fees.feePlusVat),
+        }).catch(() => {});
+      }
       sendCustomerReceipt(txn.reference);
       return ok(res, {
         status: 'SUCCESS', reference: txn.reference,
