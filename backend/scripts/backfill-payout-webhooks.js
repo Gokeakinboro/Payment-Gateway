@@ -47,6 +47,8 @@ function payoutPayload(leg) {
 async function main() {
   console.log(`[backfill] payout.success — window=${DAYS}d limit=${LIMIT}${MERCHANT ? ` merchant=${MERCHANT}` : ''}${DRY ? ' (DRY-RUN)' : ''}`);
 
+  const cutoff = new Date(Date.now() - DAYS * 24 * 60 * 60 * 1000);
+
   // Successfully-settled payout legs in the window.
   const legs = await prisma.$queryRaw`
     SELECT rd.merchant_id, rd.amount, rd.rail_order_no, rd.rail_session_id,
@@ -56,7 +58,7 @@ async function main() {
     JOIN payout_items pi ON rd.payout_item_id = pi.id
     JOIN payout_batches pb ON rd.batch_id = pb.id
     WHERE rd.status = 'success'
-      AND rd.settled_at >= NOW() - make_interval(days => ${DAYS})
+      AND rd.settled_at >= ${cutoff}
     ORDER BY rd.settled_at ASC
     LIMIT ${LIMIT}`;
 
