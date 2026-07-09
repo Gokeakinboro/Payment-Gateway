@@ -14,6 +14,28 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const { prisma } = require('../../../utils/db');
 const { logger } = require('../../../utils/logger');
+const { dispatchWebhook } = require('../../../services/webhookService');
+
+// Fire a merchant webhook for a terminal payout leg (payout.success | payout.failed).
+// Fire-and-forget (dispatchWebhook no-ops when the merchant has no webhook URL, and
+// swallows its own errors). Call ONLY when the leg actually transitioned to terminal
+// (guarded by the caller) so a retried webhook / overlapping poll can't duplicate it.
+function firePayoutWebhook(leg, event, { orderNo = null, sessionId = null, errorMsg = null } = {}) {
+  const payload = {
+    reference:      leg.batch_ref,                 // the merchant's payout batch reference
+    status:         event === 'payout.success' ? 'SUCCESS' : 'FAILED',
+    amount:         Number(leg.amount),            // beneficiary amount (kobo)
+    account_number: leg.account_number,
+    account_name:   leg.account_name || null,
+    bank_code:      leg.bank_code,
+    bank_name:      leg.bank_name || null,
+    narration:      leg.narration || null,
+    provider_ref:   orderNo || null,               // rail order number
+    session_id:     sessionId || null,
+  };
+  if (event === 'payout.failed') payload.failure_reason = errorMsg || 'Rail reported failure';
+  dispatchWebhook(leg.merchant_id, event, payload).catch(() => {});
+}
 
 // PalmPay orderStatus → our leg status. 2 = success; 1/0 = still processing (null,
 // no state change); anything else = failed. (Confirmed against the PalmPay portal.)
@@ -46,8 +68,12 @@ async function rollupBatch(batchId) {
 async function applyPayoutResult({ orderId, orderNo, sessionId, orderStatus, errorMsg, source = 'webhook' }) {
   const legs = await prisma.$queryRaw`
     SELECT rd.id, rd.payout_item_id, rd.batch_id, rd.rail_id, rd.merchant_id, rd.status,
-           rd.amount, rd.rail_cost, rd.rail_vat, pi.item_fee, pi.item_vat
-    FROM rail_disbursements rd JOIN payout_items pi ON rd.payout_item_id = pi.id
+           rd.amount, rd.rail_cost, rd.rail_vat, pi.item_fee, pi.item_vat,
+           pi.account_number, pi.account_name, pi.bank_code, pi.bank_name, pi.narration,
+           pb.batch_ref
+    FROM rail_disbursements rd
+    JOIN payout_items pi ON rd.payout_item_id = pi.id
+    JOIN payout_batches pb ON rd.batch_id = pb.id
     WHERE rd.rail_order_id = ${orderId}`;
   if (!legs.length) { logger.warn({ orderId, source }, 'payout result: no matching leg'); return { matched: false, status: null }; }
   const leg = legs[0];
@@ -62,13 +88,15 @@ async function applyPayoutResult({ orderId, orderNo, sessionId, orderStatus, err
     WHERE id = ${leg.id}::uuid`;
 
   if (status === 'success') {
-    await prisma.$executeRaw`
+    // Guarded transition → notify EXACTLY ONCE, only from an in-flight state.
+    const flippedOk = await prisma.$queryRaw`
       UPDATE rail_disbursements SET status='success', settled_at=NOW(), updated_at=NOW()
-      WHERE id=${leg.id}::uuid AND status IN ('pending','sent')`;
+      WHERE id=${leg.id}::uuid AND status IN ('pending','sent') RETURNING id`;
     await prisma.$executeRaw`
       UPDATE payout_items SET status='success', provider_ref=${orderNo || null}, processed_at=NOW()
       WHERE id=${leg.payout_item_id}::uuid AND status IN ('queued','processing')`;
     await rollupBatch(leg.batch_id);
+    if (flippedOk.length) firePayoutWebhook(leg, 'payout.success', { orderNo, sessionId });
   } else if (status === 'failed') {
     // Guarded transition → refund EXACTLY ONCE, only from an in-flight state.
     const flipped = await prisma.$queryRaw`
@@ -92,6 +120,7 @@ async function applyPayoutResult({ orderId, orderNo, sessionId, orderStatus, err
         provider_ref=${orderNo || null}, processed_at=NOW()
       WHERE id=${leg.payout_item_id}::uuid AND status IN ('queued','processing')`;
     await rollupBatch(leg.batch_id);
+    if (flipped.length) firePayoutWebhook(leg, 'payout.failed', { orderNo, sessionId, errorMsg });
   }
   // status null → still processing: recon keys recorded above, no state change.
   return { matched: true, status };
@@ -128,4 +157,4 @@ async function reconcileSentPayouts({ olderThanMs = 120000, limit = 100 } = {}) 
   return { stuck: legs.length, checked, settled, failed };
 }
 
-module.exports = { legStatusFor, rollupBatch, applyPayoutResult, reconcileSentPayouts };
+module.exports = { legStatusFor, rollupBatch, applyPayoutResult, reconcileSentPayouts, firePayoutWebhook };
