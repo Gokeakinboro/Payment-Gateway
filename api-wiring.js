@@ -2842,7 +2842,10 @@ function copyApiKeyPrefix(id, prefix) {
 async function rotateApiKey(id, prefix, label) {
   if (!confirm('Rotate "' + label + '"?\n\nThe current key will be immediately revoked. Any integrations using it will stop working until updated with the new key.\n\nProceed?')) return;
   var res = await apiFetch('/merchants/me/api-keys/rotate', { method: 'POST', body: JSON.stringify({ prefix, label }) });
-  if (res && res.status) {
+  if (res && res.status && res.data && res.data.key) {
+    // Refresh the list FIRST (it re-renders #key-result-area) — otherwise it would
+    // wipe the freshly-shown key. THEN render the new key into the fresh element.
+    await loadMerchApiKeys();
     var area = document.getElementById('key-result-area');
     if (area) {
       area.innerHTML = '<div style="background:#1a2744;border-radius:10px;padding:20px;color:#fff;margin-top:8px">' +
@@ -2851,8 +2854,8 @@ async function rotateApiKey(id, prefix, label) {
         '<div class="mono" style="background:rgba(255,255,255,.08);padding:12px;border-radius:6px;word-break:break-all;font-size:13px" id="new-key-val">' + res.data.key + '</div>' +
         '<button class="btn btn-lime" style="margin-top:12px" onclick="navigator.clipboard.writeText(document.getElementById(\'new-key-val\').textContent);this.textContent=\'Copied!\';setTimeout(()=>{this.textContent=\'Copy Key\'},2000)">Copy Key</button>' +
       '</div>';
+      area.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-    loadMerchApiKeys();
   } else {
     alert('Error: ' + ((res && res.message) || 'Rotation failed'));
   }
