@@ -79,6 +79,7 @@ var NAV = {
       {id:'settlement',      icon:'circle-check', label:'Settlements'     },
       {id:'wallets',         icon:'wallet', label:'Merchant Wallet'  },
       {id:'sa_merchant_funding', icon:'landmark', label:'Merchant Funding & Routing'},
+      {id:'sa_rail_routing', icon:'route', label:'Rail Routing Matrix'},
       {id:'compliance',      icon:'scale', label:'KYC Review'      },
       {id:'deferrals',       icon:'file-clock', label:'KYC Docs & Deferrals'},
       {id:'compliance_exceptions', icon:'flag', label:'Intl / Mastercard Compliance'},

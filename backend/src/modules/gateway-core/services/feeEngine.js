@@ -3,6 +3,7 @@
  * Paylode Fee Engine
  * All amounts in kobo (BigInt)
  */
+const railRouting = require('./railRouting');
 
 const VAT_RATE = 0.075;
 
@@ -298,31 +299,16 @@ function computeFeesForPayin(amount, cfg = {}) {
  * today only PalmPay has a VIRTUAL_ACCOUNT cost so it's chosen; add another rail's
  * cost row and the cheapest wins automatically. Returns { id, name } or null.
  *
- * PER-MERCHANT OVERRIDE: if the merchant has `payinRailId` set, that rail is used
- * (as long as it has a cost row for the product) — regardless of price and even if
- * its status is CONFIG_ONLY. This is how a SINGLE test merchant can be routed to a
- * new rail in sandbox WITHOUT touching any live merchant's collections. If the
- * override rail is missing/misconfigured we FALL BACK to the global default, so a
- * bad override can never break collections.
+ * Routing is now CHANNEL-BASED via the SA routing matrix (railRouting.js): the
+ * merchant's VA override → the SA-chosen VA default. There is NO cheapest-rail
+ * fallback — SA MUST set the VA default (routing is a traffic-type decision, not
+ * just cost). Returns { id, name } or null; a null means "no VA route configured"
+ * and the caller must reject rather than silently pick a rail.
+ * (The `product` arg is retained for call-site compatibility; VA is the channel.)
  */
 async function resolvePayinRail(prisma, product = 'VIRTUAL_ACCOUNT', merchant = null) {
-  if (merchant && merchant.payinRailId) {
-    const ov = await prisma.$queryRaw`
-      SELECT pr.id, pr.name
-      FROM payment_rails pr JOIN rail_costs rc ON rc.rail_id = pr.id
-      WHERE pr.id = ${merchant.payinRailId}::uuid
-        AND rc.service_type = ${product} AND rc.effective_to IS NULL
-        AND pr.status IN ('LIVE', 'CONFIG_ONLY')
-      LIMIT 1`;
-    if (ov[0]) return ov[0];
-    // override unusable → fall through to the global default (never fail the pay-in)
-  }
-  const rows = await prisma.$queryRaw`
-    SELECT pr.id, pr.name
-    FROM rail_costs rc JOIN payment_rails pr ON rc.rail_id = pr.id
-    WHERE rc.service_type = ${product} AND rc.effective_to IS NULL AND pr.status = 'LIVE'
-    ORDER BY rc.rate ASC LIMIT 1`;
-  return rows[0] || null;
+  const rail = await railRouting.resolveRail(prisma, 'VA', merchant);
+  return rail ? { id: rail.id, name: rail.name } : null;
 }
 
 /**

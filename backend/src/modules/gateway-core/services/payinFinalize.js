@@ -28,11 +28,11 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
 
   const merchant = txn.merchant;
 
-  // Rail that processed this collection: prefer the one stamped at mint, else pick the
-  // cheapest LIVE collection rail (config-driven; scales to multiple pay-in rails).
+  // Rail that processed this collection: prefer the one stamped at mint, else resolve
+  // the merchant's VA route from the routing matrix (override → SA default).
   let railId = txn.railId || null;
   if (!railId) {
-    const rail = await resolvePayinRail(prisma);
+    const rail = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', merchant);
     railId = (rail && rail.id) || null;
   }
 

@@ -200,6 +200,7 @@ model Merchant {
   payoutItems    PayoutItem[]
   payoutRail     PaymentRail?   @relation("MerchantPayoutRoute", fields: [payoutRailId], references: [id])
   payinRail      PaymentRail?   @relation("MerchantPayinRoute", fields: [payinRailId], references: [id])
+  railRoutes     MerchantRailRoute[]
 
   @@index([kycStatus])
   @@index([isActive])
@@ -262,8 +263,41 @@ model PaymentRail {
   wallets      MerchantWallet[]
   routedMerchants Merchant[]  @relation("MerchantPayoutRoute")
   payinMerchants  Merchant[]  @relation("MerchantPayinRoute")
+  channelDefaults RailChannelDefault[]
+  merchantRoutes  MerchantRailRoute[]
 
   @@map("payment_rails")
+}
+
+// ─── RAIL ROUTING MATRIX ──────────────────────────────────────────────────────
+// Per-CHANNEL routing (CARDS | VA | PAYOUT). SA-chosen GLOBAL default rail per
+// channel (rail_channel_defaults) + per-merchant per-channel override
+// (merchant_rail_routes). No silent cheapest-rail fallback — routing is a
+// traffic-type decision (see railRouting.js + 20260708_rail_routing_matrix.sql).
+model RailChannelDefault {
+  channel   String   @id     // 'CARDS' | 'VA' | 'PAYOUT'
+  railId    String   @map("rail_id") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  rail PaymentRail @relation(fields: [railId], references: [id])
+
+  @@map("rail_channel_defaults")
+}
+
+model MerchantRailRoute {
+  merchantId String   @map("merchant_id") @db.Uuid
+  channel    String                          // 'CARDS' | 'VA' | 'PAYOUT'
+  railId     String   @map("rail_id") @db.Uuid
+  updatedBy  String?  @map("updated_by") @db.Uuid
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
+
+  merchant Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  rail     PaymentRail @relation(fields: [railId], references: [id])
+
+  @@id([merchantId, channel])
+  @@index([railId])
+  @@map("merchant_rail_routes")
 }
 
 model RailCost {

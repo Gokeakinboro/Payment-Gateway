@@ -15,6 +15,7 @@
 //  product's Default Rail. No charge-path code change needed.
 // ─────────────────────────────────────────────────────────────────────────────
 const interswitch = require('./interswitchService');
+const railRouting = require('./railRouting');
 
 // rail-name substring (lowercased) → adapter module
 const ADAPTERS = { interswitch /*, mpgs: require('./mpgsService') */ };
@@ -24,18 +25,15 @@ function _match(name) {
   return Object.keys(ADAPTERS).find(k => String(name || '').toLowerCase().includes(k));
 }
 
-// Resolve the processor for a CARD product from its configured default rail.
-// No rail configured → Interswitch (backward compatible). A rail with no card
-// adapter yet (e.g. MPGS not built) → { adapter: null, unsupported: true }.
-async function resolveCardProcessor(prisma, product = 'CARD_LOCAL') {
+// Resolve the CARD processor from the routing matrix (CARDS channel): the
+// merchant's card override → the SA-chosen CARDS default. No CARDS route
+// configured → Interswitch (the safe incumbent, backward compatible). A rail with
+// no card adapter yet (e.g. MPGS/Parallex not built) → { adapter: null, unsupported }.
+async function resolveCardProcessor(prisma, product = 'CARD_LOCAL', merchant = null) {
   let railName = null;
   try {
-    const rows = await prisma.$queryRaw`
-      SELECT pr.name
-      FROM platform_rate_configs prc JOIN payment_rails pr ON prc.default_rail_id = pr.id
-      WHERE prc.channel = ${product} AND prc.default_rail_id IS NOT NULL AND pr.status = 'LIVE'
-      LIMIT 1`;
-    railName = rows[0] && rows[0].name;
+    const rail = await railRouting.resolveRail(prisma, 'CARDS', merchant);
+    railName = rail && rail.name;
   } catch (e) { /* fall through to default */ }
   if (!railName) return DEFAULT;
   const key = _match(railName);
