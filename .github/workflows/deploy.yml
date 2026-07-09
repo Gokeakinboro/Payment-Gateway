@@ -26,7 +26,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: 22
-          source: "app.js,api-wiring.js,dashboard.html,onboarding.html,login.html,index.html,checkout.html,sandbox.html,invoicing.html,invoice.html,qr.html"
+          source: "app.js,api-wiring.js,dashboard.html,onboarding.html,login.html,index.html,checkout.html,sandbox.html,invoicing.html,invoice.html,qr.html,privacy.html"
           target: "/var/www/paylode/"
 
       - name: Reload nginx on live web (45)
@@ -56,8 +56,8 @@ jobs:
             # by scoping this to the frontend. Backend is deployed separately via
             # the gated tools/deploy.py.
             git fetch origin main --quiet
-            git checkout origin/main -- app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html sandbox.html invoicing.html invoice.html qr.html
-            cp app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html sandbox.html invoicing.html invoice.html qr.html /var/www/paylode/
+            git checkout origin/main -- app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html sandbox.html invoicing.html invoice.html qr.html privacy.html
+            cp app.js api-wiring.js dashboard.html onboarding.html login.html index.html checkout.html sandbox.html invoicing.html invoice.html qr.html privacy.html /var/www/paylode/
             pm2 reload paylode-api || true
             nginx -s reload
             echo "Frontend deployed to 176 from main at $(date)"
