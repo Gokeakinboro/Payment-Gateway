@@ -151,7 +151,8 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
     }
 
     // ── SANDBOX / not-yet-configured: deterministic stub VA (no PalmPay call) ──
-    if (txn.isSandbox || !palmpay.isConfigured()) {
+    // Bypass for Parallex-routed merchants — Parallex APIM works in sandbox mode.
+    if ((txn.isSandbox || !palmpay.isConfigured()) && !(txn.merchant.payinRailId && parallex.isConfigured())) {
       const acctSeed = parseInt(txn.reference.replace(/\D/g,'').slice(0,8) || '80200000');
       return ok(res, {
         account_number: '802' + (acctSeed % 10000000).toString().padStart(7,'0'),
