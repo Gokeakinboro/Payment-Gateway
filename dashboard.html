@@ -239,6 +239,9 @@ tbody tr:last-child td { border-bottom: none; }
     <div class="role-name" id="role-name">Paylode HQ</div>
   </div>
   <div id="nav-items"></div>
+  <div style="padding:12px 16px 16px;margin-top:auto;border-top:1px solid rgba(255,255,255,0.06)">
+    <a href="/privacy.html" target="_blank" style="font-size:11px;color:rgba(255,255,255,0.35);text-decoration:none;display:block;text-align:center" onmouseover="this.style.color='rgba(255,255,255,0.6)'" onmouseout="this.style.color='rgba(255,255,255,0.35)'">Privacy Policy</a>
+  </div>
 </div>
 <div class="main">
   <div class="topbar">
@@ -284,7 +287,7 @@ function showHelpModal() {
     ['What is 2FA and why should I enable it?', 'Two-Factor Authentication adds a second layer of security to your account. After entering your password, you also enter a code from an authenticator app (Google Authenticator, Authy, etc.). Enable it in Platform Settings.'],
     ['How do I update my settlement bank?', 'Go to Business Profile → Change Settlement Account. Enter your new bank details. The account will go through a verification process before being activated for payouts.'],
     ['What transaction channels are supported?', 'Paylode supports Card payments (Visa, Mastercard, Verve via Interswitch), Bank Transfer, and USSD. Channel availability depends on your KYC tier.'],
-    ['Who do I contact for support?', 'Email support@paylodeservices.com or use the developer chat at paylodeservices.com/developer-chat. For urgent issues, call our operations line.'],
+    ['Who do I contact for support?', 'Email product@paylodeservices.com or use the developer chat at paylodeservices.com/developer-chat. For urgent issues, call our operations line.'],
   ];
   var html = '<div class="modal-header"><div class="modal-title">Help & FAQ</div>' +
     '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
@@ -297,7 +300,7 @@ function showHelpModal() {
         '<div id="faq-' + i + '" style="display:none;padding:12px 16px;font-size:13px;color:var(--gray-600);line-height:1.6;background:#fff">' + f[1] + '</div>' +
       '</div>';
     }).join('') +
-    '<div class="info-box" style="margin-top:16px;font-size:12px">Still need help? Email <strong>support@paylodeservices.com</strong></div>';
+    '<div class="info-box" style="margin-top:16px;font-size:12px">Still need help? Email <strong>product@paylodeservices.com</strong></div>';
   document.getElementById('modal-inner').innerHTML = html;
   document.getElementById('modal').style.display = 'flex';
 }
