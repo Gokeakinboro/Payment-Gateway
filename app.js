@@ -322,7 +322,7 @@ function statusBadge(s) {
   var m = {active:'badge-green',success:'badge-green',completed:'badge-green',pending:'badge-amber',failed:'badge-red',suspended:'badge-red'};
   return '<span class="badge ' + (m[s] || 'badge-gray') + '">' + s + '</span>';
 }
-function showModal(html) { document.getElementById('modal-inner').innerHTML = html; document.getElementById('modal').style.display = 'flex'; }
+function showModal(html) { document.getElementById('modal-inner').innerHTML = html; document.getElementById('modal').style.display = 'flex'; if (window.lucide) lucide.createIcons(); }
 function closeModal(e)   { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; }
 
 // Transient action feedback. toast(msg, 'success'|'error'|'info'). Every action
@@ -433,6 +433,7 @@ function renderPage() {
     return;
   }
   document.getElementById('main-content').innerHTML = (pages[currentPage] || renderSuperOverview)();
+  if (window.lucide) lucide.createIcons();
 }
 
 function renderSuperOverview() {

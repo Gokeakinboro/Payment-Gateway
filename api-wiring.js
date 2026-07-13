@@ -1560,7 +1560,7 @@ async function loadRevenueReport() {
         <div class="page-title">Revenue Report</div>
         <div class="page-desc">Earnings this month — local &amp; international reported separately — ${from} to ${to}</div>
       </div>
-      <button class="btn btn-outline btn-sm" onclick="navigate('fee_config')">⚙ Configure Rates →</button>
+      <button class="btn btn-outline btn-sm" onclick="navigate('fee_config')"><i data-lucide="settings" width="13" height="13" style="vertical-align:middle;margin-right:4px"></i> Configure Rates →</button>
     </div>
     <div class="info-box" style="margin-bottom:16px;font-size:12px">This page <strong>reports</strong> earned revenue. Set rates in <strong>Merchant Pricing</strong>. International card revenue is shown in <strong>USD</strong>, separate from local NGN revenue.</div>
 
@@ -3285,7 +3285,7 @@ function plQrShowModal(q) {
         '<div><label class="form-label">WhatsApp phone</label><input class="form-input" id="qr-share-phone" type="tel" placeholder="080..."></div>' +
       '</div>' +
       '<div class="flex" style="gap:8px;margin-top:10px">' +
-        '<button class="btn btn-outline" style="flex:1" id="qr-share-email-btn" onclick="plQrShareEmail()">✉ Email this QR</button>' +
+        '<button class="btn btn-outline" style="flex:1" id="qr-share-email-btn" onclick="plQrShareEmail()"><i data-lucide="mail" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Email this QR</button>' +
         '<button class="btn btn-lime" style="flex:1" onclick="plQrShareWhatsApp()">Share via WhatsApp</button>' +
       '</div>' +
       '<div id="qr-share-msg" style="display:none;font-size:12px;margin-top:8px"></div>' +
@@ -3948,7 +3948,7 @@ async function loadFeeConfig() {
               : '<div style="font-size:12px;color:var(--gray-400)">Uses flat International rate (' + flatPct + ')</div>') +
             '</div></div>' +
           '<div style="display:flex;gap:6px">' +
-            '<button class="btn btn-outline btn-sm" onclick="editCardScheme(\'' + sc[0] + '\',\'' + sc[1] + '\')">' + (cfg ? '✎ Edit' : '+ Set rate') + '</button>' +
+            '<button class="btn btn-outline btn-sm" onclick="editCardScheme(\'' + sc[0] + '\',\'' + sc[1] + '\')">' + (cfg ? '<i data-lucide="pencil" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Edit' : '+ Set rate') + '</button>' +
             (cfg ? '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="clearCardScheme(\'' + sc[0] + '\',\'' + sc[1] + '\')">Revert to flat</button>' : '') +
           '</div>' +
         '</div>';
