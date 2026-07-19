@@ -130,6 +130,7 @@ var NAV = {
     { section:'Billspay', items:[{id:'merch_wallet',icon:'wallet',label:'Billspay'}]},
     { section:'Payouts',      items:[{id:'payouts',icon:'send',label:'Send Payouts'},{id:'payout_logs',icon:'scroll-text',label:'Payout Logs'}]},
     { section:'Integration',  items:[{id:'merch_apikeys',icon:'key-round',label:'API Keys'},{id:'merch_webhooks',icon:'webhook',label:'Webhooks'}]},
+    { section:'Operations',   items:[{id:'merch_notifications',icon:'bell',label:'Notifications'}]},
     { section:'Developer',    items:DEV_SDK_ITEMS },
     { section:'Account',      items:[{id:'merch_profile',icon:'circle-user',label:'Business Profile'}]},
   ],
@@ -292,7 +293,7 @@ function renderSectionHub(sectionName) {
 function switchRole(role) { currentRole = role; currentPage = ROLE_META[role].defaultPage; renderNav(); renderPage(); closeSidebar(); }
 var __navHistory = [];
 // Nav ids that live on a standalone static page rather than an in-app view.
-var EXTERNAL_PAGES = { merch_invoicing: 'invoicing.html?v=20260705d', merch_wallet: 'wallet-admin.html', sa_wallet: 'wallet-sa.html' };
+var EXTERNAL_PAGES = { merch_invoicing: 'invoicing.html?v=20260715a', merch_wallet: 'wallet-admin.html', sa_wallet: 'wallet-sa.html' };
 function navigate(page)   {
   if (EXTERNAL_PAGES[page]) { window.location.href = EXTERNAL_PAGES[page]; return; }
   if (currentPage && currentPage !== page && String(page).indexOf('hub::') !== 0) __navHistory.push(currentPage);
@@ -421,6 +422,7 @@ function renderPage() {
     merch_settlements:renderMerchSettlements, merch_apikeys:renderMerchApiKeys,
     merch_payments:function(){ return '<div class="page-header"><div class="page-title">Payment Links</div></div><div class="card" style="text-align:center;padding:40px;color:#999">Loading…</div>'; },
     merch_webhooks:renderMerchWebhooks, merch_profile:renderMerchProfile,
+    merch_notifications:renderMerchNotifications,
     sdk_start:renderSdkStart, sdk_payments:renderSdkPayments,
     sdk_va:renderSdkVirtualAccounts,
     sdk_verify:renderSdkVerify, sdk_payouts:renderSdkPayouts,
@@ -1254,6 +1256,59 @@ function renderMerchWebhooks() {
     '<div class="rev-row"><div><div style="font-weight:600;font-size:13px">https://api.boltnigeria.com/paylode/webhook</div>' +
     '<div style="font-size:11px;color:var(--gray-400)">Events: payment.success &middot; payment.failed &middot; refund.processed</div></div>' +
     '<div class="flex" style="gap:6px"><span class="badge badge-green">Active</span><button class="btn btn-outline btn-sm">Test</button></div></div></div>';
+}
+
+function renderMerchNotifications() {
+  return '<div class="page-header"><div class="page-title">Notifications</div><div class="page-subtitle">Control which events trigger WhatsApp messages to your customers. WhatsApp notifications are billed separately.</div></div>' +
+    '<div id="notif-alert"></div>' +
+    '<div class="card">' +
+      '<table style="width:100%;border-collapse:collapse">' +
+        '<thead><tr>' +
+          '<th style="text-align:left;padding:10px 16px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Event</th>' +
+          '<th style="text-align:center;padding:10px 16px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">SMS<br><span style="font-size:10px;font-weight:400;opacity:.6">Coming soon</span></th>' +
+          '<th style="text-align:center;padding:10px 16px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">WhatsApp</th>' +
+        '</tr></thead>' +
+        '<tbody id="notif-rows"><tr><td colspan="3" style="text-align:center;padding:32px;color:var(--gray-400)">Loading…</td></tr></tbody>' +
+      '</table>' +
+    '</div>' +
+    '<script>' +
+    '(function(){\n' +
+    'var EVENTS=[' +
+      '{key:"whatsapp_invoice",label:"Invoice sent",desc:"Notify recipient when an invoice is sent to them"},' +
+      '{key:"whatsapp_payment_received",label:"Payment received",desc:"Notify recipient when their payment is confirmed"},' +
+      '{key:"whatsapp_payout",label:"Payout dispatched",desc:"Notify recipient when a payout is sent to them"}' +
+    '];\n' +
+    'function toggle(key,val){\n' +
+    '  var body={}; body[key]=val;\n' +
+    '  apiFetch("/api/v1/merchants/me/notification-settings","PATCH",body)\n' +
+    '    .then(function(r){if(!r.ok)throw new Error(r.error||"Failed");})\n' +
+    '    .catch(function(e){alert("Could not save: "+e.message); loadSettings();});\n' +
+    '}\n' +
+    'function loadSettings(){\n' +
+    '  apiFetch("/api/v1/merchants/me/notification-settings","GET")\n' +
+    '    .then(function(r){\n' +
+    '      var s=r.settings||{};\n' +
+    '      var html=EVENTS.map(function(ev){\n' +
+    '        var on=!!s[ev.key];\n' +
+    '        return \'<tr style="border-bottom:1px solid var(--gray-100)">\'+\n' +
+    '          \'<td style="padding:14px 16px">\'+\n' +
+    '            \'<div style="font-weight:500;font-size:13px">\'+ev.label+\'</div>\'+\n' +
+    '            \'<div style="font-size:11px;color:var(--gray-400);margin-top:2px">\'+ev.desc+\'</div>\'+\n' +
+    '          \'</td>\'+\n' +
+    '          \'<td style="text-align:center;padding:14px 16px"><span style="color:var(--gray-300);font-size:12px">—</span></td>\'+\n' +
+    '          \'<td style="text-align:center;padding:14px 16px">\'+\n' +
+    '            \'<label style="display:inline-flex;align-items:center;cursor:pointer">\'+\n' +
+    '              \'<input type="checkbox" \''+(on?'"checked "':'" "+')+\'data-key="\'+ev.key+\'" onchange="(function(el){toggle(el.dataset.key,el.checked);})(this)" style="width:36px;height:20px;cursor:pointer;accent-color:var(--lime)">\'+\n' +
+    '            \'</label>\'+\n' +
+    '          \'</td>\'+\n' +
+    '        \'</tr>\';\n' +
+    '      }).join("");\n' +
+    '      document.getElementById("notif-rows").innerHTML=html;\n' +
+    '    }).catch(function(){document.getElementById("notif-rows").innerHTML=\'<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--gray-400)">Could not load settings</td></tr>\';});\n' +
+    '}\n' +
+    'loadSettings();\n' +
+    '})();\n' +
+    '<\/script>';
 }
 
 function renderMerchProfile() {

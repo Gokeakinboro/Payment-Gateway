@@ -78,7 +78,7 @@ function invoiceEmailHtml({ bizName, inv, payUrl, isReminder }) {
 // or recipient-less send never falsely reports "sent".
 async function sendInvoice(invoiceId, { isReminder = false } = {}) {
   const rows = await prisma.$queryRawUnsafe(
-    `SELECT i.*, m.business_name, d.service_charge_label
+    `SELECT i.*, m.business_name, m.notification_settings, d.service_charge_label
        FROM inv_invoices i
        JOIN merchants m ON m.id = i.merchant_id
        LEFT JOIN inv_departments d ON d.id = i.department_id
@@ -105,9 +105,9 @@ async function sendInvoice(invoiceId, { isReminder = false } = {}) {
     sendError = (e && e.message) ? e.message : 'Email delivery failed';
   }
 
-  // WhatsApp notification (best-effort; no-ops until a SendChamp sender + template
-  // are configured). Additive to email — uses the recipient phone we now capture.
-  if (inv.recipient_phone) {
+  // WhatsApp notification — only if merchant has opted in (whatsapp_invoice toggle ON).
+  const notifSettings = inv.notification_settings || {};
+  if (inv.recipient_phone && notifSettings.whatsapp_invoice) {
     whatsapp.notifyInvoice({
       phone: inv.recipient_phone, recipientName: inv.recipient_name, businessName: bizName,
       invoiceNumber: inv.invoice_number, amount: inv.total_amount, currency: inv.currency, payUrl,
