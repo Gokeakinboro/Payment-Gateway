@@ -78,14 +78,22 @@ async function call(path, body = {}) {
   if (!isConfigured()) throw new Error('PalmPay not configured — set PALMPAY_APP_ID and PALMPAY_PRIVATE_KEY');
   const payload = Object.assign({ requestTime: Date.now(), version: VERSION, nonceStr: nonce() }, body);
   const signature = signParams(payload);
-  const res = await fetch(BASE_URL + path, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json', 'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + APP_ID, Signature: signature, CountryCode: COUNTRY,
-    },
-    body: JSON.stringify(payload),
-  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  let res;
+  try {
+    res = await fetch(BASE_URL + path, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json', 'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + APP_ID, Signature: signature, CountryCode: COUNTRY,
+      },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   return res.json().catch(() => ({ respCode: 'PARSE_ERROR', respMsg: 'Non-JSON response (HTTP ' + res.status + ')' }));
 }
 
