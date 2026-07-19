@@ -176,6 +176,7 @@ model Merchant {
   liveEnabled       Boolean   @default(false) @map("live_enabled") // false until SA clicks Go-Live — activation != live processing
   webhookUrl        String?   @map("webhook_url")
   webhookSecret     String?   @map("webhook_secret")
+  notificationSettings Json  @default("{}") @map("notification_settings")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
