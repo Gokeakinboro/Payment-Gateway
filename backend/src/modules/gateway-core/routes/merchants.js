@@ -839,4 +839,62 @@ router.get('/:id', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── Notification settings ─────────────────────────────────────────────────────
+// GET  /api/v1/merchants/me/notification-settings  — merchant reads own settings
+// PATCH /api/v1/merchants/me/notification-settings — merchant updates own settings
+// GET  /api/v1/merchants/:id/notification-settings — SA reads any merchant
+// PATCH /api/v1/merchants/:id/notification-settings — SA updates any merchant
+
+const NOTIF_KEYS = [
+  'whatsapp_invoice',           // invoice sent to recipient
+  'whatsapp_payment_received',  // VA / bank-transfer payment received
+  'whatsapp_payout',            // payout dispatched
+];
+
+router.get('/me/notification-settings', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const m = await prisma.merchant.findUnique({ where: { id: merchantId }, select: { notificationSettings: true } });
+    if (!m) return notFound(res, 'Merchant');
+    ok(res, { settings: m.notificationSettings || {}, availableKeys: NOTIF_KEYS });
+  } catch (e) { next(e); }
+});
+
+router.patch('/me/notification-settings', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const current = await prisma.merchant.findUnique({ where: { id: merchantId }, select: { notificationSettings: true } });
+    if (!current) return notFound(res, 'Merchant');
+    const updates = {};
+    NOTIF_KEYS.forEach((k) => { if (k in req.body) updates[k] = !!req.body[k]; });
+    const merged = { ...(current.notificationSettings || {}), ...updates };
+    const m = await prisma.merchant.update({ where: { id: merchantId }, data: { notificationSettings: merged } });
+    await logAudit(req.user.id, 'UPDATE_NOTIFICATION_SETTINGS', 'Merchant', merchantId, null, merged);
+    ok(res, { settings: m.notificationSettings });
+  } catch (e) { next(e); }
+});
+
+router.get('/:id/notification-settings', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const m = await prisma.merchant.findUnique({ where: { id: req.params.id }, select: { notificationSettings: true } });
+    if (!m) return notFound(res, 'Merchant');
+    ok(res, { settings: m.notificationSettings || {}, availableKeys: NOTIF_KEYS });
+  } catch (e) { next(e); }
+});
+
+router.patch('/:id/notification-settings', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const current = await prisma.merchant.findUnique({ where: { id: req.params.id }, select: { notificationSettings: true } });
+    if (!current) return notFound(res, 'Merchant');
+    const updates = {};
+    NOTIF_KEYS.forEach((k) => { if (k in req.body) updates[k] = !!req.body[k]; });
+    const merged = { ...(current.notificationSettings || {}), ...updates };
+    const m = await prisma.merchant.update({ where: { id: req.params.id }, data: { notificationSettings: merged } });
+    await logAudit(req.user.id, 'UPDATE_NOTIFICATION_SETTINGS', 'Merchant', req.params.id, null, merged);
+    ok(res, { settings: m.notificationSettings });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
