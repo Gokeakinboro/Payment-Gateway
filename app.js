@@ -1298,7 +1298,7 @@ function renderMerchNotifications() {
     '          \'<td style="text-align:center;padding:14px 16px"><span style="color:var(--gray-300);font-size:12px">—</span></td>\'+\n' +
     '          \'<td style="text-align:center;padding:14px 16px">\'+\n' +
     '            \'<label style="display:inline-flex;align-items:center;cursor:pointer">\'+\n' +
-    '              \'<input type="checkbox" \''+(on?'"checked "':'" "+')+\'data-key="\'+ev.key+\'" onchange="(function(el){toggle(el.dataset.key,el.checked);})(this)" style="width:36px;height:20px;cursor:pointer;accent-color:var(--lime)">\'+\n' +
+    '              \'<input type="checkbox" \'+(on?\'checked \':\'\')+\'data-key="\'+ev.key+\'" onchange="(function(el){toggle(el.dataset.key,el.checked);})(this)" style="width:36px;height:20px;cursor:pointer;accent-color:var(--lime)">\'+\n' +
     '            \'</label>\'+\n' +
     '          \'</td>\'+\n' +
     '        \'</tr>\';\n' +
