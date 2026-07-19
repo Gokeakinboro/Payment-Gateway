@@ -84,16 +84,23 @@ async function sendTemplate(recipient, templateName, languageCode, params = []) 
 
   const template = { name: templateName, language: { code: languageCode || 'en' } };
   if (params.length) {
-    template.components = [{ type: 'body', parameters: params.map((v) => ({ type: 'text', text: String(v == null ? '' : v) })) }];
+    template.components = [{ type: 'body', parameters: params.map((v) => {
+      if (v !== null && typeof v === 'object' && 'name' in v) {
+        return { type: 'text', parameter_name: v.name, text: String(v.value == null ? '' : v.value) };
+      }
+      return { type: 'text', text: String(v == null ? '' : v) };
+    }) }];
   }
   try {
     const r = await postJson(`/${VERSION}/${PHONE_ID}/messages`, {
       messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'template', template,
     });
     const ok = r.status >= 200 && r.status < 300 && r.body && !r.body.error;
-    (ok ? logger.info : logger.warn)(
-      { to, templateName, status: r.status, id: r.body?.messages?.[0]?.id, err: r.body?.error },
-      ok ? 'WhatsApp sent' : 'WhatsApp send failed');
+    if (ok) {
+      logger.info({ to, templateName, status: r.status, id: r.body?.messages?.[0]?.id }, 'WhatsApp sent');
+    } else {
+      logger.warn({ to, templateName, status: r.status, err: r.body?.error, body: r.body }, 'WhatsApp send failed');
+    }
     return { ok, response: r.body };
   } catch (e) {
     logger.warn({ to, err: e.message }, 'WhatsApp send error');
@@ -109,11 +116,11 @@ function formatMoney(kobo, currency) {
 // Invoice notification — params ORDER must match WHATSAPP_TEMPLATE_INVOICE.
 function notifyInvoice({ phone, recipientName, businessName, invoiceNumber, amount, currency, payUrl }) {
   return sendTemplate(phone, T_INVOICE, T_INVOICE_LANG, [
-    recipientName || 'there',
-    businessName || 'Paylode',
-    invoiceNumber || '',
-    formatMoney(amount, currency),
-    payUrl || '',
+    { name: 'customer_name',   value: recipientName || 'there' },
+    { name: 'business_name',   value: businessName || 'Paylode' },
+    { name: 'invoice_number',  value: invoiceNumber || '' },
+    { name: 'amount_due',      value: formatMoney(amount, currency) },
+    { name: 'pay_url',         value: payUrl || '' },
   ]);
 }
 

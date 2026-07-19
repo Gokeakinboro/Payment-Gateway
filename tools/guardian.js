@@ -28,9 +28,9 @@ const STATE_FILE = process.env.GUARDIAN_STATE || '/opt/paylode-monitor/guardian-
 const PEER_URL   = process.env.GUARDIAN_PEER || '';
 const PUBLIC      = process.env.GUARDIAN_PUBLIC || 'https://paylodeservices.com';
 const LOCAL_API   = process.env.GUARDIAN_LOCAL_API || 'http://127.0.0.1:3000/health';
-const EXPECT_WORKERS = parseInt(process.env.GUARDIAN_WORKERS || '6', 10);
+const EXPECT_WORKERS = parseInt(process.env.GUARDIAN_WORKERS || '2', 10);
 const TLS_WARN_DAYS  = parseInt(process.env.GUARDIAN_TLS_DAYS || '14', 10);
-const COOLDOWN_MS    = parseInt(process.env.GUARDIAN_COOLDOWN_MIN || '30', 10) * 60000;
+const COOLDOWN_MS    = parseInt(process.env.GUARDIAN_COOLDOWN_MIN || '480', 10) * 60000;
 const HOST = process.env.GUARDIAN_HOST || os.hostname();
 
 let prisma = null, sendEmail = null;
@@ -65,8 +65,8 @@ async function runChecks() {
 
     try {
       const j = JSON.parse(execSync('pm2 jlist 2>/dev/null', { timeout: 10000 }).toString());
-      const online = j.filter(p => p.name === 'paylode-api' && p.pm2_env.status === 'online').length;
-      checks.push(C('pm2_workers', online >= EXPECT_WORKERS, online + '/' + EXPECT_WORKERS + ' paylode-api online'));
+      const online = j.filter(p => p.name === 'paylode-core' && p.pm2_env.status === 'online').length;
+      checks.push(C('pm2_workers', online >= EXPECT_WORKERS, online + '/' + EXPECT_WORKERS + ' paylode-core online'));
     } catch (e) { checks.push(C('pm2_workers', false, 'pm2 jlist failed: ' + e.message)); }
 
     try { execSync('redis-cli ping 2>/dev/null', { timeout: 5000 }).toString().includes('PONG')

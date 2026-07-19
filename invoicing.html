@@ -508,14 +508,41 @@ async function tContacts(){
      <div id="c_imp" style="display:none;margin-top:12px"><label>Paste rows: name,email,phone (one per line)</label><textarea id="c_csv" rows="5"></textarea><button class="btn" onclick="importContacts()">Import</button></div>
      <div class="msg" id="c_msg"></div>
    </div>
-   <div class="card"><h2>Contacts</h2><div id="c_list" class="muted">Loading…</div></div>`;
+   <div class="card"><h2>Contacts</h2><div id="c_list" class="muted">Loading…</div></div>
+   <div id="c_edit_modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:900;align-items:center;justify-content:center">
+     <div style="background:#fff;border-radius:12px;padding:28px;width:100%;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+       <h3 style="margin:0 0 16px">Edit contact</h3>
+       <label>Name</label><input id="ce_name" style="margin-bottom:10px">
+       <label>Email</label><input id="ce_email" type="email" style="margin-bottom:10px">
+       <label>Phone</label><input id="ce_phone" style="margin-bottom:10px">
+       <label>Tags (comma-separated)</label><input id="ce_tags" style="margin-bottom:16px">
+       <div class="msg" id="ce_msg" style="margin-bottom:10px"></div>
+       <div style="display:flex;gap:10px"><button class="btn" onclick="saveContact()">Save</button><button class="btn sec" onclick="closeEditContact()">Cancel</button></div>
+     </div>
+   </div>`;
   loadContacts();
 }
 async function loadContacts(){
   const r=await api('/contacts'); if(!r.status){el('c_list').innerHTML=`<span class="msg err">${r.message}</span>`;return;}
   if(!r.data.length){el('c_list').innerHTML='<span class="muted">No contacts yet.</span>';return;}
   el('c_list').innerHTML=`<table><tr><th>Name</th><th>Email</th><th>Phone</th><th>Tags</th><th></th></tr>`+
-    r.data.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.email||'—')}</td><td>${esc(c.phone||'—')}</td><td>${(c.tags||[]).map(esc).join(', ')}</td><td class="right"><button class="mini" onclick="delContact('${c.id}')">Delete</button></td></tr>`).join('')+`</table>`;
+    r.data.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.email||'—')}</td><td>${esc(c.phone||'—')}</td><td>${(c.tags||[]).map(esc).join(', ')}</td><td class="right" style="white-space:nowrap"><button class="mini" onclick="openEditContact('${c.id}','${esc(c.name)}','${esc(c.email||'')}','${esc(c.phone||'')}','${esc((c.tags||[]).join(','))}')">Edit</button> <button class="mini" onclick="delContact('${c.id}')">Delete</button></td></tr>`).join('')+`</table>`;
+}
+let _ceId=null;
+function openEditContact(id,name,email,phone,tags){
+  _ceId=id;
+  el('ce_name').value=name; el('ce_email').value=email; el('ce_phone').value=phone; el('ce_tags').value=tags;
+  el('ce_msg').textContent=''; el('ce_msg').className='msg';
+  const m=el('c_edit_modal'); m.style.display='flex';
+}
+function closeEditContact(){ el('c_edit_modal').style.display='none'; _ceId=null; }
+async function saveContact(){
+  if(!_ceId) return;
+  const body={ name:el('ce_name').value, email:el('ce_email').value||null, phone:el('ce_phone').value||null,
+    tags:el('ce_tags').value.split(',').map(t=>t.trim()).filter(Boolean) };
+  const r=await api(`/contacts/${_ceId}`,{method:'PATCH',body:JSON.stringify(body)});
+  setMsg('ce_msg',r.message,r.status?'ok':'err');
+  if(r.status){ closeEditContact(); loadContacts(); }
 }
 async function addContact(){
   const body={ name:el('c_name').value, email:el('c_email').value, phone:el('c_phone').value, tags:el('c_tags').value.split(',').map(t=>t.trim()).filter(Boolean) };
