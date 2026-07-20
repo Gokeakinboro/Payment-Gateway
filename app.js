@@ -69,10 +69,10 @@ var NAV = {
   superadmin: [
     { section:'Dashboard', items:[ {id:'overview', icon:'layout-dashboard', label:'Dashboard'} ]},
     { section:'Users', items:[
-      {id:'merchants',     icon:'store', label:'Merchants'       },
-      {id:'aggregators',   icon:'building-2', label:'Aggregators'     },
-      {id:'admin_onboard', icon:'user-plus', label:'Onboard Merchant'},
-      {id:'users',         icon:'users', label:'Users & Permissions'},
+      {id:'merchants',     icon:'store',      label:'Merchants'          },
+      {id:'aggregators',   icon:'building-2', label:'Aggregators'        },
+      {id:'admin_onboard', icon:'user-plus',  label:'Onboard Merchant'   },
+      {id:'users',         icon:'users',      label:'Users & Permissions'},
     ]},
     { section:'Operations', items:[
       {id:'transactions',    icon:'arrow-right-left', label:'Transactions'    },
@@ -83,7 +83,8 @@ var NAV = {
       {id:'deferrals',       icon:'file-clock', label:'KYC Docs & Deferrals'},
       {id:'compliance_exceptions', icon:'flag', label:'Intl / Mastercard Compliance'},
       {id:'compliance_centre', icon:'shield-check', label:'Compliance Centre'},
-      {id:'onboarding_apps', icon:'file-text', label:'Applications'    },
+      {id:'onboarding_apps', icon:'file-text',      label:'Applications'    },
+      {id:'sa_whatsapp',    icon:'message-circle', label:'WhatsApp Billing'},
     ]},
     { section:'Reports', items:[
       {id:'revenue',         icon:'banknote', label:'Revenue Report'  },
@@ -106,7 +107,6 @@ var NAV = {
       {id:'invite_tracking',     icon:'mail-check', label:'Invite Tracking'  },
       {id:'sa_wallet',           icon:'clipboard-check', label:'Wallet Approvals' },
       {id:'settings',            icon:'settings', label:'Settings'         },
-      {id:'sa_whatsapp',         icon:'message-circle', label:'WhatsApp Billing' },
     ]},
     { section:'Developer', items:DEV_SDK_ITEMS },
   ],
