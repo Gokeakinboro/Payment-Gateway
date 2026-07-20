@@ -2211,6 +2211,19 @@ async function deleteUser(userId, email) {
   else alert((res && res.message) || 'Delete failed');
 }
 
+// Set the correct portal role from sessionStorage BEFORE the first render so
+// a merchant logging in never sees a flash of the superadmin dashboard.
+(function() {
+  try {
+    var u = JSON.parse(sessionStorage.getItem('paylode_user') || 'null');
+    if (!u || !u.role) return;
+    var map = { SUPER_ADMIN:'superadmin', ADMIN:'admin', COMPLIANCE_OFFICER:'compliance',
+                AUDIT:'audit', AGGREGATOR:'aggregator', MERCHANT:'merchant' };
+    var mapped = map[(u.role || '').toUpperCase()];
+    if (mapped && ROLE_META[mapped]) { currentRole = mapped; currentPage = ROLE_META[mapped].defaultPage; }
+  } catch (e) {}
+})();
+
 // Register the idle-logout timer FIRST, before any render code that could throw —
 // a render error must never leave a session running without an inactivity timeout.
 setupInactivityTimeout();
@@ -2267,9 +2280,11 @@ function setupInactivityTimeout() {
     timer = setTimeout(doLogout, TIMEOUT_MS);
   }
 
-  // Catch browsers that throttle background-tab timers, and machines that sleep:
-  // when the tab becomes visible / regains focus / is restored from bfcache,
-  // re-check whether the idle window has already elapsed.
+  // Catch browsers that throttle background-tab timers, and machines that sleep.
+  // setInterval is throttled too but still fires eventually — combined with the
+  // event checks below this guarantees logout within ~2 min of the idle window
+  // even if the tab was in the background or the machine was suspended.
+  setInterval(checkElapsed, 60000);
   document.addEventListener('visibilitychange', function() {
     if (!document.hidden) checkElapsed();
   });
