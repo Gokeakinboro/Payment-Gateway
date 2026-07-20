@@ -850,6 +850,11 @@ const NOTIF_KEYS = [
   'whatsapp_payment_received',  // VA / bank-transfer payment received
   'whatsapp_payout',            // payout dispatched
 ];
+// SA-only pricing fields stored in the same JSONB column (merchants cannot set their own price).
+const SA_PRICING_KEYS = [
+  'whatsapp_price_per_message_kobo', // what merchant is charged per outbound WA message
+  'whatsapp_free_tier_per_day',      // daily free messages borne by Paylode
+];
 
 router.get('/me/notification-settings', requireAuth, async (req, res, next) => {
   try {
@@ -890,10 +895,38 @@ router.patch('/:id/notification-settings', requireAuth, requireSuperAdmin, async
     if (!current) return notFound(res, 'Merchant');
     const updates = {};
     NOTIF_KEYS.forEach((k) => { if (k in req.body) updates[k] = !!req.body[k]; });
+    SA_PRICING_KEYS.forEach((k) => { if (k in req.body) updates[k] = Math.max(0, Number(req.body[k]) || 0); });
     const merged = { ...(current.notificationSettings || {}), ...updates };
     const m = await prisma.merchant.update({ where: { id: req.params.id }, data: { notificationSettings: merged } });
     await logAudit(req.user.id, 'UPDATE_NOTIFICATION_SETTINGS', 'Merchant', req.params.id, null, merged);
     ok(res, { settings: m.notificationSettings });
+  } catch (e) { next(e); }
+});
+
+// ── WhatsApp billing stats (SA only) ─────────────────────────────────────────
+router.get('/:id/whatsapp-stats', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT
+        COUNT(*) FILTER (WHERE succeeded)                        AS total_sent,
+        COUNT(*) FILTER (WHERE succeeded AND is_free_tier)       AS free_tier_count,
+        COUNT(*) FILTER (WHERE succeeded AND NOT is_free_tier)   AS billed_count,
+        COALESCE(SUM(merchant_charge_kobo) FILTER (WHERE succeeded), 0) AS merchant_revenue_kobo,
+        COALESCE(SUM(meta_cost_kobo)       FILTER (WHERE succeeded), 0) AS meta_cost_kobo
+      FROM whatsapp_message_log
+      WHERE merchant_id = $1::uuid
+    `, req.params.id);
+    const s = rows[0] || {};
+    const revenue = Number(s.merchant_revenue_kobo || 0);
+    const cost    = Number(s.meta_cost_kobo || 0);
+    ok(res, {
+      totalSent:           Number(s.total_sent || 0),
+      freeTierCount:       Number(s.free_tier_count || 0),
+      billedCount:         Number(s.billed_count || 0),
+      merchantRevenueKobo: revenue,
+      metaCostKobo:        cost,
+      netMarginKobo:       revenue - cost,
+    });
   } catch (e) { next(e); }
 });
 

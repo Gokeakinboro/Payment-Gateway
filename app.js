@@ -106,6 +106,7 @@ var NAV = {
       {id:'invite_tracking',     icon:'mail-check', label:'Invite Tracking'  },
       {id:'sa_wallet',           icon:'clipboard-check', label:'Wallet Approvals' },
       {id:'settings',            icon:'settings', label:'Settings'         },
+      {id:'sa_whatsapp',         icon:'message-circle', label:'WhatsApp Billing' },
     ]},
     { section:'Developer', items:DEV_SDK_ITEMS },
   ],
@@ -423,6 +424,7 @@ function renderPage() {
     merch_payments:function(){ return '<div class="page-header"><div class="page-title">Payment Links</div></div><div class="card" style="text-align:center;padding:40px;color:#999">Loading…</div>'; },
     merch_webhooks:renderMerchWebhooks, merch_profile:renderMerchProfile,
     merch_notifications:renderMerchNotifications,
+    sa_whatsapp:renderSaWhatsapp,
     sdk_start:renderSdkStart, sdk_payments:renderSdkPayments,
     sdk_va:renderSdkVirtualAccounts,
     sdk_verify:renderSdkVerify, sdk_payouts:renderSdkPayouts,
@@ -1258,10 +1260,17 @@ function renderMerchWebhooks() {
     '<div class="flex" style="gap:6px"><span class="badge badge-green">Active</span><button class="btn btn-outline btn-sm">Test</button></div></div></div>';
 }
 
+var _NOTIF_EVENTS = [
+  {key:'whatsapp_invoice',        label:'Invoice sent',       desc:'Notify recipient when an invoice is sent to them'},
+  {key:'whatsapp_payment_received',label:'Payment received',  desc:'Notify recipient when their payment is confirmed'},
+  {key:'whatsapp_payout',         label:'Payout dispatched',  desc:'Notify recipient when a payout is sent to them'},
+];
+
 function renderMerchNotifications() {
-  return '<div class="page-header"><div class="page-title">Notifications</div><div class="page-subtitle">Control which events trigger WhatsApp messages to your customers. WhatsApp notifications are billed separately.</div></div>' +
-    '<div id="notif-alert"></div>' +
-    '<div class="card">' +
+  setTimeout(loadMerchNotifSettings, 0);
+  return '<div class="page-header"><div class="page-title">Notifications</div>' +
+    '<div class="page-subtitle">Control which events trigger WhatsApp messages to your customers.</div></div>' +
+    '<div class="card" style="margin-bottom:16px">' +
       '<table style="width:100%;border-collapse:collapse">' +
         '<thead><tr>' +
           '<th style="text-align:left;padding:10px 16px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Event</th>' +
@@ -1271,44 +1280,180 @@ function renderMerchNotifications() {
         '<tbody id="notif-rows"><tr><td colspan="3" style="text-align:center;padding:32px;color:var(--gray-400)">Loading…</td></tr></tbody>' +
       '</table>' +
     '</div>' +
-    '<script>' +
-    '(function(){\n' +
-    'var EVENTS=[' +
-      '{key:"whatsapp_invoice",label:"Invoice sent",desc:"Notify recipient when an invoice is sent to them"},' +
-      '{key:"whatsapp_payment_received",label:"Payment received",desc:"Notify recipient when their payment is confirmed"},' +
-      '{key:"whatsapp_payout",label:"Payout dispatched",desc:"Notify recipient when a payout is sent to them"}' +
-    '];\n' +
-    'function toggle(key,val){\n' +
-    '  var body={}; body[key]=val;\n' +
-    '  apiFetch("/api/v1/merchants/me/notification-settings","PATCH",body)\n' +
-    '    .then(function(r){if(!r.ok)throw new Error(r.error||"Failed");})\n' +
-    '    .catch(function(e){alert("Could not save: "+e.message); loadSettings();});\n' +
-    '}\n' +
-    'function loadSettings(){\n' +
-    '  apiFetch("/api/v1/merchants/me/notification-settings","GET")\n' +
-    '    .then(function(r){\n' +
-    '      var s=r.settings||{};\n' +
-    '      var html=EVENTS.map(function(ev){\n' +
-    '        var on=!!s[ev.key];\n' +
-    '        return \'<tr style="border-bottom:1px solid var(--gray-100)">\'+\n' +
-    '          \'<td style="padding:14px 16px">\'+\n' +
-    '            \'<div style="font-weight:500;font-size:13px">\'+ev.label+\'</div>\'+\n' +
-    '            \'<div style="font-size:11px;color:var(--gray-400);margin-top:2px">\'+ev.desc+\'</div>\'+\n' +
-    '          \'</td>\'+\n' +
-    '          \'<td style="text-align:center;padding:14px 16px"><span style="color:var(--gray-300);font-size:12px">—</span></td>\'+\n' +
-    '          \'<td style="text-align:center;padding:14px 16px">\'+\n' +
-    '            \'<label style="display:inline-flex;align-items:center;cursor:pointer">\'+\n' +
-    '              \'<input type="checkbox" \'+(on?\'checked \':\'\')+\'data-key="\'+ev.key+\'" onchange="(function(el){toggle(el.dataset.key,el.checked);})(this)" style="width:36px;height:20px;cursor:pointer;accent-color:var(--lime)">\'+\n' +
-    '            \'</label>\'+\n' +
-    '          \'</td>\'+\n' +
-    '        \'</tr>\';\n' +
-    '      }).join("");\n' +
-    '      document.getElementById("notif-rows").innerHTML=html;\n' +
-    '    }).catch(function(){document.getElementById("notif-rows").innerHTML=\'<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--gray-400)">Could not load settings</td></tr>\';});\n' +
-    '}\n' +
-    'loadSettings();\n' +
-    '})();\n' +
-    '<\/script>';
+    '<div id="notif-pricing" style="display:none" class="card">' +
+      '<div class="card-header"><div class="card-title">WhatsApp Pricing (set by Paylode)</div></div>' +
+      '<div id="notif-pricing-body" style="padding:4px 0"></div>' +
+    '</div>';
+}
+
+async function loadMerchNotifSettings() {
+  var r = await apiFetch('/merchants/me/notification-settings');
+  if (!r) return;
+  var s = r.settings || {};
+  var html = _NOTIF_EVENTS.map(function(ev) {
+    var on = !!s[ev.key];
+    return '<tr style="border-bottom:1px solid var(--gray-100)">' +
+      '<td style="padding:14px 16px">' +
+        '<div style="font-weight:500;font-size:13px">' + ev.label + '</div>' +
+        '<div style="font-size:11px;color:var(--gray-400);margin-top:2px">' + ev.desc + '</div>' +
+      '</td>' +
+      '<td style="text-align:center;padding:14px 16px"><span style="color:var(--gray-300);font-size:12px">—</span></td>' +
+      '<td style="text-align:center;padding:14px 16px">' +
+        '<label style="display:inline-flex;align-items:center;cursor:pointer">' +
+          '<input type="checkbox" ' + (on ? 'checked ' : '') + 'data-key="' + ev.key + '" ' +
+          'onchange="toggleMerchNotif(this.dataset.key,this.checked,this)" ' +
+          'style="width:36px;height:20px;cursor:pointer;accent-color:var(--lime)">' +
+        '</label>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+  var rowsEl = document.getElementById('notif-rows');
+  if (rowsEl) rowsEl.innerHTML = html;
+
+  var price = Number(s.whatsapp_price_per_message_kobo || 0);
+  var tier  = Number(s.whatsapp_free_tier_per_day || 0);
+  var pricingEl = document.getElementById('notif-pricing');
+  var pricingBody = document.getElementById('notif-pricing-body');
+  if (pricingEl && pricingBody) {
+    pricingEl.style.display = 'block';
+    pricingBody.innerHTML =
+      '<div class="rev-row"><span class="rev-label">Price per WhatsApp message</span>' +
+      '<span class="rev-value">' + (price ? '&#8358;' + (price/100).toFixed(2) : 'Not set') + '</span></div>' +
+      '<div class="rev-row"><span class="rev-label">Daily free messages (borne by Paylode)</span>' +
+      '<span class="rev-value">' + (tier ? tier + ' messages/day' : 'None') + '</span></div>';
+  }
+}
+
+async function toggleMerchNotif(key, val, el) {
+  var body = {}; body[key] = val;
+  var r = await apiFetch('/merchants/me/notification-settings', { method: 'PATCH', body: JSON.stringify(body) });
+  if (!r || !r.ok) {
+    alert('Could not save notification setting');
+    if (el) el.checked = !val;
+  }
+}
+
+// ── SA WhatsApp Billing page ──────────────────────────────────────────────────
+
+function renderSaWhatsapp() {
+  setTimeout(loadSaWhatsappPage, 0);
+  return '<div class="page-header"><div class="page-title">WhatsApp Billing</div>' +
+    '<div class="page-subtitle">Set Meta cost + per-merchant pricing; view per-merchant margin.</div></div>' +
+
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><div class="card-title">Platform Cost (what Paylode pays Meta)</div></div>' +
+      '<div style="padding:4px 0 8px">' +
+        '<label style="font-size:12px;color:var(--gray-500);display:block;margin-bottom:6px">Meta cost per outbound message (kobo)</label>' +
+        '<div class="flex" style="gap:8px;align-items:center">' +
+          '<input type="number" id="wa-meta-cost" min="0" placeholder="0" style="width:160px" oninput="this.value=Math.max(0,parseInt(this.value)||0)">' +
+          '<button class="btn btn-lime btn-sm" onclick="saveSaWhatsappMetaCost()">Save</button>' +
+        '</div>' +
+        '<div id="wa-meta-msg" class="msg" style="margin-top:6px"></div>' +
+        '<div style="font-size:11px;color:var(--gray-400);margin-top:4px">100 kobo = &#8358;1.00. This is Paylode\'s cost — used to compute all merchant margins.</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><div class="card-title">Merchant WhatsApp Pricing</div></div>' +
+      '<div style="padding:4px 0 8px">' +
+        '<label style="font-size:12px;color:var(--gray-500);display:block;margin-bottom:6px">Merchant ID (UUID)</label>' +
+        '<div class="flex" style="gap:8px">' +
+          '<input type="text" id="wa-merch-id" placeholder="paste merchant UUID" style="flex:1;font-family:monospace;font-size:12px">' +
+          '<button class="btn btn-outline btn-sm" onclick="loadSaMerchantWa()">Load</button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="wa-merch-section" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--gray-200)">' +
+        '<div class="grid-2" style="gap:12px;margin-bottom:12px">' +
+          '<div>' +
+            '<label style="font-size:12px;color:var(--gray-500);display:block;margin-bottom:4px">Price charged to merchant (kobo/message)</label>' +
+            '<input type="number" id="wa-price" min="0" placeholder="0" style="width:100%" oninput="this.value=Math.max(0,parseInt(this.value)||0)">' +
+          '</div>' +
+          '<div>' +
+            '<label style="font-size:12px;color:var(--gray-500);display:block;margin-bottom:4px">Daily free tier (messages — borne by Paylode)</label>' +
+            '<input type="number" id="wa-tier" min="0" placeholder="0" style="width:100%" oninput="this.value=Math.max(0,parseInt(this.value)||0)">' +
+          '</div>' +
+        '</div>' +
+        '<button class="btn btn-lime btn-sm" onclick="saveSaMerchantWaPricing()">Save Pricing</button>' +
+        '<div id="wa-pricing-msg" class="msg" style="margin-top:8px"></div>' +
+
+        '<div id="wa-stats" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--gray-200)">' +
+          '<div style="color:var(--gray-400);font-size:13px">Loading stats…</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+async function loadSaWhatsappPage() {
+  var r = await apiFetch('/platform/settings/whatsapp');
+  if (r && r.value) {
+    var el = document.getElementById('wa-meta-cost');
+    if (el) el.value = r.value.meta_cost_per_message_kobo || 0;
+  }
+}
+
+async function saveSaWhatsappMetaCost() {
+  var cost = parseInt(document.getElementById('wa-meta-cost').value) || 0;
+  var r = await apiFetch('/platform/settings/whatsapp', { method: 'PATCH', body: JSON.stringify({ value: { meta_cost_per_message_kobo: cost } }) });
+  var el = document.getElementById('wa-meta-msg');
+  if (!el) return;
+  el.className = 'msg ' + (r && r.ok ? 'ok' : 'err');
+  el.textContent = r && r.ok ? 'Saved' : 'Could not save';
+}
+
+async function loadSaMerchantWa() {
+  var id = (document.getElementById('wa-merch-id').value || '').trim();
+  if (!id) return;
+  var sec = document.getElementById('wa-merch-section');
+  if (sec) sec.style.display = 'block';
+  var statsEl = document.getElementById('wa-stats');
+  if (statsEl) statsEl.innerHTML = '<div style="color:var(--gray-400);font-size:13px">Loading…</div>';
+
+  var [nsRes, statsRes] = await Promise.all([
+    apiFetch('/merchants/' + id + '/notification-settings'),
+    apiFetch('/merchants/' + id + '/whatsapp-stats'),
+  ]);
+
+  if (nsRes && nsRes.settings) {
+    var s = nsRes.settings;
+    var priceEl = document.getElementById('wa-price');
+    var tierEl  = document.getElementById('wa-tier');
+    if (priceEl) priceEl.value = s.whatsapp_price_per_message_kobo || 0;
+    if (tierEl)  tierEl.value  = s.whatsapp_free_tier_per_day || 0;
+  }
+
+  if (statsEl) {
+    if (!statsRes) { statsEl.innerHTML = '<div style="color:var(--gray-400);font-size:13px">Could not load stats</div>'; return; }
+    var margin = statsRes.netMarginKobo || 0;
+    var mcolor = margin >= 0 ? 'var(--lime)' : '#f87171';
+    statsEl.innerHTML =
+      '<div style="font-size:12px;font-weight:600;color:var(--gray-500);margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em">Message Summary (all time)</div>' +
+      '<div class="grid-3" style="gap:10px;margin-bottom:10px">' +
+        '<div class="stat-card"><div class="stat-label">Sent</div><div class="stat-value">' + (statsRes.totalSent || 0) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Free tier</div><div class="stat-value">' + (statsRes.freeTierCount || 0) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Billed</div><div class="stat-value">' + (statsRes.billedCount || 0) + '</div></div>' +
+      '</div>' +
+      '<div class="grid-3" style="gap:10px">' +
+        '<div class="stat-card"><div class="stat-label">Merchant Revenue</div><div class="stat-value">&#8358;' + ((statsRes.merchantRevenueKobo || 0)/100).toFixed(2) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Paylode Meta Cost</div><div class="stat-value">&#8358;' + ((statsRes.metaCostKobo || 0)/100).toFixed(2) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Net Margin</div><div class="stat-value" style="color:' + mcolor + '">&#8358;' + (margin/100).toFixed(2) + '</div></div>' +
+      '</div>';
+  }
+}
+
+async function saveSaMerchantWaPricing() {
+  var id    = (document.getElementById('wa-merch-id').value || '').trim();
+  var price = parseInt(document.getElementById('wa-price').value) || 0;
+  var tier  = parseInt(document.getElementById('wa-tier').value) || 0;
+  if (!id) return;
+  var r = await apiFetch('/merchants/' + id + '/notification-settings', {
+    method: 'PATCH',
+    body: JSON.stringify({ whatsapp_price_per_message_kobo: price, whatsapp_free_tier_per_day: tier }),
+  });
+  var el = document.getElementById('wa-pricing-msg');
+  if (!el) return;
+  el.className = 'msg ' + (r && r.ok ? 'ok' : 'err');
+  el.textContent = r && r.ok ? 'Pricing saved' : 'Could not save';
+  if (r && r.ok) loadSaMerchantWa();
 }
 
 function renderMerchProfile() {
