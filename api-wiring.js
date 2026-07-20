@@ -4870,7 +4870,7 @@ function loadPageData(page) {
       });
       break;
     default:
-      document.getElementById('main-content').innerHTML = '<div class="page-header"><div class="page-title">' + page + '</div></div><div class="card"><div class="info-box">This section is coming soon.</div></div>';
+      break; // renderPage() already rendered the content; don't overwrite.
   }
 }
 
@@ -6371,7 +6371,7 @@ loadPageData = function(page) {
       if ((window.__cmplExcTab || 'exceptions') === 'matrix') loadComplianceMatrix(); else loadComplianceExceptions(); break;
     case 'deferrals':            loadDeferrals(); break;
     case 'activity_log':         loadActivityLog(); break;
-    // Static pages — _origRenderPage already rendered them, do not overwrite
+    // Static pages / self-loading pages — renderPage() already rendered them, do not overwrite
     case 'settings':
     case 'sdk_start':
     case 'sdk_payments':
@@ -6382,6 +6382,10 @@ loadPageData = function(page) {
     case 'sdk_mobile':
     case 'sdk_errors':
     case 'sdk_test':
+    case 'merch_notifications': // self-loads via loadMerchNotifSettings()
+    case 'sa_whatsapp':         // self-loads via loadSaWhatsappPage()
+    case 'merch_webhooks':
+    case 'merch_profile':
       break;
     default: _origLoadPageData(page);
   }
