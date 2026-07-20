@@ -15,6 +15,7 @@
 const { prisma } = require('../../../utils/db');
 const { logger } = require('../../../utils/logger');
 const { dispatchWebhook } = require('../../../services/webhookService');
+const whatsapp = require('../../../services/whatsappService');
 
 // Fire a merchant webhook for a terminal payout leg (payout.success | payout.failed).
 // Fire-and-forget (dispatchWebhook no-ops when the merchant has no webhook URL, and
@@ -96,7 +97,10 @@ async function applyPayoutResult({ orderId, orderNo, sessionId, orderStatus, err
       UPDATE payout_items SET status='success', provider_ref=${orderNo || null}, processed_at=NOW()
       WHERE id=${leg.payout_item_id}::uuid AND status IN ('queued','processing')`;
     await rollupBatch(leg.batch_id);
-    if (flippedOk.length) firePayoutWebhook(leg, 'payout.success', { orderNo, sessionId });
+    if (flippedOk.length) {
+      firePayoutWebhook(leg, 'payout.success', { orderNo, sessionId });
+      whatsapp.notifyMerchantPayoutSummary(leg.batch_id).catch(() => {});
+    }
   } else if (status === 'failed') {
     // Guarded transition → refund EXACTLY ONCE, only from an in-flight state.
     const flipped = await prisma.$queryRaw`
@@ -120,7 +124,10 @@ async function applyPayoutResult({ orderId, orderNo, sessionId, orderStatus, err
         provider_ref=${orderNo || null}, processed_at=NOW()
       WHERE id=${leg.payout_item_id}::uuid AND status IN ('queued','processing')`;
     await rollupBatch(leg.batch_id);
-    if (flipped.length) firePayoutWebhook(leg, 'payout.failed', { orderNo, sessionId, errorMsg });
+    if (flipped.length) {
+      firePayoutWebhook(leg, 'payout.failed', { orderNo, sessionId, errorMsg });
+      whatsapp.notifyMerchantPayoutSummary(leg.batch_id).catch(() => {});
+    }
   }
   // status null → still processing: recon keys recorded above, no state change.
   return { matched: true, status };

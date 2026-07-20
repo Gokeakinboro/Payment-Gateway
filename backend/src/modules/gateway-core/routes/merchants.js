@@ -846,9 +846,11 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 // PATCH /api/v1/merchants/:id/notification-settings — SA updates any merchant
 
 const NOTIF_KEYS = [
-  'whatsapp_invoice',           // invoice sent to recipient
-  'whatsapp_payment_received',  // VA / bank-transfer payment received
-  'whatsapp_payout',            // payout dispatched
+  'whatsapp_invoice',           // invoice sent → recipient (customer)
+  'whatsapp_checkout_receipt',  // checkout payment confirmed → payer (customer)
+  'whatsapp_payment_received',  // legacy alias for checkout_receipt (kept for compat)
+  'whatsapp_payout',            // payout dispatched → beneficiary
+  'whatsapp_payout_summary',    // payout batch completed → merchant
 ];
 // SA-only pricing fields stored in the same JSONB column (merchants cannot set their own price).
 const SA_PRICING_KEYS = [
