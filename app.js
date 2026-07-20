@@ -1338,49 +1338,48 @@ async function toggleMerchNotif(key, val, el) {
 function renderSaWhatsapp() {
   setTimeout(loadSaWhatsappPage, 0);
   return '<div class="page-header"><div class="page-title">WhatsApp Billing</div>' +
-    '<div class="page-subtitle">Set Meta cost + per-merchant pricing; view per-merchant margin.</div></div>' +
+    '<div class="page-subtitle">Configure Meta cost and per-merchant event settings, pricing, and free tier.</div></div>' +
 
     '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><div class="card-title">Platform Cost (what Paylode pays Meta)</div></div>' +
+      '<div class="card-header"><div class="card-title">Platform Cost (what Paylode pays Meta per message)</div></div>' +
       '<div style="padding:4px 0 8px">' +
-        '<label style="font-size:12px;color:var(--gray-500);display:block;margin-bottom:6px">Meta cost per outbound message (kobo)</label>' +
         '<div class="flex" style="gap:8px;align-items:center">' +
           '<input type="number" id="wa-meta-cost" min="0" placeholder="0" style="width:160px" oninput="this.value=Math.max(0,parseInt(this.value)||0)">' +
+          '<span style="font-size:13px;color:var(--gray-500)">kobo per message</span>' +
           '<button class="btn btn-lime btn-sm" onclick="saveSaWhatsappMetaCost()">Save</button>' +
+          '<span id="wa-meta-msg" class="msg" style="margin:0"></span>' +
         '</div>' +
-        '<div id="wa-meta-msg" class="msg" style="margin-top:6px"></div>' +
-        '<div style="font-size:11px;color:var(--gray-400);margin-top:4px">100 kobo = &#8358;1.00. This is Paylode\'s cost — used to compute all merchant margins.</div>' +
+        '<div style="font-size:11px;color:var(--gray-400);margin-top:6px">100 kobo = &#8358;1.00 &nbsp;·&nbsp; Used to compute all merchant margins.</div>' +
       '</div>' +
     '</div>' +
 
-    '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><div class="card-title">Merchant WhatsApp Pricing</div></div>' +
-      '<div style="padding:4px 0 8px">' +
-        '<label style="font-size:12px;color:var(--gray-500);display:block;margin-bottom:6px">Merchant ID (UUID)</label>' +
-        '<div class="flex" style="gap:8px">' +
-          '<input type="text" id="wa-merch-id" placeholder="paste merchant UUID" style="flex:1;font-family:monospace;font-size:12px">' +
-          '<button class="btn btn-outline btn-sm" onclick="loadSaMerchantWa()">Load</button>' +
-        '</div>' +
+    '<div class="card">' +
+      '<div class="card-header">' +
+        '<div class="card-title">Merchant WhatsApp Settings</div>' +
+        '<input id="wa-search" type="search" placeholder="Search merchants…" style="width:220px" oninput="_waSearchDebounce(this.value)">' +
       '</div>' +
-      '<div id="wa-merch-section" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--gray-200)">' +
-        '<div class="grid-2" style="gap:12px;margin-bottom:12px">' +
-          '<div>' +
-            '<label style="font-size:12px;color:var(--gray-500);display:block;margin-bottom:4px">Price charged to merchant (kobo/message)</label>' +
-            '<input type="number" id="wa-price" min="0" placeholder="0" style="width:100%" oninput="this.value=Math.max(0,parseInt(this.value)||0)">' +
-          '</div>' +
-          '<div>' +
-            '<label style="font-size:12px;color:var(--gray-500);display:block;margin-bottom:4px">Daily free tier (messages — borne by Paylode)</label>' +
-            '<input type="number" id="wa-tier" min="0" placeholder="0" style="width:100%" oninput="this.value=Math.max(0,parseInt(this.value)||0)">' +
-          '</div>' +
-        '</div>' +
-        '<button class="btn btn-lime btn-sm" onclick="saveSaMerchantWaPricing()">Save Pricing</button>' +
-        '<div id="wa-pricing-msg" class="msg" style="margin-top:8px"></div>' +
-
-        '<div id="wa-stats" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--gray-200)">' +
-          '<div style="color:var(--gray-400);font-size:13px">Loading stats…</div>' +
-        '</div>' +
+      '<div class="table-wrap">' +
+        '<table style="width:100%;border-collapse:collapse">' +
+          '<thead><tr>' +
+            '<th style="text-align:left;padding:10px 12px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Merchant</th>' +
+            '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Invoice</th>' +
+            '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Payment</th>' +
+            '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Payout</th>' +
+            '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">&#8358;/msg (kobo)</th>' +
+            '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Free/day</th>' +
+          '</tr></thead>' +
+          '<tbody id="wa-merch-rows">' +
+            '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--gray-400)">Loading merchants…</td></tr>' +
+          '</tbody>' +
+        '</table>' +
       '</div>' +
     '</div>';
+}
+
+var _waSearchTimer = null;
+function _waSearchDebounce(q) {
+  clearTimeout(_waSearchTimer);
+  _waSearchTimer = setTimeout(function() { _loadWaMerchants(q); }, 320);
 }
 
 async function loadSaWhatsappPage() {
@@ -1389,6 +1388,54 @@ async function loadSaWhatsappPage() {
     var el = document.getElementById('wa-meta-cost');
     if (el) el.value = r.value.meta_cost_per_message_kobo || 0;
   }
+  _loadWaMerchants('');
+}
+
+async function _loadWaMerchants(q) {
+  var tbody = document.getElementById('wa-merch-rows');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">Loading…</td></tr>';
+  var url = '/merchants?' + (q ? 'search=' + encodeURIComponent(q) + '&' : '') + 'perPage=30&page=1';
+  var r = await apiFetch(url);
+  var merchants = (r && r.data && r.data.data) || [];
+  if (!merchants.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">No merchants found</td></tr>';
+    return;
+  }
+  var settings = await Promise.all(merchants.map(function(m) {
+    return apiFetch('/merchants/' + m.id + '/notification-settings')
+      .then(function(ns) { return (ns && ns.settings) || {}; })
+      .catch(function() { return {}; });
+  }));
+  tbody.innerHTML = merchants.map(function(m, i) {
+    var s = settings[i];
+    var mid = m.id;
+    function tog(key, val) {
+      return '<td style="text-align:center;padding:10px 8px">' +
+        '<input type="checkbox" ' + (val ? 'checked ' : '') +
+        'onchange="saveSaWaToggle(\'' + mid + '\',\'' + key + '\',this.checked,this)" ' +
+        'style="width:36px;height:20px;cursor:pointer;accent-color:var(--lime)"></td>';
+    }
+    return '<tr style="border-bottom:1px solid var(--gray-100)">' +
+      '<td style="padding:10px 12px">' +
+        '<div style="font-weight:500;font-size:13px">' + (m.businessName || '—') + '</div>' +
+        '<div style="font-size:11px;color:var(--gray-400)">' + (m.merchantCode || '') + '</div>' +
+      '</td>' +
+      tog('whatsapp_invoice',         s.whatsapp_invoice) +
+      tog('whatsapp_payment_received', s.whatsapp_payment_received) +
+      tog('whatsapp_payout',           s.whatsapp_payout) +
+      '<td style="text-align:center;padding:8px">' +
+        '<input type="number" min="0" value="' + (s.whatsapp_price_per_message_kobo || 0) + '" ' +
+        'style="width:72px;text-align:center" ' +
+        'onchange="saveSaWaPricing(\'' + mid + '\',this.value,null)">' +
+      '</td>' +
+      '<td style="text-align:center;padding:8px">' +
+        '<input type="number" min="0" value="' + (s.whatsapp_free_tier_per_day || 0) + '" ' +
+        'style="width:56px;text-align:center" ' +
+        'onchange="saveSaWaPricing(\'' + mid + '\',null,this.value)">' +
+      '</td>' +
+    '</tr>';
+  }).join('');
 }
 
 async function saveSaWhatsappMetaCost() {
@@ -1400,60 +1447,17 @@ async function saveSaWhatsappMetaCost() {
   el.textContent = r && r.ok ? 'Saved' : 'Could not save';
 }
 
-async function loadSaMerchantWa() {
-  var id = (document.getElementById('wa-merch-id').value || '').trim();
-  if (!id) return;
-  var sec = document.getElementById('wa-merch-section');
-  if (sec) sec.style.display = 'block';
-  var statsEl = document.getElementById('wa-stats');
-  if (statsEl) statsEl.innerHTML = '<div style="color:var(--gray-400);font-size:13px">Loading…</div>';
-
-  var [nsRes, statsRes] = await Promise.all([
-    apiFetch('/merchants/' + id + '/notification-settings'),
-    apiFetch('/merchants/' + id + '/whatsapp-stats'),
-  ]);
-
-  if (nsRes && nsRes.settings) {
-    var s = nsRes.settings;
-    var priceEl = document.getElementById('wa-price');
-    var tierEl  = document.getElementById('wa-tier');
-    if (priceEl) priceEl.value = s.whatsapp_price_per_message_kobo || 0;
-    if (tierEl)  tierEl.value  = s.whatsapp_free_tier_per_day || 0;
-  }
-
-  if (statsEl) {
-    if (!statsRes) { statsEl.innerHTML = '<div style="color:var(--gray-400);font-size:13px">Could not load stats</div>'; return; }
-    var margin = statsRes.netMarginKobo || 0;
-    var mcolor = margin >= 0 ? 'var(--lime)' : '#f87171';
-    statsEl.innerHTML =
-      '<div style="font-size:12px;font-weight:600;color:var(--gray-500);margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em">Message Summary (all time)</div>' +
-      '<div class="grid-3" style="gap:10px;margin-bottom:10px">' +
-        '<div class="stat-card"><div class="stat-label">Sent</div><div class="stat-value">' + (statsRes.totalSent || 0) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Free tier</div><div class="stat-value">' + (statsRes.freeTierCount || 0) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Billed</div><div class="stat-value">' + (statsRes.billedCount || 0) + '</div></div>' +
-      '</div>' +
-      '<div class="grid-3" style="gap:10px">' +
-        '<div class="stat-card"><div class="stat-label">Merchant Revenue</div><div class="stat-value">&#8358;' + ((statsRes.merchantRevenueKobo || 0)/100).toFixed(2) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Paylode Meta Cost</div><div class="stat-value">&#8358;' + ((statsRes.metaCostKobo || 0)/100).toFixed(2) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Net Margin</div><div class="stat-value" style="color:' + mcolor + '">&#8358;' + (margin/100).toFixed(2) + '</div></div>' +
-      '</div>';
-  }
+async function saveSaWaToggle(merchantId, key, val, checkbox) {
+  var body = {}; body[key] = val;
+  var r = await apiFetch('/merchants/' + merchantId + '/notification-settings', { method: 'PATCH', body: JSON.stringify(body) });
+  if (!r || !r.ok) { alert('Could not save'); if (checkbox) checkbox.checked = !val; }
 }
 
-async function saveSaMerchantWaPricing() {
-  var id    = (document.getElementById('wa-merch-id').value || '').trim();
-  var price = parseInt(document.getElementById('wa-price').value) || 0;
-  var tier  = parseInt(document.getElementById('wa-tier').value) || 0;
-  if (!id) return;
-  var r = await apiFetch('/merchants/' + id + '/notification-settings', {
-    method: 'PATCH',
-    body: JSON.stringify({ whatsapp_price_per_message_kobo: price, whatsapp_free_tier_per_day: tier }),
-  });
-  var el = document.getElementById('wa-pricing-msg');
-  if (!el) return;
-  el.className = 'msg ' + (r && r.ok ? 'ok' : 'err');
-  el.textContent = r && r.ok ? 'Pricing saved' : 'Could not save';
-  if (r && r.ok) loadSaMerchantWa();
+async function saveSaWaPricing(merchantId, price, tier) {
+  var body = {};
+  if (price !== null) body.whatsapp_price_per_message_kobo = parseInt(price) || 0;
+  if (tier  !== null) body.whatsapp_free_tier_per_day      = parseInt(tier)  || 0;
+  apiFetch('/merchants/' + merchantId + '/notification-settings', { method: 'PATCH', body: JSON.stringify(body) });
 }
 
 function renderMerchProfile() {
