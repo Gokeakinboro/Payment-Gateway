@@ -38,8 +38,12 @@ const T_PAYLINK      = process.env.WHATSAPP_TEMPLATE_PAYMENT_LINK || '';
 const T_PAYLINK_LANG = process.env.WHATSAPP_TEMPLATE_PAYMENT_LINK_LANG || 'en';
 const T_QR           = process.env.WHATSAPP_TEMPLATE_QR || '';
 const T_QR_LANG      = process.env.WHATSAPP_TEMPLATE_QR_LANG || 'en';
-const T_RECEIPT      = process.env.WHATSAPP_TEMPLATE_RECEIPT || '';
-const T_RECEIPT_LANG = process.env.WHATSAPP_TEMPLATE_RECEIPT_LANG || 'en';
+const T_RECEIPT          = process.env.WHATSAPP_TEMPLATE_RECEIPT || '';
+const T_RECEIPT_LANG     = process.env.WHATSAPP_TEMPLATE_RECEIPT_LANG || 'en';
+const T_CHECKOUT_RECEIPT = process.env.WHATSAPP_TEMPLATE_CHECKOUT_RECEIPT || '';
+const T_CHECKOUT_LANG    = process.env.WHATSAPP_TEMPLATE_CHECKOUT_RECEIPT_LANG || 'en';
+const T_PAYOUT_SUMMARY   = process.env.WHATSAPP_TEMPLATE_PAYOUT_SUMMARY || '';
+const T_PAYOUT_SUM_LANG  = process.env.WHATSAPP_TEMPLATE_PAYOUT_SUMMARY_LANG || 'en';
 
 const isConfigured = () => !!(TOKEN && PHONE_ID);
 
@@ -208,4 +212,64 @@ function notifyReceipt({ phone, recipientName, businessName, invoiceNumber, amou
   ], { merchantId, eventType: 'payment_received' });
 }
 
-module.exports = { sendTemplate, notifyInvoice, notifyReceipt, notifyPaymentLink, notifyQr, normalizePhone, isConfigured };
+// Checkout payment receipt — fired when a customer's pay-in is confirmed.
+// Phone must come from transaction metadata (customer_phone / customerPhone).
+// Self-loads the transaction + merchant notification settings by reference.
+async function notifyCheckoutReceipt(reference) {
+  if (!T_CHECKOUT_RECEIPT) return;
+  try {
+    const txn = await prisma.transaction.findUnique({
+      where: { reference },
+      include: { merchant: { select: { businessName: true, notificationSettings: true, id: true } } },
+    });
+    if (!txn || txn.status !== 'SUCCESS') return;
+    const ns = txn.merchant?.notificationSettings || {};
+    // Honour per-merchant opt-in. Also accept the legacy whatsapp_payment_received key.
+    if (!ns.whatsapp_checkout_receipt && !ns.whatsapp_payment_received) return;
+    const phone = (txn.metadata && (txn.metadata.customer_phone || txn.metadata.customerPhone)) || null;
+    if (!phone) return;
+    const ccy   = txn.currency || 'NGN';
+    const paidKobo = (txn.metadata?.payin?.charge != null) ? txn.metadata.payin.charge : txn.amount;
+    const dateStr  = new Date(txn.paidAt || Date.now()).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
+    return sendTemplate(phone, T_CHECKOUT_RECEIPT, T_CHECKOUT_LANG, [
+      { name: 'customer_name',  value: txn.customerEmail ? txn.customerEmail.split('@')[0] : 'there' },
+      { name: 'amount_paid',    value: formatMoney(paidKobo, ccy) },
+      { name: 'business_name',  value: txn.merchant?.businessName || 'Paylode' },
+      { name: 'reference',      value: txn.reference },
+      { name: 'date_time',      value: dateStr },
+    ], { merchantId: txn.merchant?.id, eventType: 'checkout_receipt' });
+  } catch (e) {
+    logger.warn({ err: e.message, reference }, 'WhatsApp checkout receipt failed');
+  }
+}
+
+// Merchant payout batch summary — fired when a batch reaches terminal status.
+// Self-loads the batch + merchant from batchId.
+async function notifyMerchantPayoutSummary(batchId) {
+  if (!T_PAYOUT_SUMMARY) return;
+  try {
+    const batch = await prisma.payoutBatch.findUnique({
+      where: { id: batchId },
+      include: { merchant: { select: { businessName: true, businessPhone: true, notificationSettings: true, id: true } } },
+    });
+    if (!batch || !['completed', 'partially_failed', 'failed'].includes(batch.status)) return;
+    const ns = batch.merchant?.notificationSettings || {};
+    if (!ns.whatsapp_payout_summary) return;
+    const phone = batch.merchant?.businessPhone;
+    if (!phone) return;
+    const total    = formatMoney(batch.totalAmount, 'NGN');
+    const count    = String(batch.totalItems || 0);
+    const sentAt   = new Date().toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
+    return sendTemplate(phone, T_PAYOUT_SUMMARY, T_PAYOUT_SUM_LANG, [
+      { name: 'merchant_name',  value: batch.merchant?.businessName || 'Merchant' },
+      { name: 'total_amount',   value: total },
+      { name: 'txn_count',      value: count },
+      { name: 'dispatch_time',  value: sentAt },
+    ], { merchantId: batch.merchant?.id, eventType: 'payout_summary' });
+  } catch (e) {
+    logger.warn({ err: e.message, batchId }, 'WhatsApp payout summary failed');
+  }
+}
+
+module.exports = { sendTemplate, notifyInvoice, notifyReceipt, notifyPaymentLink, notifyQr,
+  notifyCheckoutReceipt, notifyMerchantPayoutSummary, normalizePhone, isConfigured };
