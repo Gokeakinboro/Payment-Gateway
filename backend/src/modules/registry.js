@@ -47,7 +47,8 @@ const MODULES = [
   { name: 'youverify-webhook', basePath: '/api/v1/webhooks/youverify', load: () => require('../routes/youverify-webhook'), enabledEnv: 'MODULE_YOUVERIFY_WEBHOOK_ENABLED', category: 'webhook' },
   { name: 'palmpay-webhook',   basePath: '/api/v1/webhooks/palmpay',   load: () => require('./gateway-core/routes/palmpay-webhook'),   enabledEnv: 'MODULE_PALMPAY_WEBHOOK_ENABLED',   category: 'money' },
   { name: 'parallex-webhook',  basePath: '/api/v1/webhooks/parallex',  load: () => require('./gateway-core/routes/parallex-webhook'),  enabledEnv: 'MODULE_PARALLEX_WEBHOOK_ENABLED', category: 'money' },
-  { name: 'whatsapp-webhook',  basePath: '/api/v1/webhooks/whatsapp',  load: () => require('../routes/whatsappWebhook'),               enabledEnv: 'MODULE_WHATSAPP_WEBHOOK_ENABLED', category: 'webhook' },
+  { name: 'whatsapp-webhook',   basePath: '/api/v1/webhooks/whatsapp',  load: () => require('../routes/whatsappWebhook'),    enabledEnv: 'MODULE_WHATSAPP_WEBHOOK_ENABLED',   category: 'webhook' },
+  { name: 'platform-settings', basePath: '/api/v1/platform/settings',  load: () => require('../routes/platformSettings'),   enabledEnv: 'MODULE_PLATFORM_SETTINGS_ENABLED',  category: 'core'    },
 
   // ── More core ────────────────────────────────────────────────────────────
   { name: 'deferrals',     basePath: '/api/v1/deferrals',      load: () => require('./gateway-core/routes/deferrals'),    enabledEnv: 'MODULE_DEFERRALS_ENABLED',     category: 'core' },
