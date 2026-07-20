@@ -747,6 +747,35 @@ model NigerianBank {
   @@map("nigerian_banks")
 }
 
+// ─── WHATSAPP BILLING ────────────────────────────────────────────────────────
+
+model WhatsappMessageLog {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId         String   @map("merchant_id") @db.Uuid
+  eventType          String   @map("event_type")
+  sentAt             DateTime @default(now()) @map("sent_at")
+  isFreeTier         Boolean  @default(false) @map("is_free_tier")
+  merchantChargeKobo BigInt   @default(0) @map("merchant_charge_kobo")
+  metaCostKobo       BigInt   @default(0) @map("meta_cost_kobo")
+  metaMessageId      String?  @map("meta_message_id")
+  succeeded          Boolean  @default(true)
+
+  @@index([merchantId])
+  @@index([sentAt])
+  @@map("whatsapp_message_log")
+}
+
+// ─── PLATFORM SETTINGS (key-value) ───────────────────────────────────────────
+
+model PlatformSettings {
+  key       String   @id
+  value     Json     @default("{}")
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
+}
+
 // ─── WEBHOOKS LOG ─────────────────────────────────────────────────────────────
 
 model WebhookDelivery {

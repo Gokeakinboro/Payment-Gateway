@@ -19,11 +19,14 @@
  *   WHATSAPP_TEMPLATE_QR            approved template name for QR-code shares
  *   WHATSAPP_TEMPLATE_QR_LANG       language code, default en
  *
- * Template body variables ({{1}},{{2}},…) are positional — the params arrays in
- * notifyInvoice/notifyReceipt must match each approved template's variable order.
+ * Billing (merchant_id + event_type in opts):
+ *   Each successful send is logged in whatsapp_message_log. The merchant is
+ *   charged their configured price per message; messages within the daily free
+ *   tier are borne by Paylode (meta_cost_kobo recorded, merchant_charge = 0).
  */
 const https = require('https');
 const { logger } = require('../utils/logger');
+const { prisma } = require('../utils/db');
 
 const TOKEN    = process.env.WHATSAPP_ACCESS_TOKEN || '';
 const PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
@@ -73,8 +76,56 @@ function postJson(path, body) {
   });
 }
 
-// Low-level: send one approved template. params = ordered body variable values.
-async function sendTemplate(recipient, templateName, languageCode, params = []) {
+// ── Billing helpers ───────────────────────────────────────────────────────────
+
+async function _getWhatsappPlatformCost() {
+  try {
+    const row = await prisma.platformSettings.findUnique({ where: { key: 'whatsapp' } });
+    return Number((row?.value || {}).meta_cost_per_message_kobo || 0);
+  } catch { return 0; }
+}
+
+async function _countTodayMessages(merchantId) {
+  try {
+    const todayUtc = new Date(); todayUtc.setUTCHours(0, 0, 0, 0);
+    const result = await prisma.$queryRawUnsafe(
+      `SELECT COUNT(*) AS cnt FROM whatsapp_message_log
+        WHERE merchant_id = $1::uuid AND sent_at >= $2 AND succeeded = TRUE`,
+      merchantId, todayUtc);
+    return Number(result[0]?.cnt || 0);
+  } catch { return 0; }
+}
+
+async function _billMessage(merchantId, eventType, metaMessageId, succeeded) {
+  try {
+    const [metaCostKobo, merchant] = await Promise.all([
+      _getWhatsappPlatformCost(),
+      prisma.merchant.findUnique({ where: { id: merchantId }, select: { notificationSettings: true } }),
+    ]);
+    const ns = merchant?.notificationSettings || {};
+    const pricePerMsg = Number(ns.whatsapp_price_per_message_kobo || 0);
+    const freeTier    = Number(ns.whatsapp_free_tier_per_day || 0);
+    const todayCount  = freeTier > 0 ? await _countTodayMessages(merchantId) : 0;
+    const isFreeTier  = freeTier > 0 && todayCount < freeTier;
+    await prisma.whatsappMessageLog.create({
+      data: {
+        merchantId, eventType,
+        isFreeTier,
+        merchantChargeKobo: BigInt(isFreeTier ? 0 : pricePerMsg),
+        metaCostKobo: BigInt(metaCostKobo),
+        metaMessageId: metaMessageId || null,
+        succeeded,
+      },
+    });
+  } catch (e) {
+    logger.warn({ err: e.message }, 'WhatsApp billing log failed');
+  }
+}
+
+// ── Core send ─────────────────────────────────────────────────────────────────
+
+// opts = { merchantId?, eventType? } — when provided, logs billing entry after send.
+async function sendTemplate(recipient, templateName, languageCode, params = [], opts = {}) {
   if (!isConfigured() || !templateName) {
     logger.debug({ templateName, configured: isConfigured() }, 'WhatsApp skipped (not configured)');
     return { skipped: true, reason: 'not_configured' };
@@ -91,19 +142,23 @@ async function sendTemplate(recipient, templateName, languageCode, params = []) 
       return { type: 'text', text: String(v == null ? '' : v) };
     }) }];
   }
+  let sendOk = false, msgId = null;
   try {
     const r = await postJson(`/${VERSION}/${PHONE_ID}/messages`, {
       messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'template', template,
     });
-    const ok = r.status >= 200 && r.status < 300 && r.body && !r.body.error;
-    if (ok) {
-      logger.info({ to, templateName, status: r.status, id: r.body?.messages?.[0]?.id }, 'WhatsApp sent');
+    sendOk = r.status >= 200 && r.status < 300 && r.body && !r.body.error;
+    msgId  = r.body?.messages?.[0]?.id;
+    if (sendOk) {
+      logger.info({ to, templateName, status: r.status, id: msgId }, 'WhatsApp sent');
     } else {
       logger.warn({ to, templateName, status: r.status, err: r.body?.error, body: r.body }, 'WhatsApp send failed');
     }
-    return { ok, response: r.body };
+    if (opts.merchantId) _billMessage(opts.merchantId, opts.eventType || 'unknown', msgId, sendOk).catch(() => {});
+    return { ok: sendOk, response: r.body };
   } catch (e) {
     logger.warn({ to, err: e.message }, 'WhatsApp send error');
+    if (opts.merchantId) _billMessage(opts.merchantId, opts.eventType || 'unknown', null, false).catch(() => {});
     return { ok: false, error: e.message };
   }
 }
@@ -114,43 +169,43 @@ function formatMoney(kobo, currency) {
 }
 
 // Invoice notification — params ORDER must match WHATSAPP_TEMPLATE_INVOICE.
-function notifyInvoice({ phone, recipientName, businessName, invoiceNumber, amount, currency, payUrl }) {
+function notifyInvoice({ phone, recipientName, businessName, invoiceNumber, amount, currency, payUrl, merchantId }) {
   return sendTemplate(phone, T_INVOICE, T_INVOICE_LANG, [
     { name: 'customer_name',   value: recipientName || 'there' },
     { name: 'business_name',   value: businessName || 'Paylode' },
     { name: 'invoice_number',  value: invoiceNumber || '' },
     { name: 'amount_due',      value: formatMoney(amount, currency) },
     { name: 'pay_url',         value: payUrl || '' },
-  ]);
+  ], { merchantId, eventType: 'invoice' });
 }
 
 // Payment-link share — params ORDER must match WHATSAPP_TEMPLATE_PAYMENT_LINK.
-function notifyPaymentLink({ phone, businessName, title, amount, currency, payUrl }) {
+function notifyPaymentLink({ phone, businessName, title, amount, currency, payUrl, merchantId }) {
   return sendTemplate(phone, T_PAYLINK, T_PAYLINK_LANG, [
     businessName || 'Paylode',
     title || 'Payment request',
     amount == null ? 'any amount' : formatMoney(amount, currency),
     payUrl || '',
-  ]);
+  ], { merchantId, eventType: 'payment_link' });
 }
 
 // QR-code share — params ORDER must match WHATSAPP_TEMPLATE_QR.
-function notifyQr({ phone, businessName, label, payUrl }) {
+function notifyQr({ phone, businessName, label, payUrl, merchantId }) {
   return sendTemplate(phone, T_QR, T_QR_LANG, [
     businessName || 'Paylode',
     label || 'Scan to pay',
     payUrl || '',
-  ]);
+  ], { merchantId, eventType: 'qr' });
 }
 
 // Payment receipt — params ORDER must match WHATSAPP_TEMPLATE_RECEIPT.
-function notifyReceipt({ phone, recipientName, businessName, invoiceNumber, amount, currency }) {
+function notifyReceipt({ phone, recipientName, businessName, invoiceNumber, amount, currency, merchantId }) {
   return sendTemplate(phone, T_RECEIPT, T_RECEIPT_LANG, [
     recipientName || 'there',
     businessName || 'Paylode',
     invoiceNumber || '',
     formatMoney(amount, currency),
-  ]);
+  ], { merchantId, eventType: 'payment_received' });
 }
 
 module.exports = { sendTemplate, notifyInvoice, notifyReceipt, notifyPaymentLink, notifyQr, normalizePhone, isConfigured };

@@ -111,6 +111,7 @@ async function sendInvoice(invoiceId, { isReminder = false } = {}) {
     whatsapp.notifyInvoice({
       phone: inv.recipient_phone, recipientName: inv.recipient_name, businessName: bizName,
       invoiceNumber: inv.invoice_number, amount: inv.total_amount, currency: inv.currency, payUrl,
+      merchantId: inv.merchant_id,
     }).catch(() => {});
   }
 
