@@ -12,6 +12,7 @@ const { prisma } = require('../../../utils/db');
 const { dispatchWebhook } = require('../../../services/webhookService');
 const { computeFeesForPayin, resolvePayinRail, resolvePayinRateConfig } = require('./feeEngine');
 const { sendCustomerReceipt } = require('./receiptEmail');
+const whatsapp = require('../../../services/whatsappService');
 
 // Finalize by transaction reference. Returns:
 //   { finalized:true, fees }          — we flipped PENDING→SUCCESS this call
@@ -140,6 +141,8 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
 
   // Email the customer their receipt (best-effort, non-blocking).
   sendCustomerReceipt(txn.reference);
+  // WhatsApp checkout receipt — fires only if merchant opted in + customer phone captured.
+  whatsapp.notifyCheckoutReceipt(txn.reference).catch(() => {});
 
   if (merchant.webhookUrl) {
     dispatchWebhook(merchant.id, 'payment.success', {

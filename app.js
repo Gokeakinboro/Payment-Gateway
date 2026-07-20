@@ -1261,9 +1261,10 @@ function renderMerchWebhooks() {
 }
 
 var _NOTIF_EVENTS = [
-  {key:'whatsapp_invoice',        label:'Invoice sent',       desc:'Notify recipient when an invoice is sent to them'},
-  {key:'whatsapp_payment_received',label:'Payment received',  desc:'Notify recipient when their payment is confirmed'},
-  {key:'whatsapp_payout',         label:'Payout dispatched',  desc:'Notify recipient when a payout is sent to them'},
+  {key:'whatsapp_invoice',         label:'Invoice',         desc:'Customer receives a WhatsApp notification when you send them an invoice'},
+  {key:'whatsapp_checkout_receipt',label:'Receipt',         desc:'Customer receives a WhatsApp receipt when their payment on your checkout page is confirmed'},
+  {key:'whatsapp_payout',          label:'Payout',          desc:'Beneficiary receives a WhatsApp notification when you send them a payout'},
+  {key:'whatsapp_payout_summary',  label:'Payout summary',  desc:'You receive a WhatsApp summary when your payout batch completes (sent to your business phone)'},
 ];
 
 function renderMerchNotifications() {
@@ -1363,13 +1364,14 @@ function renderSaWhatsapp() {
           '<thead><tr>' +
             '<th style="text-align:left;padding:10px 12px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Merchant</th>' +
             '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Invoice</th>' +
-            '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Payment</th>' +
+            '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Receipt</th>' +
             '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Payout</th>' +
+            '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Payout summary</th>' +
             '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">&#8358;/msg (kobo)</th>' +
             '<th style="text-align:center;padding:10px 8px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Free/day</th>' +
           '</tr></thead>' +
           '<tbody id="wa-merch-rows">' +
-            '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--gray-400)">Loading merchants…</td></tr>' +
+            '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--gray-400)">Loading merchants…</td></tr>' +
           '</tbody>' +
         '</table>' +
       '</div>' +
@@ -1394,12 +1396,12 @@ async function loadSaWhatsappPage() {
 async function _loadWaMerchants(q) {
   var tbody = document.getElementById('wa-merch-rows');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--gray-400)">Loading…</td></tr>';
   var url = '/merchants?active=true&' + (q ? 'search=' + encodeURIComponent(q) + '&' : '') + 'perPage=30&page=1';
   var r = await apiFetch(url);
   var merchants = (r && r.data && r.data.data) || [];
   if (!merchants.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">No merchants found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--gray-400)">No merchants found</td></tr>';
     return;
   }
   var settings = await Promise.all(merchants.map(function(m) {
@@ -1421,9 +1423,10 @@ async function _loadWaMerchants(q) {
         '<div style="font-weight:500;font-size:13px">' + (m.businessName || '—') + '</div>' +
         '<div style="font-size:11px;color:var(--gray-400)">' + (m.merchantCode || '') + '</div>' +
       '</td>' +
-      tog('whatsapp_invoice',         s.whatsapp_invoice) +
-      tog('whatsapp_payment_received', s.whatsapp_payment_received) +
+      tog('whatsapp_invoice',          s.whatsapp_invoice) +
+      tog('whatsapp_checkout_receipt', s.whatsapp_checkout_receipt || s.whatsapp_payment_received) +
       tog('whatsapp_payout',           s.whatsapp_payout) +
+      tog('whatsapp_payout_summary',   s.whatsapp_payout_summary) +
       '<td style="text-align:center;padding:8px">' +
         '<input type="number" min="0" value="' + (s.whatsapp_price_per_message_kobo || 0) + '" ' +
         'style="width:72px;text-align:center" ' +
