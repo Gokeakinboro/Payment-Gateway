@@ -1289,7 +1289,7 @@ function renderMerchNotifications() {
 async function loadMerchNotifSettings() {
   var r = await apiFetch('/merchants/me/notification-settings');
   if (!r) return;
-  var s = r.settings || {};
+  var s = (r.data && r.data.settings) || {};
   var html = _NOTIF_EVENTS.map(function(ev) {
     var on = !!s[ev.key];
     return '<tr style="border-bottom:1px solid var(--gray-100)">' +
@@ -1327,7 +1327,7 @@ async function loadMerchNotifSettings() {
 async function toggleMerchNotif(key, val, el) {
   var body = {}; body[key] = val;
   var r = await apiFetch('/merchants/me/notification-settings', { method: 'PATCH', body: JSON.stringify(body) });
-  if (!r || !r.ok) {
+  if (!r || !r.status) {
     alert('Could not save notification setting');
     if (el) el.checked = !val;
   }
@@ -1384,9 +1384,9 @@ function _waSearchDebounce(q) {
 
 async function loadSaWhatsappPage() {
   var r = await apiFetch('/platform/settings/whatsapp');
-  if (r && r.value) {
+  if (r && r.data && r.data.value) {
     var el = document.getElementById('wa-meta-cost');
-    if (el) el.value = r.value.meta_cost_per_message_kobo || 0;
+    if (el) el.value = r.data.value.meta_cost_per_message_kobo || 0;
   }
   _loadWaMerchants('');
 }
@@ -1395,7 +1395,7 @@ async function _loadWaMerchants(q) {
   var tbody = document.getElementById('wa-merch-rows');
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">Loading…</td></tr>';
-  var url = '/merchants?' + (q ? 'search=' + encodeURIComponent(q) + '&' : '') + 'perPage=30&page=1';
+  var url = '/merchants?active=true&' + (q ? 'search=' + encodeURIComponent(q) + '&' : '') + 'perPage=30&page=1';
   var r = await apiFetch(url);
   var merchants = (r && r.data && r.data.data) || [];
   if (!merchants.length) {
@@ -1404,7 +1404,7 @@ async function _loadWaMerchants(q) {
   }
   var settings = await Promise.all(merchants.map(function(m) {
     return apiFetch('/merchants/' + m.id + '/notification-settings')
-      .then(function(ns) { return (ns && ns.settings) || {}; })
+      .then(function(ns) { return (ns && ns.data && ns.data.settings) || {}; })
       .catch(function() { return {}; });
   }));
   tbody.innerHTML = merchants.map(function(m, i) {
@@ -1443,14 +1443,14 @@ async function saveSaWhatsappMetaCost() {
   var r = await apiFetch('/platform/settings/whatsapp', { method: 'PATCH', body: JSON.stringify({ value: { meta_cost_per_message_kobo: cost } }) });
   var el = document.getElementById('wa-meta-msg');
   if (!el) return;
-  el.className = 'msg ' + (r && r.ok ? 'ok' : 'err');
-  el.textContent = r && r.ok ? 'Saved' : 'Could not save';
+  el.className = 'msg ' + (r && r.status ? 'ok' : 'err');
+  el.textContent = r && r.status ? 'Saved' : 'Could not save';
 }
 
 async function saveSaWaToggle(merchantId, key, val, checkbox) {
   var body = {}; body[key] = val;
   var r = await apiFetch('/merchants/' + merchantId + '/notification-settings', { method: 'PATCH', body: JSON.stringify(body) });
-  if (!r || !r.ok) { alert('Could not save'); if (checkbox) checkbox.checked = !val; }
+  if (!r || !r.status) { alert('Could not save'); if (checkbox) checkbox.checked = !val; }
 }
 
 async function saveSaWaPricing(merchantId, price, tier) {
