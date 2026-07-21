@@ -476,7 +476,7 @@ async function viewMerchant(id) {
           : '<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="document.getElementById(\'modal\').style.display=\'none\';activateMerchant(\'' + id + '\',\'' + nameEsc + '\')">Activate</button>') : '') +
         (canManage ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';closeMerchant(\'' + id + '\',\'' + nameEsc + '\')">Close Account</button>' : '') +
         (isSA ? '<button class="btn btn-outline" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';deleteMerchant(\'' + id + '\',\'' + nameEsc + '\')">&#128465; Delete</button>' : '') +
-        (canManage ? '<button class="btn btn-lime" onclick="document.getElementById(\'modal\').style.display=\'none\';editMerchant(\'' + id + '\')">&#9998; Edit</button>' : '') +
+        (canManage ? '<button class="btn btn-lime" onclick="editMerchant(\'' + id + '\')">&#9998; Edit</button>' : '') +
       '</div>' +
     '</div>';
 
@@ -1008,7 +1008,7 @@ async function editMerchant(id) {
     adminOnlyFields +
     '<div class="divider"></div>' +
     '<div class="flex-between">' +
-      '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+      '<button class="btn btn-outline" onclick="viewMerchant(\'' + id + '\')">Cancel</button>' +
       '<button class="btn btn-lime" onclick="saveMerchantEdit(\'' + id + '\')">Save Changes</button>' +
     '</div>';
   document.getElementById('modal').style.display = 'flex';
@@ -1097,11 +1097,10 @@ async function saveMerchantEdit(id) {
 
   var res = await apiFetch('/merchants/' + id, { method: 'PUT', body: JSON.stringify(body) });
   if (res && res.status) {
-    alert('Merchant updated successfully');
-    document.getElementById('modal').style.display = 'none';
-    // Refresh whichever merchant list is currently showing
+    // Refresh the background list silently, then return to the detail view
     if (currentRole === 'aggregator') loadPageData('agg_merchants');
     else loadMerchants();
+    viewMerchant(id);
   } else {
     alert('Error: ' + ((res && res.message) || 'Update failed'));
   }

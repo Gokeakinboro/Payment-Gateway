@@ -351,10 +351,10 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
     if (link.expires_at && new Date(link.expires_at) < new Date())
       return fail(res, 'This payment link has expired', 'LINK_EXPIRED', 410);
 
-    // Email is OPTIONAL (a link is shared to many; each payer fills their own, or
-    // skips it). Validate only when provided. Used for the receipt + customer screening.
+    // Email + phone are both OPTIONAL — customer fills whichever they prefer for receipt.
     const email = String(req.body.email || '').trim().toLowerCase();
     if (email && !email.includes('@')) return fail(res, 'Enter a valid email or leave it blank');
+    const phone = String(req.body.phone || '').trim().replace(/[^\d+]/g, '').slice(0, 20) || null;
 
     // Amount: fixed from the link, or customer-entered for open-amount links.
     let amount;
@@ -404,7 +404,8 @@ router.post('/public/:slug/transaction', async (req, res, next) => {
       accessCode:    ref,
       isSandbox:     false,
       metadata:      { description: link.title, source: 'payment_link', payment_link_slug: req.params.slug,
-                       charge_vat: link.charge_vat, base_amount: amount, vat_amount: Number(vat) },
+                       charge_vat: link.charge_vat, base_amount: amount, vat_amount: Number(vat),
+                       ...(phone && { customer_phone: phone }) },
     }});
 
     return created(res, {
