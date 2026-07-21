@@ -818,6 +818,59 @@ router.get('/me', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── PUT /api/v1/merchants/:id — SA/admin edit merchant profile ────────────────
+router.put('/:id', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const isSA = req.user.role === 'SUPER_ADMIN';
+    const {
+      businessName, category, businessEmail, businessPhone,
+      rcNumber, address, website,
+      settlementBank, settlementAccount, settlementAccountName,
+      kycStatus, aggregatorId,
+    } = req.body;
+
+    const data = {};
+    if (businessName  !== undefined) data.businessName  = businessName;
+    if (category      !== undefined) data.category      = category;
+    if (businessEmail !== undefined) data.businessEmail = businessEmail;
+    if (businessPhone !== undefined) data.businessPhone = businessPhone;
+    if (rcNumber      !== undefined) data.rcNumber      = rcNumber || null;
+    if (address       !== undefined) data.address       = address  || null;
+    if (website       !== undefined) data.website       = website  || null;
+
+    // Settlement — SA writes directly; reset verify status so ops re-checks
+    if (settlementBank !== undefined || settlementAccount !== undefined || settlementAccountName !== undefined) {
+      if (settlementBank        !== undefined) data.settlementBank        = settlementBank        || null;
+      if (settlementAccount     !== undefined) data.settlementAccount     = settlementAccount     || null;
+      if (settlementAccountName !== undefined) data.settlementAccountName = settlementAccountName || null;
+      data.settleVerifyStatus = 'pending_manual';
+    }
+
+    // SA-only fields
+    if (isSA) {
+      const KYC_MAP = {
+        active:'ACTIVE', suspended:'SUSPENDED', pending_kyc:'PENDING_KYC',
+        kyc_in_review:'KYC_IN_REVIEW', kyc_rejected:'KYC_REJECTED',
+      };
+      if (kycStatus !== undefined && KYC_MAP[kycStatus]) {
+        data.kycStatus = KYC_MAP[kycStatus];
+        data.isActive  = data.kycStatus === 'ACTIVE';
+      }
+      if (aggregatorId !== undefined) data.aggregatorId = aggregatorId || null;
+    }
+
+    if (!Object.keys(data).length) return fail(res, 'No updatable fields provided');
+
+    const before = await prisma.merchant.findUnique({ where: { id }, select: { businessName:true, kycStatus:true, businessEmail:true, settlementBank:true, settlementAccount:true, aggregatorId:true } });
+    if (!before) return notFound(res, 'Merchant');
+
+    const m = await prisma.merchant.update({ where: { id }, data });
+    await logAudit(req.user.id, 'MERCHANT_PROFILE_EDITED', 'merchants', id, before, data);
+    ok(res, m, 'Merchant updated');
+  } catch (e) { next(e); }
+});
+
 // ── GET /api/v1/merchants/:id — single merchant detail (admin / staff) ─────────
 router.get('/:id', requireAuth, async (req, res, next) => {
   try {
