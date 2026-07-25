@@ -1377,6 +1377,215 @@ async function rotatePartnerKey(id, name) {
 // Trigger partners load when page renders
 document.addEventListener('navigate:partners', function() { loadPartners(); });
 
+// ── MPGS ACTIVITY REPORT ─────────────────────────────────────────────────────
+
+async function loadMpgsActivityReport() {
+  const el = document.getElementById('mpgs-activity-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  const from = document.getElementById('mpgs-from')?.value || '';
+  const to   = document.getElementById('mpgs-to')?.value   || '';
+  const ccy  = document.getElementById('mpgs-ccy')?.value  || '';
+  const src  = document.getElementById('mpgs-src')?.value  || '';
+  let qs = `?from=${from}&to=${to}`;
+  if (ccy) qs += `&currency=${ccy}`;
+  if (src) qs += `&source_type=${src}`;
+
+  const res = await apiFetch('/reports/mpgs-activity' + qs);
+  if (!res?.data) { el.innerHTML = errorBox('Could not load MPGS activity'); return; }
+  const d = res.data;
+
+  const fmtN = (v, ccy) => ccy === 'USD' ? '$' + Number(v||0).toLocaleString('en-NG', {minimumFractionDigits:2}) : '₦' + Number(v||0).toLocaleString('en-NG', {minimumFractionDigits:2});
+  const srcBadge = s => s === 'partner' ? '<span class="badge badge-blue">Partner</span>' : s === 'aggregator' ? '<span class="badge badge-purple">Aggregator</span>' : '<span class="badge badge-gray">Direct</span>';
+  const schemeBadge = s => `<span class="badge badge-gray">${s||'—'}</span>`;
+
+  // Source-type summary cards
+  const summaryCards = d.by_source_type.map(r =>
+    `<div class="stat-card card-sm">
+      <div class="stat-label">${r.label || r.source_type}</div>
+      <div class="stat-value" style="font-size:18px">₦${Number(r.volume_ngn||0).toLocaleString('en-NG',{minimumFractionDigits:0})}</div>
+      ${r.volume_usd > 0 ? `<div style="font-size:12px;color:#666">$${Number(r.volume_usd).toLocaleString('en-NG',{minimumFractionDigits:2})} USD</div>` : ''}
+      <div class="stat-sub">${r.txns} txns · ${r.approval_rate_pct}% approval</div>
+    </div>`
+  ).join('');
+
+  // Per-MID table
+  const midRows = d.by_mid.map(r =>
+    `<tr>
+      <td class="mono" style="font-size:12px">${r.mpgs_mid || '—'}</td>
+      <td>${srcBadge(r.source_type)}</td>
+      <td style="font-size:12px">${r.entity_name || '—'}</td>
+      <td>${schemeBadge(r.card_scheme)}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.total_txns}</td>
+      <td class="mono" style="color:var(--green)">${r.approved}</td>
+      <td class="mono" style="color:var(--red)">${r.declined}</td>
+      <td><span class="badge ${r.approval_rate_pct >= 80 ? 'badge-green' : r.approval_rate_pct >= 60 ? 'badge-amber' : 'badge-red'}">${r.approval_rate_pct}%</span></td>
+      <td class="mono">${fmtN(r.volume, r.currency)}</td>
+    </tr>`
+  ).join('');
+
+  // Decline reasons
+  const declineRows = d.decline_reasons.map(r =>
+    `<tr><td>${r.reason || 'DECLINED'}</td><td>${srcBadge(r.source_type)}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.count}</td></tr>`
+  ).join('');
+
+  el.innerHTML =
+    `<div class="grid-3" style="margin-bottom:16px">${summaryCards}</div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">By MID / User Type / Currency</div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>MID</th><th>Type</th><th>Entity</th><th>Scheme</th><th>CCY</th><th>Total</th><th>Approved</th><th>Declined</th><th>Approval %</th><th>Volume</th></tr></thead>
+        <tbody>${midRows || '<tr><td colspan="10" style="text-align:center;color:#999;padding:20px">No MPGS transactions in this period</td></tr>'}</tbody>
+      </table></div>
+    </div>
+    ${declineRows ? `<div class="card">
+      <div class="card-header"><div class="card-title">Decline Reasons</div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Reason</th><th>Type</th><th>Currency</th><th>Count</th></tr></thead>
+        <tbody>${declineRows}</tbody>
+      </table></div>
+    </div>` : ''}`;
+}
+
+// ── PARTNER REVENUE REPORT ────────────────────────────────────────────────────
+
+async function loadPartnerRevenueReport() {
+  const el = document.getElementById('partner-revenue-content');
+  if (!el) return;
+  el.innerHTML = loading();
+
+  // Populate partner filter dropdown on first load
+  const partnerSel = document.getElementById('pr-partner');
+  if (partnerSel && partnerSel.options.length === 1) {
+    const pRes = await apiFetch('/partners');
+    if (pRes?.data) {
+      pRes.data.forEach(p => {
+        const o = document.createElement('option'); o.value = p.id; o.textContent = p.name;
+        partnerSel.appendChild(o);
+      });
+    }
+  }
+
+  const from = document.getElementById('pr-from')?.value || '';
+  const to   = document.getElementById('pr-to')?.value   || '';
+  const pid  = document.getElementById('pr-partner')?.value || '';
+  let qs = `?from=${from}&to=${to}`;
+  if (pid) qs += `&partner_id=${pid}`;
+
+  const res = await apiFetch('/reports/partner-revenue' + qs);
+  if (!res?.data) { el.innerHTML = errorBox('Could not load partner revenue'); return; }
+  const d = res.data;
+  const s = d.summary;
+  const fmtN = v => '₦' + Number(v||0).toLocaleString('en-NG', {minimumFractionDigits:2});
+
+  const partnerRows = d.by_partner.map(r =>
+    `<tr>
+      <td style="font-weight:600">${r.partner_name}</td>
+      <td class="mono" style="font-size:11px">${r.slug}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.success_txns} / ${r.total_txns}</td>
+      <td><span class="badge ${r.approval_rate_pct >= 80 ? 'badge-green' : r.approval_rate_pct >= 60 ? 'badge-amber' : 'badge-red'}">${r.approval_rate_pct}%</span></td>
+      <td class="mono">${r.currency === 'USD' ? '$'+Number(r.volume||0).toLocaleString('en-NG',{minimumFractionDigits:2}) : fmtN(r.volume)}</td>
+      <td class="mono">${r.currency === 'USD' ? '$'+Number(r.fee_revenue||0).toLocaleString('en-NG',{minimumFractionDigits:2}) : fmtN(r.fee_revenue)}</td>
+    </tr>`
+  ).join('');
+
+  const merchantRows = d.by_merchant.map(r =>
+    `<tr>
+      <td style="font-size:12px">${r.business_name}</td>
+      <td class="mono" style="font-size:11px">${r.mpgs_mid || '—'}</td>
+      <td class="mono" style="font-size:11px">${r.mcc || '—'}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.success_txns} / ${r.total_txns}</td>
+      <td><span class="badge ${r.approval_rate_pct >= 80 ? 'badge-green' : r.approval_rate_pct >= 60 ? 'badge-amber' : 'badge-red'}">${r.approval_rate_pct}%</span></td>
+      <td class="mono">${r.currency === 'USD' ? '$'+Number(r.volume||0).toLocaleString('en-NG',{minimumFractionDigits:2}) : fmtN(r.volume)}</td>
+    </tr>`
+  ).join('');
+
+  el.innerHTML =
+    `<div class="grid-3" style="margin-bottom:16px">
+      <div class="stat-card card-sm"><div class="stat-label">NGN Volume</div><div class="stat-value" style="font-size:18px">${fmtN(s.volume_ngn)}</div><div class="stat-sub">Fee: ${fmtN(s.fee_ngn)}</div></div>
+      <div class="stat-card card-sm"><div class="stat-label">USD Volume</div><div class="stat-value" style="font-size:18px">$${Number(s.volume_usd||0).toLocaleString('en-NG',{minimumFractionDigits:2})}</div><div class="stat-sub">Fee: $${Number(s.fee_usd||0).toLocaleString('en-NG',{minimumFractionDigits:2})}</div></div>
+      <div class="stat-card card-sm"><div class="stat-label">Active Merchants</div><div class="stat-value" style="font-size:22px">${s.total_merchants}</div><div class="stat-sub">across ${s.total_partners} partner${s.total_partners !== 1 ? 's' : ''}</div></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">By Partner</div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Partner</th><th>Slug</th><th>CCY</th><th>Txns (OK/Total)</th><th>Approval</th><th>Volume</th><th>Fee Revenue</th></tr></thead>
+        <tbody>${partnerRows || '<tr><td colspan="7" style="text-align:center;color:#999;padding:20px">No partner transactions in this period</td></tr>'}</tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">By Merchant</div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Business</th><th>MID</th><th>MCC</th><th>CCY</th><th>Txns (OK/Total)</th><th>Approval</th><th>Volume</th></tr></thead>
+        <tbody>${merchantRows || '<tr><td colspan="7" style="text-align:center;color:#999;padding:20px">No data</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+}
+
+// ── USER TYPE SUMMARY ─────────────────────────────────────────────────────────
+
+async function loadUserTypeSummary() {
+  const el = document.getElementById('user-type-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  const from = document.getElementById('uts-from')?.value || '';
+  const to   = document.getElementById('uts-to')?.value   || '';
+  const res = await apiFetch(`/reports/user-type-summary?from=${from}&to=${to}`);
+  if (!res?.data) { el.innerHTML = errorBox('Could not load summary'); return; }
+  const d = res.data;
+  const fmtN = v => '₦' + Number(v||0).toLocaleString('en-NG', {minimumFractionDigits:2});
+  const total = d.summary.reduce((s, r) => s + r.txns, 0);
+
+  const summaryCards = d.summary.map(r => {
+    const pct = total > 0 ? ((r.txns / total) * 100).toFixed(1) : 0;
+    return `<div class="stat-card card-sm">
+      <div class="stat-label">${r.label}</div>
+      <div class="stat-value" style="font-size:18px">${fmtN(r.volume_ngn)}</div>
+      ${r.volume_usd > 0 ? `<div style="font-size:12px;color:#666">+ $${Number(r.volume_usd).toLocaleString('en-NG',{minimumFractionDigits:2})} USD</div>` : ''}
+      <div class="stat-sub">${r.txns.toLocaleString()} txns (${pct}%) · Fee ${fmtN(r.fee_ngn)}</div>
+    </div>`;
+  }).join('');
+
+  const aggRows = d.by_aggregator.map(r =>
+    `<tr><td style="font-weight:500">${r.company_name}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.channel}</td>
+      <td class="mono">${r.txns}</td>
+      <td class="mono">${fmtN(r.volume)}</td></tr>`
+  ).join('');
+
+  const partnerRows = d.by_partner.map(r =>
+    `<tr><td style="font-weight:500">${r.partner_name}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.txns}</td>
+      <td class="mono">${fmtN(r.volume)}</td></tr>`
+  ).join('');
+
+  el.innerHTML =
+    `<div class="grid-3" style="margin-bottom:20px">${summaryCards}</div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-header"><div class="card-title">By Aggregator</div></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Aggregator</th><th>CCY</th><th>Channel</th><th>Txns</th><th>Volume</th></tr></thead>
+          <tbody>${aggRows || '<tr><td colspan="5" style="text-align:center;color:#999;padding:16px">No aggregator transactions</td></tr>'}</tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">By Partner</div></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Partner</th><th>CCY</th><th>Txns</th><th>Volume</th></tr></thead>
+          <tbody>${partnerRows || '<tr><td colspan="4" style="text-align:center;color:#999;padding:16px">No partner transactions</td></tr>'}</tbody>
+        </table></div>
+      </div>
+    </div>`;
+}
+
 // ── AGGREGATORS ───────────────────────────────────────────────────────────────
 async function loadAggregators() {
   const el = document.getElementById('main-content');
@@ -5096,6 +5305,9 @@ function loadPageData(page) {
     case 'partners':         loadPartners(); break;
     case 'compliance':       loadCompliance(); break;
     case 'revenue':          loadRevenueReport(); break;
+    case 'mpgs_activity':    loadMpgsActivityReport(); break;
+    case 'partner_revenue':  loadPartnerRevenueReport(); break;
+    case 'user_type_summary': loadUserTypeSummary(); break;
     case 'settlement':       loadSettlements(); break;
     case 'sa_connections':   loadMerchantActivity(); break;
     case 'sa_reconciliation': loadReconciliation(); break;

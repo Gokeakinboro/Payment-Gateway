@@ -896,4 +896,269 @@ router.get('/merchant-activity', requireAuth, requireSuperAdmin, async (req, res
   } catch (e) { next(e); }
 });
 
+// ── GET /api/v1/reports/partner-revenue ──────────────────────────────────────
+// Volume + Paylode fee revenue for partner-routed MPGS transactions.
+// Drillable: ?partner_id= filters to one partner; always per-merchant breakdown.
+// Currency-split: NGN and USD shown separately.
+router.get('/partner-revenue', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { from, to, partner_id } = req.query;
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const toDate   = to   ? new Date(to)   : new Date();
+
+    // Partner-level summary
+    const partnerRows = await prisma.$queryRawUnsafe(`
+      SELECT
+        p.id::text              AS partner_id,
+        p.name                  AS partner_name,
+        p.slug,
+        t.currency,
+        COUNT(*)::int           AS total_txns,
+        COUNT(*) FILTER (WHERE t.status = 'SUCCESS')::int AS success_txns,
+        COUNT(*) FILTER (WHERE t.status = 'FAILED')::int  AS failed_txns,
+        SUM(t.amount) FILTER (WHERE t.status = 'SUCCESS')::bigint  AS volume_kobo,
+        SUM(t.merchant_fee) FILTER (WHERE t.status = 'SUCCESS')::bigint AS fee_kobo,
+        ROUND(
+          COUNT(*) FILTER (WHERE t.status = 'SUCCESS') * 100.0 / NULLIF(COUNT(*), 0), 2
+        ) AS approval_rate_pct
+      FROM transactions t
+      JOIN partners p ON (t.metadata->>'partner_id') = p.id::text
+      WHERE t.metadata->>'partner_id' IS NOT NULL
+        AND t.is_sandbox = false
+        AND t.created_at BETWEEN $1 AND $2
+        ${partner_id ? "AND p.id = $3::uuid" : ""}
+      GROUP BY p.id, p.name, p.slug, t.currency
+      ORDER BY p.name, t.currency
+    `, ...[fromDate, toDate, ...(partner_id ? [partner_id] : [])]);
+
+    // Per-merchant breakdown under each partner
+    const merchantRows = await prisma.$queryRawUnsafe(`
+      SELECT
+        p.id::text              AS partner_id,
+        pm.id::text             AS partner_merchant_id,
+        pm.business_name,
+        pm.mcc,
+        (t.metadata->>'partner_mid') AS mpgs_mid,
+        t.currency,
+        COUNT(*)::int           AS total_txns,
+        COUNT(*) FILTER (WHERE t.status = 'SUCCESS')::int AS success_txns,
+        COUNT(*) FILTER (WHERE t.status = 'FAILED')::int  AS failed_txns,
+        SUM(t.amount) FILTER (WHERE t.status = 'SUCCESS')::bigint  AS volume_kobo,
+        SUM(t.merchant_fee) FILTER (WHERE t.status = 'SUCCESS')::bigint AS fee_kobo,
+        ROUND(
+          COUNT(*) FILTER (WHERE t.status = 'SUCCESS') * 100.0 / NULLIF(COUNT(*), 0), 2
+        ) AS approval_rate_pct,
+        MAX(t.created_at) AS last_txn_at
+      FROM transactions t
+      JOIN partners p         ON (t.metadata->>'partner_id')          = p.id::text
+      JOIN partner_merchants pm ON (t.metadata->>'partner_merchant_id') = pm.id::text
+      WHERE t.metadata->>'partner_id' IS NOT NULL
+        AND t.is_sandbox = false
+        AND t.created_at BETWEEN $1 AND $2
+        ${partner_id ? "AND p.id = $3::uuid" : ""}
+      GROUP BY p.id, pm.id, pm.business_name, pm.mcc, mpgs_mid, t.currency
+      ORDER BY p.id, volume_kobo DESC NULLS LAST
+    `, ...[fromDate, toDate, ...(partner_id ? [partner_id] : [])]);
+
+    const fmt = r => ({
+      ...r,
+      volume:       Number(r.volume_kobo || 0) / 100,
+      fee_revenue:  Number(r.fee_kobo || 0) / 100,
+      approval_rate_pct: Number(r.approval_rate_pct || 0),
+    });
+
+    ok(res, {
+      period: { from: fromDate, to: toDate },
+      by_partner:  partnerRows.map(fmt),
+      by_merchant: merchantRows.map(fmt),
+      summary: {
+        total_partners:  [...new Set(partnerRows.map(r => r.partner_id))].length,
+        total_merchants: [...new Set(merchantRows.map(r => r.partner_merchant_id))].length,
+        volume_ngn: partnerRows.filter(r => r.currency === 'NGN').reduce((s, r) => s + Number(r.volume_kobo || 0) / 100, 0),
+        volume_usd: partnerRows.filter(r => r.currency === 'USD').reduce((s, r) => s + Number(r.volume_kobo || 0) / 100, 0),
+        fee_ngn:    partnerRows.filter(r => r.currency === 'NGN').reduce((s, r) => s + Number(r.fee_kobo || 0) / 100, 0),
+        fee_usd:    partnerRows.filter(r => r.currency === 'USD').reduce((s, r) => s + Number(r.fee_kobo || 0) / 100, 0),
+      },
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/mpgs-activity ────────────────────────────────────────
+// MPGS card transaction report across ALL sources: direct Paylode merchants,
+// aggregator merchants, and partner merchants. Per-MID, per-currency,
+// per-card-scheme breakdown with approval rates and decline reason analysis.
+router.get('/mpgs-activity', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { from, to, mid, currency, source_type } = req.query;
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const toDate   = to   ? new Date(to)   : new Date();
+
+    // All MPGS transactions are identified by presence of metadata.mpgsOrderId
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT
+        COALESCE(t.metadata->>'partner_mid', mc.mpgs_mid) AS mpgs_mid,
+        CASE
+          WHEN t.metadata->>'partner_id' IS NOT NULL THEN 'partner'
+          WHEN m.aggregator_id IS NOT NULL            THEN 'aggregator'
+          ELSE                                             'direct'
+        END                                         AS source_type,
+        COALESCE(p.name, a.company_name, m.business_name, 'Unknown') AS entity_name,
+        t.currency,
+        t.metadata->'card'->>'scheme'               AS card_scheme,
+        COUNT(*)::int                               AS total_txns,
+        COUNT(*) FILTER (WHERE t.status = 'SUCCESS')::int  AS approved,
+        COUNT(*) FILTER (WHERE t.status = 'FAILED')::int   AS declined,
+        COUNT(*) FILTER (WHERE t.status = 'PENDING')::int  AS pending,
+        SUM(t.amount) FILTER (WHERE t.status = 'SUCCESS')::bigint  AS volume_kobo,
+        SUM(t.merchant_fee) FILTER (WHERE t.status = 'SUCCESS')::bigint AS fee_kobo,
+        ROUND(
+          COUNT(*) FILTER (WHERE t.status = 'SUCCESS') * 100.0 / NULLIF(COUNT(*), 0), 2
+        ) AS approval_rate_pct,
+        MAX(t.created_at) AS last_txn_at
+      FROM transactions t
+      LEFT JOIN merchant_mpgs_configs mc  ON mc.merchant_id = t.merchant_id
+      LEFT JOIN merchants m               ON m.id = t.merchant_id
+      LEFT JOIN aggregators a             ON a.id = m.aggregator_id
+      LEFT JOIN partners p                ON p.id::text = (t.metadata->>'partner_id')
+      WHERE t.metadata->>'mpgsOrderId' IS NOT NULL
+        AND t.is_sandbox = false
+        AND t.created_at BETWEEN $1 AND $2
+        ${mid         ? "AND COALESCE(t.metadata->>'partner_mid', mc.mpgs_mid) = $3" : ""}
+        ${currency    ? "AND t.currency = $4" : ""}
+        ${source_type ? "AND CASE WHEN t.metadata->>'partner_id' IS NOT NULL THEN 'partner' WHEN m.aggregator_id IS NOT NULL THEN 'aggregator' ELSE 'direct' END = $5" : ""}
+      GROUP BY mpgs_mid, source_type, entity_name, t.currency, card_scheme
+      ORDER BY volume_kobo DESC NULLS LAST
+    `, fromDate, toDate,
+      ...(mid         ? [mid]         : []),
+      ...(currency    ? [currency]    : []),
+      ...(source_type ? [source_type] : []));
+
+    // Decline reason breakdown for the same window
+    const declineRows = await prisma.$queryRawUnsafe(`
+      SELECT
+        COALESCE(t.failure_reason, 'DECLINED') AS reason,
+        t.currency,
+        CASE
+          WHEN t.metadata->>'partner_id' IS NOT NULL THEN 'partner'
+          WHEN m.aggregator_id IS NOT NULL            THEN 'aggregator'
+          ELSE                                             'direct'
+        END AS source_type,
+        COUNT(*)::int AS count
+      FROM transactions t
+      LEFT JOIN merchants m ON m.id = t.merchant_id
+      WHERE t.status = 'FAILED'
+        AND t.metadata->>'mpgsOrderId' IS NOT NULL
+        AND t.is_sandbox = false
+        AND t.created_at BETWEEN $1 AND $2
+      GROUP BY reason, t.currency, source_type
+      ORDER BY count DESC
+      LIMIT 30
+    `, fromDate, toDate);
+
+    // Cross-user-type summary
+    const bySource = ['direct', 'aggregator', 'partner'].map(src => {
+      const srcRows = rows.filter(r => r.source_type === src);
+      return {
+        source_type:  src,
+        total_txns:   srcRows.reduce((s, r) => s + r.total_txns, 0),
+        approved:     srcRows.reduce((s, r) => s + r.approved, 0),
+        declined:     srcRows.reduce((s, r) => s + r.declined, 0),
+        volume_ngn:   srcRows.filter(r => r.currency === 'NGN').reduce((s, r) => s + Number(r.volume_kobo || 0) / 100, 0),
+        volume_usd:   srcRows.filter(r => r.currency === 'USD').reduce((s, r) => s + Number(r.volume_kobo || 0) / 100, 0),
+        approval_rate_pct: srcRows.length
+          ? Math.round(srcRows.reduce((s, r) => s + r.approved, 0) * 1000 / Math.max(srcRows.reduce((s, r) => s + r.total_txns, 0), 1)) / 10
+          : 0,
+      };
+    });
+
+    ok(res, {
+      period: { from: fromDate, to: toDate },
+      by_mid: rows.map(r => ({
+        ...r,
+        volume:          Number(r.volume_kobo || 0) / 100,
+        fee_revenue:     Number(r.fee_kobo    || 0) / 100,
+        approval_rate_pct: Number(r.approval_rate_pct || 0),
+      })),
+      decline_reasons: declineRows,
+      by_source_type:  bySource,
+      currencies_seen: [...new Set(rows.map(r => r.currency))],
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/user-type-summary ────────────────────────────────────
+// High-level volume breakdown by user type: direct merchants, aggregator
+// merchants, and partner merchants. Covers ALL channels, not just MPGS.
+router.get('/user-type-summary', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { from, to } = req.query;
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const toDate   = to   ? new Date(to)   : new Date();
+
+    const [directRows, aggRows, partnerRows] = await Promise.all([
+      // Direct merchants (no aggregator, no partner)
+      prisma.$queryRawUnsafe(`
+        SELECT t.currency, t.channel::text,
+               COUNT(*)::int AS txns,
+               SUM(t.amount) FILTER (WHERE t.status='SUCCESS')::bigint AS volume_kobo,
+               SUM(t.merchant_fee) FILTER (WHERE t.status='SUCCESS')::bigint AS fee_kobo
+        FROM transactions t
+        JOIN merchants m ON m.id = t.merchant_id
+        WHERE m.aggregator_id IS NULL
+          AND t.metadata->>'partner_id' IS NULL
+          AND t.is_sandbox = false
+          AND t.created_at BETWEEN $1 AND $2
+        GROUP BY t.currency, t.channel
+      `, fromDate, toDate),
+
+      // Aggregator sub-merchants
+      prisma.$queryRawUnsafe(`
+        SELECT a.id::text AS aggregator_id, a.company_name,
+               t.currency, t.channel::text,
+               COUNT(*)::int AS txns,
+               SUM(t.amount) FILTER (WHERE t.status='SUCCESS')::bigint AS volume_kobo,
+               SUM(t.merchant_fee) FILTER (WHERE t.status='SUCCESS')::bigint AS fee_kobo
+        FROM transactions t
+        JOIN merchants m   ON m.id = t.merchant_id
+        JOIN aggregators a ON a.id = m.aggregator_id
+        WHERE t.is_sandbox = false
+          AND t.created_at BETWEEN $1 AND $2
+        GROUP BY a.id, a.company_name, t.currency, t.channel
+        ORDER BY volume_kobo DESC NULLS LAST
+      `, fromDate, toDate),
+
+      // Partner merchants
+      prisma.$queryRawUnsafe(`
+        SELECT p.id::text AS partner_id, p.name AS partner_name,
+               t.currency,
+               COUNT(*)::int AS txns,
+               SUM(t.amount) FILTER (WHERE t.status='SUCCESS')::bigint AS volume_kobo,
+               SUM(t.merchant_fee) FILTER (WHERE t.status='SUCCESS')::bigint AS fee_kobo
+        FROM transactions t
+        JOIN partners p ON p.id::text = (t.metadata->>'partner_id')
+        WHERE t.is_sandbox = false
+          AND t.created_at BETWEEN $1 AND $2
+        GROUP BY p.id, p.name, t.currency
+        ORDER BY volume_kobo DESC NULLS LAST
+      `, fromDate, toDate),
+    ]);
+
+    const sumVol  = (rows, ccy) => rows.filter(r => !ccy || r.currency === ccy).reduce((s, r) => s + Number(r.volume_kobo || 0) / 100, 0);
+    const sumFee  = (rows, ccy) => rows.filter(r => !ccy || r.currency === ccy).reduce((s, r) => s + Number(r.fee_kobo    || 0) / 100, 0);
+    const sumTxns = rows => rows.reduce((s, r) => s + r.txns, 0);
+
+    ok(res, {
+      period: { from: fromDate, to: toDate },
+      summary: [
+        { source: 'direct',     label: 'Direct Merchants',      volume_ngn: sumVol(directRows,'NGN'),  volume_usd: sumVol(directRows,'USD'),  fee_ngn: sumFee(directRows,'NGN'),  fee_usd: sumFee(directRows,'USD'),  txns: sumTxns(directRows)  },
+        { source: 'aggregator', label: 'Aggregator Merchants',  volume_ngn: sumVol(aggRows,'NGN'),     volume_usd: sumVol(aggRows,'USD'),     fee_ngn: sumFee(aggRows,'NGN'),     fee_usd: sumFee(aggRows,'USD'),     txns: sumTxns(aggRows)     },
+        { source: 'partner',    label: 'Partner Merchants',     volume_ngn: sumVol(partnerRows,'NGN'), volume_usd: sumVol(partnerRows,'USD'), fee_ngn: sumFee(partnerRows,'NGN'), fee_usd: sumFee(partnerRows,'USD'), txns: sumTxns(partnerRows) },
+      ],
+      by_aggregator: aggRows.map(r => ({ ...r, volume: Number(r.volume_kobo||0)/100, fee: Number(r.fee_kobo||0)/100 })),
+      by_partner:    partnerRows.map(r => ({ ...r, volume: Number(r.volume_kobo||0)/100, fee: Number(r.fee_kobo||0)/100 })),
+      direct_by_channel: directRows.map(r => ({ ...r, volume: Number(r.volume_kobo||0)/100, fee: Number(r.fee_kobo||0)/100 })),
+    });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
