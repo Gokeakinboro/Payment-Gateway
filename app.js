@@ -112,7 +112,7 @@ var NAV = {
   ],
   admin: [
     { section:'Dashboard',  items:[{id:'overview',icon:'layout-dashboard',label:'Dashboard'}]},
-    { section:'Management',  items:[{id:'transactions',icon:'arrow-right-left',label:'All Transactions'},{id:'merchants',icon:'store',label:'Merchants'},{id:'aggregators',icon:'building-2',label:'Aggregators'},{id:'admin_onboard',icon:'user-plus',label:'Onboard Merchant'}]},
+    { section:'Management',  items:[{id:'transactions',icon:'arrow-right-left',label:'All Transactions'},{id:'merchants',icon:'store',label:'Merchants'},{id:'aggregators',icon:'building-2',label:'Aggregators'},{id:'partners',icon:'handshake',label:'Partners'},{id:'admin_onboard',icon:'user-plus',label:'Onboard Merchant'}]},
     { section:'Operations',  items:[{id:'settlement',icon:'circle-check',label:'Settlement'},{id:'wallets',icon:'wallet',label:'Merchant Wallets'},{id:'compliance',icon:'scale',label:'KYC Review'},{id:'deferrals',icon:'file-clock',label:'KYC Docs & Deferrals'},{id:'compliance_exceptions',icon:'flag',label:'Intl / Mastercard Compliance'},{id:'compliance_centre',icon:'shield-check',label:'Compliance Centre'},{id:'onboarding_apps',icon:'file-text',label:'Applications'},{id:'revenue',icon:'banknote',label:'Revenue (Read-Only)'}]},
     { section:'System',      items:[{id:'users',icon:'users',label:'Invite Users'},{id:'activity_log',icon:'history',label:'Activity Log'},{id:'invite_tracking',icon:'mail-check',label:'Invite Tracking'}]},
     { section:'Developer',   items:DEV_SDK_ITEMS },
@@ -409,7 +409,7 @@ function renderComplianceExceptions() {
 function renderPage() {
   var pages = {
     overview:renderSuperOverview, transactions:renderTransactions,
-    merchants:renderMerchants, aggregators:renderAggregators,
+    merchants:renderMerchants, aggregators:renderAggregators, partners:renderPartners,
     revenue:renderRevenueConfig, rails:renderRailCosts,
     settlement:renderSettlement, compliance:renderKycReview, compliance_centre:renderCompliance, settings:renderSettings,
     compliance_exceptions:renderComplianceExceptions, deferrals:renderDocDeferralsShell,
@@ -522,6 +522,13 @@ function renderMerchants() {
     '<div class="card"><div class="table-wrap"><table>' +
     '<thead><tr><th>ID</th><th>Merchant</th><th>Category</th><th>Aggregator</th><th>Rate</th><th>Vol (MTD)</th><th>Status</th><th>Actions</th></tr></thead>' +
     '<tbody>' + rows + '</tbody></table></div></div>';
+}
+
+function renderPartners() {
+  return '<div class="page-header flex-between"><div><div class="page-title">Partner Gateway</div>' +
+    '<div class="page-desc">Third-party processors routing their merchants through Paylode MPGS</div></div>' +
+    '<button class="btn btn-lime" onclick="openCreatePartner()">+ Add Partner</button></div>' +
+    '<div id="partners-content"><div style="text-align:center;padding:40px;color:#999">Loading…</div></div>';
 }
 
 function renderAggregators() {
