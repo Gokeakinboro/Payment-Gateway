@@ -201,6 +201,7 @@ model Merchant {
   payoutItems    PayoutItem[]
   payoutRail     PaymentRail?   @relation("MerchantPayoutRoute", fields: [payoutRailId], references: [id])
   payinRail      PaymentRail?   @relation("MerchantPayinRoute", fields: [payinRailId], references: [id])
+  mpgsConfig     MerchantMpgsConfig?
 
   @@index([kycStatus])
   @@index([isActive])
@@ -609,6 +610,91 @@ model AggregatorRateConfig {
   @@unique([aggregatorId, merchantId], name: "aggregatorId_merchantId")
   @@index([aggregatorId])
   @@map("aggregator_rate_configs")
+}
+
+// ─── PARTNERS ────────────────────────────────────────────────────────────────
+// Organisations (e.g. Payonus) that route their own merchants through Paylode's
+// MPGS gateway. Each partner has an API key and a KYC policy for their merchants.
+
+model Partner {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String
+  slug            String    @unique
+  contactEmail    String?   @map("contact_email")
+  contactPhone    String?   @map("contact_phone")
+  kycRequirement  String    @default("none") @map("kyc_requirement") // none | basic | full
+  apiKey          String?   @unique @map("api_key")
+  apiKeyHash      String?   @map("api_key_hash")
+  apiKeyPrefix    String?   @map("api_key_prefix")
+  status          String    @default("active")          // active | suspended | pending
+  notes           String?
+  createdBy       String?   @map("created_by") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  merchants       PartnerMerchant[]
+
+  @@map("partners")
+}
+
+model PartnerMerchant {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partnerId                 String    @map("partner_id") @db.Uuid
+  businessName              String    @map("business_name")
+  mcc                       String?
+  country                   String    @default("NG")
+  state                     String?
+  contactName               String?   @map("contact_name")
+  contactEmail              String?   @map("contact_email")
+  contactPhone              String?   @map("contact_phone")
+  registrationNumber        String?   @map("registration_number")
+  website                   String?
+  kycStatus                 String    @default("not_required") @map("kyc_status")
+                                      // not_required | pending | approved | rejected
+  kycNotes                  String?   @map("kyc_notes")
+  kycReviewedBy             String?   @map("kyc_reviewed_by") @db.Uuid
+  kycReviewedAt             DateTime? @map("kyc_reviewed_at")
+  kycDocuments              Json      @default("[]") @map("kyc_documents")
+  mpgsMid                   String?   @unique @map("mpgs_mid")
+  mpgsApiPassword           String?   @map("mpgs_api_password")
+  mpgsBaseUrl               String?   @map("mpgs_base_url")
+  gatewayApiPasswordHash    String?   @map("gateway_api_password_hash")
+  gatewayApiPasswordPrefix  String?   @map("gateway_api_password_prefix")
+  status                    String    @default("pending_mid")
+                                      // pending_mid | pending_kyc | active | suspended | rejected
+  activatedAt               DateTime? @map("activated_at")
+  metadata                  Json      @default("{}")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  partner                   Partner   @relation(fields: [partnerId], references: [id])
+
+  @@index([partnerId])
+  @@index([status])
+  @@map("partner_merchants")
+}
+
+// ─── MERCHANT MPGS CONFIG ─────────────────────────────────────────────────────
+
+model MerchantMpgsConfig {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId      String   @unique @map("merchant_id") @db.Uuid
+  mpgsMid         String   @unique @map("mpgs_mid")   // Merchant ID issued by Parallex/MPGS — used as Basic Auth username
+  mpgsApiPassword String   @map("mpgs_api_password")  // Real MPGS API password (Parallex-issued) — used to forward to MPGS
+  mpgsBaseUrl     String   @map("mpgs_base_url")       // e.g. https://parallex.gateway.mastercard.com/api/rest/version/77
+  // Gateway credentials Paylode issues to the merchant (separate from the real MPGS creds above).
+  // Merchant authenticates to Paylode using: Basic merchant.{mpgsMid}:{gatewayApiPassword}
+  gatewayApiPasswordHash   String?  @map("gateway_api_password_hash")   // SHA-256 of the issued password
+  gatewayApiPasswordPrefix String?  @map("gateway_api_password_prefix") // first 8 chars for display
+  isActive        Boolean  @default(true) @map("is_active")
+  notes           String?
+  createdBy       String?  @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@map("merchant_mpgs_configs")
 }
 
 // ─── MERCHANT WALLETS ────────────────────────────────────────────────────────
