@@ -217,11 +217,13 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
         vatOutput:     vatKobo,
         isSandbox:     sandbox,
         metadata: {
-          card:             cardMeta,
-          mpgsOrderId:      orderId,
-          mpgsTxnId:        txnId,
+          card:                cardMeta,
+          mpgsOrderId:         orderId,
+          mpgsTxnId:           txnId,
           apiOperation,
-          customerRef:      txnMeta?.reference || null,
+          customerRef:         txnMeta?.reference || null,
+          // merchant's return URL — we redirect cardholder here after 3DS challenge completes
+          merchantRedirectUrl: authentication?.redirectResponseUrl || null,
           ...(req.isPartner ? {
             partner_id:          req.partnerMerchant.partnerId,
             partner_merchant_id: req.partnerMerchant.id,
@@ -247,6 +249,8 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
           mpgs_request_body: mpgsSvc.toMpgsPayload({
             amount: amountKobo, currency: order.currency,
             reference: paylodeRef, description: order.description || null,
+            apiOperation,
+            authentication: { redirectResponseUrl: `${process.env.APP_URL || 'https://api.paylodeservices.com'}/api/rest/3ds/callback?ref=${encodeURIComponent(paylodeRef)}` },
             card: {
               number: cardData.number, expiry_month: cardData.expiry.month,
               expiry_year: cardData.expiry.year, cvv: cardData.securityCode,
@@ -266,11 +270,18 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
       }
 
       // ── Build payload for real MPGS ────────────────────────────────────────
+      // Replace the merchant's redirectResponseUrl with our 3DS callback so we
+      // intercept the post-challenge result before forwarding to the merchant.
+      const appUrl = process.env.APP_URL || 'https://api.paylodeservices.com';
+      const our3dsCallbackUrl = `${appUrl}/api/rest/3ds/callback?ref=${encodeURIComponent(paylodeRef)}`;
+
       const mpgsPayload = {
-        amount:      amountKobo,
-        currency:    order.currency,
-        reference:   paylodeRef,
-        description: order.description || null,
+        amount:       amountKobo,
+        currency:     order.currency,
+        reference:    paylodeRef,
+        description:  order.description || null,
+        apiOperation,
+        authentication: { redirectResponseUrl: our3dsCallbackUrl },
         card: {
           number:       cardData.number,
           expiry_month: cardData.expiry.month,
@@ -337,18 +348,20 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
         },
       });
 
-      // ── Webhook (non-blocking) ─────────────────────────────────────────────
-      dispatchWebhook(merchant.id, mpgsResult.ok ? 'card.charge.success' : 'card.charge.failed', {
-        reference:          paylodeRef,
-        mpgs_order_id:      orderId,
-        mpgs_transaction_id: txnId,
-        status:             finalStatus,
-        amount:             Number(amountKobo),
-        currency:           order.currency,
-        card:               cardMeta,
-        authorization_code: mpgsResult.authorizationCode,
-        gateway_code:       mpgsResult.gatewayCode,
-      });
+      // ── Webhook (non-blocking) — skip for partner merchants (no Paylode webhook config)
+      if (!req.isPartner) {
+        dispatchWebhook(merchant.id, mpgsResult.ok ? 'card.charge.success' : 'card.charge.failed', {
+          reference:           paylodeRef,
+          mpgs_order_id:       orderId,
+          mpgs_transaction_id: txnId,
+          status:              finalStatus,
+          amount:              Number(amountKobo),
+          currency:            order.currency,
+          card:                cardMeta,
+          authorization_code:  mpgsResult.authorizationCode,
+          gateway_code:        mpgsResult.gatewayCode,
+        });
+      }
 
       // ── Return MPGS-format response ────────────────────────────────────────
       if (!mpgsResult.ok) {
@@ -411,8 +424,11 @@ router.get('/version/:v/merchant/:mid/order/:orderId',
       const { orderId } = req.params;
       const paylodeRef  = `PX-${orderId}-`;  // prefix match
 
+      const txnWhere = req.isPartner
+        ? { reference: { startsWith: paylodeRef } }
+        : { reference: { startsWith: paylodeRef }, merchantId: req.merchant.id };
       const txn = await prisma.transaction.findFirst({
-        where: { reference: { startsWith: paylodeRef }, merchantId: req.merchant.id },
+        where: txnWhere,
         orderBy: { createdAt: 'desc' },
       });
 
@@ -444,5 +460,110 @@ router.get('/version/:v/merchant/:mid/order/:orderId',
     } catch (err) { next(err); }
   }
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  GET /api/rest/3ds/callback?ref={paylodeRef}
+//
+//  MPGS redirects the cardholder's browser here after a 3DS challenge completes.
+//  We verify the outcome with MPGS, update the transaction, fire the merchant
+//  webhook, then redirect the cardholder to the merchant's original return URL.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/3ds/callback', async (req, res, next) => {
+  const paylodeRef = req.query.ref;
+  if (!paylodeRef) return res.status(400).send('Missing ref parameter');
+
+  let txn;
+  try {
+    txn = await prisma.transaction.findFirst({
+      where:   { reference: paylodeRef, status: 'PENDING' },
+      orderBy: { createdAt: 'desc' },
+    });
+  } catch (err) { return next(err); }
+
+  if (!txn) {
+    logger.warn({ ref: paylodeRef }, '3DS callback: transaction not found or already processed');
+    return res.status(200).send('Payment already processed');
+  }
+
+  const meta = txn.metadata || {};
+  const merchantRedirectUrl = meta.merchantRedirectUrl || null;
+
+  const redirectMerchant = (status) => {
+    if (!merchantRedirectUrl) return res.status(200).json({ result: status, reference: paylodeRef });
+    const sep = merchantRedirectUrl.includes('?') ? '&' : '?';
+    return res.redirect(`${merchantRedirectUrl}${sep}result=${status}&reference=${encodeURIComponent(paylodeRef)}`);
+  };
+
+  // ── Load the MPGS config for this transaction ──────────────────────────────
+  let mpgsConfig;
+  try {
+    if (meta.partner_merchant_id) {
+      const pm = await prisma.partnerMerchant.findUnique({ where: { id: meta.partner_merchant_id } });
+      if (pm) mpgsConfig = { mpgsMid: pm.mpgsMid, mpgsApiPassword: pm.mpgsApiPassword,
+                              mpgsBaseUrl: pm.mpgsBaseUrl || 'https://na-gateway.mastercard.com/api/rest/version/77' };
+    } else if (txn.merchantId) {
+      const cfg = await prisma.merchantMpgsConfig.findUnique({ where: { merchantId: txn.merchantId } });
+      if (cfg) mpgsConfig = { mpgsMid: cfg.mpgsMid, mpgsApiPassword: cfg.mpgsApiPassword, mpgsBaseUrl: cfg.mpgsBaseUrl };
+    }
+  } catch (err) { return next(err); }
+
+  if (!mpgsConfig) {
+    logger.error({ ref: paylodeRef }, '3DS callback: MPGS config not found');
+    await prisma.transaction.update({ where: { id: txn.id }, data: { status: 'FAILED', failureReason: 'Config not found post-3DS' } });
+    return redirectMerchant('FAILED');
+  }
+
+  // ── Retrieve final order status from MPGS ──────────────────────────────────
+  let orderResult;
+  try {
+    orderResult = await mpgsSvc.getOrder(mpgsConfig, paylodeRef);
+  } catch (err) {
+    logger.error({ err: err.message, ref: paylodeRef }, '3DS callback: MPGS requery failed');
+    await prisma.transaction.update({ where: { id: txn.id }, data: { status: 'FAILED', failureReason: 'MPGS requery error post-3DS' } });
+    return redirectMerchant('FAILED');
+  }
+
+  const finalStatus  = orderResult.ok ? 'SUCCESS' : 'FAILED';
+  const raw          = orderResult.raw || {};
+  const authCode     = raw?.transaction?.authorizationCode || null;
+  const gatewayCode  = raw?.response?.gatewayCode || null;
+  const acquirerCode = raw?.response?.acquirerCode || null;
+
+  try {
+    await prisma.transaction.update({
+      where: { id: txn.id },
+      data: {
+        status:        finalStatus,
+        paidAt:        finalStatus === 'SUCCESS' ? new Date() : null,
+        failureReason: finalStatus === 'FAILED'  ? (gatewayCode || 'DECLINED') : null,
+        netRevenue:    finalStatus === 'SUCCESS'
+          ? (BigInt(txn.amount) - BigInt(txn.merchantFee || 0))
+          : BigInt(0),
+        metadata: {
+          ...meta,
+          mpgs: { gatewayCode, acquirerCode, authorizationCode: authCode },
+        },
+      },
+    });
+  } catch (err) { return next(err); }
+
+  // ── Webhook (regular merchants only) ──────────────────────────────────────
+  if (txn.merchantId) {
+    dispatchWebhook(txn.merchantId, finalStatus === 'SUCCESS' ? 'card.charge.success' : 'card.charge.failed', {
+      reference:           paylodeRef,
+      mpgs_order_id:       meta.mpgsOrderId  || null,
+      mpgs_transaction_id: meta.mpgsTxnId    || null,
+      status:              finalStatus,
+      amount:              Number(txn.amount),
+      currency:            txn.currency,
+      card:                meta.card          || null,
+      authorization_code:  authCode,
+      gateway_code:        gatewayCode,
+    });
+  }
+
+  logger.info({ ref: paylodeRef, status: finalStatus }, '3DS callback processed');
+  return redirectMerchant(finalStatus);
+});
 
 module.exports = router;

@@ -42,9 +42,10 @@ function cardTypeFromNumber(pan) {
 }
 
 // ── Payload transformer: Paylode format → MPGS REST body ─────────────────────
-function toMpgsPayload({ amount, currency = 'NGN', description, card, customer, reference }) {
+function toMpgsPayload({ amount, currency = 'NGN', description, card, customer, reference,
+                         apiOperation = 'PAY', authentication = null }) {
   const body = {
-    apiOperation: 'PAY',
+    apiOperation,
     order: {
       amount: nairaFromKobo(amount),
       currency,
@@ -74,6 +75,11 @@ function toMpgsPayload({ amount, currency = 'NGN', description, card, customer, 
     if (customer.first_name) body.customer.firstName = customer.first_name;
     if (customer.last_name)  body.customer.lastName  = customer.last_name;
     if (customer.ip_address) body.customer.ipAddress = customer.ip_address;
+  }
+
+  // MPGS needs this to redirect the cardholder back after a 3DS challenge
+  if (authentication?.redirectResponseUrl) {
+    body.authentication = { redirectResponseUrl: authentication.redirectResponseUrl };
   }
 
   return body;
@@ -127,7 +133,8 @@ function buildSandboxResponse(cardNumber) {
 /**
  * Charge a card through MPGS.
  * @param {object} config   { mpgsMid, mpgsApiPassword, mpgsBaseUrl } from merchant_mpgs_configs
- * @param {object} payload  { amount(kobo), currency, reference, description, card, customer }
+ * @param {object} payload  { amount(kobo), currency, reference, description, card, customer,
+ *                            apiOperation?, authentication? }
  * @param {boolean} sandbox  if true, return a mock response without calling MPGS
  */
 async function charge(config, payload, sandbox = false) {
