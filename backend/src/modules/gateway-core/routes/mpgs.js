@@ -20,7 +20,7 @@ const router  = require('express').Router();
 const crypto  = require('crypto');
 const { prisma }  = require('../../../utils/db');
 const { ok, fail, notFound, created } = require('../../../utils/helpers');
-const { requireApiKey, requireAdmin } = require('../../../middleware/auth');
+const { requireAuth, requireApiKey, requireAdmin } = require('../../../middleware/auth');
 
 // ── Gateway password generation ───────────────────────────────────────────────
 // Generates a strong API password for merchant → Paylode gateway auth.
@@ -35,7 +35,7 @@ function generateGatewayPassword() {
 // ─────────────────────────────────────────────────────────────────────────────
 //  SA: list all configured merchants
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/admin', requireAdmin, async (req, res, next) => {
+router.get('/admin', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const configs = await prisma.merchantMpgsConfig.findMany({
       orderBy: { createdAt: 'desc' },
@@ -58,7 +58,7 @@ router.get('/admin', requireAdmin, async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 //  SA: get one merchant's config
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/admin/:merchantId', requireAdmin, async (req, res, next) => {
+router.get('/admin/:merchantId', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const config = await prisma.merchantMpgsConfig.findUnique({
       where:   { merchantId: req.params.merchantId },
@@ -91,7 +91,7 @@ router.get('/admin/:merchantId', requireAdmin, async (req, res, next) => {
 //  Body: { mpgs_mid, mpgs_api_password, mpgs_base_url, notes? }
 //  Returns the gateway_api_password ONCE — must be shared with merchant immediately.
 // ─────────────────────────────────────────────────────────────────────────────
-router.put('/admin/:merchantId', requireAdmin, async (req, res, next) => {
+router.put('/admin/:merchantId', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { merchantId } = req.params;
     const { mpgs_mid, mpgs_api_password, mpgs_base_url, notes } = req.body;
@@ -143,7 +143,7 @@ router.put('/admin/:merchantId', requireAdmin, async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 //  SA: rotate gateway password (use when merchant reports credential compromise)
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/admin/:merchantId/rotate-password', requireAdmin, async (req, res, next) => {
+router.post('/admin/:merchantId/rotate-password', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const config = await prisma.merchantMpgsConfig.findUnique({ where: { merchantId: req.params.merchantId } });
     if (!config) return notFound(res, 'MPGS config');
@@ -166,7 +166,7 @@ router.post('/admin/:merchantId/rotate-password', requireAdmin, async (req, res,
 // ─────────────────────────────────────────────────────────────────────────────
 //  SA: deactivate config
 // ─────────────────────────────────────────────────────────────────────────────
-router.delete('/admin/:merchantId', requireAdmin, async (req, res, next) => {
+router.delete('/admin/:merchantId', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const config = await prisma.merchantMpgsConfig.findUnique({ where: { merchantId: req.params.merchantId } });
     if (!config) return notFound(res, 'MPGS config');

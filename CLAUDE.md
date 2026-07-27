@@ -31,5 +31,14 @@ later). Repo: `Payment-Gateway`.
 - Compare box↔repo files LF-normalised (`tr -d '\r'`) — Windows scp adds CRLF.
 - SSH to 176/45 is key-based (BatchMode works).
 
-Detailed project memory lives in this repo's Claude namespace — start at
-`MEMORY.md` (resume point: `kiv-backlog-index`).
+## Shared project memory
+Detailed context lives in `.claude/memory/` (checked into this repo).
+Start at `.claude/memory/MEMORY.md` — it indexes every memory file.
+Resume point: `kiv-backlog-index`.
+
+Four credential-reference files are NOT in git (blocked by `.claude/memory/.gitignore`).
+New collaborators must obtain these separately from the project owner:
+- `reference-parallex-portal-creds.md`
+- `reference-meta-facebook-app-creds.md`
+- `reference-demo-test-account.md`
+- `reference-gokeakinboro-account.md`
