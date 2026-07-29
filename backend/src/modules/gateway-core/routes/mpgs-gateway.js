@@ -250,7 +250,6 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
             amount: amountKobo, currency: order.currency,
             reference: paylodeRef, description: order.description || null,
             apiOperation,
-            authentication: { redirectResponseUrl: `${process.env.APP_URL || 'https://api.paylodeservices.com'}/api/rest/3ds/callback?ref=${encodeURIComponent(paylodeRef)}` },
             card: {
               number: cardData.number, expiry_month: cardData.expiry.month,
               expiry_year: cardData.expiry.year, cvv: cardData.securityCode,
@@ -270,8 +269,10 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
       }
 
       // ── Build payload for real MPGS ────────────────────────────────────────
-      // Replace the merchant's redirectResponseUrl with our 3DS callback so we
-      // intercept the post-challenge result before forwarding to the merchant.
+      // NOTE: authentication.redirectResponseUrl is intentionally omitted here.
+      // Parallex's MPGS instance rejects it as an unsupported parameter (HTTP 400).
+      // When Parallex enables 3DS Hosted Page, re-add:
+      //   authentication: { redirectResponseUrl: `${APP_URL}/api/rest/3ds/callback?ref=${paylodeRef}` }
       const appUrl = process.env.APP_URL || 'https://api.paylodeservices.com';
       const our3dsCallbackUrl = `${appUrl}/api/rest/3ds/callback?ref=${encodeURIComponent(paylodeRef)}`;
 
@@ -281,7 +282,6 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
         reference:    paylodeRef,
         description:  order.description || null,
         apiOperation,
-        authentication: { redirectResponseUrl: our3dsCallbackUrl },
         card: {
           number:       cardData.number,
           expiry_month: cardData.expiry.month,
