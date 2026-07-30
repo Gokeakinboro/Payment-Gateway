@@ -342,12 +342,12 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
         return res.status(202).json({
           result: 'PENDING_AUTHENTICATION',
           authentication: {
-            redirectUrl: mpgsResult.authRedirectUrl,
-            version:     mpgsResult.auth3dsVersion || '3DS2',
+            redirectUrl:  mpgsResult.authRedirectUrl  || null,
+            redirectHtml: mpgsResult.authRedirectHtml || null,  // iframe HTML for challenge
+            version:      mpgsResult.auth3dsVersion   || '3DS2',
           },
           order: { id: orderId, amount: parseFloat(order.amount), currency: order.currency },
           transaction: { id: txnId },
-          // Paylode-specific: reference for polling/reconciliation
           'paylode.reference': paylodeRef,
         });
       }
@@ -541,27 +541,15 @@ router.get('/3ds/callback', async (req, res, next) => {
     return redirectMerchant('FAILED');
   }
 
-  // ── Complete payment via PAY (step 3 of 3DS2 flow) ────────────────────────
-  // After the challenge, 3DS auth is stored in MPGS — we now call payAfterChallenge
-  // which issues PUT /order/{id}/transaction/2 (new txn sequence within same order).
-  // We reconstruct card details from the stored transaction metadata.
-  const cardMeta = meta.card || {};
+  // ── Complete payment via PAY (txnId=1, minimal body — MPGS links 3DS auth) ──
   let payResult;
   try {
     payResult = await mpgsSvc.payAfterChallenge(mpgsConfig, {
-      reference:   paylodeRef,
-      amount:      txn.amount,
-      currency:    txn.currency,
-      description: meta.description || null,
+      reference:    paylodeRef,
+      amount:       txn.amount,
+      currency:     txn.currency,
+      description:  meta.description  || null,
       apiOperation: meta.apiOperation || 'PAY',
-      card: {
-        number:       meta.cardFull?.number || null,
-        expiry_month: meta.cardFull?.expiry_month || null,
-        expiry_year:  meta.cardFull?.expiry_year  || null,
-        cvv:          meta.cardFull?.cvv           || null,
-        name:         meta.cardFull?.name          || null,
-      },
-      customer: meta.customer || null,
     });
   } catch (err) {
     logger.error({ err: err.message, ref: paylodeRef }, '3DS callback: PAY after challenge failed');

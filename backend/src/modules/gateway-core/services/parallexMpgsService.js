@@ -204,33 +204,28 @@ async function charge(config, payload, sandbox = false) {
     }}},
   });
 
-  // Challenge flow — return redirect URL so the gateway can send 202 to merchant
-  if (auth2.result === 'PENDING' && auth2.authentication?.redirectUrl) {
+  // Challenge flow — transactionStatus C means cardholder must authenticate
+  // Challenge URL/HTML is at authentication.redirect (not authentication.redirectUrl)
+  const txnStatus = auth2.authentication?.['3ds2']?.transactionStatus;
+  if (auth2.result === 'PENDING' || txnStatus === 'C') {
+    const redirect = auth2.authentication?.redirect || {};
     return {
       ok: false, pending3ds: true, result: 'PENDING',
-      gatewayCode:    'PENDING_AUTHENTICATION',
-      authRedirectUrl: auth2.authentication.redirectUrl,
-      auth3dsVersion:  auth2.authentication.version || '3DS2',
-      mpgsOrderId:     orderId, mpgsTransactionId: '1',
+      gatewayCode:      'PENDING_AUTHENTICATION',
+      authRedirectUrl:  redirect?.customizedHtml?.['3ds2']?.acsUrl || null,
+      authRedirectHtml: redirect?.html || null,
+      auth3dsVersion:   auth2.authentication?.version || '3DS2',
+      mpgsOrderId:      orderId, mpgsTransactionId: '1',
       raw: auth2,
     };
   }
 
-  // ── Step 3: PAY (txnId=2; 3DS auth already stored by MPGS) ──────────────────
-  const pay = await put('2', {
+  // ── Step 3: PAY (txnId=1, same txn — MPGS links 3DS auth automatically) ──────
+  // Minimal body only; card data is stored in MPGS session from steps 1-2.
+  const pay = await put('1', {
     apiOperation: payload.apiOperation || 'PAY',
     order: { amount: nairaFromKobo(payload.amount), currency: payload.currency, description: payload.description || 'Paylode payment' },
-    sourceOfFunds: { type: 'CARD', provided: { card: {
-      number: pan, expiry: exp, securityCode: String(payload.card.cvv),
-      ...(payload.card.name ? { nameOnCard: payload.card.name } : {}),
-    }}},
     transaction: { reference: payload.reference },
-    ...(payload.customer ? { customer: {
-      ...(payload.customer.email      && { email:     payload.customer.email }),
-      ...(payload.customer.phone      && { phone:     payload.customer.phone }),
-      ...(payload.customer.first_name && { firstName: payload.customer.first_name }),
-      ...(payload.customer.last_name  && { lastName:  payload.customer.last_name }),
-    }} : {}),
   });
 
   return fromMpgsResponse(pay);
@@ -238,15 +233,15 @@ async function charge(config, payload, sandbox = false) {
 
 /**
  * Complete a PAY after a 3DS challenge — called from the 3DS callback endpoint.
- * Uses txnId=2 (same order, new transaction sequence within that order).
+ * Uses txnId=1 (same order, same transaction — MPGS links the 3DS auth to it).
+ * Card data is already stored in the MPGS session from AUTHENTICATE_PAYER; minimal
+ * body avoids "transaction already processed with different params" errors.
  */
-async function payAfterChallenge(config, { reference, amount, currency, card, customer, description, apiOperation }) {
+async function payAfterChallenge(config, { reference, amount, currency, description, apiOperation }) {
   const { mpgsMid, mpgsApiPassword, mpgsBaseUrl } = config;
   const baseUrl = mpgsBaseUrl.replace(/\/$/, '');
   const orderId = mpgsOrderId(reference);
-  const url     = `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/2`;
-  const pan = String(card.number).replace(/\s/g, '');
-  const exp = { month: String(card.expiry_month).padStart(2, '0'), year: String(card.expiry_year).slice(-2) };
+  const url     = `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/1`;
 
   const res = await fetch(url, {
     method: 'PUT',
@@ -254,17 +249,7 @@ async function payAfterChallenge(config, { reference, amount, currency, card, cu
     body: JSON.stringify({
       apiOperation: apiOperation || 'PAY',
       order: { amount: nairaFromKobo(amount), currency, description: description || 'Paylode payment' },
-      sourceOfFunds: { type: 'CARD', provided: { card: {
-        number: pan, expiry: exp, securityCode: String(card.cvv),
-        ...(card.name ? { nameOnCard: card.name } : {}),
-      }}},
       transaction: { reference },
-      ...(customer ? { customer: {
-        ...(customer.email      && { email:     customer.email }),
-        ...(customer.phone      && { phone:     customer.phone }),
-        ...(customer.first_name && { firstName: customer.first_name }),
-        ...(customer.last_name  && { lastName:  customer.last_name }),
-      }} : {}),
     }),
   });
 
