@@ -157,7 +157,7 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
   requireGatewayAuth,
   async (req, res, next) => {
     try {
-      const { apiOperation, order, sourceOfFunds, transaction: txnMeta, customer, authentication } = req.body;
+      const { apiOperation, order, sourceOfFunds, transaction: txnMeta, customer, authentication, device } = req.body;
       const { orderId, txnId } = req.params;
       const config   = req.mpgsConfig;
       const merchant = req.merchant;
@@ -218,9 +218,24 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
         isSandbox:     sandbox,
         metadata: {
           card:                cardMeta,
+          // Store full card + customer for use in payAfterChallenge (3DS2 callback)
+          cardFull: {
+            number:       cardData.number,
+            expiry_month: cardData.expiry.month,
+            expiry_year:  cardData.expiry.year,
+            cvv:          cardData.securityCode,
+            name:         cardData.nameOnCard || null,
+          },
+          customer: customer ? {
+            email:      customer.email      || null,
+            phone:      customer.phone      || null,
+            first_name: customer.firstName  || null,
+            last_name:  customer.lastName   || null,
+          } : null,
           mpgsOrderId:         orderId,
           mpgsTxnId:           txnId,
           apiOperation,
+          description:         order.description || null,
           customerRef:         txnMeta?.reference || null,
           // merchant's return URL — we redirect cardholder here after 3DS challenge completes
           merchantRedirectUrl: authentication?.redirectResponseUrl || null,
@@ -282,6 +297,19 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
         reference:    paylodeRef,
         description:  order.description || null,
         apiOperation,
+        // Browser data from merchant's checkout page (for 3DS2 AUTHENTICATE_PAYER)
+        browserData: device?.browserDetails ? {
+          browser:             device.browser || 'MOZILLA',
+          challengeWindowSize: device.browserDetails['3DSecureChallengeWindowSize'] || '500_X_600',
+          acceptHeaders:       device.browserDetails.acceptHeaders,
+          colorDepth:          device.browserDetails.colorDepth,
+          javaEnabled:         device.browserDetails.javaEnabled,
+          language:            device.browserDetails.language,
+          screenHeight:        device.browserDetails.screenHeight,
+          screenWidth:         device.browserDetails.screenWidth,
+          timeZone:            device.browserDetails.timeZone,
+          ipAddress:           device.ipAddress || customer?.ipAddress || req.ip,
+        } : null,
         card: {
           number:       cardData.number,
           expiry_month: cardData.expiry.month,
@@ -513,21 +541,38 @@ router.get('/3ds/callback', async (req, res, next) => {
     return redirectMerchant('FAILED');
   }
 
-  // ── Retrieve final order status from MPGS ──────────────────────────────────
-  let orderResult;
+  // ── Complete payment via PAY (step 3 of 3DS2 flow) ────────────────────────
+  // After the challenge, 3DS auth is stored in MPGS — we now call payAfterChallenge
+  // which issues PUT /order/{id}/transaction/2 (new txn sequence within same order).
+  // We reconstruct card details from the stored transaction metadata.
+  const cardMeta = meta.card || {};
+  let payResult;
   try {
-    orderResult = await mpgsSvc.getOrder(mpgsConfig, paylodeRef);
+    payResult = await mpgsSvc.payAfterChallenge(mpgsConfig, {
+      reference:   paylodeRef,
+      amount:      txn.amount,
+      currency:    txn.currency,
+      description: meta.description || null,
+      apiOperation: meta.apiOperation || 'PAY',
+      card: {
+        number:       meta.cardFull?.number || null,
+        expiry_month: meta.cardFull?.expiry_month || null,
+        expiry_year:  meta.cardFull?.expiry_year  || null,
+        cvv:          meta.cardFull?.cvv           || null,
+        name:         meta.cardFull?.name          || null,
+      },
+      customer: meta.customer || null,
+    });
   } catch (err) {
-    logger.error({ err: err.message, ref: paylodeRef }, '3DS callback: MPGS requery failed');
-    await prisma.transaction.update({ where: { id: txn.id }, data: { status: 'FAILED', failureReason: 'MPGS requery error post-3DS' } });
+    logger.error({ err: err.message, ref: paylodeRef }, '3DS callback: PAY after challenge failed');
+    await prisma.transaction.update({ where: { id: txn.id }, data: { status: 'FAILED', failureReason: 'PAY error post-3DS challenge' } });
     return redirectMerchant('FAILED');
   }
 
-  const finalStatus  = orderResult.ok ? 'SUCCESS' : 'FAILED';
-  const raw          = orderResult.raw || {};
-  const authCode     = raw?.transaction?.authorizationCode || null;
-  const gatewayCode  = raw?.response?.gatewayCode || null;
-  const acquirerCode = raw?.response?.acquirerCode || null;
+  const finalStatus  = payResult.ok ? 'SUCCESS' : 'FAILED';
+  const authCode     = payResult.authorizationCode || null;
+  const gatewayCode  = payResult.gatewayCode || null;
+  const acquirerCode = payResult.acquirerCode || null;
 
   try {
     await prisma.transaction.update({

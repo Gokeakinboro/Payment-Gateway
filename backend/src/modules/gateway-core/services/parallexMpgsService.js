@@ -131,10 +131,18 @@ function buildSandboxResponse(cardNumber) {
 }
 
 /**
- * Charge a card through MPGS.
- * @param {object} config   { mpgsMid, mpgsApiPassword, mpgsBaseUrl } from merchant_mpgs_configs
- * @param {object} payload  { amount(kobo), currency, reference, description, card, customer,
- *                            apiOperation?, authentication? }
+ * Charge a card through MPGS using the 3DS2 three-step flow:
+ *   1. INITIATE_AUTHENTICATION  — enrol check (card + currency)
+ *   2. AUTHENTICATE_PAYER       — 3DS2 challenge/frictionless (browser data + card + amount)
+ *   3. PAY                      — capture (full card + txnId=2)
+ *
+ * If step 2 returns PENDING (challenge required), we return { pending3ds:true, authRedirectUrl }
+ * and the caller handles the redirect.  The gateway's 3DS callback then calls payAfterChallenge()
+ * to complete step 3 once the cardholder returns.
+ *
+ * @param {object} config    { mpgsMid, mpgsApiPassword, mpgsBaseUrl }
+ * @param {object} payload   { amount(kobo), currency, reference, description, card, customer,
+ *                             apiOperation?, browserData? }
  * @param {boolean} sandbox  if true, return a mock response without calling MPGS
  */
 async function charge(config, payload, sandbox = false) {
@@ -143,24 +151,124 @@ async function charge(config, payload, sandbox = false) {
   const { mpgsMid, mpgsApiPassword, mpgsBaseUrl } = config;
   const baseUrl = mpgsBaseUrl.replace(/\/$/, '');
   const orderId = mpgsOrderId(payload.reference);
-  const url = `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/1`;
+  const auth    = basicAuth(mpgsMid, mpgsApiPassword);
+  const headers = { Authorization: auth, 'Content-Type': 'application/json', Accept: 'application/json' };
 
-  const body = toMpgsPayload(payload);
-  const res = await fetch(url, {
-    method:  'PUT',
-    headers: {
-      Authorization:  basicAuth(mpgsMid, mpgsApiPassword),
-      'Content-Type': 'application/json',
-      Accept:         'application/json',
-    },
-    body: JSON.stringify(body),
+  async function put(txnId, body) {
+    const url = `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/${txnId}`;
+    const res = await fetch(url, { method: 'PUT', headers, body: JSON.stringify(body) });
+    return res.json().catch(() => ({ result: 'FAILURE', error: { cause: 'NON_JSON_RESPONSE', explanation: `HTTP ${res.status}` } }));
+  }
+
+  const pan  = String(payload.card.number).replace(/\s/g, '');
+  const exp  = { month: String(payload.card.expiry_month).padStart(2, '0'), year: String(payload.card.expiry_year).slice(-2) };
+  const bd   = payload.browserData || {};
+  const appUrl = process.env.APP_URL || 'https://api.paylodeservices.com';
+
+  // ── Step 1: INITIATE_AUTHENTICATION ──────────────────────────────────────────
+  const init = await put('1', {
+    apiOperation: 'INITIATE_AUTHENTICATION',
+    authentication: { channel: 'PAYER_BROWSER', purpose: 'PAYMENT_TRANSACTION' },
+    order: { currency: payload.currency },
+    sourceOfFunds: { type: 'CARD', provided: { card: { number: pan, expiry: exp } } },
   });
 
-  const json = await res.json().catch(() => ({
-    result: 'FAILURE',
-    error:  { cause: 'NON_JSON_RESPONSE', explanation: `HTTP ${res.status}` },
-  }));
+  // If initiation itself errors, try a direct PAY (Parallex may have changed config)
+  if (init.result === 'ERROR') {
+    const direct = await put('1', toMpgsPayload(payload));
+    return fromMpgsResponse(direct);
+  }
 
+  // ── Step 2: AUTHENTICATE_PAYER ───────────────────────────────────────────────
+  const callbackUrl = `${appUrl}/api/rest/3ds/callback?ref=${encodeURIComponent(payload.reference)}`;
+  const auth2 = await put('1', {
+    apiOperation: 'AUTHENTICATE_PAYER',
+    authentication: { redirectResponseUrl: callbackUrl },
+    device: {
+      browser: bd.browser || 'MOZILLA',
+      browserDetails: {
+        '3DSecureChallengeWindowSize': bd.challengeWindowSize || '500_X_600',
+        acceptHeaders:  bd.acceptHeaders  || 'application/json',
+        colorDepth:     bd.colorDepth     ?? 24,
+        javaEnabled:    bd.javaEnabled    ?? true,
+        language:       bd.language       || 'en-NG',
+        screenHeight:   bd.screenHeight   ?? 900,
+        screenWidth:    bd.screenWidth    ?? 1440,
+        timeZone:       bd.timeZone       ?? 0,
+      },
+      ipAddress: bd.ipAddress || payload.customer?.ip_address || '0.0.0.0',
+    },
+    order: { currency: payload.currency, amount: nairaFromKobo(payload.amount) },
+    sourceOfFunds: { provided: { card: {
+      number: pan, expiry: exp, securityCode: String(payload.card.cvv),
+    }}},
+  });
+
+  // Challenge flow — return redirect URL so the gateway can send 202 to merchant
+  if (auth2.result === 'PENDING' && auth2.authentication?.redirectUrl) {
+    return {
+      ok: false, pending3ds: true, result: 'PENDING',
+      gatewayCode:    'PENDING_AUTHENTICATION',
+      authRedirectUrl: auth2.authentication.redirectUrl,
+      auth3dsVersion:  auth2.authentication.version || '3DS2',
+      mpgsOrderId:     orderId, mpgsTransactionId: '1',
+      raw: auth2,
+    };
+  }
+
+  // ── Step 3: PAY (txnId=2; 3DS auth already stored by MPGS) ──────────────────
+  const pay = await put('2', {
+    apiOperation: payload.apiOperation || 'PAY',
+    order: { amount: nairaFromKobo(payload.amount), currency: payload.currency, description: payload.description || 'Paylode payment' },
+    sourceOfFunds: { type: 'CARD', provided: { card: {
+      number: pan, expiry: exp, securityCode: String(payload.card.cvv),
+      ...(payload.card.name ? { nameOnCard: payload.card.name } : {}),
+    }}},
+    transaction: { reference: payload.reference },
+    ...(payload.customer ? { customer: {
+      ...(payload.customer.email      && { email:     payload.customer.email }),
+      ...(payload.customer.phone      && { phone:     payload.customer.phone }),
+      ...(payload.customer.first_name && { firstName: payload.customer.first_name }),
+      ...(payload.customer.last_name  && { lastName:  payload.customer.last_name }),
+    }} : {}),
+  });
+
+  return fromMpgsResponse(pay);
+}
+
+/**
+ * Complete a PAY after a 3DS challenge — called from the 3DS callback endpoint.
+ * Uses txnId=2 (same order, new transaction sequence within that order).
+ */
+async function payAfterChallenge(config, { reference, amount, currency, card, customer, description, apiOperation }) {
+  const { mpgsMid, mpgsApiPassword, mpgsBaseUrl } = config;
+  const baseUrl = mpgsBaseUrl.replace(/\/$/, '');
+  const orderId = mpgsOrderId(reference);
+  const url     = `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/2`;
+  const pan = String(card.number).replace(/\s/g, '');
+  const exp = { month: String(card.expiry_month).padStart(2, '0'), year: String(card.expiry_year).slice(-2) };
+
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { Authorization: basicAuth(mpgsMid, mpgsApiPassword), 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      apiOperation: apiOperation || 'PAY',
+      order: { amount: nairaFromKobo(amount), currency, description: description || 'Paylode payment' },
+      sourceOfFunds: { type: 'CARD', provided: { card: {
+        number: pan, expiry: exp, securityCode: String(card.cvv),
+        ...(card.name ? { nameOnCard: card.name } : {}),
+      }}},
+      transaction: { reference },
+      ...(customer ? { customer: {
+        ...(customer.email      && { email:     customer.email }),
+        ...(customer.phone      && { phone:     customer.phone }),
+        ...(customer.first_name && { firstName: customer.first_name }),
+        ...(customer.last_name  && { lastName:  customer.last_name }),
+      }} : {}),
+    }),
+  });
+
+  const json = await res.json().catch(() => ({ result: 'FAILURE', error: { cause: 'NON_JSON_RESPONSE' } }));
   return fromMpgsResponse(json);
 }
 
@@ -180,7 +288,7 @@ async function getOrder(config, reference) {
 }
 
 module.exports = {
-  charge, getOrder,
+  charge, payAfterChallenge, getOrder,
   toMpgsPayload, fromMpgsResponse, buildSandboxResponse,
   cardTypeFromNumber, nairaFromKobo, mpgsOrderId, MPGS_VERSION,
 };
