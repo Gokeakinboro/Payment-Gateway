@@ -914,7 +914,7 @@ model MpgsApplicant {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  application MpgsApplication?
+  applications MpgsApplication[]
 
   @@map("mpgs_applicants")
 }
