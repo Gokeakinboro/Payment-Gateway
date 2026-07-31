@@ -405,6 +405,7 @@ textarea{resize:vertical;min-height:64px}
 
 <script>
 const API = '/api/v1/mpgs-portal';
+const appId = new URLSearchParams(window.location.search).get('id');
 function logout() { localStorage.removeItem('mpgs_token'); localStorage.removeItem('mpgs_user'); window.location.href = 'mpgs-login.html'; }
 function token()  { return localStorage.getItem('mpgs_token'); }
 function authFetch(url, opts = {}) {
@@ -531,7 +532,7 @@ async function save(submit) {
   document.getElementById('alertOk').classList.remove('show');
 
   try {
-    const r = await authFetch(`${API}/portal/questionnaire`, {
+    const r = await authFetch(`${API}/portal/applications/${appId}/questionnaire`, {
       method: 'PUT',
       body: JSON.stringify({ data, submit }),
     });
@@ -565,10 +566,13 @@ document.getElementById('qForm').addEventListener('submit', e => { e.preventDefa
 // Load existing data
 (async () => {
   if (!token()) { window.location.href = 'mpgs-login.html'; return; }
-  const r = await authFetch(`${API}/portal/me`);
+  if (!appId) { window.location.href = 'mpgs-dashboard.html'; return; }
+  document.querySelector('.back').href = `mpgs-merchant.html?id=${appId}`;
+  const r = await authFetch(`${API}/portal/applications/${appId}`);
   if (r.status === 401) { logout(); return; }
   const d = await r.json();
   const app = d.data?.application;
+  if (app) document.querySelector('.form-header p').insertAdjacentHTML('beforebegin', `<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:8px">${app.merchantName || ''}</div>`);
   if (app?.questionnaire) populateData(app.questionnaire);
   else if (app?.questDraft) populateData(app.questDraft);
 })();

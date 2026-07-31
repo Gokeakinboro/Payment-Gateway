@@ -427,6 +427,7 @@ body{font-family:var(--font);background:var(--g50);color:var(--g800);min-height:
 
 <script>
 const API = '/api/v1/mpgs-portal';
+const appId = new URLSearchParams(window.location.search).get('id');
 let selectedOwnership = '';
 let selectedOnbType = '';
 
@@ -520,7 +521,7 @@ async function save(submit) {
   document.getElementById('alertErr').classList.remove('show');
   document.getElementById('alertOk').classList.remove('show');
   try {
-    const r = await authFetch(`${API}/portal/application-form`, {
+    const r = await authFetch(`${API}/portal/applications/${appId}/application-form`, {
       method: 'PUT',
       body: JSON.stringify({ data, submit }),
     });
@@ -553,13 +554,15 @@ document.getElementById('appForm').addEventListener('submit', e => { e.preventDe
 
 (async () => {
   if (!token()) { window.location.href = 'mpgs-login.html'; return; }
-  const r = await authFetch(`${API}/portal/me`);
+  if (!appId) { window.location.href = 'mpgs-dashboard.html'; return; }
+  document.querySelector('.back').href = `mpgs-merchant.html?id=${appId}`;
+  const r = await authFetch(`${API}/portal/applications/${appId}`);
   if (r.status === 401) { logout(); return; }
   const d = await r.json();
   const app = d.data?.application;
+  if (app) document.querySelector('.bank-header').insertAdjacentHTML('beforebegin', `<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:8px">${app.merchantName || ''}</div>`);
   if (app?.applicationForm) populateData(app.applicationForm);
   else if (app?.formDraft) populateData(app.formDraft);
-  // Pre-fill s5Date with today if empty
   if (!document.getElementById('s5Date').value) {
     document.getElementById('s5Date').value = new Date().toISOString().split('T')[0];
   }

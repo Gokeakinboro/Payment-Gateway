@@ -28,18 +28,29 @@ CREATE TABLE IF NOT EXISTS mpgs_applicants (
 );
 
 CREATE TABLE IF NOT EXISTS mpgs_applications (
-  id               UUID              PRIMARY KEY DEFAULT gen_random_uuid(),
-  applicant_id     UUID              NOT NULL UNIQUE REFERENCES mpgs_applicants(id),
-  status           "MpgsPortalStatus" NOT NULL DEFAULT 'DRAFT',
-  questionnaire    JSONB,
-  application_form JSONB,
-  quest_draft      JSONB,
-  form_draft       JSONB,
-  submitted_at     TIMESTAMPTZ,
-  sent_to_bank_at  TIMESTAMPTZ,
-  sent_to_bank_by  TEXT,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id                   UUID              PRIMARY KEY DEFAULT gen_random_uuid(),
+  applicant_id         UUID              NOT NULL REFERENCES mpgs_applicants(id),
+  merchant_name        TEXT,
+  status               "MpgsPortalStatus" NOT NULL DEFAULT 'DRAFT',
+  questionnaire        JSONB,
+  application_form     JSONB,
+  quest_draft          JSONB,
+  form_draft           JSONB,
+  submitted_at         TIMESTAMPTZ,
+  sent_to_bank_at      TIMESTAMPTZ,
+  sent_to_bank_by      TEXT,
+  parallex_merchant_id TEXT,
+  parallex_operator_id TEXT,
+  paylode_merchant_id  UUID,
+  domain_name          TEXT,
+  domain_host          TEXT,
+  domain_credentials   JSONB,
+  vps_provider         TEXT,
+  vps_ip               TEXT,
+  vps_credentials      JSONB,
+  website_notes        TEXT,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS mpgs_documents (

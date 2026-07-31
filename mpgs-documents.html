@@ -86,6 +86,7 @@ body{font-family:var(--font);background:var(--g50);color:var(--g800);min-height:
 
 <script>
 const API = '/api/v1/mpgs-portal';
+const appId = new URLSearchParams(window.location.search).get('id');
 let uploadedDocs = {};
 
 function logout() { localStorage.removeItem('mpgs_token'); localStorage.removeItem('mpgs_user'); window.location.href = 'mpgs-login.html'; }
@@ -98,11 +99,16 @@ const STATUS_LABELS = { PENDING: 'Pending review', ACCEPTED: '✓ Accepted', REJ
 
 async function load() {
   if (!token()) { window.location.href = 'mpgs-login.html'; return; }
-  const r = await authFetch(`${API}/portal/me`);
+  if (!appId) { window.location.href = 'mpgs-dashboard.html'; return; }
+  const r = await authFetch(`${API}/portal/applications/${appId}`);
   if (r.status === 401) { logout(); return; }
   const d = await r.json();
   const docs = (d.data.application?.documents || []);
   const docsList = d.data.docsList || [];
+  const app = d.data.application;
+  document.querySelector('.back').href = `mpgs-merchant.html?id=${appId}`;
+  document.querySelector('.done-btn').href = `mpgs-merchant.html?id=${appId}`;
+  if (app) document.querySelector('.page-sub').insertAdjacentHTML('beforebegin', `<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:6px">${app.merchantName || ''}</div>`);
   docs.forEach(doc => { uploadedDocs[doc.docKey] = doc; });
   renderList(docsList);
 }
@@ -153,7 +159,7 @@ async function uploadDoc(docKey, input) {
   try {
     const fd = new FormData();
     fd.append('file', file);
-    const r = await authFetch(`${API}/portal/documents/${docKey}`, { method: 'POST', body: fd });
+    const r = await authFetch(`${API}/portal/applications/${appId}/documents/${docKey}`, { method: 'POST', body: fd });
     const d = await r.json();
     if (!d.status) throw new Error(d.message);
     uploadedDocs[docKey] = d.data;
@@ -170,7 +176,7 @@ async function uploadDoc(docKey, input) {
 async function removeDoc(docKey) {
   if (!confirm('Remove this document?')) return;
   try {
-    const r = await authFetch(`${API}/portal/documents/${docKey}`, { method: 'DELETE' });
+    const r = await authFetch(`${API}/portal/applications/${appId}/documents/${docKey}`, { method: 'DELETE' });
     const d = await r.json();
     if (!d.status) throw new Error(d.message);
     delete uploadedDocs[docKey];

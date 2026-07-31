@@ -44,6 +44,8 @@ FRONTEND = [
     ('mpgs-documents.html',                        '/var/www/paylode/mpgs-documents.html'),
     ('mpgs-questionnaire.html',                    '/var/www/paylode/mpgs-questionnaire.html'),
     ('mpgs-application.html',                      '/var/www/paylode/mpgs-application.html'),
+    ('mpgs-merchant.html',                         '/var/www/paylode/mpgs-merchant.html'),
+    ('mpgs-website.html',                          '/var/www/paylode/mpgs-website.html'),
     ('mpgs-admin.html',                            '/var/www/paylode/mpgs-admin.html'),
 ]
 
