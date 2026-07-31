@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPGS Portal — Web Business Questionnaire</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--navy:#1a2744;--navy-l:#253360;--lime:#7dc534;--white:#fff;--g50:#f8fafc;--g100:#f1f5f9;--g200:#e2e8f0;--g300:#cbd5e1;--g400:#94a3b8;--g500:#64748b;--g600:#475569;--g700:#334155;--g800:#1e293b;--red:#ef4444;--font:'DM Sans',sans-serif}
+body{font-family:var(--font);background:var(--g50);color:var(--g800);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--navy);height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.logo-box{width:32px;height:32px;background:var(--lime);border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--navy);font-size:14px}
+.logo-name{color:#fff;font-weight:700;font-size:15px}
+.logo-sep{color:rgba(255,255,255,.3);margin:0 4px}
+.logo-sub{color:rgba(255,255,255,.6);font-size:13px}
+.logout-btn{background:none;border:1.5px solid rgba(255,255,255,.25);color:rgba(255,255,255,.7);font-family:var(--font);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer}
+.logout-btn:hover{border-color:rgba(255,255,255,.5);color:#fff}
+.container{max-width:820px;margin:0 auto;padding:36px 20px 60px}
+.back{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--g500);text-decoration:none;margin-bottom:20px}
+.back:hover{color:var(--navy)}
+/* Form title block */
+.form-header{text-align:center;margin-bottom:28px}
+.form-header h1{font-size:20px;font-weight:700;color:var(--navy);letter-spacing:.5px;text-decoration:underline;margin-bottom:4px}
+.form-header p{font-size:13px;color:var(--g500)}
+/* Section headers */
+.section-head{background:var(--navy);color:#fff;font-size:13px;font-weight:700;padding:9px 14px;letter-spacing:.3px;margin-top:24px;margin-bottom:0;border-radius:6px 6px 0 0}
+/* Table */
+.q-table{width:100%;border-collapse:collapse;background:#fff;border:1.5px solid var(--g300);border-top:none;margin-bottom:0;border-radius:0 0 6px 6px;overflow:hidden}
+.q-table th{padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);background:var(--g100);border-bottom:1.5px solid var(--g200);text-transform:uppercase;letter-spacing:.3px}
+.q-table td{padding:10px 14px;border-bottom:1px solid var(--g100);vertical-align:top}
+.q-table tr:last-child td{border-bottom:none}
+.q-table tr:hover td{background:var(--g50)}
+.sn{width:40px;color:var(--g400);font-weight:600;font-size:12px;white-space:nowrap;vertical-align:middle}
+.q-label{width:220px;font-size:13px;color:var(--g700);line-height:1.5;vertical-align:middle}
+.q-label .req{color:var(--red)}
+.q-input{width:100%}
+/* Inputs */
+input[type=text],input[type=number],input[type=url],textarea,select{
+  width:100%;padding:8px 10px;border:1.5px solid var(--g300);border-radius:6px;
+  font-size:13px;font-family:var(--font);color:var(--g800);background:#fff;outline:none;transition:border-color .15s
+}
+input:focus,textarea:focus,select:focus{border-color:var(--navy);box-shadow:0 0 0 3px rgba(26,39,68,.06)}
+input.err,textarea.err{border-color:var(--red)}
+textarea{resize:vertical;min-height:64px}
+/* Checkboxes + radios */
+.opts{display:flex;flex-wrap:wrap;gap:8px 16px;padding:4px 0}
+.opt-item{display:flex;align-items:center;gap:7px;cursor:pointer}
+.opt-item input{width:15px;height:15px;margin:0;accent-color:var(--navy);cursor:pointer;flex-shrink:0}
+.opt-item span{font-size:13px;color:var(--g700)}
+/* Sub-row for 4 columns */
+.sub-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.sub-label{font-size:11px;color:var(--g500);margin-bottom:3px}
+/* Action bar */
+.action-bar{background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:20px 24px;margin-top:28px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.action-bar-info{font-size:13px;color:var(--g500)}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:10px 22px;border-radius:8px;font-size:14px;font-weight:600;font-family:var(--font);cursor:pointer;border:none;transition:all .15s}
+.btn-outline{background:#fff;border:1.5px solid var(--g300);color:var(--g700)}
+.btn-outline:hover{border-color:var(--navy);color:var(--navy)}
+.btn-primary{background:var(--navy);color:#fff}
+.btn-primary:hover{background:var(--navy-l)}
+.btn-lime{background:var(--lime);color:var(--navy)}
+.btn-lime:hover{background:#6cb82a}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.alert{padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:16px;display:none}
+.alert.show{display:block}
+.alert.err{background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.alert.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a}
+.saved-badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#16a34a;display:none}
+.saved-badge.show{display:inline-flex}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo-box">P</div>
+    <span class="logo-name">Paylode</span>
+    <span class="logo-sep">|</span>
+    <span class="logo-sub">MPGS Onboarding Portal</span>
+  </div>
+  <button class="logout-btn" onclick="logout()">Log out</button>
+</div>
+
+<div class="container">
+  <a href="mpgs-dashboard.html" class="back">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+    Back to dashboard
+  </a>
+
+  <div class="form-header">
+    <h1>WEB BUSINESS — QUESTIONNAIRE</h1>
+    <p>Fields marked <span style="color:var(--red)">*</span> are compulsory</p>
+  </div>
+
+  <div class="alert err" id="alertErr"></div>
+  <div class="alert ok" id="alertOk"></div>
+
+  <form id="qForm" novalidate>
+
+    <!-- SECTION A: GENERAL INFORMATION -->
+    <div class="section-head">A. GENERAL INFORMATION</div>
+    <table class="q-table">
+      <thead><tr><th class="sn">S/N</th><th>Items</th><th></th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="sn">1</td>
+          <td class="q-label"><span class="req">*</span>Company Name:</td>
+          <td class="q-input"><input type="text" id="companyName" placeholder="Full registered company name"></td>
+        </tr>
+        <tr>
+          <td class="sn">2</td>
+          <td class="q-label"><span class="req">*</span>Company Address (Head office):</td>
+          <td class="q-input"><textarea id="companyAddress" rows="3" placeholder="Full registered head office address"></textarea></td>
+        </tr>
+        <tr>
+          <td class="sn">3</td>
+          <td class="q-label"><span class="req">*</span>Length of stay at company address:</td>
+          <td class="q-input"><input type="text" id="lengthOfStay" placeholder="e.g. 3 years, 18 months"></td>
+        </tr>
+        <tr>
+          <td class="sn">4</td>
+          <td class="q-label"><span class="req">*</span>Country of location:</td>
+          <td class="q-input"><input type="text" id="country" placeholder="e.g. Nigeria"></td>
+        </tr>
+        <tr>
+          <td class="sn">5</td>
+          <td class="q-label"><span class="req">*</span>Full Name and Address of Directors:</td>
+          <td class="q-input"><textarea id="directors" rows="5" placeholder="List each director's full name and residential address on a new line"></textarea></td>
+        </tr>
+        <tr>
+          <td class="sn">6</td>
+          <td class="q-label"><span class="req">*</span>Company Registration Number:</td>
+          <td class="q-input"><input type="text" id="rcNumber" placeholder="RC Number"></td>
+        </tr>
+        <tr>
+          <td class="sn">7</td>
+          <td class="q-label"><span class="req">*</span>Company Bank Verification Number:</td>
+          <td class="q-input"><input type="text" id="bvn" placeholder="BVN"></td>
+        </tr>
+        <tr>
+          <td class="sn">8</td>
+          <td class="q-label"><span class="req">*</span>Tax Identification Number:</td>
+          <td class="q-input"><input type="text" id="tin" placeholder="TIN"></td>
+        </tr>
+        <tr>
+          <td class="sn">9</td>
+          <td class="q-label"><span class="req">*</span>Number of years/months of operation:</td>
+          <td class="q-input"><input type="text" id="yearsOfOperation" placeholder="e.g. 5 years 3 months"></td>
+        </tr>
+        <tr>
+          <td class="sn">10</td>
+          <td class="q-label"><span class="req">*</span>List of outlets and their address:</td>
+          <td class="q-input"><textarea id="outlets" rows="4" placeholder="List each outlet and its address on a new line. Write N/A if none."></textarea></td>
+        </tr>
+        <tr>
+          <td class="sn">11</td>
+          <td class="q-label"><span class="req">*</span>Website / URL / IP Address:</td>
+          <td class="q-input"><input type="url" id="website" placeholder="https://www.yourwebsite.com"></td>
+        </tr>
+        <tr>
+          <td class="sn">12</td>
+          <td class="q-label"><span class="req">*</span>Customer service contact number and email:</td>
+          <td class="q-input"><input type="text" id="customerServiceContact" placeholder="e.g. +234 801 000 0000 | support@company.com"></td>
+        </tr>
+        <tr>
+          <td class="sn">13</td>
+          <td class="q-label">
+            <div style="margin-bottom:8px"><span class="req">*</span>a. Type of Goods or Services:</div>
+            <div><span class="req">*</span>b. Merchant category code (MCC):</div>
+          </td>
+          <td class="q-input">
+            <input type="text" id="typeOfGoods" placeholder="Type of goods or services" style="margin-bottom:8px">
+            <input type="text" id="mcc" placeholder="MCC code, e.g. 5999">
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">14</td>
+          <td class="q-label"><span class="req">*</span>Attach Statement of Account (3–6 months):</td>
+          <td class="q-input" style="vertical-align:middle">
+            <div id="stmtUploadArea">
+              <p style="font-size:12px;color:var(--g500);margin-bottom:8px">Upload your bank statement via Step 1 — Documents (Bank Statement). The document is linked automatically.</p>
+              <a href="mpgs-documents.html" style="font-size:12px;color:var(--navy);font-weight:600">→ Go to document upload</a>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">15</td>
+          <td class="q-label">Previous Payment Engines (Yes or No):</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="radio" name="prevPaymentEngines" value="Yes" id="prevYes"> <span>Yes</span></label>
+              <label class="opt-item"><input type="radio" name="prevPaymentEngines" value="No"  id="prevNo">  <span>No</span></label>
+            </div>
+          </td>
+        </tr>
+        <tr id="row16" style="display:none">
+          <td class="sn">16</td>
+          <td class="q-label">Reason for leaving:</td>
+          <td class="q-input"><textarea id="reasonForLeaving" rows="2" placeholder="Reason for leaving previous payment engine"></textarea></td>
+        </tr>
+        <tr>
+          <td class="sn">17</td>
+          <td class="q-label">Address of merchant store/Warehouse:</td>
+          <td class="q-input"><textarea id="storeAddress" rows="2" placeholder="Store or warehouse address. Write N/A if same as head office."></textarea></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- SECTION B: PAYMENT INFORMATION -->
+    <div class="section-head">B. PAYMENT INFORMATION</div>
+    <table class="q-table">
+      <thead><tr><th class="sn">S/N</th><th>Items</th><th></th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="sn">1</td>
+          <td class="q-label"><span class="req">*</span>Card brand (MasterCard, Visa etc.) Accepted:</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="checkbox" name="cardBrands" value="MasterCard"> <span>MasterCard</span></label>
+              <label class="opt-item"><input type="checkbox" name="cardBrands" value="Visa"> <span>Visa</span></label>
+              <label class="opt-item"><input type="checkbox" name="cardBrands" value="Verve"> <span>Verve</span></label>
+              <label class="opt-item"><input type="checkbox" name="cardBrands" value="American Express"> <span>American Express</span></label>
+              <label class="opt-item"><input type="checkbox" name="cardBrands" value="Others"> <span>Others</span></label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">2</td>
+          <td class="q-label"><span class="req">*</span>Card currency (USD, NGN, GBP &amp; Euro):</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="checkbox" name="cardCurrencies" value="NGN"> <span>NGN</span></label>
+              <label class="opt-item"><input type="checkbox" name="cardCurrencies" value="USD"> <span>USD</span></label>
+              <label class="opt-item"><input type="checkbox" name="cardCurrencies" value="GBP"> <span>GBP</span></label>
+              <label class="opt-item"><input type="checkbox" name="cardCurrencies" value="EUR"> <span>Euro</span></label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">3</td>
+          <td class="q-label"><span class="req">*</span>Card types (Debit, Credit, Prepaid):</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="checkbox" name="cardTypes" value="Debit"> <span>Debit</span></label>
+              <label class="opt-item"><input type="checkbox" name="cardTypes" value="Credit"> <span>Credit</span></label>
+              <label class="opt-item"><input type="checkbox" name="cardTypes" value="Prepaid"> <span>Prepaid</span></label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">4</td>
+          <td class="q-label"><span class="req">*</span>Time frame for order processing (within 24hrs, 48hrs, 72hrs, others):</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="radio" name="orderProcessingTime" value="Within 24hrs"> <span>Within 24hrs</span></label>
+              <label class="opt-item"><input type="radio" name="orderProcessingTime" value="Within 48hrs"> <span>Within 48hrs</span></label>
+              <label class="opt-item"><input type="radio" name="orderProcessingTime" value="Within 72hrs"> <span>Within 72hrs</span></label>
+              <label class="opt-item"><input type="radio" name="orderProcessingTime" value="Others"> <span>Others:</span></label>
+              <input type="text" id="orderTimeOther" placeholder="Specify" style="width:120px;padding:5px 8px;font-size:12px;border:1.5px solid var(--g300);border-radius:5px">
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">5</td>
+          <td class="q-label"><span class="req">*</span>Payment model (2 party, 3 party or 2.5 party):</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="radio" name="paymentModel" value="2 party"> <span>2 party</span></label>
+              <label class="opt-item"><input type="radio" name="paymentModel" value="3 party"> <span>3 party</span></label>
+              <label class="opt-item"><input type="radio" name="paymentModel" value="2.5 party"> <span>2.5 party</span></label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">6</td>
+          <td class="q-label"><span class="req">*</span>Transaction model (Purchase or Auth/capture):</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="radio" name="transactionModel" value="Purchase"> <span>Purchase</span></label>
+              <label class="opt-item"><input type="radio" name="transactionModel" value="Auth/capture"> <span>Auth/capture</span></label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">7</td>
+          <td class="q-label"><span class="req">*</span>Annual Sales Projection:</td>
+          <td class="q-input">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div>
+                <div class="sub-label">Volume (number of transactions)</div>
+                <input type="text" id="annualVolume" placeholder="e.g. 50,000">
+              </div>
+              <div>
+                <div class="sub-label">Value (amount in currency)</div>
+                <input type="text" id="annualValue" placeholder="e.g. ₦500,000,000">
+              </div>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- SECTION C: SECURITY INFORMATION -->
+    <div class="section-head">C. SECURITY INFORMATION</div>
+    <table class="q-table">
+      <thead><tr><th class="sn">S/N</th><th>Items</th><th></th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="sn">1</td>
+          <td class="q-label"><span class="req">*</span>PCIDSS Status (Certified, Work-In-Progress, Not Started):</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="radio" name="pcidssStatus" value="Certified"> <span>Certified</span></label>
+              <label class="opt-item"><input type="radio" name="pcidssStatus" value="Work-In-Progress"> <span>Work-In-Progress</span></label>
+              <label class="opt-item"><input type="radio" name="pcidssStatus" value="Not Started"> <span>Not Started</span></label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">2</td>
+          <td class="q-label"><span class="req">*</span>Advance Functionality (Void transaction, Refund, Query-Dr):</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="checkbox" name="advanceFunctionality" value="Void transaction"> <span>Void transaction</span></label>
+              <label class="opt-item"><input type="checkbox" name="advanceFunctionality" value="Refund"> <span>Refund</span></label>
+              <label class="opt-item"><input type="checkbox" name="advanceFunctionality" value="Query-Dr"> <span>Query-Dr</span></label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">3</td>
+          <td class="q-label"><span class="req">*</span>3-D Secure (Verify by Visa, MasterCard Secure Code or J/Secure):</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="checkbox" name="threeDSecure" value="Verified by Visa"> <span>Verified by Visa</span></label>
+              <label class="opt-item"><input type="checkbox" name="threeDSecure" value="MasterCard Secure Code"> <span>MasterCard Secure Code</span></label>
+              <label class="opt-item"><input type="checkbox" name="threeDSecure" value="J/Secure"> <span>J/Secure</span></label>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">4</td>
+          <td class="q-label"><span class="req">*</span>Will send unique transaction &amp; order reference (Yes or No):</td>
+          <td class="q-input">
+            <div class="opts">
+              <label class="opt-item"><input type="radio" name="uniqueRef" value="Yes"> <span>Yes</span></label>
+              <label class="opt-item"><input type="radio" name="uniqueRef" value="No"> <span>No</span></label>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- SECTION D: SALES INFORMATION -->
+    <div class="section-head">D. SALES INFORMATION</div>
+    <table class="q-table">
+      <thead><tr><th class="sn">S/N</th><th>Items</th><th></th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="sn">1</td>
+          <td class="q-label"><span class="req">*</span>Estimated Sales:</td>
+          <td class="q-input">
+            <div class="sub-grid">
+              <div><div class="sub-label">Daily</div><input type="text" id="salesDaily" placeholder="e.g. ₦500,000"></div>
+              <div><div class="sub-label">Weekly</div><input type="text" id="salesWeekly" placeholder="e.g. ₦3,000,000"></div>
+              <div><div class="sub-label">Monthly</div><input type="text" id="salesMonthly" placeholder="e.g. ₦12,000,000"></div>
+              <div><div class="sub-label">Annual</div><input type="text" id="salesAnnual" placeholder="e.g. ₦150,000,000"></div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sn">2</td>
+          <td class="q-label"><span class="req">*</span>Highest goods/service value:</td>
+          <td class="q-input"><input type="text" id="highestValue" placeholder="e.g. ₦5,000,000"></td>
+        </tr>
+        <tr>
+          <td class="sn">3</td>
+          <td class="q-label"><span class="req">*</span>Lowest goods/service value:</td>
+          <td class="q-input"><input type="text" id="lowestValue" placeholder="e.g. ₦1,000"></td>
+        </tr>
+        <tr>
+          <td class="sn">4</td>
+          <td class="q-label"><span class="req">*</span>List of goods and services:</td>
+          <td class="q-input"><textarea id="goodsList" rows="4" placeholder="List all goods and/or services you sell"></textarea></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Action bar -->
+    <div class="action-bar">
+      <div class="action-bar-info">
+        <span id="savedBadge" class="saved-badge">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#16a34a" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+          Draft saved
+        </span>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button type="button" class="btn btn-outline" id="saveDraftBtn" onclick="save(false)">Save Draft</button>
+        <button type="submit" class="btn btn-lime" id="submitBtn">Save &amp; Submit Questionnaire</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+const API = '/api/v1/mpgs-portal';
+function logout() { localStorage.removeItem('mpgs_token'); localStorage.removeItem('mpgs_user'); window.location.href = 'mpgs-login.html'; }
+function token()  { return localStorage.getItem('mpgs_token'); }
+function authFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' } });
+}
+
+// Show/hide row 16 based on Q15
+document.querySelectorAll('input[name="prevPaymentEngines"]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.getElementById('row16').style.display = r.value === 'Yes' ? '' : 'none';
+  });
+});
+
+function collectCheckboxes(name) {
+  return [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(c => c.value);
+}
+function collectRadio(name) {
+  const el = document.querySelector(`input[name="${name}"]:checked`);
+  return el ? el.value : '';
+}
+
+function collectData() {
+  const orderTime = collectRadio('orderProcessingTime');
+  const orderTimeVal = orderTime === 'Others' ? document.getElementById('orderTimeOther').value.trim() || 'Others' : orderTime;
+  return {
+    companyName: document.getElementById('companyName').value.trim(),
+    companyAddress: document.getElementById('companyAddress').value.trim(),
+    lengthOfStay: document.getElementById('lengthOfStay').value.trim(),
+    country: document.getElementById('country').value.trim(),
+    directors: document.getElementById('directors').value.trim(),
+    rcNumber: document.getElementById('rcNumber').value.trim(),
+    bvn: document.getElementById('bvn').value.trim(),
+    tin: document.getElementById('tin').value.trim(),
+    yearsOfOperation: document.getElementById('yearsOfOperation').value.trim(),
+    outlets: document.getElementById('outlets').value.trim(),
+    website: document.getElementById('website').value.trim(),
+    customerServiceContact: document.getElementById('customerServiceContact').value.trim(),
+    typeOfGoods: document.getElementById('typeOfGoods').value.trim(),
+    mcc: document.getElementById('mcc').value.trim(),
+    prevPaymentEngines: collectRadio('prevPaymentEngines'),
+    reasonForLeaving: document.getElementById('reasonForLeaving').value.trim(),
+    storeAddress: document.getElementById('storeAddress').value.trim(),
+    cardBrands: collectCheckboxes('cardBrands'),
+    cardCurrencies: collectCheckboxes('cardCurrencies'),
+    cardTypes: collectCheckboxes('cardTypes'),
+    orderProcessingTime: orderTimeVal,
+    paymentModel: collectRadio('paymentModel'),
+    transactionModel: collectRadio('transactionModel'),
+    annualVolume: document.getElementById('annualVolume').value.trim(),
+    annualValue: document.getElementById('annualValue').value.trim(),
+    pcidssStatus: collectRadio('pcidssStatus'),
+    advanceFunctionality: collectCheckboxes('advanceFunctionality'),
+    threeDSecure: collectCheckboxes('threeDSecure'),
+    uniqueRef: collectRadio('uniqueRef'),
+    salesDaily: document.getElementById('salesDaily').value.trim(),
+    salesWeekly: document.getElementById('salesWeekly').value.trim(),
+    salesMonthly: document.getElementById('salesMonthly').value.trim(),
+    salesAnnual: document.getElementById('salesAnnual').value.trim(),
+    highestValue: document.getElementById('highestValue').value.trim(),
+    lowestValue: document.getElementById('lowestValue').value.trim(),
+    goodsList: document.getElementById('goodsList').value.trim(),
+  };
+}
+
+function populateData(d) {
+  if (!d) return;
+  const set = (id, val) => { if (document.getElementById(id) && val) document.getElementById(id).value = val; };
+  set('companyName', d.companyName); set('companyAddress', d.companyAddress);
+  set('lengthOfStay', d.lengthOfStay); set('country', d.country); set('directors', d.directors);
+  set('rcNumber', d.rcNumber); set('bvn', d.bvn); set('tin', d.tin);
+  set('yearsOfOperation', d.yearsOfOperation); set('outlets', d.outlets);
+  set('website', d.website); set('customerServiceContact', d.customerServiceContact);
+  set('typeOfGoods', d.typeOfGoods); set('mcc', d.mcc);
+  set('reasonForLeaving', d.reasonForLeaving); set('storeAddress', d.storeAddress);
+  set('annualVolume', d.annualVolume); set('annualValue', d.annualValue);
+  set('salesDaily', d.salesDaily); set('salesWeekly', d.salesWeekly);
+  set('salesMonthly', d.salesMonthly); set('salesAnnual', d.salesAnnual);
+  set('highestValue', d.highestValue); set('lowestValue', d.lowestValue);
+  set('goodsList', d.goodsList);
+
+  // Radios
+  const checkRadio = (name, val) => { if (val) { const el = document.querySelector(`input[name="${name}"][value="${val}"]`); if (el) el.checked = true; } };
+  checkRadio('prevPaymentEngines', d.prevPaymentEngines);
+  checkRadio('paymentModel', d.paymentModel); checkRadio('transactionModel', d.transactionModel);
+  checkRadio('pcidssStatus', d.pcidssStatus); checkRadio('uniqueRef', d.uniqueRef);
+  if (d.orderProcessingTime && !['Within 24hrs','Within 48hrs','Within 72hrs'].includes(d.orderProcessingTime)) {
+    document.querySelector('input[name="orderProcessingTime"][value="Others"]').checked = true;
+    document.getElementById('orderTimeOther').value = d.orderProcessingTime;
+  } else { checkRadio('orderProcessingTime', d.orderProcessingTime); }
+  if (d.prevPaymentEngines === 'Yes') document.getElementById('row16').style.display = '';
+
+  // Checkboxes
+  const checkBoxes = (name, vals) => { if (Array.isArray(vals)) vals.forEach(v => { const el = document.querySelector(`input[name="${name}"][value="${v}"]`); if (el) el.checked = true; }); };
+  checkBoxes('cardBrands', d.cardBrands); checkBoxes('cardCurrencies', d.cardCurrencies);
+  checkBoxes('cardTypes', d.cardTypes); checkBoxes('advanceFunctionality', d.advanceFunctionality);
+  checkBoxes('threeDSecure', d.threeDSecure);
+}
+
+async function save(submit) {
+  const data = collectData();
+  if (submit) {
+    const required = ['companyName','companyAddress','lengthOfStay','country','directors','rcNumber','bvn','tin','yearsOfOperation','outlets','website','customerServiceContact','typeOfGoods','mcc','annualVolume','annualValue','salesDaily','salesWeekly','salesMonthly','salesAnnual','highestValue','lowestValue','goodsList'];
+    const missing = required.filter(k => !data[k]);
+    if (missing.length) {
+      document.getElementById('alertErr').textContent = 'Please fill all required (*) fields before submitting.';
+      document.getElementById('alertErr').classList.add('show');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    if (!data.cardBrands.length) { showErr('Please select at least one card brand'); return; }
+    if (!data.cardCurrencies.length) { showErr('Please select at least one card currency'); return; }
+    if (!data.cardTypes.length) { showErr('Please select at least one card type'); return; }
+    if (!data.orderProcessingTime) { showErr('Please select an order processing time frame'); return; }
+    if (!data.paymentModel) { showErr('Please select a payment model'); return; }
+    if (!data.transactionModel) { showErr('Please select a transaction model'); return; }
+    if (!data.pcidssStatus) { showErr('Please select PCIDSS status'); return; }
+    if (!data.uniqueRef) { showErr('Please answer the unique reference question'); return; }
+  }
+
+  const btn = submit ? document.getElementById('submitBtn') : document.getElementById('saveDraftBtn');
+  btn.disabled = true;
+  btn.textContent = submit ? 'Submitting…' : 'Saving…';
+  document.getElementById('alertErr').classList.remove('show');
+  document.getElementById('alertOk').classList.remove('show');
+
+  try {
+    const r = await authFetch(`${API}/portal/questionnaire`, {
+      method: 'PUT',
+      body: JSON.stringify({ data, submit }),
+    });
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    if (submit) {
+      document.getElementById('alertOk').textContent = 'Questionnaire submitted successfully!';
+      document.getElementById('alertOk').classList.add('show');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setTimeout(() => window.location.href = 'mpgs-dashboard.html', 1500);
+    } else {
+      document.getElementById('savedBadge').classList.add('show');
+      setTimeout(() => document.getElementById('savedBadge').classList.remove('show'), 3000);
+    }
+  } catch (e) {
+    showErr(e.message || 'Save failed');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = submit ? 'Save & Submit Questionnaire' : 'Save Draft';
+  }
+}
+
+function showErr(msg) {
+  document.getElementById('alertErr').textContent = msg;
+  document.getElementById('alertErr').classList.add('show');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+document.getElementById('qForm').addEventListener('submit', e => { e.preventDefault(); save(true); });
+
+// Load existing data
+(async () => {
+  if (!token()) { window.location.href = 'mpgs-login.html'; return; }
+  const r = await authFetch(`${API}/portal/me`);
+  if (r.status === 401) { logout(); return; }
+  const d = await r.json();
+  const app = d.data?.application;
+  if (app?.questionnaire) populateData(app.questionnaire);
+  else if (app?.questDraft) populateData(app.questDraft);
+})();
+</script>
+</body>
+</html>
