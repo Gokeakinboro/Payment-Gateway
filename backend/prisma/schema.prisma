@@ -920,23 +920,36 @@ model MpgsApplicant {
 }
 
 model MpgsApplication {
-  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  applicantId     String            @unique @map("applicant_id") @db.Uuid
-  applicant       MpgsApplicant     @relation(fields: [applicantId], references: [id])
-  status          MpgsPortalStatus  @default(DRAFT)
-  questionnaire   Json?
-  applicationForm Json?             @map("application_form")
-  questDraft      Json?             @map("quest_draft")
-  formDraft       Json?             @map("form_draft")
-  submittedAt     DateTime?         @map("submitted_at")
-  sentToBankAt    DateTime?         @map("sent_to_bank_at")
-  sentToBankBy    String?           @map("sent_to_bank_by")
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
+  id                   String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicantId          String            @map("applicant_id") @db.Uuid
+  applicant            MpgsApplicant     @relation(fields: [applicantId], references: [id])
+  merchantName         String?           @map("merchant_name")
+  status               MpgsPortalStatus  @default(DRAFT)
+  questionnaire        Json?
+  applicationForm      Json?             @map("application_form")
+  questDraft           Json?             @map("quest_draft")
+  formDraft            Json?             @map("form_draft")
+  submittedAt          DateTime?         @map("submitted_at")
+  sentToBankAt         DateTime?         @map("sent_to_bank_at")
+  sentToBankBy         String?           @map("sent_to_bank_by")
+  parallexMerchantId   String?           @map("parallex_merchant_id")
+  parallexOperatorId   String?           @map("parallex_operator_id")
+  paylodeMerchantId    String?           @map("paylode_merchant_id") @db.Uuid
+  // Website & hosting details (filled by applicant for Paylode to build/configure site)
+  domainName           String?           @map("domain_name")
+  domainHost           String?           @map("domain_host")
+  domainCredentials    Json?             @map("domain_credentials")
+  vpsProvider          String?           @map("vps_provider")
+  vpsIp                String?           @map("vps_ip")
+  vpsCredentials       Json?             @map("vps_credentials")
+  websiteNotes         String?           @map("website_notes")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
 
   documents MpgsDocument[]
   comments  MpgsComment[]
 
+  @@index([applicantId])
   @@map("mpgs_applications")
 }
 

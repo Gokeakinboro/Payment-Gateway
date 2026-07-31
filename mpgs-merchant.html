@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPGS Portal — Merchant Submission</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--navy:#1a2744;--navy-l:#253360;--lime:#7dc534;--white:#fff;--g50:#f8fafc;--g100:#f1f5f9;--g200:#e2e8f0;--g300:#cbd5e1;--g400:#94a3b8;--g500:#64748b;--g600:#475569;--g700:#334155;--g800:#1e293b;--red:#ef4444;--green:#10b981;--amber:#f59e0b;--font:'DM Sans',sans-serif}
+body{font-family:var(--font);background:var(--g50);color:var(--g800);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--navy);height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.logo-box{width:32px;height:32px;background:var(--lime);border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--navy);font-size:14px}
+.logo-name{color:#fff;font-weight:700;font-size:15px}
+.logo-sep{color:rgba(255,255,255,.3);margin:0 4px}
+.logo-sub{color:rgba(255,255,255,.6);font-size:13px}
+.logout-btn{background:none;border:1.5px solid rgba(255,255,255,.25);color:rgba(255,255,255,.7);font-family:var(--font);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer}
+.logout-btn:hover{border-color:rgba(255,255,255,.5);color:#fff}
+.container{max-width:860px;margin:0 auto;padding:36px 20px 60px}
+.back{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--g500);text-decoration:none;margin-bottom:20px}
+.back:hover{color:var(--navy)}
+.page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:28px;flex-wrap:wrap}
+.merchant-name{font-size:22px;font-weight:700;color:var(--navy)}
+.status-badge{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:600}
+.status-badge.DRAFT{background:#f1f5f9;color:var(--g600)}
+.status-badge.SUBMITTED{background:#eff6ff;color:#2563eb}
+.status-badge.UNDER_REVIEW{background:#fefce8;color:#ca8a04}
+.status-badge.ACTION_REQUIRED{background:#fff7ed;color:#ea580c}
+.status-badge.APPROVED{background:#f0fdf4;color:#16a34a}
+.status-badge.REJECTED{background:#fef2f2;color:#dc2626}
+.status-badge.SENT_TO_BANK{background:#f0fdf4;color:#16a34a}
+.ids-bar{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:13px;color:#15803d;display:none}
+.ids-bar.show{display:block}
+/* Step cards */
+.steps{display:flex;flex-direction:column;gap:10px;margin-bottom:28px}
+.step-card{background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:18px 22px;display:flex;align-items:center;gap:16px;text-decoration:none;color:inherit;transition:all .2s}
+.step-card:hover:not(.locked){border-color:var(--navy);box-shadow:0 2px 12px rgba(26,39,68,.08)}
+.step-card.done{border-color:var(--lime)}
+.step-card.warn{border-color:var(--amber)}
+.step-card.locked{opacity:.45;cursor:not-allowed}
+.step-icon{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-icon.done{background:#f0fdf4}
+.step-icon.warn{background:#fff7ed}
+.step-icon.pending{background:var(--g100)}
+.step-info{flex:1}
+.step-num{font-size:11px;font-weight:600;color:var(--g400);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px}
+.step-label{font-size:15px;font-weight:600;color:var(--navy)}
+.step-desc{font-size:12px;color:var(--g500);margin-top:2px}
+.step-tick{font-size:12px;font-weight:600;flex-shrink:0;padding:4px 10px;border-radius:12px}
+.step-tick.done{background:#f0fdf4;color:var(--green)}
+.step-tick.warn{background:#fff7ed;color:var(--amber)}
+.step-tick.pending{background:var(--g100);color:var(--g500)}
+/* Feedback section */
+.sec{background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:22px;margin-bottom:16px}
+.sec-title{font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.comment-item{padding:12px 14px;border:1.5px solid var(--g200);border-radius:8px;margin-bottom:8px}
+.comment-meta{font-size:12px;color:var(--g400);margin-bottom:5px}
+.comment-body{font-size:13px;color:var(--g700);line-height:1.6;white-space:pre-wrap}
+.empty-msg{font-size:13px;color:var(--g400);text-align:center;padding:16px 0}
+/* Submit section */
+.submit-sec{background:#fff;border:2px solid var(--g200);border-radius:12px;padding:24px;text-align:center}
+.submit-sec.ready{border-color:var(--lime)}
+.submit-title{font-size:17px;font-weight:700;color:var(--navy);margin-bottom:6px}
+.submit-sub{font-size:13px;color:var(--g500);margin-bottom:16px;line-height:1.6}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:11px 24px;border-radius:8px;font-size:14px;font-weight:600;font-family:var(--font);cursor:pointer;border:none;transition:all .15s;text-decoration:none}
+.btn-lime{background:var(--lime);color:var(--navy)}
+.btn-lime:hover{background:#6cb82a}
+.btn-lime:disabled{opacity:.5;cursor:not-allowed}
+.alert{padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:16px;display:none}
+.alert.show{display:block}
+.alert.err{background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.alert.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a}
+.alert.info{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo-box">P</div>
+    <span class="logo-name">Paylode</span>
+    <span class="logo-sep">|</span>
+    <span class="logo-sub">MPGS Onboarding Portal</span>
+  </div>
+  <button class="logout-btn" onclick="logout()">Log out</button>
+</div>
+
+<div class="container">
+  <a href="mpgs-dashboard.html" class="back">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+    All merchant submissions
+  </a>
+
+  <div class="page-header">
+    <div>
+      <div class="merchant-name" id="merchantName">Loading…</div>
+      <div style="font-size:13px;color:var(--g400);margin-top:3px" id="merchantSub"></div>
+    </div>
+    <span class="status-badge" id="statusBadge"></span>
+  </div>
+
+  <div class="ids-bar" id="idsBar"></div>
+  <div class="alert info" id="actionAlert" style="display:none"><strong>Action required:</strong> Please review the feedback below, update your documents or forms, then resubmit.</div>
+  <div class="alert err" id="alertErr"></div>
+  <div class="alert ok" id="alertOk"></div>
+
+  <div class="steps" id="stepsContainer"></div>
+
+  <!-- Feedback / comments -->
+  <div class="sec" id="commentsSection">
+    <div class="sec-title">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+      Feedback from Paylode Review Team
+    </div>
+    <div id="commentsList"></div>
+  </div>
+
+  <!-- Submit -->
+  <div class="submit-sec" id="submitSec">
+    <div class="submit-title" id="submitTitle">Complete all steps to submit</div>
+    <div class="submit-sub" id="submitSub">Complete all 5 steps above, then submit your application to Paylode for review.</div>
+    <button class="btn btn-lime" id="submitBtn" style="display:none" onclick="submitApp()">Submit Application to Paylode</button>
+  </div>
+</div>
+
+<script>
+const API = '/api/v1/mpgs-portal';
+const STATUS_LABELS = { DRAFT:'Draft', SUBMITTED:'Submitted', UNDER_REVIEW:'Under Review', ACTION_REQUIRED:'Action Required', APPROVED:'Approved', REJECTED:'Rejected', SENT_TO_BANK:'Sent to Parallex Bank' };
+let appId = new URLSearchParams(window.location.search).get('id');
+
+function logout() { localStorage.removeItem('mpgs_token'); localStorage.removeItem('mpgs_user'); window.location.href = 'mpgs-login.html'; }
+function token()  { return localStorage.getItem('mpgs_token'); }
+function authFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' } });
+}
+
+async function load() {
+  if (!token()) { window.location.href = 'mpgs-login.html'; return; }
+  if (!appId) { window.location.href = 'mpgs-dashboard.html'; return; }
+  try {
+    const r = await authFetch(`${API}/portal/applications/${appId}`);
+    if (r.status === 401) { logout(); return; }
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    render(d.data);
+  } catch (e) {
+    document.getElementById('alertErr').textContent = 'Failed to load: ' + e.message;
+    document.getElementById('alertErr').classList.add('show');
+  }
+}
+
+function render({ application: app, docsList }) {
+  document.title = `${app.merchantName || 'Submission'} — MPGS Portal`;
+  document.getElementById('merchantName').textContent = app.merchantName || 'Unnamed submission';
+  document.getElementById('merchantSub').textContent = `Application ID: ${app.id.slice(0,8).toUpperCase()}`;
+
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = STATUS_LABELS[app.status] || app.status;
+  badge.className = 'status-badge ' + app.status;
+
+  if (app.status === 'ACTION_REQUIRED') document.getElementById('actionAlert').style.display = 'block';
+
+  if (app.parallexMerchantId || app.parallexOperatorId) {
+    const idsBar = document.getElementById('idsBar');
+    idsBar.innerHTML = `✓ Onboarding Complete — Parallex Merchant ID: <strong>${app.parallexMerchantId || 'Pending'}</strong>${app.parallexOperatorId ? ' &nbsp;|&nbsp; Operator ID: <strong>'+app.parallexOperatorId+'</strong>' : ''}`;
+    idsBar.classList.add('show');
+  }
+
+  const docs = app.documents || [];
+  const required = docsList.filter(d => d.key !== 'pcidss_cert');
+  const uploaded = new Set(docs.map(d => d.docKey));
+  const docsComplete = required.every(k => uploaded.has(k));
+  const hasReupload  = docs.some(d => ['REJECTED','REUPLOAD_REQUESTED'].includes(d.status));
+
+  const canEdit = ['DRAFT', 'ACTION_REQUIRED'].includes(app.status);
+  const appUrl  = (page) => `${page}?id=${app.id}`;
+
+  const steps = [
+    {
+      num: '1 of 5', label: 'Upload Documents', desc: `Upload all required KYB documents (${docs.length}/${required.length} uploaded)`,
+      href: appUrl('mpgs-documents.html'), done: docsComplete, warn: hasReupload, locked: false,
+      tick: hasReupload ? '⚠ Re-upload needed' : docsComplete ? `✓ Complete` : `${docs.length}/${required.length} uploaded`,
+    },
+    {
+      num: '2 of 5', label: 'Web Business Questionnaire', desc: 'Complete the 4-section web business questionnaire',
+      href: appUrl('mpgs-questionnaire.html'), done: !!app.questionnaire, warn: false, locked: false,
+      tick: app.questionnaire ? '✓ Submitted' : app.questDraft ? 'Draft saved' : 'Not started',
+    },
+    {
+      num: '3 of 5', label: 'Parallex Bank Application Form', desc: 'Complete the 7-section Parallex Bank merchant application form',
+      href: appUrl('mpgs-application.html'), done: !!app.applicationForm, warn: false, locked: false,
+      tick: app.applicationForm ? '✓ Submitted' : app.formDraft ? 'Draft saved' : 'Not started',
+    },
+    {
+      num: '4 of 5', label: 'Website & Hosting Details', desc: 'Provide your domain name, hosting provider, and VPS/server details',
+      href: appUrl('mpgs-website.html'), done: !!app.domainName, warn: false, locked: false,
+      tick: app.domainName ? `✓ ${app.domainName}` : 'Not filled',
+    },
+    {
+      num: '5 of 5', label: 'Submit Application', desc: 'Final review and submission to Paylode for processing',
+      href: null, done: ['SUBMITTED','UNDER_REVIEW','APPROVED','SENT_TO_BANK'].includes(app.status), warn: false, locked: !canEdit,
+      tick: ['SUBMITTED','UNDER_REVIEW','APPROVED','SENT_TO_BANK'].includes(app.status) ? '✓ Submitted' : 'Complete steps 1–4',
+    },
+  ];
+
+  const iconSvg = (done, warn) => {
+    if (warn) return `<svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="#f59e0b" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>`;
+    if (done) return `<svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="#16a34a" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>`;
+    return `<svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><circle cx="12" cy="12" r="10"/></svg>`;
+  };
+
+  document.getElementById('stepsContainer').innerHTML = steps.map(s => `
+    <${s.href && !s.locked ? `a href="${s.href}"` : 'div'} class="step-card ${s.done ? 'done' : s.warn ? 'warn' : ''} ${s.locked ? 'locked' : ''}">
+      <div class="step-icon ${s.done ? 'done' : s.warn ? 'warn' : 'pending'}">${iconSvg(s.done, s.warn)}</div>
+      <div class="step-info">
+        <div class="step-num">${s.num}</div>
+        <div class="step-label">${s.label}</div>
+        <div class="step-desc">${s.desc}</div>
+      </div>
+      <span class="step-tick ${s.done ? 'done' : s.warn ? 'warn' : 'pending'}">${s.tick}</span>
+    </${s.href && !s.locked ? 'a' : 'div'}>`).join('');
+
+  // Comments
+  const comments = (app.comments || []).filter(c => !c.isInternal);
+  const list = document.getElementById('commentsList');
+  list.innerHTML = comments.length
+    ? comments.map(c => `<div class="comment-item"><div class="comment-meta">${c.authorName} &mdash; ${new Date(c.createdAt).toLocaleString()}</div><div class="comment-body">${c.content}</div></div>`).join('')
+    : '<div class="empty-msg">No feedback from the review team yet.</div>';
+
+  // Submit section
+  const allReady = docsComplete && app.questionnaire && app.applicationForm && canEdit;
+  if (allReady) {
+    document.getElementById('submitSec').classList.add('ready');
+    document.getElementById('submitTitle').textContent = 'Ready to submit';
+    document.getElementById('submitSub').textContent = 'All required steps are complete. Submit your application to Paylode for review.';
+    document.getElementById('submitBtn').style.display = 'inline-flex';
+  } else if (['SUBMITTED','UNDER_REVIEW'].includes(app.status)) {
+    document.getElementById('submitTitle').textContent = 'Application submitted';
+    document.getElementById('submitSub').textContent = 'Your application is under review. We'll email you with any updates or feedback.';
+  } else if (['APPROVED','SENT_TO_BANK'].includes(app.status)) {
+    document.getElementById('submitSec').classList.add('ready');
+    document.getElementById('submitTitle').textContent = app.status === 'SENT_TO_BANK' ? 'Sent to Parallex Bank' : 'Approved';
+    document.getElementById('submitSub').textContent = 'Your MPGS onboarding application has been approved and forwarded to Parallex Bank.';
+  } else if (app.status === 'REJECTED') {
+    document.getElementById('submitTitle').textContent = 'Application not approved';
+    document.getElementById('submitSub').textContent = 'Please review the feedback below and contact Paylode support for guidance.';
+  }
+}
+
+async function submitApp() {
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  document.getElementById('alertErr').classList.remove('show');
+  try {
+    const r = await authFetch(`${API}/portal/applications/${appId}/submit`, { method: 'POST' });
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    document.getElementById('alertOk').textContent = 'Application submitted successfully!';
+    document.getElementById('alertOk').classList.add('show');
+    await load();
+  } catch (e) {
+    document.getElementById('alertErr').textContent = e.message;
+    document.getElementById('alertErr').classList.add('show');
+    btn.disabled = false; btn.textContent = 'Submit Application to Paylode';
+  }
+}
+
+load();
+</script>
+</body>
+</html>
