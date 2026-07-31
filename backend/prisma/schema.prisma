@@ -879,3 +879,93 @@ model WebhookDelivery {
   @@index([merchantId])
   @@map("webhook_deliveries")
 }
+
+// ─── MPGS / PARALLEX BANK MERCHANT ONBOARDING PORTAL ─────────────────────────
+
+enum MpgsPortalStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  ACTION_REQUIRED
+  APPROVED
+  REJECTED
+  SENT_TO_BANK
+}
+
+enum MpgsDocStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  REUPLOAD_REQUESTED
+}
+
+model MpgsApplicant {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email               String    @unique
+  passwordHash        String    @map("password_hash")
+  firstName           String    @map("first_name")
+  lastName            String    @map("last_name")
+  companyName         String?   @map("company_name")
+  isEmailVerified     Boolean   @default(false) @map("is_email_verified")
+  emailVerifyToken    String?   @map("email_verify_token")
+  emailVerifyExpiry   DateTime? @map("email_verify_expiry")
+  passwordResetToken  String?   @map("password_reset_token")
+  passwordResetExpiry DateTime? @map("password_reset_expiry")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  application MpgsApplication?
+
+  @@map("mpgs_applicants")
+}
+
+model MpgsApplication {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicantId     String            @unique @map("applicant_id") @db.Uuid
+  applicant       MpgsApplicant     @relation(fields: [applicantId], references: [id])
+  status          MpgsPortalStatus  @default(DRAFT)
+  questionnaire   Json?
+  applicationForm Json?             @map("application_form")
+  questDraft      Json?             @map("quest_draft")
+  formDraft       Json?             @map("form_draft")
+  submittedAt     DateTime?         @map("submitted_at")
+  sentToBankAt    DateTime?         @map("sent_to_bank_at")
+  sentToBankBy    String?           @map("sent_to_bank_by")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  documents MpgsDocument[]
+  comments  MpgsComment[]
+
+  @@map("mpgs_applications")
+}
+
+model MpgsDocument {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicationId String          @map("application_id") @db.Uuid
+  application   MpgsApplication @relation(fields: [applicationId], references: [id])
+  docKey        String          @map("doc_key")
+  docLabel      String          @map("doc_label")
+  filename      String
+  filepath      String
+  mimetype      String
+  filesize      Int
+  status        MpgsDocStatus   @default(PENDING)
+  uploadedAt    DateTime        @default(now()) @map("uploaded_at")
+
+  @@unique([applicationId, docKey])
+  @@map("mpgs_documents")
+}
+
+model MpgsComment {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicationId String          @map("application_id") @db.Uuid
+  application   MpgsApplication @relation(fields: [applicationId], references: [id])
+  authorName    String          @map("author_name")
+  content       String
+  isInternal    Boolean         @default(false) @map("is_internal")
+  sentByEmail   Boolean         @default(false) @map("sent_by_email")
+  createdAt     DateTime        @default(now()) @map("created_at")
+
+  @@map("mpgs_comments")
+}

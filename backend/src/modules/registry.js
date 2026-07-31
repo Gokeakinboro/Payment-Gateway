@@ -56,6 +56,7 @@ const MODULES = [
   { name: 'support',       basePath: '/api/v1/support',        load: () => require('../routes/support'),      enabledEnv: 'MODULE_SUPPORT_ENABLED',       category: 'core' },
   { name: 'payment-links', basePath: '/api/v1/payment-links',  load: () => require('../routes/paymentLinks'), enabledEnv: 'MODULE_PAYMENT_LINKS_ENABLED', category: 'money' },
   { name: 'mpgs',          basePath: '/api/v1/mpgs',           load: () => require('./gateway-core/routes/mpgs'),             enabledEnv: 'MODULE_MPGS_ENABLED',          category: 'money' },
+  { name: 'mpgs-portal',  basePath: '/api/v1/mpgs-portal',    load: () => require('../routes/mpgs-portal'),  enabledEnv: 'MODULE_MPGS_PORTAL_ENABLED',   category: 'core'  },
   // MPGS-mirrored gateway — merchants use standard MPGS SDK/docs, host = Paylode
   { name: 'mpgs-gateway',  basePath: '/api/rest',              load: () => require('./gateway-core/routes/mpgs-gateway'),      enabledEnv: 'MODULE_MPGS_GATEWAY_ENABLED',  category: 'money' },
   // Partner gateway — third-party processors (Payonus, etc.) routing merchants via Paylode

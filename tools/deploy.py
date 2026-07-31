@@ -34,6 +34,17 @@ FRONTEND = [
     ('invoicing.html',                             '/var/www/paylode/invoicing.html'),
     ('invoice.html',                               '/var/www/paylode/invoice.html'),
     ('qr.html',                                    '/var/www/paylode/qr.html'),
+    # MPGS / Parallex Bank onboarding portal pages
+    ('mpgs-login.html',                            '/var/www/paylode/mpgs-login.html'),
+    ('mpgs-register.html',                         '/var/www/paylode/mpgs-register.html'),
+    ('mpgs-verify.html',                           '/var/www/paylode/mpgs-verify.html'),
+    ('mpgs-forgot.html',                           '/var/www/paylode/mpgs-forgot.html'),
+    ('mpgs-reset.html',                            '/var/www/paylode/mpgs-reset.html'),
+    ('mpgs-dashboard.html',                        '/var/www/paylode/mpgs-dashboard.html'),
+    ('mpgs-documents.html',                        '/var/www/paylode/mpgs-documents.html'),
+    ('mpgs-questionnaire.html',                    '/var/www/paylode/mpgs-questionnaire.html'),
+    ('mpgs-application.html',                      '/var/www/paylode/mpgs-application.html'),
+    ('mpgs-admin.html',                            '/var/www/paylode/mpgs-admin.html'),
 ]
 
 # nginx config (176). Placed by the deploy so the router config is version-controlled,
@@ -41,6 +52,7 @@ FRONTEND = [
 # `nginx -t && systemctl reload nginx` on 176. (Split-services topology; see DEPLOYMENT.md.)
 NGINX = [
     ('nginx/paylode-176-router.conf',              '/etc/nginx/conf.d/paylode-router.conf'),
+    ('nginx/mpgs-portal.conf',                     '/etc/nginx/conf.d/mpgs-portal.conf'),
 ]
 
 # Backend (176) is derived by WALKING the tree rather than an explicit list, so a

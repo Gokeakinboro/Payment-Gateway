@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPGS Portal — Merchant Application Form</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--navy:#1a2744;--navy-l:#253360;--lime:#7dc534;--pblue:#1c2b6e;--pgold:#c8a84b;--white:#fff;--g50:#f8fafc;--g100:#f1f5f9;--g200:#e2e8f0;--g300:#cbd5e1;--g400:#94a3b8;--g500:#64748b;--g600:#475569;--g700:#334155;--g800:#1e293b;--red:#ef4444;--font:'DM Sans',sans-serif}
+body{font-family:var(--font);background:var(--g50);color:var(--g800);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--navy);height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.logo-box{width:32px;height:32px;background:var(--lime);border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--navy);font-size:14px}
+.logo-name{color:#fff;font-weight:700;font-size:15px}
+.logo-sep{color:rgba(255,255,255,.3);margin:0 4px}
+.logo-sub{color:rgba(255,255,255,.6);font-size:13px}
+.logout-btn{background:none;border:1.5px solid rgba(255,255,255,.25);color:rgba(255,255,255,.7);font-family:var(--font);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer}
+.logout-btn:hover{border-color:rgba(255,255,255,.5);color:#fff}
+.container{max-width:840px;margin:0 auto;padding:36px 20px 60px}
+.back{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--g500);text-decoration:none;margin-bottom:20px}
+.back:hover{color:var(--navy)}
+
+/* Parallex Bank letterhead */
+.bank-header{background:#fff;border:1.5px solid var(--g200);border-radius:10px 10px 0 0;padding:18px 24px;display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:0}
+.bank-logo{display:flex;align-items:center;gap:10px}
+.bank-logo-mark{width:48px;height:48px;position:relative;flex-shrink:0}
+.bank-logo-mark svg{width:48px;height:48px}
+.bank-logo-text{font-size:20px;font-weight:700;color:var(--pblue);letter-spacing:.5px;font-style:italic}
+.bank-logo-text span{display:block;font-size:10px;font-weight:400;font-style:normal;color:var(--g400);letter-spacing:.3px}
+.bank-info{text-align:right}
+.bank-info strong{display:block;font-size:13px;font-weight:700;color:var(--pblue);letter-spacing:.3px}
+.bank-info small{display:block;font-size:11px;color:var(--g500)}
+.form-title-bar{background:var(--pblue);color:#fff;text-align:center;padding:12px;font-size:13px;font-weight:700;letter-spacing:.5px}
+.form-subtitle-bar{border:1.5px solid var(--g300);border-top:none;text-align:center;padding:9px;font-size:12px;font-weight:600;letter-spacing:.3px;color:var(--g700)}
+.form-notice{border:1.5px solid var(--g300);border-top:none;padding:10px 14px;font-size:12px;color:var(--g600);font-style:italic;line-height:1.6}
+.form-notice p{margin-bottom:4px}
+.form-notice p:last-child{margin:0}
+
+/* Section headers */
+.section-head{background:var(--pblue);color:#fff;font-size:12px;font-weight:700;padding:8px 14px;letter-spacing:.4px;margin-top:20px;border:1.5px solid var(--pblue)}
+/* Form table */
+.f-table{width:100%;border-collapse:collapse;background:#fff;border:1.5px solid var(--g300);border-top:none;margin-bottom:0}
+.f-table td{padding:9px 12px;border:1px solid var(--g300);font-size:13px;vertical-align:middle}
+.f-label{color:var(--g700);font-weight:500;white-space:nowrap}
+.req{color:var(--red)}
+.f-input input,.f-input textarea,.f-input select{
+  width:100%;padding:7px 10px;border:1.5px solid var(--g300);border-radius:5px;
+  font-size:13px;font-family:var(--font);color:var(--g800);background:#fff;outline:none;transition:border-color .15s
+}
+.f-input input:focus,.f-input textarea:focus,.f-input select:focus{border-color:var(--pblue);box-shadow:0 0 0 3px rgba(28,43,110,.06)}
+.f-input input.err,.f-input textarea.err{border-color:var(--red)}
+.f-input textarea{resize:vertical;min-height:64px}
+/* Ownership checkboxes */
+.ownership-grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.own-row{display:flex;align-items:center;gap:0;padding:8px 12px;border:1px solid var(--g300)}
+.own-box{width:20px;height:20px;border:2px solid var(--g400);border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-right:10px;transition:all .15s}
+.own-box.checked{background:var(--pblue);border-color:var(--pblue)}
+.own-box.checked::after{content:'✓';color:#fff;font-size:13px;font-weight:700}
+.own-box input{display:none}
+.own-label{font-size:13px;color:var(--g700);cursor:pointer}
+.side-label{color:var(--g500);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+/* Declaration box */
+.decl-box{border:1.5px solid var(--g300);background:#fff;padding:16px;margin:0;font-size:12px;color:var(--g600);line-height:1.9}
+.sig-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:16px}
+.sig-field label{display:block;font-size:11px;font-weight:600;color:var(--g500);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
+.sig-field input{width:100%;padding:7px 10px;border-bottom:1.5px solid var(--g300);border-top:none;border-left:none;border-right:none;border-radius:0;font-size:13px;font-family:var(--font);color:var(--g800);background:none;outline:none}
+/* Onboarding type */
+.onb-type{display:flex;gap:0;border:1.5px solid var(--g300)}
+.onb-opt{flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;border-right:1px solid var(--g300);cursor:pointer}
+.onb-opt:last-child{border-right:none}
+.onb-box{width:20px;height:20px;border:2px solid var(--g400);border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.onb-box.checked{background:var(--pblue);border-color:var(--pblue)}
+.onb-box.checked::after{content:'✓';color:#fff;font-size:12px;font-weight:700}
+/* Internal / bank section (greyed) */
+.bank-section{opacity:.65;pointer-events:none;user-select:none}
+.bank-section-note{font-size:11px;color:var(--g400);text-align:right;padding:6px 12px;font-style:italic;background:#f8fafc;border:1px solid var(--g200);border-top:none}
+/* Action bar */
+.action-bar{background:#fff;border:1.5px solid var(--g200);border-radius:0 0 12px 12px;padding:20px 24px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:0}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:10px 22px;border-radius:8px;font-size:14px;font-weight:600;font-family:var(--font);cursor:pointer;border:none;transition:all .15s}
+.btn-outline{background:#fff;border:1.5px solid var(--g300);color:var(--g700)}
+.btn-outline:hover{border-color:var(--navy);color:var(--navy)}
+.btn-primary{background:var(--pblue);color:#fff}
+.btn-primary:hover{background:#152256}
+.btn-lime{background:var(--lime);color:var(--navy)}
+.btn-lime:hover{background:#6cb82a}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.alert{padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:16px;display:none}
+.alert.show{display:block}
+.alert.err{background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.alert.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a}
+.saved-badge{display:none;align-items:center;gap:5px;font-size:12px;color:#16a34a}
+.saved-badge.show{display:inline-flex}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo-box">P</div>
+    <span class="logo-name">Paylode</span>
+    <span class="logo-sep">|</span>
+    <span class="logo-sub">MPGS Onboarding Portal</span>
+  </div>
+  <button class="logout-btn" onclick="logout()">Log out</button>
+</div>
+
+<div class="container">
+  <a href="mpgs-dashboard.html" class="back">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+    Back to dashboard
+  </a>
+
+  <div class="alert err" id="alertErr"></div>
+  <div class="alert ok" id="alertOk"></div>
+
+  <!-- Parallex Bank letterhead -->
+  <div class="bank-header">
+    <div class="bank-logo">
+      <div class="bank-logo-mark">
+        <!-- Parallex Bank logo approximation -->
+        <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="24" cy="24" r="22" stroke="#1c2b6e" stroke-width="2.5" fill="none"/>
+          <circle cx="24" cy="24" r="14" stroke="#1c2b6e" stroke-width="1.5" fill="none"/>
+          <circle cx="24" cy="24" r="6" fill="#1c2b6e"/>
+          <line x1="24" y1="2" x2="24" y2="10" stroke="#1c2b6e" stroke-width="2" stroke-linecap="round"/>
+          <line x1="24" y1="38" x2="24" y2="46" stroke="#1c2b6e" stroke-width="2" stroke-linecap="round"/>
+          <line x1="2" y1="24" x2="10" y2="24" stroke="#1c2b6e" stroke-width="2" stroke-linecap="round"/>
+          <line x1="38" y1="24" x2="46" y2="24" stroke="#1c2b6e" stroke-width="2" stroke-linecap="round"/>
+          <line x1="7" y1="7" x2="13" y2="13" stroke="#c8a84b" stroke-width="2" stroke-linecap="round"/>
+          <line x1="35" y1="35" x2="41" y2="41" stroke="#c8a84b" stroke-width="2" stroke-linecap="round"/>
+          <line x1="41" y1="7" x2="35" y2="13" stroke="#c8a84b" stroke-width="2" stroke-linecap="round"/>
+          <line x1="13" y1="35" x2="7" y2="41" stroke="#c8a84b" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <div class="bank-logo-text">parallex<span>BANK</span></div>
+      </div>
+    </div>
+    <div class="bank-info">
+      <strong>PARALLEX BANK LIMITED</strong>
+      <small>RC 747627</small>
+    </div>
+  </div>
+  <div class="form-title-bar">PARALLEX PAYMENT GATEWAY</div>
+  <div class="form-subtitle-bar">MERCHANT APPLICATION FORM</div>
+  <div class="form-notice">
+    <p>Please complete this form and provide documentary evidence as appropriate. Submission of fraudulent documentation and false information will lead to refusal of this application and denial of service.</p>
+    <p>Instructions [All fields with * are COMPULSORY] &mdash; Complete every part of this form in BLOCK LETTERS.</p>
+    <p>Attach Photocopies of relevant documents including certificate of company's registration.</p>
+  </div>
+
+  <form id="appForm" novalidate>
+
+    <!-- SECTION 1: GENERAL INFORMATION -->
+    <div class="section-head">SECTION 1: GENERAL INFORMATION</div>
+    <div style="background:#fff;border:1.5px solid var(--g300);border-top:none;padding:10px 14px;font-size:12px;color:var(--g600);font-style:italic">
+      Please complete this section with information about your organization. You should also attach a copy of your company's certificate of incorporation.
+    </div>
+    <table class="f-table">
+      <tr>
+        <td class="f-label" style="width:40%"><span class="req">*</span> Company Name:</td>
+        <td class="f-input"><input type="text" id="s1CompanyName" placeholder="Full registered company name"></td>
+      </tr>
+      <tr>
+        <td class="f-label"><span class="req">*</span> Company Address:</td>
+        <td class="f-input"><input type="text" id="s1CompanyAddress" placeholder="Full registered address"></td>
+      </tr>
+      <tr>
+        <td class="f-label" colspan="2" style="padding-bottom:4px">Type of Ownership</td>
+      </tr>
+      <tr>
+        <td colspan="2" style="padding:0 12px 10px">
+          <div class="ownership-grid" id="ownershipGrid">
+            <div class="own-row" onclick="toggleOwn('Sole Owner')">
+              <div class="own-box" id="own-Sole Owner"></div>
+              <span class="own-label">Sole Owner</span>
+            </div>
+            <div class="own-row" style="border-left:none;justify-content:space-between" onclick="toggleOwn('Sole Owner', true)">
+              <span class="side-label">RC Number:</span>
+              <input type="text" id="s1RcNumber" placeholder="RC Number" style="width:160px;padding:5px 8px;border:1.5px solid var(--g300);border-radius:5px;font-size:12px" onclick="event.stopPropagation()">
+            </div>
+            <div class="own-row" onclick="toggleOwn('Partnership/Joint Ventures')">
+              <div class="own-box" id="own-Partnership/Joint Ventures"></div>
+              <span class="own-label">Partnership/Joint Ventures</span>
+            </div>
+            <div class="own-row" style="border-left:none;justify-content:space-between" onclick="toggleOwn('Partnership/Joint Ventures', true)">
+              <span class="side-label">Trading Name:</span>
+              <input type="text" id="s1TradingName" placeholder="Trading name" style="width:160px;padding:5px 8px;border:1.5px solid var(--g300);border-radius:5px;font-size:12px" onclick="event.stopPropagation()">
+            </div>
+            <div class="own-row" onclick="toggleOwn('Limited Liability Company')">
+              <div class="own-box" id="own-Limited Liability Company"></div>
+              <span class="own-label">Limited Liability Company</span>
+            </div>
+            <div class="own-row" style="border-left:none;justify-content:space-between" onclick="toggleOwn('Limited Liability Company', true)">
+              <span class="side-label">Date Registered:</span>
+              <input type="date" id="s1DateRegistered" style="width:160px;padding:5px 8px;border:1.5px solid var(--g300);border-radius:5px;font-size:12px" onclick="event.stopPropagation()">
+            </div>
+            <div class="own-row" onclick="toggleOwn('Non-Profit Organization /NGO')">
+              <div class="own-box" id="own-Non-Profit Organization /NGO"></div>
+              <span class="own-label">Non-Profit Organization /NGO</span>
+            </div>
+            <div class="own-row" style="border-left:none;justify-content:space-between" onclick="toggleOwn('Non-Profit Organization /NGO', true)">
+              <span class="side-label">Tax ID Number:</span>
+              <input type="text" id="s1Tin" placeholder="TIN" style="width:160px;padding:5px 8px;border:1.5px solid var(--g300);border-radius:5px;font-size:12px" onclick="event.stopPropagation()">
+            </div>
+            <div class="own-row" onclick="toggleOwn('Public Liability Company')">
+              <div class="own-box" id="own-Public Liability Company"></div>
+              <span class="own-label">Public Liability Company</span>
+            </div>
+            <div class="own-row" style="border-left:none">
+              &nbsp;
+            </div>
+            <div class="own-row" onclick="toggleOwn('Religious Organization')">
+              <div class="own-box" id="own-Religious Organization"></div>
+              <span class="own-label">Religious Organization</span>
+            </div>
+            <div class="own-row" style="border-left:none">
+              &nbsp;
+            </div>
+            <div class="own-row" onclick="toggleOwn('Government')">
+              <div class="own-box" id="own-Government"></div>
+              <span class="own-label">Government</span>
+            </div>
+            <div class="own-row" style="border-left:none;gap:8px">
+              <div class="own-box" id="own-Others"></div>
+              <span class="own-label" onclick="toggleOwn('Others')">Others (Specify):</span>
+              <input type="text" id="s1OwnershipOther" placeholder="Specify" style="flex:1;padding:5px 8px;border:1.5px solid var(--g300);border-radius:5px;font-size:12px" onclick="toggleOwn('Others')">
+            </div>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- SECTION 2: CONTACT INFORMATION -->
+    <div class="section-head">SECTION 2: CONTACT INFORMATION</div>
+    <div style="background:#fff;border:1.5px solid var(--g300);border-top:none;padding:10px 14px;font-size:12px;color:var(--g600);font-style:italic">
+      This section gathers information about the contact persons for your organization. All correspondence between Parallex Bank Ltd and your organization will be addressed to the persons specified below.
+    </div>
+    <table class="f-table">
+      <tr>
+        <td class="f-label" style="width:30%;background:var(--g50);font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.3px"></td>
+        <td style="width:35%;background:var(--g50);font-size:11px;font-weight:700;color:var(--pblue);text-transform:uppercase;letter-spacing:.3px;padding:8px 12px">Primary Contact</td>
+        <td style="width:35%;background:var(--g50);font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.3px;padding:8px 12px">Secondary Contact</td>
+      </tr>
+      <tr>
+        <td class="f-label"><span class="req">*</span>Name:</td>
+        <td class="f-input"><input type="text" id="s2PrimaryName" placeholder="Full name"></td>
+        <td class="f-input"><input type="text" id="s2SecondaryName" placeholder="Full name"></td>
+      </tr>
+      <tr>
+        <td class="f-label">Designation:</td>
+        <td class="f-input"><input type="text" id="s2PrimaryDesignation" placeholder="Job title / role"></td>
+        <td class="f-input"><input type="text" id="s2SecondaryDesignation" placeholder="Job title / role"></td>
+      </tr>
+      <tr>
+        <td class="f-label">Office Telephone/Extension:</td>
+        <td class="f-input"><input type="text" id="s2PrimaryOfficeTel" placeholder="+234 ..."></td>
+        <td class="f-input"><input type="text" id="s2SecondaryOfficeTel" placeholder="+234 ..."></td>
+      </tr>
+      <tr>
+        <td class="f-label">Mobile Phone:</td>
+        <td class="f-input"><input type="text" id="s2PrimaryMobile" placeholder="+234 ..."></td>
+        <td class="f-input"><input type="text" id="s2SecondaryMobile" placeholder="+234 ..."></td>
+      </tr>
+      <tr>
+        <td class="f-label">Email Address:</td>
+        <td class="f-input"><input type="email" id="s2PrimaryEmail" placeholder="email@company.com"></td>
+        <td class="f-input"><input type="email" id="s2SecondaryEmail" placeholder="email@company.com"></td>
+      </tr>
+    </table>
+
+    <!-- SECTION 3: ECOMMERCE WEBSITE INFORMATION -->
+    <div class="section-head">SECTION 3: ECOMMERCE WEBSITE INFORMATION</div>
+    <div style="background:#fff;border:1.5px solid var(--g300);border-top:none;padding:10px 14px;font-size:12px;color:var(--g600);font-style:italic">
+      Please supply information about the products you intend to provide on the website and Merchant category code (MCC).
+    </div>
+    <table class="f-table">
+      <tr>
+        <td class="f-input" colspan="2">
+          <textarea id="s3ProductsMcc" rows="4" placeholder="Describe the products/services to be sold on the website and include the Merchant Category Code (MCC)"></textarea>
+        </td>
+      </tr>
+      <tr>
+        <td class="f-label" style="width:40%"><span class="req">*</span>Website Name:</td>
+        <td class="f-input"><input type="text" id="s3WebsiteName" placeholder="Name of website"></td>
+      </tr>
+      <tr>
+        <td class="f-label"><span class="req">*</span>Website URL:</td>
+        <td class="f-input"><input type="url" id="s3WebsiteUrl" placeholder="https://www.yourwebsite.com"></td>
+      </tr>
+    </table>
+
+    <!-- SECTION 4: BANK DETAILS -->
+    <div class="section-head">SECTION 4: BANK DETAILS</div>
+    <div style="background:#fff;border:1.5px solid var(--g300);border-top:none;padding:10px 14px;font-size:12px;color:var(--g600);font-style:italic">
+      Complete this section with your information with the Bank. Payments made via website will be deposited into the account details supplied.
+    </div>
+    <table class="f-table">
+      <tr>
+        <td class="f-label" style="width:40%">Account Number:</td>
+        <td class="f-input"><input type="text" id="s4AccountNumber" placeholder="10-digit account number"></td>
+      </tr>
+      <tr>
+        <td class="f-label">Account Name:</td>
+        <td class="f-input"><input type="text" id="s4AccountName" placeholder="Name on account"></td>
+      </tr>
+      <tr>
+        <td class="f-label">Account Type:</td>
+        <td class="f-input">
+          <select id="s4AccountType">
+            <option value="">Select account type</option>
+            <option>Current</option>
+            <option>Savings</option>
+            <option>Corporate</option>
+          </select>
+        </td>
+      </tr>
+      <tr>
+        <td class="f-label">Settlement Account:</td>
+        <td class="f-input"><input type="text" id="s4SettlementAccount" placeholder="Settlement account number"></td>
+      </tr>
+      <tr>
+        <td class="f-label">Collateral Account:</td>
+        <td class="f-input"><input type="text" id="s4CollateralAccount" placeholder="Collateral account number (if applicable)"></td>
+      </tr>
+      <tr>
+        <td class="f-label">Branch Where Account is Domiciled:</td>
+        <td class="f-input"><input type="text" id="s4Branch" placeholder="Branch name and location"></td>
+      </tr>
+    </table>
+
+    <!-- SECTION 5: OTHER DETAILS -->
+    <div class="section-head">SECTION 5: OTHER DETAILS ONLY</div>
+    <div style="background:#fff;border:1.5px solid var(--g300);border-top:none;padding:10px 14px;font-size:12px;color:var(--g600);font-style:italic">
+      Please provide any other additional information in the space below.
+    </div>
+    <table class="f-table">
+      <tr>
+        <td class="f-input">
+          <textarea id="s5OtherDetails" rows="5" placeholder="Any additional information relevant to your application"></textarea>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:14px">
+          <div class="decl-box">
+            <p>I <input type="text" id="s5IndividualName" placeholder="Individual's name" style="display:inline;width:220px;border:none;border-bottom:1.5px solid var(--g300);padding:2px 4px;font-size:12px;background:none;outline:none"> on behalf of
+            <input type="text" id="s5CompanyName" placeholder="Name of company" style="display:inline;width:220px;border:none;border-bottom:1.5px solid var(--g300);padding:2px 4px;font-size:12px;background:none;outline:none">
+            hereby certify that the information provided on this form is true and accurate. I agree that Parallex Bank Ltd reserves the right to take appropriate measures including legal actions if the information here is discovered to be false. I agree that I will provide Parallex Bank Ltd with details of transactions performed on the site upon demand.</p>
+            <div class="sig-row">
+              <div class="sig-field"><label>Authorized Signature:</label><input type="text" id="s5AuthSig" placeholder="Sign on submission"></div>
+              <div class="sig-field"><label>Designation:</label><input type="text" id="s5Designation" placeholder="Your designation"></div>
+              <div class="sig-field"><label>Date:</label><input type="date" id="s5Date"></div>
+            </div>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- SECTION 6: MERCHANT INFORMATION -->
+    <div class="section-head">SECTION 6: MERCHANT INFORMATION</div>
+    <table class="f-table">
+      <tr>
+        <td style="padding:12px 14px">
+          <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:10px">TICK THE ONBOARDING TYPE</div>
+          <div class="onb-type" id="onbTypeRow">
+            <div class="onb-opt" onclick="selectOnbType('Direct Merchant')">
+              <div class="onb-box" id="onb-Direct Merchant"></div>
+              <span style="font-size:13px;color:var(--g700)">DIRECT MERCHANT</span>
+            </div>
+            <div class="onb-opt" onclick="selectOnbType('Payment Facilitator')">
+              <div class="onb-box" id="onb-Payment Facilitator"></div>
+              <span style="font-size:13px;color:var(--g700)">PAYMENT FACILITATOR</span>
+            </div>
+            <div class="onb-opt" onclick="selectOnbType('MSO')">
+              <div class="onb-box" id="onb-MSO"></div>
+              <span style="font-size:13px;color:var(--g700)">MSO</span>
+            </div>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- SECTION 7: FOR BANK USE (greyed) -->
+    <div class="section-head bank-section" style="opacity:.5">SECTION 7: E-COMMERCE WEBSITE INFORMATION</div>
+    <div class="bank-section-note">This section is completed by Parallex Bank Ltd's account officer upon receipt of your application</div>
+    <table class="f-table bank-section">
+      <tr>
+        <td class="f-label" style="width:40%">Appropriate KYC in place:</td>
+        <td>
+          <div style="display:flex;gap:16px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="radio" name="s7Kyc" value="YES" disabled> YES</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="radio" name="s7Kyc" value="NO" disabled> NO</label>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td class="f-label">Select requisite actions taken — References:</td>
+        <td><input type="text" disabled placeholder="For bank use only"></td>
+      </tr>
+      <tr>
+        <td class="f-label">Account Officer's Name:</td>
+        <td><input type="text" disabled placeholder="For bank use only"></td>
+      </tr>
+      <tr>
+        <td class="f-label">Account Officer's Signature:</td>
+        <td><input type="text" disabled placeholder="For bank use only"></td>
+      </tr>
+      <tr>
+        <td class="f-label">Web Business Sign Off:</td>
+        <td><input type="text" disabled placeholder="For bank use only"></td>
+      </tr>
+    </table>
+
+    <!-- Action bar -->
+    <div class="action-bar">
+      <span id="savedBadge" class="saved-badge">
+        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#16a34a" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+        Draft saved
+      </span>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button type="button" class="btn btn-outline" id="saveDraftBtn" onclick="save(false)">Save Draft</button>
+        <button type="submit" class="btn btn-lime" id="submitBtn">Save &amp; Submit Application Form</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+const API = '/api/v1/mpgs-portal';
+let selectedOwnership = '';
+let selectedOnbType = '';
+
+function logout() { localStorage.removeItem('mpgs_token'); localStorage.removeItem('mpgs_user'); window.location.href = 'mpgs-login.html'; }
+function token()  { return localStorage.getItem('mpgs_token'); }
+function authFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' } });
+}
+
+function toggleOwn(val, sibling) {
+  if (sibling) return;
+  if (selectedOwnership === val) {
+    selectedOwnership = '';
+    document.getElementById('own-' + val).classList.remove('checked');
+  } else {
+    if (selectedOwnership) document.getElementById('own-' + selectedOwnership)?.classList.remove('checked');
+    selectedOwnership = val;
+    document.getElementById('own-' + val)?.classList.add('checked');
+  }
+  document.getElementById('s1OwnershipOther').required = val === 'Others';
+}
+
+function selectOnbType(val) {
+  if (selectedOnbType) document.getElementById('onb-' + selectedOnbType)?.classList.remove('checked');
+  selectedOnbType = val;
+  document.getElementById('onb-' + val)?.classList.add('checked');
+}
+
+function collectData() {
+  return {
+    s1CompanyName: document.getElementById('s1CompanyName').value.trim(),
+    s1CompanyAddress: document.getElementById('s1CompanyAddress').value.trim(),
+    s1OwnershipType: selectedOwnership === 'Others' ? 'Others: ' + document.getElementById('s1OwnershipOther').value.trim() : selectedOwnership,
+    s1RcNumber: document.getElementById('s1RcNumber').value.trim(),
+    s1TradingName: document.getElementById('s1TradingName').value.trim(),
+    s1DateRegistered: document.getElementById('s1DateRegistered').value,
+    s1Tin: document.getElementById('s1Tin').value.trim(),
+    s2PrimaryName: document.getElementById('s2PrimaryName').value.trim(),
+    s2PrimaryDesignation: document.getElementById('s2PrimaryDesignation').value.trim(),
+    s2PrimaryOfficeTel: document.getElementById('s2PrimaryOfficeTel').value.trim(),
+    s2PrimaryMobile: document.getElementById('s2PrimaryMobile').value.trim(),
+    s2PrimaryEmail: document.getElementById('s2PrimaryEmail').value.trim(),
+    s2SecondaryName: document.getElementById('s2SecondaryName').value.trim(),
+    s2SecondaryDesignation: document.getElementById('s2SecondaryDesignation').value.trim(),
+    s2SecondaryOfficeTel: document.getElementById('s2SecondaryOfficeTel').value.trim(),
+    s2SecondaryMobile: document.getElementById('s2SecondaryMobile').value.trim(),
+    s2SecondaryEmail: document.getElementById('s2SecondaryEmail').value.trim(),
+    s3ProductsMcc: document.getElementById('s3ProductsMcc').value.trim(),
+    s3WebsiteName: document.getElementById('s3WebsiteName').value.trim(),
+    s3WebsiteUrl: document.getElementById('s3WebsiteUrl').value.trim(),
+    s4AccountNumber: document.getElementById('s4AccountNumber').value.trim(),
+    s4AccountName: document.getElementById('s4AccountName').value.trim(),
+    s4AccountType: document.getElementById('s4AccountType').value,
+    s4SettlementAccount: document.getElementById('s4SettlementAccount').value.trim(),
+    s4CollateralAccount: document.getElementById('s4CollateralAccount').value.trim(),
+    s4Branch: document.getElementById('s4Branch').value.trim(),
+    s5OtherDetails: document.getElementById('s5OtherDetails').value.trim(),
+    s5IndividualName: document.getElementById('s5IndividualName').value.trim(),
+    s5CompanyName: document.getElementById('s5CompanyName').value.trim(),
+    s5AuthSig: document.getElementById('s5AuthSig').value.trim(),
+    s5Designation: document.getElementById('s5Designation').value.trim(),
+    s5Date: document.getElementById('s5Date').value,
+    s6OnboardingType: selectedOnbType,
+  };
+}
+
+function populateData(d) {
+  if (!d) return;
+  const set = (id, val) => { if (document.getElementById(id) !== null && val !== undefined) document.getElementById(id).value = val; };
+  Object.keys(d).forEach(k => set(k, d[k]));
+  if (d.s1OwnershipType) {
+    const known = ['Sole Owner','Partnership/Joint Ventures','Limited Liability Company','Non-Profit Organization /NGO','Public Liability Company','Religious Organization','Government'];
+    if (known.includes(d.s1OwnershipType)) toggleOwn(d.s1OwnershipType);
+    else if (d.s1OwnershipType.startsWith('Others:')) { toggleOwn('Others'); set('s1OwnershipOther', d.s1OwnershipType.replace('Others: ', '')); }
+  }
+  if (d.s6OnboardingType) selectOnbType(d.s6OnboardingType);
+}
+
+async function save(submit) {
+  const data = collectData();
+  if (submit) {
+    const required = ['s1CompanyName','s1CompanyAddress','s2PrimaryName','s3WebsiteName','s3WebsiteUrl'];
+    const missing = required.filter(k => !data[k]);
+    if (missing.length || !selectedOnbType) {
+      showErr(!selectedOnbType ? 'Please select the onboarding type in Section 6' : 'Please fill all required (*) fields before submitting');
+      return;
+    }
+  }
+  const btn = submit ? document.getElementById('submitBtn') : document.getElementById('saveDraftBtn');
+  btn.disabled = true; btn.textContent = submit ? 'Submitting…' : 'Saving…';
+  document.getElementById('alertErr').classList.remove('show');
+  document.getElementById('alertOk').classList.remove('show');
+  try {
+    const r = await authFetch(`${API}/portal/application-form`, {
+      method: 'PUT',
+      body: JSON.stringify({ data, submit }),
+    });
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    if (submit) {
+      document.getElementById('alertOk').textContent = 'Application form submitted successfully!';
+      document.getElementById('alertOk').classList.add('show');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setTimeout(() => window.location.href = 'mpgs-dashboard.html', 1500);
+    } else {
+      document.getElementById('savedBadge').classList.add('show');
+      setTimeout(() => document.getElementById('savedBadge').classList.remove('show'), 3000);
+    }
+  } catch (e) {
+    showErr(e.message || 'Save failed');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = submit ? 'Save & Submit Application Form' : 'Save Draft';
+  }
+}
+
+function showErr(msg) {
+  document.getElementById('alertErr').textContent = msg;
+  document.getElementById('alertErr').classList.add('show');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+document.getElementById('appForm').addEventListener('submit', e => { e.preventDefault(); save(true); });
+
+(async () => {
+  if (!token()) { window.location.href = 'mpgs-login.html'; return; }
+  const r = await authFetch(`${API}/portal/me`);
+  if (r.status === 401) { logout(); return; }
+  const d = await r.json();
+  const app = d.data?.application;
+  if (app?.applicationForm) populateData(app.applicationForm);
+  else if (app?.formDraft) populateData(app.formDraft);
+  // Pre-fill s5Date with today if empty
+  if (!document.getElementById('s5Date').value) {
+    document.getElementById('s5Date').value = new Date().toISOString().split('T')[0];
+  }
+})();
+</script>
+</body>
+</html>

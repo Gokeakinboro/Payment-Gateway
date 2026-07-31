@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPGS Admin — Paylode</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--navy:#1a2744;--navy-l:#253360;--lime:#7dc534;--white:#fff;--g50:#f8fafc;--g100:#f1f5f9;--g200:#e2e8f0;--g300:#cbd5e1;--g400:#94a3b8;--g500:#64748b;--g600:#475569;--g700:#334155;--g800:#1e293b;--red:#ef4444;--green:#10b981;--amber:#f59e0b;--font:'DM Sans',sans-serif}
+body{font-family:var(--font);background:var(--g50);color:var(--g800);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--navy);height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.logo-box{width:32px;height:32px;background:var(--lime);border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--navy);font-size:14px}
+.logo-name{color:#fff;font-weight:700;font-size:15px}
+.logo-sep{color:rgba(255,255,255,.3);margin:0 4px}
+.logo-sub{color:rgba(255,255,255,.6);font-size:13px}
+.layout{display:flex;flex:1;min-height:0}
+/* Sidebar */
+.sidebar{width:280px;background:#fff;border-right:1.5px solid var(--g200);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar-head{padding:16px 20px;border-bottom:1.5px solid var(--g200)}
+.sidebar-title{font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px}
+.filter-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.filter-btn{padding:4px 10px;border:1.5px solid var(--g300);border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;background:#fff;color:var(--g600);font-family:var(--font)}
+.filter-btn.active{background:var(--navy);border-color:var(--navy);color:#fff}
+.app-list{flex:1;overflow-y:auto}
+.app-item{padding:14px 20px;border-bottom:1px solid var(--g100);cursor:pointer;transition:background .1s}
+.app-item:hover{background:var(--g50)}
+.app-item.active{background:#eff6ff;border-left:3px solid var(--navy)}
+.app-name{font-size:13px;font-weight:600;color:var(--g800);margin-bottom:2px}
+.app-email{font-size:12px;color:var(--g400);margin-bottom:4px}
+.app-meta{display:flex;align-items:center;gap:8px}
+.status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.status-dot.DRAFT{background:#94a3b8}
+.status-dot.SUBMITTED{background:#3b82f6}
+.status-dot.UNDER_REVIEW{background:#eab308}
+.status-dot.ACTION_REQUIRED{background:#f97316}
+.status-dot.APPROVED{background:#22c55e}
+.status-dot.REJECTED{background:#ef4444}
+.status-dot.SENT_TO_BANK{background:#10b981}
+.app-status-text{font-size:11px;color:var(--g500)}
+.app-date{font-size:11px;color:var(--g400)}
+/* Main content */
+.main{flex:1;overflow-y:auto;padding:0}
+.main-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--g400);font-size:14px;gap:12px}
+.detail-wrap{padding:28px 32px}
+.detail-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:24px;flex-wrap:wrap}
+.detail-name{font-size:20px;font-weight:700;color:var(--navy)}
+.detail-email{font-size:13px;color:var(--g500);margin-top:2px}
+.status-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:600;white-space:nowrap}
+.status-badge.DRAFT{background:#f1f5f9;color:var(--g600)}
+.status-badge.SUBMITTED{background:#eff6ff;color:#2563eb}
+.status-badge.UNDER_REVIEW{background:#fefce8;color:#ca8a04}
+.status-badge.ACTION_REQUIRED{background:#fff7ed;color:#ea580c}
+.status-badge.APPROVED{background:#f0fdf4;color:#16a34a}
+.status-badge.REJECTED{background:#fef2f2;color:#dc2626}
+.status-badge.SENT_TO_BANK{background:#f0fdf4;color:#16a34a}
+.tabs{display:flex;gap:0;border-bottom:1.5px solid var(--g200);margin-bottom:20px}
+.tab{padding:10px 20px;font-size:13px;font-weight:600;color:var(--g500);cursor:pointer;border-bottom:2.5px solid transparent;margin-bottom:-1.5px;transition:all .15s}
+.tab.active{color:var(--navy);border-bottom-color:var(--navy)}
+.tab:hover{color:var(--g800)}
+.tab-pane{display:none}
+.tab-pane.active{display:block}
+/* Section card */
+.sec{background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:20px;margin-bottom:16px}
+.sec-title{font-size:13px;font-weight:700;color:var(--navy);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+/* Documents */
+.doc-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--g100)}
+.doc-row:last-child{border-bottom:none}
+.doc-check{width:18px;height:18px;accent-color:var(--navy);cursor:pointer;flex-shrink:0}
+.doc-name{flex:1;font-size:13px;color:var(--g700)}
+.doc-file{font-size:11px;color:var(--g400)}
+.doc-status-badge{padding:3px 8px;border-radius:10px;font-size:11px;font-weight:600;flex-shrink:0}
+.doc-status-badge.PENDING{background:var(--g100);color:var(--g500)}
+.doc-status-badge.ACCEPTED{background:#f0fdf4;color:#16a34a}
+.doc-status-badge.REJECTED{background:#fef2f2;color:#dc2626}
+.doc-status-badge.REUPLOAD_REQUESTED{background:#fff7ed;color:#ea580c}
+.doc-actions-row{display:flex;gap:6px;flex-shrink:0}
+.ic-btn{background:none;border:1.5px solid var(--g200);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:11px;font-weight:600;color:var(--g600);font-family:var(--font)}
+.ic-btn:hover{border-color:var(--navy);color:var(--navy)}
+.ic-btn.danger:hover{border-color:var(--red);color:var(--red)}
+/* Comments */
+.comment-item{padding:12px 14px;border:1.5px solid var(--g200);border-radius:8px;margin-bottom:10px}
+.comment-meta{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.comment-author{font-size:12px;font-weight:600;color:var(--g700)}
+.comment-time{font-size:11px;color:var(--g400)}
+.comment-internal-badge{background:var(--g100);color:var(--g500);font-size:10px;font-weight:700;padding:2px 6px;border-radius:8px}
+.comment-body{font-size:13px;color:var(--g700);line-height:1.6;white-space:pre-wrap}
+.comment-form textarea{width:100%;padding:10px 12px;border:1.5px solid var(--g300);border-radius:8px;font-size:13px;font-family:var(--font);resize:vertical;min-height:80px;outline:none}
+.comment-form textarea:focus{border-color:var(--navy)}
+.comment-form-actions{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+.check-label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--g600);cursor:pointer}
+.check-label input{accent-color:var(--navy)}
+/* Status update */
+.status-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.status-note{width:100%;margin-top:8px}
+.status-note textarea{width:100%;padding:8px 10px;border:1.5px solid var(--g300);border-radius:6px;font-size:13px;font-family:var(--font);resize:vertical;min-height:60px;outline:none}
+.status-note textarea:focus{border-color:var(--navy)}
+/* Send to bank */
+.send-row{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.send-row input[type=email]{flex:1;padding:9px 12px;border:1.5px solid var(--g300);border-radius:7px;font-size:13px;font-family:var(--font);outline:none}
+.send-row input[type=email]:focus{border-color:var(--navy)}
+.include-label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--g700);cursor:pointer;margin-bottom:8px}
+.include-label input{accent-color:var(--navy);width:16px;height:16px}
+.note-area{width:100%;padding:8px 10px;border:1.5px solid var(--g300);border-radius:7px;font-size:13px;font-family:var(--font);resize:vertical;min-height:60px;margin-top:6px;outline:none}
+.note-area:focus{border-color:var(--navy)}
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:7px;font-size:13px;font-weight:600;font-family:var(--font);cursor:pointer;border:none;transition:all .15s}
+.btn-primary{background:var(--navy);color:#fff}
+.btn-primary:hover{background:var(--navy-l)}
+.btn-lime{background:var(--lime);color:var(--navy)}
+.btn-lime:hover{background:#6cb82a}
+.btn-danger{background:#fef2f2;border:1.5px solid #fecaca;color:#dc2626}
+.btn-danger:hover{background:#fee2e2}
+.btn-outline{background:#fff;border:1.5px solid var(--g300);color:var(--g700)}
+.btn-outline:hover{border-color:var(--navy);color:var(--navy)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.alert{padding:10px 14px;border-radius:7px;font-size:13px;margin-bottom:12px}
+.alert.err{background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.alert.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a}
+.alert{display:none}
+.alert.show{display:block}
+.empty-state{text-align:center;padding:32px;color:var(--g400);font-size:13px}
+/* Forms preview */
+.form-preview{background:#fff;border:1.5px solid var(--g200);border-radius:8px;overflow:hidden;margin-top:8px}
+.form-preview-head{background:var(--g100);padding:10px 14px;font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;display:flex;align-items:center;justify-content:space-between}
+.form-preview-body{padding:14px}
+.fv-row{display:flex;gap:0;border-bottom:1px solid var(--g100);padding:7px 0}
+.fv-row:last-child{border-bottom:none}
+.fv-label{width:200px;font-size:12px;color:var(--g500);flex-shrink:0}
+.fv-val{flex:1;font-size:13px;color:var(--g800)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo-box">P</div>
+    <span class="logo-name">Paylode</span>
+    <span class="logo-sep">|</span>
+    <span class="logo-sub">MPGS Onboarding — Admin Portal</span>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- Sidebar: application list -->
+  <div class="sidebar">
+    <div class="sidebar-head">
+      <div class="sidebar-title">Applications</div>
+      <div class="filter-row">
+        <button class="filter-btn active" onclick="setFilter('', this)">All</button>
+        <button class="filter-btn" onclick="setFilter('SUBMITTED', this)">New</button>
+        <button class="filter-btn" onclick="setFilter('UNDER_REVIEW', this)">In Review</button>
+        <button class="filter-btn" onclick="setFilter('ACTION_REQUIRED', this)">Action Req.</button>
+        <button class="filter-btn" onclick="setFilter('APPROVED', this)">Approved</button>
+        <button class="filter-btn" onclick="setFilter('SENT_TO_BANK', this)">Sent</button>
+      </div>
+    </div>
+    <div class="app-list" id="appList">
+      <div class="empty-state">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="main" id="mainContent">
+    <div class="main-placeholder">
+      <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="#cbd5e1" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      <span>Select an application from the list</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/api/v1/mpgs-portal';
+let paylodeToken = localStorage.getItem('paylode_token') || localStorage.getItem('token') || '';
+let allApps = [];
+let currentFilter = '';
+let currentApp = null;
+
+function authFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${paylodeToken}`, 'Content-Type': 'application/json' } });
+}
+
+function setFilter(status, btn) {
+  currentFilter = status;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderList(status ? allApps.filter(a => a.status === status) : allApps);
+}
+
+const STATUS_LABELS = { DRAFT:'Draft', SUBMITTED:'Submitted', UNDER_REVIEW:'Under Review', ACTION_REQUIRED:'Action Required', APPROVED:'Approved', REJECTED:'Rejected', SENT_TO_BANK:'Sent to Bank' };
+
+async function loadList() {
+  try {
+    const r = await authFetch(`${API}/admin/applications?limit=100`);
+    if (r.status === 401) { alert('Please log in to the Paylode admin portal first, then return to this page.'); return; }
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    allApps = d.data.apps;
+    renderList(allApps);
+  } catch (e) {
+    document.getElementById('appList').innerHTML = `<div class="empty-state" style="color:var(--red)">${e.message}</div>`;
+  }
+}
+
+function renderList(apps) {
+  if (!apps.length) { document.getElementById('appList').innerHTML = '<div class="empty-state">No applications</div>'; return; }
+  document.getElementById('appList').innerHTML = apps.map(a => `
+    <div class="app-item ${currentApp?.id === a.id ? 'active' : ''}" onclick="loadDetail('${a.id}')">
+      <div class="app-name">${a.applicant.companyName || a.applicant.firstName + ' ' + a.applicant.lastName}</div>
+      <div class="app-email">${a.applicant.email}</div>
+      <div class="app-meta">
+        <div class="status-dot ${a.status}"></div>
+        <span class="app-status-text">${STATUS_LABELS[a.status] || a.status}</span>
+        <span class="app-date">&middot; ${new Date(a.updatedAt||a.createdAt).toLocaleDateString()}</span>
+        ${a.comments.length ? `<span style="font-size:11px;color:var(--g400)">&middot; ${a.comments.length} comment${a.comments.length>1?'s':''}</span>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+async function loadDetail(id) {
+  const r = await authFetch(`${API}/admin/applications/${id}`);
+  const d = await r.json();
+  if (!d.status) { alert(d.message); return; }
+  currentApp = d.data.app;
+  const docsList = d.data.docsList;
+  renderDetail(currentApp, docsList);
+  // Re-render list to update active state
+  renderList(currentFilter ? allApps.filter(a => a.status === currentFilter) : allApps);
+}
+
+function renderDetail(app, docsList) {
+  const companyName = app.applicant.companyName || app.applicant.firstName + ' ' + app.applicant.lastName;
+  const docsMap = {};
+  (app.documents || []).forEach(d => { docsMap[d.docKey] = d; });
+
+  document.getElementById('mainContent').innerHTML = `
+    <div class="detail-wrap">
+      <div class="detail-header">
+        <div>
+          <div class="detail-name">${companyName}</div>
+          <div class="detail-email">${app.applicant.email} &mdash; submitted ${app.submittedAt ? new Date(app.submittedAt).toLocaleString() : 'not yet'}</div>
+        </div>
+        <span class="status-badge ${app.status}">${STATUS_LABELS[app.status] || app.status}</span>
+      </div>
+
+      <div class="alert err" id="detailErr"></div>
+      <div class="alert ok" id="detailOk"></div>
+
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('documents')">Documents</div>
+        <div class="tab" onclick="switchTab('forms')">Forms</div>
+        <div class="tab" onclick="switchTab('comments')">Comments (${(app.comments||[]).length})</div>
+        <div class="tab" onclick="switchTab('actions')">Actions &amp; Send</div>
+      </div>
+
+      <!-- DOCUMENTS TAB -->
+      <div class="tab-pane active" id="tab-documents">
+        <div class="sec">
+          <div class="sec-title">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Required Documents
+          </div>
+          ${docsList.map(doc => {
+            const uploaded = docsMap[doc.key];
+            return `<div class="doc-row">
+              <input type="checkbox" class="doc-check" id="dchk-${doc.key}" ${!uploaded ? 'disabled' : ''}>
+              <div style="flex:1">
+                <div class="doc-name">${doc.label}${doc.key==='pcidss_cert'?' <span style="font-size:11px;color:var(--g400)">(optional)</span>':''}</div>
+                ${uploaded ? `<div class="doc-file">${uploaded.filename} &mdash; ${(uploaded.filesize/1024).toFixed(0)} KB &mdash; ${new Date(uploaded.uploadedAt).toLocaleDateString()}</div>` : '<div class="doc-file" style="color:var(--g400)">Not uploaded</div>'}
+              </div>
+              <span class="doc-status-badge ${uploaded ? uploaded.status : ''}">${uploaded ? (uploaded.status.replace('_',' ')) : 'Missing'}</span>
+              <div class="doc-actions-row">
+                ${uploaded ? `
+                  <button class="ic-btn" onclick="downloadDoc('${app.id}','${doc.key}')">⬇ Download</button>
+                  <button class="ic-btn" onclick="updateDocStatus('${app.id}','${doc.key}','ACCEPTED')">✓ Accept</button>
+                  <button class="ic-btn danger" onclick="updateDocStatus('${app.id}','${doc.key}','REUPLOAD_REQUESTED')">↩ Re-upload</button>
+                  <button class="ic-btn danger" onclick="updateDocStatus('${app.id}','${doc.key}','REJECTED')">✗ Reject</button>
+                ` : ''}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- FORMS TAB -->
+      <div class="tab-pane" id="tab-forms">
+        ${renderFormPreview('Web Business Questionnaire', app.questionnaire, [
+          ['Company Name','companyName'],['Company Address','companyAddress'],
+          ['Length of stay','lengthOfStay'],['Country','country'],['Directors','directors'],
+          ['RC Number','rcNumber'],['BVN','bvn'],['TIN','tin'],
+          ['Years of operation','yearsOfOperation'],['Outlets','outlets'],
+          ['Website','website'],['Customer Service Contact','customerServiceContact'],
+          ['Type of Goods','typeOfGoods'],['MCC','mcc'],
+          ['Previous Payment Engines','prevPaymentEngines'],['Reason for leaving','reasonForLeaving'],
+          ['Store/Warehouse Address','storeAddress'],
+          ['Card Brands','cardBrands'],['Card Currencies','cardCurrencies'],['Card Types','cardTypes'],
+          ['Order Processing Time','orderProcessingTime'],['Payment Model','paymentModel'],
+          ['Transaction Model','transactionModel'],['Annual Volume','annualVolume'],['Annual Value','annualValue'],
+          ['PCIDSS Status','pcidssStatus'],['Advance Functionality','advanceFunctionality'],
+          ['3D Secure','threeDSecure'],['Unique Reference','uniqueRef'],
+          ['Sales Daily','salesDaily'],['Sales Weekly','salesWeekly'],['Sales Monthly','salesMonthly'],['Sales Annual','salesAnnual'],
+          ['Highest Value','highestValue'],['Lowest Value','lowestValue'],['Goods List','goodsList'],
+        ])}
+        ${renderFormPreview('Parallex Bank Application Form', app.applicationForm, [
+          ['Company Name','s1CompanyName'],['Company Address','s1CompanyAddress'],
+          ['Ownership Type','s1OwnershipType'],['RC Number','s1RcNumber'],
+          ['Trading Name','s1TradingName'],['Date Registered','s1DateRegistered'],['TIN','s1Tin'],
+          ['Primary Contact Name','s2PrimaryName'],['Primary Designation','s2PrimaryDesignation'],
+          ['Primary Office Tel','s2PrimaryOfficeTel'],['Primary Mobile','s2PrimaryMobile'],['Primary Email','s2PrimaryEmail'],
+          ['Secondary Contact Name','s2SecondaryName'],['Secondary Designation','s2SecondaryDesignation'],
+          ['Products/MCC','s3ProductsMcc'],['Website Name','s3WebsiteName'],['Website URL','s3WebsiteUrl'],
+          ['Account Number','s4AccountNumber'],['Account Name','s4AccountName'],['Account Type','s4AccountType'],
+          ['Settlement Account','s4SettlementAccount'],['Collateral Account','s4CollateralAccount'],['Branch','s4Branch'],
+          ['Other Details','s5OtherDetails'],['Individual Name','s5IndividualName'],['Company Name (Decl.)','s5CompanyName'],
+          ['Designation','s5Designation'],['Date','s5Date'],['Onboarding Type','s6OnboardingType'],
+        ])}
+      </div>
+
+      <!-- COMMENTS TAB -->
+      <div class="tab-pane" id="tab-comments">
+        <div class="sec">
+          <div class="sec-title">Comments &amp; Feedback</div>
+          <div id="commentsList">
+            ${(app.comments||[]).length === 0 ? '<div class="empty-state">No comments yet</div>' : (app.comments||[]).map(c => `
+              <div class="comment-item">
+                <div class="comment-meta">
+                  <span class="comment-author">${c.authorName}</span>
+                  <span class="comment-time">${new Date(c.createdAt).toLocaleString()}</span>
+                  ${c.isInternal ? '<span class="comment-internal-badge">INTERNAL</span>' : ''}
+                  ${c.sentByEmail ? '<span style="font-size:10px;color:var(--green)">✉ emailed to merchant</span>' : ''}
+                </div>
+                <div class="comment-body">${c.content}</div>
+              </div>`).join('')}
+          </div>
+          <div style="margin-top:16px">
+            <div class="sec-title" style="margin-bottom:8px">Add Comment</div>
+            <div class="comment-form">
+              <textarea id="commentText" placeholder="Write your comment or feedback…"></textarea>
+              <div class="comment-form-actions">
+                <label class="check-label"><input type="checkbox" id="commentInternal"> Internal note (not visible to merchant, no email sent)</label>
+                <button class="btn btn-primary" onclick="addComment('${app.id}')">Post Comment</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ACTIONS TAB -->
+      <div class="tab-pane" id="tab-actions">
+        <!-- Status update -->
+        <div class="sec">
+          <div class="sec-title">Update Application Status</div>
+          <div class="status-row">
+            <select id="newStatus" style="padding:8px 12px;border:1.5px solid var(--g300);border-radius:7px;font-size:13px;font-family:var(--font);outline:none">
+              <option value="">Select new status…</option>
+              <option value="UNDER_REVIEW">Under Review</option>
+              <option value="ACTION_REQUIRED">Action Required</option>
+              <option value="APPROVED">Approved</option>
+              <option value="REJECTED">Rejected</option>
+            </select>
+            <button class="btn btn-outline" onclick="updateStatus('${app.id}')">Update Status</button>
+          </div>
+          <div class="status-note" id="statusNoteWrap" style="display:none">
+            <textarea id="statusNote" placeholder="Optional note to send to merchant (required if Action Required)"></textarea>
+          </div>
+        </div>
+
+        <!-- Send to bank -->
+        <div class="sec">
+          <div class="sec-title">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            Send to Parallex Bank
+          </div>
+          <p style="font-size:13px;color:var(--g500);margin-bottom:12px">Select which documents to attach and which forms to include, then email directly to Parallex Bank.</p>
+
+          <div style="margin-bottom:12px">
+            <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">Recipient</div>
+            <div class="send-row">
+              <input type="email" id="bankEmail" placeholder="Parallex Bank email (leave blank to use PARALLEX_BANK_EMAIL env var)">
+            </div>
+          </div>
+
+          <div style="margin-bottom:12px">
+            <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">Include Forms</div>
+            <label class="include-label"><input type="checkbox" id="inclQuest" checked> Web Business Questionnaire</label>
+            <label class="include-label"><input type="checkbox" id="inclForm" checked> Parallex Bank Application Form</label>
+          </div>
+
+          <div style="margin-bottom:12px">
+            <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">Attach Documents (select below)</div>
+            ${docsList.filter(d => docsMap[d.key]).map(doc => `
+              <label class="include-label"><input type="checkbox" class="bank-doc-chk" value="${doc.key}" checked> ${doc.label}</label>`).join('') || '<p style="font-size:13px;color:var(--g400)">No documents uploaded yet</p>'}
+          </div>
+
+          <div style="margin-bottom:12px">
+            <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Cover Note (optional)</div>
+            <textarea class="note-area" id="bankNote" placeholder="Optional cover note to include in the email to Parallex Bank"></textarea>
+          </div>
+
+          <button class="btn btn-lime" onclick="sendToBank('${app.id}')">
+            <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+            Send to Parallex Bank
+          </button>
+          ${app.sentToBankAt ? `<p style="font-size:12px;color:var(--green);margin-top:8px">✓ Previously sent ${new Date(app.sentToBankAt).toLocaleString()} by ${app.sentToBankBy||'admin'}</p>` : ''}
+        </div>
+      </div>
+    </div>`;
+
+  document.getElementById('newStatus').addEventListener('change', function() {
+    document.getElementById('statusNoteWrap').style.display = this.value ? 'block' : 'none';
+  });
+}
+
+function renderFormPreview(title, data, fields) {
+  if (!data) return `<div class="sec"><div class="sec-title">${title}</div><div class="empty-state">Not submitted yet</div></div>`;
+  return `<div class="sec"><div class="sec-title">${title}</div>
+    <div class="form-preview-body">
+      ${fields.map(([label, key]) => {
+        const val = data[key];
+        if (!val && val !== 0) return '';
+        const display = Array.isArray(val) ? val.join(', ') : String(val);
+        return `<div class="fv-row"><div class="fv-label">${label}</div><div class="fv-val">${display}</div></div>`;
+      }).filter(Boolean).join('')}
+    </div></div>`;
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const names = ['documents','forms','comments','actions'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.tab-pane').forEach(p => {
+    p.classList.toggle('active', p.id === 'tab-' + name);
+  });
+}
+
+async function downloadDoc(appId, docKey) {
+  window.open(`${API}/admin/applications/${appId}/documents/${docKey}/download?auth=${paylodeToken}`, '_blank');
+  // Note: auth via query param won't work with the current middleware. Open as Bearer is preferred.
+  // Fallback: use fetch + blob
+  try {
+    const r = await authFetch(`${API}/admin/applications/${appId}/documents/${docKey}/download`);
+    if (!r.ok) { alert('Download failed'); return; }
+    const blob = await r.blob();
+    const cd = r.headers.get('Content-Disposition') || '';
+    const fname = (cd.match(/filename="([^"]+)"/) || [])[1] || 'document';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = fname; a.click();
+    URL.revokeObjectURL(url);
+  } catch {}
+}
+
+async function updateDocStatus(appId, docKey, status) {
+  try {
+    const r = await authFetch(`${API}/admin/applications/${appId}/documents/${docKey}/status`, {
+      method: 'PUT', body: JSON.stringify({ status }),
+    });
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    showDetail('ok', `Document status updated to ${status.replace('_',' ')}`);
+    await loadDetail(appId);
+  } catch (e) {
+    showDetail('err', e.message);
+  }
+}
+
+async function addComment(appId) {
+  const content    = document.getElementById('commentText').value.trim();
+  const isInternal = document.getElementById('commentInternal').checked;
+  if (!content) { showDetail('err', 'Please enter a comment'); return; }
+  try {
+    const r = await authFetch(`${API}/admin/applications/${appId}/comments`, {
+      method: 'POST', body: JSON.stringify({ content, isInternal }),
+    });
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    showDetail('ok', isInternal ? 'Internal note added' : 'Comment added and emailed to merchant');
+    await loadDetail(appId);
+    switchTab('comments');
+  } catch (e) {
+    showDetail('err', e.message);
+  }
+}
+
+async function updateStatus(appId) {
+  const status = document.getElementById('newStatus').value;
+  const note   = document.getElementById('statusNote')?.value.trim();
+  if (!status) { showDetail('err', 'Please select a status'); return; }
+  if (status === 'ACTION_REQUIRED' && !note) { showDetail('err', 'Please provide a note explaining what action is required'); return; }
+  try {
+    const r = await authFetch(`${API}/admin/applications/${appId}/status`, {
+      method: 'PUT', body: JSON.stringify({ status, note }),
+    });
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    // Update in local list
+    const idx = allApps.findIndex(a => a.id === appId);
+    if (idx >= 0) allApps[idx].status = status;
+    showDetail('ok', `Status updated to "${status.replace('_',' ')}"`);
+    await loadDetail(appId);
+    renderList(currentFilter ? allApps.filter(a => a.status === currentFilter) : allApps);
+  } catch (e) {
+    showDetail('err', e.message);
+  }
+}
+
+async function sendToBank(appId) {
+  const recipientEmail = document.getElementById('bankEmail').value.trim();
+  const includeQuestionnaire  = document.getElementById('inclQuest').checked;
+  const includeApplicationForm = document.getElementById('inclForm').checked;
+  const note = document.getElementById('bankNote').value.trim();
+  const docKeys = [...document.querySelectorAll('.bank-doc-chk:checked')].map(c => c.value);
+  if (!recipientEmail && !docKeys.length && !includeQuestionnaire && !includeApplicationForm) {
+    showDetail('err', 'Please select at least one item to send'); return;
+  }
+  try {
+    const r = await authFetch(`${API}/admin/applications/${appId}/send-to-bank`, {
+      method: 'POST',
+      body: JSON.stringify({ recipientEmail: recipientEmail || undefined, includeQuestionnaire, includeApplicationForm, docKeys, note }),
+    });
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    showDetail('ok', `Application sent to Parallex Bank (${d.data.sentTo}) with ${d.data.attachments} attachment(s)`);
+    await loadDetail(appId);
+  } catch (e) {
+    showDetail('err', e.message);
+  }
+}
+
+function showDetail(type, msg) {
+  const el = document.getElementById(type === 'ok' ? 'detailOk' : 'detailErr');
+  if (!el) return;
+  el.textContent = msg; el.className = `alert ${type} show`;
+  setTimeout(() => el.classList.remove('show'), 5000);
+}
+
+loadList();
+</script>
+</body>
+</html>
