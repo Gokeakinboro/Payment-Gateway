@@ -371,37 +371,35 @@ function renderDetail(app, docsList) {
             <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
             Send to Parallex Bank
           </div>
-          <p style="font-size:13px;color:var(--g500);margin-bottom:12px">Select which documents to attach and which forms to include, then email directly to Parallex Bank.</p>
+          ${app.sentToBankAt ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#15803d">✓ Previously sent on ${new Date(app.sentToBankAt).toLocaleString()} by ${app.sentToBankBy||'admin'} — you can send again below</div>` : ''}
 
-          <div style="margin-bottom:12px">
-            <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">Recipient</div>
-            <div class="send-row">
-              <input type="email" id="bankEmail" placeholder="Parallex Bank email (leave blank to use PARALLEX_BANK_EMAIL env var)">
-            </div>
+          <div style="margin-bottom:16px">
+            <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px">Recipient Email(s) <span style="color:var(--red)">*</span></div>
+            <textarea id="bankEmails" class="note-area" rows="3" placeholder="Enter one or more email addresses, separated by commas or new lines&#10;e.g.&#10;john@parallexbank.com&#10;mpgs@parallexbank.com, operations@parallexbank.com" style="min-height:90px;font-family:monospace;font-size:13px"></textarea>
+            <div style="font-size:11px;color:var(--g400);margin-top:4px">Separate multiple addresses with a comma, semicolon, or new line — all will receive the same email simultaneously.</div>
           </div>
 
-          <div style="margin-bottom:12px">
+          <div style="margin-bottom:14px">
             <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">Include Forms</div>
             <label class="include-label"><input type="checkbox" id="inclQuest" checked> Web Business Questionnaire</label>
             <label class="include-label"><input type="checkbox" id="inclForm" checked> Parallex Bank Application Form</label>
           </div>
 
-          <div style="margin-bottom:12px">
-            <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">Attach Documents (select below)</div>
+          <div style="margin-bottom:14px">
+            <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">Attach Documents</div>
             ${docsList.filter(d => docsMap[d.key]).map(doc => `
               <label class="include-label"><input type="checkbox" class="bank-doc-chk" value="${doc.key}" checked> ${doc.label}</label>`).join('') || '<p style="font-size:13px;color:var(--g400)">No documents uploaded yet</p>'}
           </div>
 
-          <div style="margin-bottom:12px">
+          <div style="margin-bottom:16px">
             <div style="font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Cover Note (optional)</div>
-            <textarea class="note-area" id="bankNote" placeholder="Optional cover note to include in the email to Parallex Bank"></textarea>
+            <textarea class="note-area" id="bankNote" placeholder="Optional cover note to include in the email body"></textarea>
           </div>
 
-          <button class="btn btn-lime" onclick="sendToBank('${app.id}')">
-            <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+          <button class="btn btn-lime" style="width:100%;justify-content:center;padding:13px" onclick="sendToBank('${app.id}')">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
             Send to Parallex Bank
           </button>
-          ${app.sentToBankAt ? `<p style="font-size:12px;color:var(--green);margin-top:8px">✓ Previously sent ${new Date(app.sentToBankAt).toLocaleString()} by ${app.sentToBankBy||'admin'}</p>` : ''}
         </div>
       </div>
     </div>`;
@@ -505,25 +503,31 @@ async function updateStatus(appId) {
 }
 
 async function sendToBank(appId) {
-  const recipientEmail = document.getElementById('bankEmail').value.trim();
-  const includeQuestionnaire  = document.getElementById('inclQuest').checked;
+  const rawEmails = (document.getElementById('bankEmails')?.value || '').trim();
+  const includeQuestionnaire   = document.getElementById('inclQuest').checked;
   const includeApplicationForm = document.getElementById('inclForm').checked;
-  const note = document.getElementById('bankNote').value.trim();
+  const note    = document.getElementById('bankNote').value.trim();
   const docKeys = [...document.querySelectorAll('.bank-doc-chk:checked')].map(c => c.value);
-  if (!recipientEmail && !docKeys.length && !includeQuestionnaire && !includeApplicationForm) {
-    showDetail('err', 'Please select at least one item to send'); return;
-  }
+
+  if (!rawEmails) { showDetail('err', 'Please enter at least one recipient email address'); return; }
+
+  const btn = document.querySelector(`button[onclick="sendToBank('${appId}')"]`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
   try {
     const r = await authFetch(`${API}/admin/applications/${appId}/send-to-bank`, {
       method: 'POST',
-      body: JSON.stringify({ recipientEmail: recipientEmail || undefined, includeQuestionnaire, includeApplicationForm, docKeys, note }),
+      body: JSON.stringify({ recipientEmails: rawEmails, includeQuestionnaire, includeApplicationForm, docKeys, note }),
     });
     const d = await r.json();
     if (!d.status) throw new Error(d.message);
-    showDetail('ok', `Application sent to Parallex Bank (${d.data.sentTo}) with ${d.data.attachments} attachment(s)`);
+    const recipients = Array.isArray(d.data.sentTo) ? d.data.sentTo.join(', ') : d.data.sentTo;
+    showDetail('ok', `✓ Sent to ${recipients} with ${d.data.attachments} attachment(s)`);
     await loadDetail(appId);
   } catch (e) {
     showDetail('err', e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> Send to Parallex Bank'; }
   }
 }
 
