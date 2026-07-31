@@ -35,6 +35,7 @@ const { prisma }  = require('../../../utils/db');
 const { screenTransaction } = require('../../../services/complianceService');
 const { dispatchWebhook }   = require('../../../services/webhookService');
 const mpgsSvc = require('../services/parallexMpgsService');
+const appUrlBase = () => process.env.APP_URL || 'https://api.paylodeservices.com';
 const { logger } = require('../../../utils/logger');
 
 // ── MPGS-format response helpers ─────────────────────────────────────────────
@@ -338,13 +339,24 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
 
       // ── Handle 3DS challenge ───────────────────────────────────────────────
       if (mpgsResult.pending3ds) {
-        await prisma.transaction.update({ where: { id: txn.id }, data: { status: 'PENDING' } });
+        const challengeHtml = mpgsResult.authRedirectHtml || null;
+        await prisma.transaction.update({
+          where: { id: txn.id },
+          data: {
+            status: 'PENDING',
+            ...(challengeHtml ? { metadata: { ...(txn.metadata || {}), authRedirectHtml: challengeHtml } } : {}),
+          },
+        });
+        const challengeUrl = challengeHtml
+          ? `${appUrl}/api/rest/3ds/challenge?ref=${encodeURIComponent(paylodeRef)}`
+          : null;
         return res.status(202).json({
           result: 'PENDING_AUTHENTICATION',
           authentication: {
-            redirectUrl:  mpgsResult.authRedirectUrl  || null,
-            redirectHtml: mpgsResult.authRedirectHtml || null,  // iframe HTML for challenge
-            version:      mpgsResult.auth3dsVersion   || '3DS2',
+            redirectUrl:  mpgsResult.authRedirectUrl || null,
+            redirectHtml: challengeHtml,
+            challengeUrl,
+            version:      mpgsResult.auth3dsVersion || '3DS2',
           },
           order: { id: orderId, amount: parseFloat(order.amount), currency: order.currency },
           transaction: { id: txnId },
@@ -490,13 +502,164 @@ router.get('/version/:v/merchant/:mid/order/:orderId',
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  GET /api/rest/3ds/callback?ref={paylodeRef}
+//  GET /api/rest/3ds/challenge?ref={paylodeRef}
 //
-//  MPGS redirects the cardholder's browser here after a 3DS challenge completes.
-//  We verify the outcome with MPGS, update the transaction, fire the merchant
-//  webhook, then redirect the cardholder to the merchant's original return URL.
+//  Serves the 3DS challenge HTML stored in the transaction metadata.
+//  The merchant (or test tool) directs the cardholder's browser here;
+//  the HTML auto-submits to the ACS to start the 3DS challenge.
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/3ds/callback', async (req, res, next) => {
+router.get('/3ds/challenge', async (req, res, next) => {
+  const paylodeRef = req.query.ref;
+  if (!paylodeRef) return res.status(400).send('<h1>Missing ref parameter</h1>');
+  try {
+    const txn = await prisma.transaction.findFirst({
+      where:   { reference: paylodeRef },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!txn) return res.status(404).send('<h1>Transaction not found</h1>');
+
+    const meta = txn.metadata || {};
+
+    if (!meta.authRedirectHtml) {
+      return res.status(404).send('<h1>3DS challenge not found or already completed</h1>');
+    }
+    // Cardinal Commerce sets X-Frame-Options: SAMEORIGIN, so the iframe approach is blocked.
+    // Instead, extract the creq + action from the fragment and do a full-page POST so the
+    // browser navigates directly to Cardinal's challenge page.
+    const challengeFrag = meta.authRedirectHtml;
+    const creqMatch     = challengeFrag.match(/name="creq"\s+value="([^"]+)"/);
+    const actionMatch   = challengeFrag.match(/action="([^"]+)"/);
+    const creqValue     = creqMatch  ? creqMatch[1]                           : null;
+    const actionUrl     = actionMatch ? actionMatch[1].replace(/&amp;/g, '&') : null;
+
+    if (!creqValue || !actionUrl) {
+      // Fallback: serve the raw fragment (best-effort)
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authenticating...</title></head><body>${challengeFrag}</body></html>`);
+    }
+
+    // Override the default restrictive CSP: we need inline scripts + form POST to ACS domains.
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action *; frame-ancestors 'none'");
+    // Full-page POST — browser navigates to Cardinal/ACS, completes challenge, then ACS
+    // redirects the browser back to our redirectResponseUrl (the callback endpoint).
+    const actionHtml = actionUrl.replace(/&/g, '&amp;');
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authenticating your payment...</title>
+  <style>body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f5f5;font-family:sans-serif;flex-direction:column;}p{color:#555;font-size:15px;margin-top:16px;}</style>
+</head>
+<body>
+  <p>Redirecting to your bank for authentication...</p>
+  <form id="f" method="POST" action="${actionHtml}">
+    <input type="hidden" name="creq" value="${creqValue}" />
+  </form>
+  <script>document.getElementById('f').submit();</script>
+</body>
+</html>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(html);
+  } catch (err) { next(err); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  POST /api/rest/3ds/step2?ref={paylodeRef}
+//
+//  Called by the challenge page JavaScript after the 3DS Method iframe has run.
+//  Executes AUTHENTICATE_PAYER (with method now completed), stores the resulting
+//  challenge HTML, and returns the challenge URL for the browser to redirect to.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/3ds/step2', async (req, res, next) => {
+  const paylodeRef = req.query.ref;
+  if (!paylodeRef) return res.status(400).json({ error: 'Missing ref' });
+  try {
+    const txn = await prisma.transaction.findFirst({
+      where:   { reference: paylodeRef, status: 'PENDING' },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!txn) return res.status(404).json({ error: 'Transaction not found or already processed' });
+
+    const meta = txn.metadata || {};
+    if (!meta.cardFull) return res.status(400).json({ error: 'Card data missing from session' });
+
+    // Load MPGS config for this transaction
+    let mpgsConfig;
+    if (meta.partner_merchant_id) {
+      const pm = await prisma.partnerMerchant.findUnique({ where: { id: meta.partner_merchant_id } });
+      if (pm) mpgsConfig = { mpgsMid: pm.mpgsMid, mpgsApiPassword: pm.mpgsApiPassword, mpgsBaseUrl: pm.mpgsBaseUrl || 'https://na-gateway.mastercard.com/api/rest/version/77' };
+    } else if (txn.merchantId) {
+      const cfg = await prisma.merchantMpgsConfig.findUnique({ where: { merchantId: txn.merchantId } });
+      if (cfg) mpgsConfig = { mpgsMid: cfg.mpgsMid, mpgsApiPassword: cfg.mpgsApiPassword, mpgsBaseUrl: cfg.mpgsBaseUrl };
+    }
+    if (!mpgsConfig) return res.status(500).json({ error: 'MPGS config not found' });
+
+    const cf = meta.cardFull;
+    const authResult = await mpgsSvc.authenticatePayer(mpgsConfig, {
+      reference:    paylodeRef,
+      amount:       txn.amount,
+      currency:     txn.currency,
+      description:  meta.description || null,
+      apiOperation: meta.apiOperation || 'PAY',
+      card: {
+        number:       cf.number,
+        expiry_month: cf.expiry_month,
+        expiry_year:  cf.expiry_year,
+        cvv:          cf.cvv,
+        name:         cf.name || null,
+      },
+      customer: meta.customer || null,
+    });
+
+    const appUrl = process.env.APP_URL || 'https://api.paylodeservices.com';
+
+    if (authResult.pending3ds) {
+      const challengeHtml = authResult.authRedirectHtml || null;
+      // Store challenge HTML so the challenge page can serve it
+      await prisma.transaction.update({
+        where: { id: txn.id },
+        data: { metadata: { ...meta, authRedirectHtml: challengeHtml } },
+      });
+      const challengeUrl = `${appUrl}/api/rest/3ds/challenge?ref=${encodeURIComponent(paylodeRef)}`;
+      return res.json({ result: 'PENDING', challengeUrl });
+    }
+
+    // Frictionless outcome — complete the payment now
+    if (authResult.ok) {
+      const amountKobo = BigInt(txn.amount);
+      const feeKobo    = BigInt(txn.merchantFee || 0);
+      await prisma.transaction.update({
+        where: { id: txn.id },
+        data: {
+          status:        'SUCCESS',
+          paidAt:        new Date(),
+          netRevenue:    amountKobo - feeKobo,
+          failureReason: null,
+          metadata: { ...meta, mpgs: { gatewayCode: authResult.gatewayCode, authorizationCode: authResult.authorizationCode } },
+        },
+      });
+      return res.json({ result: 'SUCCESS', reference: paylodeRef });
+    }
+
+    // Frictionless failure
+    await prisma.transaction.update({
+      where: { id: txn.id },
+      data: { status: 'FAILED', failureReason: authResult.declineReason || authResult.gatewayCode || 'DECLINED' },
+    });
+    return res.json({ result: 'FAILED', reference: paylodeRef });
+
+  } catch (err) { next(err); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  POST /api/rest/3ds/callback?ref={paylodeRef}   (also handles GET for testing)
+//
+//  MPGS redirects the cardholder's browser here (via POST) after a 3DS
+//  challenge completes.  We complete the PAY, update the transaction, fire
+//  the merchant webhook, then redirect the cardholder to their return URL.
+// ─────────────────────────────────────────────────────────────────────────────
+router.all('/3ds/callback', async (req, res, next) => {
   const paylodeRef = req.query.ref;
   if (!paylodeRef) return res.status(400).send('Missing ref parameter');
 

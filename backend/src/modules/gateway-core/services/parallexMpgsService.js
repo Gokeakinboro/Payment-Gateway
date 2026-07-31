@@ -173,7 +173,7 @@ async function charge(config, payload, sandbox = false) {
     sourceOfFunds: { type: 'CARD', provided: { card: { number: pan, expiry: exp } } },
   });
 
-  // If initiation itself errors, try a direct PAY (Parallex may have changed config)
+  // If initiation errors, fall back to a direct PAY (Parallex may not have 3DS configured)
   if (init.result === 'ERROR') {
     const direct = await put('1', toMpgsPayload(payload));
     return fromMpgsResponse(direct);
@@ -181,54 +181,136 @@ async function charge(config, payload, sandbox = false) {
 
   // ── Step 2: AUTHENTICATE_PAYER ───────────────────────────────────────────────
   const callbackUrl = `${appUrl}/api/rest/3ds/callback?ref=${encodeURIComponent(payload.reference)}`;
-  const auth2 = await put('1', {
-    apiOperation: 'AUTHENTICATE_PAYER',
-    authentication: { redirectResponseUrl: callbackUrl },
-    device: {
-      browser: bd.browser || 'MOZILLA',
-      browserDetails: {
-        '3DSecureChallengeWindowSize': bd.challengeWindowSize || '500_X_600',
-        acceptHeaders:  bd.acceptHeaders  || 'application/json',
-        colorDepth:     bd.colorDepth     ?? 24,
-        javaEnabled:    bd.javaEnabled    ?? true,
-        language:       bd.language       || 'en-NG',
-        screenHeight:   bd.screenHeight   ?? 900,
-        screenWidth:    bd.screenWidth    ?? 1440,
-        timeZone:       bd.timeZone       ?? 0,
-      },
-      ipAddress: bd.ipAddress || payload.customer?.ip_address || '0.0.0.0',
-    },
-    order: { currency: payload.currency, amount: nairaFromKobo(payload.amount) },
-    sourceOfFunds: { provided: { card: {
-      number: pan, expiry: exp, securityCode: String(payload.card.cvv),
-    }}},
-  });
+  const auth2 = await fetch(
+    `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/1`,
+    {
+      method: 'PUT', headers,
+      body: JSON.stringify({
+        apiOperation: 'AUTHENTICATE_PAYER',
+        authentication: { redirectResponseUrl: callbackUrl },
+        device: {
+          browser: bd.browser || 'MOZILLA',
+          browserDetails: {
+            '3DSecureChallengeWindowSize': bd.challengeWindowSize || '500_X_600',
+            acceptHeaders:  bd.acceptHeaders  || 'application/json',
+            colorDepth:     bd.colorDepth     ?? 24,
+            javaEnabled:    bd.javaEnabled    ?? true,
+            language:       bd.language       || 'en-NG',
+            screenHeight:   bd.screenHeight   ?? 900,
+            screenWidth:    bd.screenWidth    ?? 1440,
+            timeZone:       bd.timeZone       ?? 0,
+          },
+          ipAddress: bd.ipAddress || payload.customer?.ip_address || '0.0.0.0',
+        },
+        order: { currency: payload.currency, amount: nairaFromKobo(payload.amount) },
+        sourceOfFunds: { provided: { card: {
+          number: pan, expiry: exp, securityCode: String(payload.card.cvv),
+        }}},
+      }),
+    }
+  ).then(r => r.json()).catch(() => ({ result: 'FAILURE', error: { cause: 'NON_JSON_RESPONSE' } }));
 
-  // Challenge flow — transactionStatus C means cardholder must authenticate
-  // Challenge URL/HTML is at authentication.redirect (not authentication.redirectUrl)
-  const txnStatus = auth2.authentication?.['3ds2']?.transactionStatus;
-  if (auth2.result === 'PENDING' || txnStatus === 'C') {
+  const txnStatus        = auth2.authentication?.['3ds2']?.transactionStatus;
+  const payerInteraction = auth2.authentication?.payerInteraction;
+  if (auth2.result === 'PENDING' || txnStatus === 'C' || payerInteraction === 'REQUIRED') {
     const redirect = auth2.authentication?.redirect || {};
     return {
       ok: false, pending3ds: true, result: 'PENDING',
       gatewayCode:      'PENDING_AUTHENTICATION',
       authRedirectUrl:  redirect?.customizedHtml?.['3ds2']?.acsUrl || null,
-      authRedirectHtml: redirect?.html || null,
+      authRedirectHtml: redirect?.html || auth2.authentication?.redirectHtml || null,
       auth3dsVersion:   auth2.authentication?.version || '3DS2',
       mpgsOrderId:      orderId, mpgsTransactionId: '1',
       raw: auth2,
     };
   }
 
-  // ── Step 3: PAY (txnId=1, same txn — MPGS links 3DS auth automatically) ──────
-  // Minimal body only; card data is stored in MPGS session from steps 1-2.
-  const pay = await put('1', {
-    apiOperation: payload.apiOperation || 'PAY',
-    order: { amount: nairaFromKobo(payload.amount), currency: payload.currency, description: payload.description || 'Paylode payment' },
-    transaction: { reference: payload.reference },
-  });
+  // ── Step 3: PAY (frictionless — no challenge needed) ─────────────────────────
+  const pay = await fetch(
+    `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/1`,
+    {
+      method: 'PUT', headers,
+      body: JSON.stringify({
+        apiOperation: payload.apiOperation || 'PAY',
+        order: { amount: nairaFromKobo(payload.amount), currency: payload.currency, description: payload.description || 'Paylode payment' },
+        transaction: { reference: payload.reference },
+      }),
+    }
+  ).then(r => r.json()).catch(() => ({ result: 'FAILURE', error: { cause: 'NON_JSON_RESPONSE' } }));
 
   return fromMpgsResponse(pay);
+}
+
+/**
+ * Step 2 of the 3DS2 flow — called server-side after the browser has run the
+ * 3DS Method (fingerprinting) iframe.  Calls AUTHENTICATE_PAYER and returns:
+ *   • pending3ds: true  — challenge required, authRedirectHtml contains challenge page
+ *   • ok: true          — frictionless success, PAY should be called immediately
+ *   • ok: false         — frictionless failure
+ */
+async function authenticatePayer(config, payload) {
+  const { mpgsMid, mpgsApiPassword, mpgsBaseUrl } = config;
+  const baseUrl = mpgsBaseUrl.replace(/\/$/, '');
+  const orderId = mpgsOrderId(payload.reference);
+  const auth    = basicAuth(mpgsMid, mpgsApiPassword);
+  const headers = { Authorization: auth, 'Content-Type': 'application/json', Accept: 'application/json' };
+  const appUrl  = process.env.APP_URL || 'https://api.paylodeservices.com';
+
+  const bd          = payload.browserData || {};
+  const callbackUrl = `${appUrl}/api/rest/3ds/callback?ref=${encodeURIComponent(payload.reference)}`;
+
+  const pan = String(payload.card.number).replace(/\s/g, '');
+  const exp = { month: String(payload.card.expiry_month).padStart(2, '0'), year: String(payload.card.expiry_year).slice(-2) };
+
+  const auth2 = await fetch(
+    `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/1`,
+    {
+      method: 'PUT', headers,
+      body: JSON.stringify({
+        apiOperation: 'AUTHENTICATE_PAYER',
+        authentication: { redirectResponseUrl: callbackUrl },
+        device: {
+          browser: bd.browser || 'MOZILLA',
+          browserDetails: {
+            '3DSecureChallengeWindowSize': bd.challengeWindowSize || '500_X_600',
+            acceptHeaders:  bd.acceptHeaders  || 'application/json',
+            colorDepth:     bd.colorDepth     ?? 24,
+            javaEnabled:    bd.javaEnabled    ?? true,
+            language:       bd.language       || 'en-NG',
+            screenHeight:   bd.screenHeight   ?? 900,
+            screenWidth:    bd.screenWidth    ?? 1440,
+            timeZone:       bd.timeZone       ?? 0,
+          },
+          ipAddress: bd.ipAddress || payload.customer?.ip_address || '0.0.0.0',
+        },
+        order: { currency: payload.currency, amount: nairaFromKobo(payload.amount) },
+        sourceOfFunds: { provided: { card: { number: pan, expiry: exp, securityCode: String(payload.card.cvv) } } },
+      }),
+    }
+  ).then(r => r.json()).catch(() => ({ result: 'FAILURE', error: { cause: 'NON_JSON_RESPONSE' } }));
+
+  const txnStatus        = auth2.authentication?.['3ds2']?.transactionStatus;
+  const payerInteraction = auth2.authentication?.payerInteraction;
+  if (auth2.result === 'PENDING' || txnStatus === 'C' || payerInteraction === 'REQUIRED') {
+    const redirect = auth2.authentication?.redirect || {};
+    return {
+      ok: false, pending3ds: true, result: 'PENDING',
+      gatewayCode:      'PENDING_AUTHENTICATION',
+      authRedirectUrl:  redirect?.customizedHtml?.['3ds2']?.acsUrl || null,
+      authRedirectHtml: redirect?.html || auth2.authentication?.redirectHtml || null,
+      auth3dsVersion:   auth2.authentication?.version || '3DS2',
+      mpgsOrderId:      orderId, mpgsTransactionId: '1',
+      raw: auth2,
+    };
+  }
+
+  // Frictionless outcome — check if we need to PAY immediately
+  if (auth2.result === 'SUCCESS' || auth2.result === 'FAILURE') {
+    return fromMpgsResponse(auth2);
+  }
+
+  // Unknown result — treat as error
+  return { ok: false, result: auth2.result || 'UNKNOWN', raw: auth2 };
 }
 
 /**
@@ -273,7 +355,7 @@ async function getOrder(config, reference) {
 }
 
 module.exports = {
-  charge, payAfterChallenge, getOrder,
+  charge, authenticatePayer, payAfterChallenge, getOrder,
   toMpgsPayload, fromMpgsResponse, buildSandboxResponse,
   cardTypeFromNumber, nairaFromKobo, mpgsOrderId, MPGS_VERSION,
 };
