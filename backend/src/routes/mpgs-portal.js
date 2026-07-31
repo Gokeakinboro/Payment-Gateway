@@ -672,14 +672,22 @@ router.get('/admin/applications/:id/documents/:docKey/download', requireAuth, re
 
 router.post('/admin/applications/:id/send-to-bank', requireAuth, requireAdminOrCompliance, async (req, res) => {
   try {
-    const { docKeys, includeQuestionnaire, includeApplicationForm, recipientEmail, note } = req.body;
-    const bankEmail = recipientEmail || process.env.PARALLEX_BANK_EMAIL;
-    if (!bankEmail) return fail(res, 'Recipient email is required (set PARALLEX_BANK_EMAIL env var or pass recipientEmail)');
+    const { docKeys, includeQuestionnaire, includeApplicationForm, recipientEmails, note } = req.body;
+
+    // Accept a string (one address or comma/newline separated) or an array
+    const rawEmails = Array.isArray(recipientEmails) ? recipientEmails : (recipientEmails || '');
+    const emailList = (Array.isArray(rawEmails) ? rawEmails : rawEmails.split(/[\s,;]+/))
+      .map(e => e.trim())
+      .filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+
+    if (!emailList.length) return fail(res, 'At least one valid recipient email address is required');
+
     const app = await prisma.mpgsApplication.findUnique({
       where: { id: req.params.id },
       include: { applicant: { select: { firstName: true, lastName: true, email: true, companyName: true } }, documents: true },
     });
     if (!app) return notFound(res, 'Application');
+
     const attachments = [];
     if (docKeys && docKeys.length) {
       for (const key of docKeys) {
@@ -689,11 +697,14 @@ router.post('/admin/applications/:id/send-to-bank', requireAuth, requireAdminOrC
         }
       }
     }
+
     let formHtml = '';
     if (includeQuestionnaire && app.questionnaire)    formHtml += buildQuestionnaireHtml(app.questionnaire);
     if (includeApplicationForm && app.applicationForm) formHtml += buildApplicationFormHtml(app.applicationForm);
+
+    const toStr = emailList.join(', ');
     await sendEmail({
-      to: bankEmail,
+      to: toStr,
       subject: `MPGS Onboarding Application — ${app.merchantName}`,
       html: `<div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto">
         <div style="background:#1a2744;padding:20px 28px;border-radius:8px 8px 0 0">
@@ -702,7 +713,7 @@ router.post('/admin/applications/:id/send-to-bank', requireAuth, requireAdminOrC
         <div style="background:#f8fafc;padding:28px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px">
           <p><strong>Merchant:</strong> ${app.merchantName}</p>
           <p><strong>Submitted by:</strong> ${app.applicant.firstName} ${app.applicant.lastName} (${app.applicant.email})</p>
-          <p><strong>Paylode staff:</strong> ${req.user.email}</p>
+          <p><strong>Sent by (Paylode):</strong> ${req.user.email}</p>
           ${app.parallexMerchantId ? `<p><strong>Parallex Merchant ID:</strong> ${app.parallexMerchantId}</p>` : ''}
           ${app.parallexOperatorId ? `<p><strong>Parallex Operator ID:</strong> ${app.parallexOperatorId}</p>` : ''}
           ${note ? `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:12px 16px;margin:12px 0"><p style="margin:0;color:#334155">${note}</p></div>` : ''}
@@ -712,11 +723,13 @@ router.post('/admin/applications/:id/send-to-bank', requireAuth, requireAdminOrC
       </div>`,
       attachments,
     });
+
     await prisma.mpgsApplication.update({
       where: { id: req.params.id },
       data: { sentToBankAt: new Date(), sentToBankBy: req.user.email, status: 'SENT_TO_BANK' },
     });
-    return ok(res, { sentTo: bankEmail, attachments: attachments.length }, `Application sent to ${bankEmail}`);
+
+    return ok(res, { sentTo: emailList, attachments: attachments.length }, `Application sent to ${emailList.length} recipient(s)`);
   } catch (e) {
     logger.error({ err: e }, 'MPGS send-to-bank error');
     return fail(res, 'Failed to send application', 'ERROR', 500);
