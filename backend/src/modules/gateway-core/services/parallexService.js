@@ -26,12 +26,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const crypto = require('crypto');
 
-const BASE_URL      = (process.env.PARALLEX_VA_BASE_URL || 'https://parallex-apim.azure-api.net/VirtualAccount/v1/VirtualAccount').replace(/\/$/, '');
-const USERNAME      = process.env.PARALLEX_VA_USERNAME || '';
-const PASSWORD      = process.env.PARALLEX_VA_PASSWORD || '';
-const SUBKEY        = process.env.PARALLEX_VA_SUBKEY || '';
-const SUBKEY_HEADER = process.env.PARALLEX_VA_SUBKEY_HEADER || 'Ocp-Apim-Subscription-Key';
-const MERCHANT_ID   = process.env.PARALLEX_VA_MERCHANT_ID || '';
+const BASE_URL           = (process.env.PARALLEX_VA_BASE_URL || 'https://parallex-apim.azure-api.net/VirtualAccount/v1/VirtualAccount').replace(/\/$/, '');
+const USERNAME           = process.env.PARALLEX_VA_USERNAME || '';
+const PASSWORD           = process.env.PARALLEX_VA_PASSWORD || '';
+const SUBKEY             = process.env.PARALLEX_VA_SUBKEY || '';
+const SUBKEY_HEADER      = process.env.PARALLEX_VA_SUBKEY_HEADER || 'Ocp-Apim-Subscription-Key';
+const MERCHANT_ID        = process.env.PARALLEX_VA_MERCHANT_ID || '';
+// Paylode settlement account at Parallex — where all VA pay-in collections are settled
+const SETTLEMENT_ACCOUNT = process.env.PARALLEX_VA_SETTLEMENT_ACCOUNT || '1000362856';
 
 function isConfigured() { return !!(USERNAME && PASSWORD && SUBKEY); }
 const b64          = (s) => Buffer.from(String(s), 'utf8').toString('base64');
@@ -139,7 +141,7 @@ function verifyInflow(body, expectedSecret) {
 }
 
 module.exports = {
-  isConfigured, login, call, BASE_URL,
+  isConfigured, login, call, BASE_URL, SETTLEMENT_ACCOUNT,
   createTimedAccount, temporaryRequery, createPermanentAccount, permanentRequery,
   addWebhook, getTransactions, getBanks, verifyInflow,
   b64, nairaFromKobo, koboFromNaira,

@@ -71,6 +71,7 @@ var NAV = {
     { section:'Users', items:[
       {id:'merchants',     icon:'store',      label:'Merchants'          },
       {id:'aggregators',   icon:'building-2', label:'Aggregators'        },
+      {id:'partners',      icon:'handshake',  label:'Partners'           },
       {id:'admin_onboard', icon:'user-plus',  label:'Onboard Merchant'   },
       {id:'users',         icon:'users',      label:'Users & Permissions'},
     ]},
@@ -87,11 +88,14 @@ var NAV = {
       {id:'sa_whatsapp',    icon:'message-circle', label:'WhatsApp Billing'},
     ]},
     { section:'Reports', items:[
-      {id:'revenue',         icon:'banknote', label:'Revenue Report'  },
-      {id:'vat_report',      icon:'receipt-text', label:'VAT Report'      },
-      {id:'cbn_report',      icon:'file-spreadsheet', label:'CBN Report'      },
-      {id:'payout_report',   icon:'send', label:'Payout Report'   },
-      {id:'rail_settlement', icon:'route', label:'Rail Settlement' },
+      {id:'revenue',           icon:'banknote',          label:'Revenue Report'    },
+      {id:'vat_report',        icon:'receipt-text',      label:'VAT Report'        },
+      {id:'cbn_report',        icon:'file-spreadsheet',  label:'CBN Report'        },
+      {id:'payout_report',     icon:'send',              label:'Payout Report'     },
+      {id:'rail_settlement',   icon:'route',             label:'Rail Settlement'   },
+      {id:'mpgs_activity',     icon:'credit-card',       label:'MPGS Activity'     },
+      {id:'partner_revenue',   icon:'handshake',         label:'Partner Revenue'   },
+      {id:'user_type_summary', icon:'pie-chart',         label:'Volume by User Type'},
     ]},
     { section:'System Config', items:[
       {id:'service_providers',   icon:'server', label:'Service Providers'},
@@ -112,7 +116,7 @@ var NAV = {
   ],
   admin: [
     { section:'Dashboard',  items:[{id:'overview',icon:'layout-dashboard',label:'Dashboard'}]},
-    { section:'Management',  items:[{id:'transactions',icon:'arrow-right-left',label:'All Transactions'},{id:'merchants',icon:'store',label:'Merchants'},{id:'aggregators',icon:'building-2',label:'Aggregators'},{id:'admin_onboard',icon:'user-plus',label:'Onboard Merchant'}]},
+    { section:'Management',  items:[{id:'transactions',icon:'arrow-right-left',label:'All Transactions'},{id:'merchants',icon:'store',label:'Merchants'},{id:'aggregators',icon:'building-2',label:'Aggregators'},{id:'partners',icon:'handshake',label:'Partners'},{id:'admin_onboard',icon:'user-plus',label:'Onboard Merchant'}]},
     { section:'Operations',  items:[{id:'settlement',icon:'circle-check',label:'Settlement'},{id:'wallets',icon:'wallet',label:'Merchant Wallets'},{id:'compliance',icon:'scale',label:'KYC Review'},{id:'deferrals',icon:'file-clock',label:'KYC Docs & Deferrals'},{id:'compliance_exceptions',icon:'flag',label:'Intl / Mastercard Compliance'},{id:'compliance_centre',icon:'shield-check',label:'Compliance Centre'},{id:'onboarding_apps',icon:'file-text',label:'Applications'},{id:'revenue',icon:'banknote',label:'Revenue (Read-Only)'}]},
     { section:'System',      items:[{id:'users',icon:'users',label:'Invite Users'},{id:'activity_log',icon:'history',label:'Activity Log'},{id:'invite_tracking',icon:'mail-check',label:'Invite Tracking'}]},
     { section:'Developer',   items:DEV_SDK_ITEMS },
@@ -409,7 +413,7 @@ function renderComplianceExceptions() {
 function renderPage() {
   var pages = {
     overview:renderSuperOverview, transactions:renderTransactions,
-    merchants:renderMerchants, aggregators:renderAggregators,
+    merchants:renderMerchants, aggregators:renderAggregators, partners:renderPartners,
     revenue:renderRevenueConfig, rails:renderRailCosts,
     settlement:renderSettlement, compliance:renderKycReview, compliance_centre:renderCompliance, settings:renderSettings,
     compliance_exceptions:renderComplianceExceptions, deferrals:renderDocDeferralsShell,
@@ -425,6 +429,9 @@ function renderPage() {
     merch_webhooks:renderMerchWebhooks, merch_profile:renderMerchProfile,
     merch_notifications:renderMerchNotifications,
     sa_whatsapp:renderSaWhatsapp,
+    mpgs_activity:renderMpgsActivity,
+    partner_revenue:renderPartnerRevenue,
+    user_type_summary:renderUserTypeSummary,
     sdk_start:renderSdkStart, sdk_payments:renderSdkPayments,
     sdk_va:renderSdkVirtualAccounts,
     sdk_verify:renderSdkVerify, sdk_payouts:renderSdkPayouts,
@@ -522,6 +529,13 @@ function renderMerchants() {
     '<div class="card"><div class="table-wrap"><table>' +
     '<thead><tr><th>ID</th><th>Merchant</th><th>Category</th><th>Aggregator</th><th>Rate</th><th>Vol (MTD)</th><th>Status</th><th>Actions</th></tr></thead>' +
     '<tbody>' + rows + '</tbody></table></div></div>';
+}
+
+function renderPartners() {
+  return '<div class="page-header flex-between"><div><div class="page-title">Partner Gateway</div>' +
+    '<div class="page-desc">Third-party processors routing their merchants through Paylode MPGS</div></div>' +
+    '<button class="btn btn-lime" onclick="openCreatePartner()">+ Add Partner</button></div>' +
+    '<div id="partners-content"><div style="text-align:center;padding:40px;color:#999">Loading…</div></div>';
 }
 
 function renderAggregators() {
@@ -1335,6 +1349,57 @@ async function toggleMerchNotif(key, val, el) {
 }
 
 // ── SA WhatsApp Billing page ──────────────────────────────────────────────────
+
+function renderMpgsActivity() {
+  setTimeout(loadMpgsActivityReport, 0);
+  return '<div class="page-header flex-between"><div><div class="page-title">MPGS Card Activity</div>' +
+    '<div class="page-desc">Mastercard gateway transactions across all user types — approval rates, currencies, decline analysis</div></div></div>' +
+    '<div class="card" style="margin-bottom:12px">' +
+      '<div class="flex" style="gap:10px;flex-wrap:wrap;align-items:flex-end">' +
+        '<div><label class="form-label" style="font-size:11px">From</label>' +
+          '<input class="form-input" id="mpgs-from" type="date" style="width:140px" value="' + new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10) + '"></div>' +
+        '<div><label class="form-label" style="font-size:11px">To</label>' +
+          '<input class="form-input" id="mpgs-to" type="date" style="width:140px" value="' + new Date().toISOString().slice(0,10) + '"></div>' +
+        '<div><label class="form-label" style="font-size:11px">Currency</label>' +
+          '<select class="form-input form-select" id="mpgs-ccy" style="width:110px"><option value="">All</option><option>NGN</option><option>USD</option></select></div>' +
+        '<div><label class="form-label" style="font-size:11px">Source</label>' +
+          '<select class="form-input form-select" id="mpgs-src" style="width:140px"><option value="">All types</option><option value="direct">Direct</option><option value="aggregator">Aggregator</option><option value="partner">Partner</option></select></div>' +
+        '<button class="btn btn-lime" onclick="loadMpgsActivityReport()">Filter</button>' +
+      '</div></div>' +
+    '<div id="mpgs-activity-content"><div style="text-align:center;padding:40px;color:#999">Loading…</div></div>';
+}
+
+function renderPartnerRevenue() {
+  setTimeout(loadPartnerRevenueReport, 0);
+  return '<div class="page-header flex-between"><div><div class="page-title">Partner Revenue</div>' +
+    '<div class="page-desc">Volume and fee revenue from partner-routed MPGS transactions (Payonus and others)</div></div></div>' +
+    '<div class="card" style="margin-bottom:12px">' +
+      '<div class="flex" style="gap:10px;flex-wrap:wrap;align-items:flex-end">' +
+        '<div><label class="form-label" style="font-size:11px">From</label>' +
+          '<input class="form-input" id="pr-from" type="date" style="width:140px" value="' + new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10) + '"></div>' +
+        '<div><label class="form-label" style="font-size:11px">To</label>' +
+          '<input class="form-input" id="pr-to" type="date" style="width:140px" value="' + new Date().toISOString().slice(0,10) + '"></div>' +
+        '<div><label class="form-label" style="font-size:11px">Partner</label>' +
+          '<select class="form-input form-select" id="pr-partner" style="width:160px"><option value="">All partners</option></select></div>' +
+        '<button class="btn btn-lime" onclick="loadPartnerRevenueReport()">Filter</button>' +
+      '</div></div>' +
+    '<div id="partner-revenue-content"><div style="text-align:center;padding:40px;color:#999">Loading…</div></div>';
+}
+
+function renderUserTypeSummary() {
+  setTimeout(loadUserTypeSummary, 0);
+  return '<div class="page-header"><div class="page-title">Volume by User Type</div>' +
+    '<div class="page-desc">Consolidated view across direct merchants, aggregator sub-merchants, and partner merchants</div></div>' +
+    '<div class="card" style="margin-bottom:12px">' +
+      '<div class="flex" style="gap:10px;flex-wrap:wrap;align-items:flex-end">' +
+        '<div><label class="form-label" style="font-size:11px">From</label>' +
+          '<input class="form-input" id="uts-from" type="date" style="width:140px" value="' + new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10) + '"></div>' +
+        '<div><label class="form-label" style="font-size:11px">To</label>' +
+          '<input class="form-input" id="uts-to" type="date" style="width:140px" value="' + new Date().toISOString().slice(0,10) + '"></div>' +
+        '<button class="btn btn-lime" onclick="loadUserTypeSummary()">Filter</button>' +
+      '</div></div>' +
+    '<div id="user-type-content"><div style="text-align:center;padding:40px;color:#999">Loading…</div></div>';
+}
 
 function renderSaWhatsapp() {
   setTimeout(loadSaWhatsappPage, 0);

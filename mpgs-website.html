@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPGS Portal — Website & Hosting Details</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--navy:#1a2744;--navy-l:#253360;--lime:#7dc534;--g50:#f8fafc;--g100:#f1f5f9;--g200:#e2e8f0;--g300:#cbd5e1;--g400:#94a3b8;--g500:#64748b;--g600:#475569;--g700:#334155;--g800:#1e293b;--red:#ef4444;--green:#10b981;--font:'DM Sans',sans-serif}
+body{font-family:var(--font);background:var(--g50);color:var(--g800);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--navy);height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.logo-box{width:32px;height:32px;background:var(--lime);border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--navy);font-size:14px}
+.logo-name{color:#fff;font-weight:700;font-size:15px}
+.logo-sep{color:rgba(255,255,255,.3);margin:0 4px}
+.logo-sub{color:rgba(255,255,255,.6);font-size:13px}
+.logout-btn{background:none;border:1.5px solid rgba(255,255,255,.25);color:rgba(255,255,255,.7);font-family:var(--font);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer}
+.logout-btn:hover{border-color:rgba(255,255,255,.5);color:#fff}
+.container{max-width:760px;margin:0 auto;padding:36px 20px 60px}
+.back{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--g500);text-decoration:none;margin-bottom:20px}
+.back:hover{color:var(--navy)}
+.page-title{font-size:22px;font-weight:700;color:var(--navy);margin-bottom:4px}
+.merchant-tag{display:inline-flex;align-items:center;gap:6px;background:var(--navy);color:#fff;font-size:12px;font-weight:600;padding:4px 12px;border-radius:14px;margin-bottom:16px}
+.page-sub{font-size:14px;color:var(--g500);margin-bottom:28px;line-height:1.6}
+.card{background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:24px;margin-bottom:20px}
+.card-title{font-size:14px;font-weight:700;color:var(--navy);margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--g100);display:flex;align-items:center;gap:8px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.field{margin-bottom:0}
+.field.full{grid-column:1/-1}
+label{display:block;font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;letter-spacing:.3px;text-transform:uppercase}
+input[type=text],input[type=url],input[type=password],textarea{width:100%;padding:10px 13px;border:1.5px solid var(--g300);border-radius:8px;font-size:14px;font-family:var(--font);color:var(--g800);background:#fff;outline:none;transition:border-color .15s}
+input:focus,textarea:focus{border-color:var(--navy);box-shadow:0 0 0 3px rgba(26,39,68,.06)}
+textarea{resize:vertical;min-height:80px}
+.hint{font-size:11px;color:var(--g400);margin-top:4px}
+.input-wrap{position:relative}
+.eye-btn{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--g400);padding:4px;display:flex}
+.eye-btn:hover{color:var(--g600)}
+.notice{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 16px;font-size:13px;color:#1e40af;margin-bottom:20px;line-height:1.6}
+.action-bar{background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:18px 22px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:10px 22px;border-radius:8px;font-size:14px;font-weight:600;font-family:var(--font);cursor:pointer;border:none;transition:all .15s;text-decoration:none}
+.btn-outline{background:#fff;border:1.5px solid var(--g300);color:var(--g700)}
+.btn-outline:hover{border-color:var(--navy);color:var(--navy)}
+.btn-lime{background:var(--lime);color:var(--navy)}
+.btn-lime:hover{background:#6cb82a}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.alert{padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:16px;display:none}
+.alert.show{display:block}
+.alert.err{background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.alert.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a}
+.saved-badge{display:none;align-items:center;gap:5px;font-size:12px;color:var(--green)}
+.saved-badge.show{display:inline-flex}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo-box">P</div>
+    <span class="logo-name">Paylode</span>
+    <span class="logo-sep">|</span>
+    <span class="logo-sub">MPGS Onboarding Portal</span>
+  </div>
+  <button class="logout-btn" onclick="logout()">Log out</button>
+</div>
+
+<div class="container">
+  <a href="javascript:history.back()" class="back">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+    Back to merchant submission
+  </a>
+
+  <span class="merchant-tag" id="merchantTag">Loading…</span>
+  <h1 class="page-title">Step 4 — Website &amp; Hosting Details</h1>
+  <p class="page-sub">Provide your domain name, hosting provider, and VPS/server details so Paylode can configure your MPGS-integrated e-commerce website.</p>
+
+  <div class="notice">
+    <strong>Security notice:</strong> Credentials entered here are stored securely and accessed only by the Paylode technical team for the purpose of website setup and MPGS integration. You can update these details at any time.
+  </div>
+
+  <div class="alert err" id="alertErr"></div>
+  <div class="alert ok" id="alertOk"></div>
+
+  <form id="websiteForm" novalidate>
+
+    <!-- Domain -->
+    <div class="card">
+      <div class="card-title">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>
+        Domain Name
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label for="domainName">Domain Name</label>
+          <input type="url" id="domainName" placeholder="e.g. https://www.merchantsite.com">
+          <div class="hint">Include https:// if available</div>
+        </div>
+        <div class="field">
+          <label for="domainHost">Domain Registrar / Host</label>
+          <input type="text" id="domainHost" placeholder="e.g. GoDaddy, Namecheap, Whogohost">
+        </div>
+        <div class="field">
+          <label for="domainUser">Registrar Login / Username</label>
+          <input type="text" id="domainUser" placeholder="Login email or username" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="domainPass">Registrar Password</label>
+          <div class="input-wrap">
+            <input type="password" id="domainPass" placeholder="Registrar account password" autocomplete="new-password">
+            <button type="button" class="eye-btn" onclick="togglePw('domainPass')">
+              <svg width="17" height="17" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="field full">
+          <label for="domainNotes">Domain / cPanel Notes</label>
+          <textarea id="domainNotes" placeholder="Any additional notes about the domain or cPanel access (e.g. two-factor authentication instructions, cPanel URL)"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- VPS / Hosting Server -->
+    <div class="card">
+      <div class="card-title">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        VPS / Hosting Server
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label for="vpsProvider">VPS / Hosting Provider</label>
+          <input type="text" id="vpsProvider" placeholder="e.g. Contabo, DigitalOcean, AWS, Namecheap">
+        </div>
+        <div class="field">
+          <label for="vpsIp">Server IP Address</label>
+          <input type="text" id="vpsIp" placeholder="e.g. 176.57.188.45">
+        </div>
+        <div class="field">
+          <label for="vpsUser">SSH / Server Username</label>
+          <input type="text" id="vpsUser" placeholder="e.g. root, ubuntu, admin" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="vpsPass">SSH / Server Password</label>
+          <div class="input-wrap">
+            <input type="password" id="vpsPass" placeholder="SSH or control panel password" autocomplete="new-password">
+            <button type="button" class="eye-btn" onclick="togglePw('vpsPass')">
+              <svg width="17" height="17" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="field full">
+          <label for="vpsNotes">Server / Hosting Notes</label>
+          <textarea id="vpsNotes" placeholder="e.g. VPS control panel URL, OS type (Ubuntu 22.04), port, any SSH key notes, hosting plan details"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="action-bar">
+      <span id="savedBadge" class="saved-badge">
+        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#16a34a" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+        Saved
+      </span>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button type="button" class="btn btn-outline" onclick="save()">Save</button>
+        <a id="backBtn" href="mpgs-merchant.html" class="btn btn-lime">Save &amp; Continue</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+const API = '/api/v1/mpgs-portal';
+const appId = new URLSearchParams(window.location.search).get('id');
+
+function logout() { localStorage.removeItem('mpgs_token'); localStorage.removeItem('mpgs_user'); window.location.href = 'mpgs-login.html'; }
+function token()  { return localStorage.getItem('mpgs_token'); }
+function authFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' } });
+}
+
+function togglePw(id) {
+  const inp = document.getElementById(id);
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+function set(id, val) { if (document.getElementById(id) && val) document.getElementById(id).value = val; }
+
+async function load() {
+  if (!token()) { window.location.href = 'mpgs-login.html'; return; }
+  if (!appId) { window.location.href = 'mpgs-dashboard.html'; return; }
+  document.getElementById('backBtn').href = `mpgs-merchant.html?id=${appId}`;
+  try {
+    const r = await authFetch(`${API}/portal/applications/${appId}`);
+    if (r.status === 401) { logout(); return; }
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    const app = d.data.application;
+    document.getElementById('merchantTag').textContent = app.merchantName || 'Submission';
+    document.title = `${app.merchantName || 'Submission'} — Website Details — MPGS Portal`;
+    set('domainName', app.domainName);
+    set('domainHost', app.domainHost);
+    if (app.domainCredentials) { set('domainUser', app.domainCredentials.username); set('domainPass', app.domainCredentials.password); set('domainNotes', app.domainCredentials.notes); }
+    set('vpsProvider', app.vpsProvider);
+    set('vpsIp', app.vpsIp);
+    if (app.vpsCredentials)    { set('vpsUser', app.vpsCredentials.username); set('vpsPass', app.vpsCredentials.password); set('vpsNotes', app.vpsCredentials.notes); }
+  } catch (e) {
+    document.getElementById('alertErr').textContent = 'Failed to load: ' + e.message;
+    document.getElementById('alertErr').classList.add('show');
+  }
+}
+
+async function save() {
+  const data = {
+    domainName: document.getElementById('domainName').value.trim() || null,
+    domainHost: document.getElementById('domainHost').value.trim() || null,
+    domainCredentials: {
+      username: document.getElementById('domainUser').value.trim(),
+      password: document.getElementById('domainPass').value,
+      notes:    document.getElementById('domainNotes').value.trim(),
+    },
+    vpsProvider: document.getElementById('vpsProvider').value.trim() || null,
+    vpsIp:       document.getElementById('vpsIp').value.trim() || null,
+    vpsCredentials: {
+      username: document.getElementById('vpsUser').value.trim(),
+      password: document.getElementById('vpsPass').value,
+      notes:    document.getElementById('vpsNotes').value.trim(),
+    },
+  };
+  document.getElementById('alertErr').classList.remove('show');
+  try {
+    const r = await authFetch(`${API}/portal/applications/${appId}/website-details`, {
+      method: 'PUT', body: JSON.stringify(data),
+    });
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    const badge = document.getElementById('savedBadge');
+    badge.classList.add('show');
+    setTimeout(() => badge.classList.remove('show'), 3000);
+  } catch (e) {
+    document.getElementById('alertErr').textContent = e.message || 'Save failed';
+    document.getElementById('alertErr').classList.add('show');
+  }
+}
+
+// Save & Continue button saves first
+document.getElementById('backBtn').addEventListener('click', async function(e) {
+  e.preventDefault();
+  await save();
+  window.location.href = `mpgs-merchant.html?id=${appId}`;
+});
+
+load();
+</script>
+</body>
+</html>

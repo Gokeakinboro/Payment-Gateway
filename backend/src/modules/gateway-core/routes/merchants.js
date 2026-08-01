@@ -14,6 +14,99 @@ function genTempPassword() {
   return Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!';
 }
 
+// ── Auto-create MPGS onboarding draft on merchant activation ──────────────────
+// Pre-fills from the merchant's Paylode profile. SA reviews + sends to Parallex.
+// Non-blocking: any failure is silently swallowed so activation never fails.
+// Idempotent: skips if a draft already exists for this merchant.
+async function createMpgsOnboardingDraft(merchantId) {
+  try {
+    const existing = await prisma.mpgsApplication.findFirst({
+      where: { paylodeMerchantId: merchantId },
+    });
+    if (existing) return;
+
+    const merchant = await prisma.merchant.findUnique({
+      where:  { id: merchantId },
+      select: { businessName:true, address:true, businessEmail:true, businessPhone:true,
+                website:true, mcc:true, rcNumber:true, expectedMonthlyVol:true },
+    });
+    if (!merchant) return;
+
+    const applicant = await prisma.mpgsApplicant.findFirst({ orderBy: { createdAt: 'asc' } });
+    if (!applicant) return; // no MPGS portal accounts yet — skip
+
+    const monthly = merchant.expectedMonthlyVol || '';
+    const mcc     = merchant.mcc || '';
+
+    await prisma.mpgsApplication.create({
+      data: {
+        applicantId:       applicant.id,
+        paylodeMerchantId: merchantId,
+        merchantName:      merchant.businessName,
+        status:            'DRAFT',
+        questionnaire: {
+          companyName:            merchant.businessName,
+          companyAddress:         merchant.address || '',
+          country:                'Nigeria',
+          website:                merchant.website || '',
+          mcc,
+          rcNumber:               merchant.rcNumber || '',
+          customerServiceContact: `${merchant.businessPhone || ''} | ${merchant.businessEmail || ''}`,
+          typeOfGoods:            '',
+          // Defaults — NGN only (USD requires SA approval per merchant policy)
+          cardBrands:             ['MasterCard', 'Visa', 'Verve'],
+          cardCurrencies:         ['NGN'],
+          cardTypes:              ['Debit', 'Credit'],
+          paymentModel:           '3 party',
+          transactionModel:       'Purchase',
+          uniqueRef:              'Yes',
+          salesMonthly:           monthly,
+          prevPaymentEngines:     'No',
+          pcidssStatus:           'Not Started',
+          advanceFunctionality:   ['Refund'],
+          threeDSecure:           ['MasterCard Secure Code'],
+          storeAddress:           merchant.address || '',
+          // SA to fill before sending to Parallex:
+          bvn: '', tin: '', directors: '', lengthOfStay: '', outlets: '',
+          yearsOfOperation: '', annualVolume: '', annualValue: '',
+          salesDaily: '', salesWeekly: '', salesAnnual: '',
+          highestValue: '', lowestValue: '', goodsList: '',
+        },
+        applicationForm: {
+          s1CompanyName:          merchant.businessName,
+          s1CompanyAddress:       merchant.address || '',
+          s1OwnershipType:        '',
+          s1RcNumber:             merchant.rcNumber || '',
+          s1TradingName:          merchant.businessName,
+          s1DateRegistered:       '',
+          s1Tin:                  '',
+          s2PrimaryName:          '',
+          s2PrimaryDesignation:   '',
+          s2PrimaryOfficeTel:     merchant.businessPhone || '',
+          s2PrimaryMobile:        merchant.businessPhone || '',
+          s2PrimaryEmail:         merchant.businessEmail || '',
+          s2SecondaryName:        '', s2SecondaryDesignation: '',
+          s2SecondaryOfficeTel:   '', s2SecondaryMobile: '', s2SecondaryEmail: '',
+          s3ProductsMcc:          mcc ? `MCC ${mcc}` : '',
+          s3WebsiteName:          merchant.businessName,
+          s3WebsiteUrl:           merchant.website || '',
+          s4AccountNumber:        '', s4AccountName:   '', s4AccountType: 'Current',
+          s4SettlementAccount:    '', s4CollateralAccount: 'N/A', s4Branch: '',
+          s5OtherDetails:         '',
+          s5IndividualName:       '', s5CompanyName: merchant.businessName,
+          s5AuthSig:              '', s5Designation: '',
+          s5Date:                 new Date().toISOString().split('T')[0],
+          s6OnboardingType:       'Payment Facilitator',
+        },
+      },
+    });
+
+    logger.info({ merchantId, merchantName: merchant.businessName }, 'Auto-created MPGS onboarding draft');
+  } catch (err) {
+    logger.warn({ err: err.message, merchantId }, 'Auto-create MPGS draft failed (non-fatal)');
+  }
+}
+
 // Field-level gate (#8): only viewers with view_merchant_contact (SUPER_ADMIN by
 // default) may see merchant contact details. Strips PII from list/detail payloads.
 const CONTACT_FIELDS = ['email', 'businessEmail', 'businessPhone', 'phone', 'address', 'website'];
@@ -280,6 +373,8 @@ router.put('/:id/activate', requireAuth, requireAdminOrCompliance, async (req, r
   try {
     const m = await prisma.merchant.update({ where:{id:req.params.id}, data:{kycStatus:'ACTIVE',isActive:true} });
     await logAudit(req.user.id, 'MERCHANT_REACTIVATED', 'merchants', m.id, {isActive:false}, {isActive:true});
+    // Auto-create MPGS onboarding draft for card acceptance (non-blocking).
+    createMpgsOnboardingDraft(req.params.id).catch(() => {});
     // Notify the merchant their account is active (best-effort — never blocks the action).
     if (m.businessEmail) {
       const login = (process.env.APP_URL || 'https://paylodeservices.com') + '/login.html';
@@ -449,6 +544,8 @@ router.post('/me/activate', requireAuth, async (req, res, next) => {
       select: { businessName:true, businessEmail:true },
     });
     await logAudit(req.user.id, 'MERCHANT_SELF_ACTIVATED', 'merchants', merchantId, { isActive:false, kycStatus:'KYC_APPROVED' }, { isActive:true, kycStatus:'ACTIVE' }, null, req.ip).catch(() => {});
+    // Auto-create MPGS onboarding draft for card acceptance (non-blocking).
+    createMpgsOnboardingDraft(merchantId).catch(() => {});
     // Close the onboarding lifecycle timeline: record the 'activated' stage on the
     // merchant's linked submission so the full cycle (submit→approve→activate) is tracked.
     await prisma.$executeRaw`

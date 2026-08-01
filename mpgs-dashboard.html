@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPGS Portal — My Submissions</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--navy:#1a2744;--navy-l:#253360;--lime:#7dc534;--white:#fff;--g50:#f8fafc;--g100:#f1f5f9;--g200:#e2e8f0;--g300:#cbd5e1;--g400:#94a3b8;--g500:#64748b;--g600:#475569;--g700:#334155;--g800:#1e293b;--red:#ef4444;--green:#10b981;--amber:#f59e0b;--font:'DM Sans',sans-serif}
+body{font-family:var(--font);background:var(--g50);color:var(--g800);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--navy);height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.logo-box{width:32px;height:32px;background:var(--lime);border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--navy);font-size:14px}
+.logo-name{color:#fff;font-weight:700;font-size:15px}
+.logo-sep{color:rgba(255,255,255,.3);margin:0 4px}
+.logo-sub{color:rgba(255,255,255,.6);font-size:13px}
+.topbar-right{display:flex;align-items:center;gap:16px}
+.user-name{color:rgba(255,255,255,.8);font-size:13px}
+.logout-btn{background:none;border:1.5px solid rgba(255,255,255,.25);color:rgba(255,255,255,.7);font-family:var(--font);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer}
+.logout-btn:hover{border-color:rgba(255,255,255,.5);color:#fff}
+.container{max-width:900px;margin:0 auto;padding:36px 20px 60px}
+.page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}
+.page-title{font-size:22px;font-weight:700;color:var(--navy)}
+.page-sub{font-size:14px;color:var(--g500);margin-top:2px}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;font-family:var(--font);cursor:pointer;border:none;transition:all .15s;text-decoration:none}
+.btn-lime{background:var(--lime);color:var(--navy)}
+.btn-lime:hover{background:#6cb82a}
+.btn-navy{background:var(--navy);color:#fff}
+.btn-navy:hover{background:var(--navy-l)}
+.btn-outline{background:#fff;border:1.5px solid var(--g300);color:var(--g700)}
+.btn-outline:hover{border-color:var(--navy);color:var(--navy)}
+/* Merchant cards */
+.merchant-grid{display:grid;gap:16px}
+.merchant-card{background:#fff;border:2px solid var(--g200);border-radius:14px;padding:24px;transition:all .2s;text-decoration:none;display:block;color:inherit}
+.merchant-card:hover{border-color:var(--navy);box-shadow:0 4px 20px rgba(26,39,68,.1)}
+.merchant-card.has-action{border-color:var(--amber)}
+.merchant-card.approved,.merchant-card.sent{border-color:var(--lime)}
+.mc-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}
+.mc-name{font-size:16px;font-weight:700;color:var(--navy)}
+.mc-sub{font-size:12px;color:var(--g400);margin-top:2px}
+.status-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:14px;font-size:11px;font-weight:600;white-space:nowrap}
+.status-badge.DRAFT{background:#f1f5f9;color:var(--g600)}
+.status-badge.SUBMITTED{background:#eff6ff;color:#2563eb}
+.status-badge.UNDER_REVIEW{background:#fefce8;color:#ca8a04}
+.status-badge.ACTION_REQUIRED{background:#fff7ed;color:#ea580c}
+.status-badge.APPROVED{background:#f0fdf4;color:#16a34a}
+.status-badge.REJECTED{background:#fef2f2;color:#dc2626}
+.status-badge.SENT_TO_BANK{background:#f0fdf4;color:#16a34a}
+.mc-steps{display:flex;gap:8px;flex-wrap:wrap}
+.mc-step{display:flex;align-items:center;gap:5px;font-size:12px;padding:4px 10px;border-radius:20px}
+.mc-step.done{background:#f0fdf4;color:#16a34a}
+.mc-step.pending{background:var(--g100);color:var(--g500)}
+.mc-step.warn{background:#fff7ed;color:#ea580c}
+.mc-step svg{flex-shrink:0}
+.mc-footer{display:flex;align-items:center;justify-content:space-between;margin-top:14px;flex-wrap:wrap;gap:8px}
+.mc-date{font-size:12px;color:var(--g400)}
+.mc-comments{font-size:12px;color:var(--navy);font-weight:600}
+.mc-ids{font-size:11px;color:var(--green);margin-top:4px}
+/* Add merchant modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}
+.modal-overlay.show{display:flex}
+.modal{background:#fff;border-radius:14px;padding:32px;width:100%;max-width:400px}
+.modal-title{font-size:18px;font-weight:700;color:var(--navy);margin-bottom:6px}
+.modal-sub{font-size:13px;color:var(--g500);margin-bottom:20px}
+.field label{display:block;font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;letter-spacing:.3px;text-transform:uppercase}
+.field input{width:100%;padding:11px 14px;border:1.5px solid var(--g300);border-radius:8px;font-size:14px;font-family:var(--font);color:var(--g800);outline:none;transition:border-color .15s}
+.field input:focus{border-color:var(--navy)}
+.modal-actions{display:flex;gap:10px;margin-top:20px}
+.alert{padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:16px;display:none}
+.alert.show{display:block}
+.alert.err{background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.empty-state{text-align:center;padding:48px 24px;background:#fff;border:2px dashed var(--g200);border-radius:14px}
+.empty-icon{font-size:48px;margin-bottom:16px}
+.empty-title{font-size:18px;font-weight:700;color:var(--navy);margin-bottom:8px}
+.empty-sub{font-size:14px;color:var(--g500);margin-bottom:20px}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo-box">P</div>
+    <span class="logo-name">Paylode</span>
+    <span class="logo-sep">|</span>
+    <span class="logo-sub">MPGS Onboarding Portal</span>
+  </div>
+  <div class="topbar-right">
+    <span class="user-name" id="userName"></span>
+    <button class="logout-btn" onclick="logout()">Log out</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">My Merchant Submissions</h1>
+      <p class="page-sub">Each card below is a separate MPGS onboarding submission for one merchant.</p>
+    </div>
+    <button class="btn btn-lime" onclick="showAddModal()">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+      Add Merchant
+    </button>
+  </div>
+
+  <div class="alert err" id="alertErr"></div>
+  <div class="merchant-grid" id="merchantGrid"></div>
+</div>
+
+<!-- Add merchant modal -->
+<div class="modal-overlay" id="addModal">
+  <div class="modal">
+    <div class="modal-title">New Merchant Submission</div>
+    <p class="modal-sub">Enter the name of the merchant you are onboarding to MPGS.</p>
+    <div class="alert err" id="modalErr"></div>
+    <div class="field">
+      <label for="merchantName">Merchant / Company Name</label>
+      <input type="text" id="merchantName" placeholder="e.g. Acme Foods Limited" autocomplete="off">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeAddModal()">Cancel</button>
+      <button class="btn btn-navy" id="createBtn" onclick="createMerchant()">Create Submission</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/api/v1/mpgs-portal';
+const STATUS_LABELS = { DRAFT:'Draft', SUBMITTED:'Submitted', UNDER_REVIEW:'Under Review', ACTION_REQUIRED:'Action Required', APPROVED:'Approved', REJECTED:'Rejected', SENT_TO_BANK:'Sent to Bank' };
+
+function logout() { localStorage.removeItem('mpgs_token'); localStorage.removeItem('mpgs_user'); window.location.href = 'mpgs-login.html'; }
+function token()  { return localStorage.getItem('mpgs_token'); }
+function authFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' } });
+}
+
+async function load() {
+  if (!token()) { window.location.href = 'mpgs-login.html'; return; }
+  try {
+    const r = await authFetch(`${API}/portal/me`);
+    if (r.status === 401) { logout(); return; }
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    document.getElementById('userName').textContent = `${d.data.firstName} ${d.data.lastName}`;
+    renderGrid(d.data.applications || [], d.data.docsList || []);
+  } catch (e) {
+    document.getElementById('alertErr').textContent = 'Failed to load: ' + e.message;
+    document.getElementById('alertErr').classList.add('show');
+  }
+}
+
+function renderGrid(apps, docsList) {
+  const grid = document.getElementById('merchantGrid');
+  if (!apps.length) {
+    grid.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🏪</div>
+        <div class="empty-title">No submissions yet</div>
+        <p class="empty-sub">Click "Add Merchant" to start your first MPGS onboarding application.</p>
+        <button class="btn btn-lime" onclick="showAddModal()">Add First Merchant</button>
+      </div>`;
+    return;
+  }
+
+  const requiredDocKeys = docsList.filter(d => d.key !== 'pcidss_cert').map(d => d.key);
+
+  grid.innerHTML = apps.map(app => {
+    const uploadedDocKeys = new Set((app.documents || []).map(d => d.docKey));
+    const docsComplete = requiredDocKeys.every(k => uploadedDocKeys.has(k));
+    const docsCount    = (app.documents || []).length;
+    const hasReupload  = (app.documents || []).some(d => d.status === 'REUPLOAD_REQUESTED' || d.status === 'REJECTED');
+    const commentCount = (app.comments || []).length;
+    const cardClass = ['ACTION_REQUIRED'].includes(app.status) ? 'has-action' :
+                      ['APPROVED','SENT_TO_BANK'].includes(app.status) ? 'approved' : '';
+
+    const step = (done, warn, label) => `
+      <div class="mc-step ${warn ? 'warn' : done ? 'done' : 'pending'}">
+        <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          ${warn ? '<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>'
+                : done ? '<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>'
+                       : '<circle cx="12" cy="12" r="10"/>'}
+        </svg>
+        ${label}
+      </div>`;
+
+    return `
+    <a class="merchant-card ${cardClass}" href="mpgs-merchant.html?id=${app.id}">
+      <div class="mc-header">
+        <div>
+          <div class="mc-name">${app.merchantName || 'Unnamed submission'}</div>
+          <div class="mc-sub">Created ${new Date(app.createdAt).toLocaleDateString()}</div>
+          ${app.parallexMerchantId ? `<div class="mc-ids">✓ Merchant ID: ${app.parallexMerchantId}${app.parallexOperatorId ? ' | Operator ID: '+app.parallexOperatorId : ''}</div>` : ''}
+        </div>
+        <span class="status-badge ${app.status}">${STATUS_LABELS[app.status] || app.status}</span>
+      </div>
+      <div class="mc-steps">
+        ${step(docsComplete, hasReupload, `Documents (${docsCount}/${requiredDocKeys.length})`)}
+        ${step(!!app.questionnaire, false, app.questDraft ? 'Questionnaire (draft)' : 'Questionnaire')}
+        ${step(!!app.applicationForm, false, app.formDraft ? 'Application form (draft)' : 'Application form')}
+        ${step(app.domainName, false, app.domainName ? 'Website details' : 'Website details')}
+        ${step(['SUBMITTED','UNDER_REVIEW','APPROVED','SENT_TO_BANK'].includes(app.status), false, 'Submitted')}
+      </div>
+      <div class="mc-footer">
+        <span class="mc-date">Last updated ${new Date(app.updatedAt || app.createdAt).toLocaleString()}</span>
+        ${commentCount ? `<span class="mc-comments">💬 ${commentCount} feedback message${commentCount>1?'s':''}</span>` : ''}
+      </div>
+    </a>`;
+  }).join('');
+}
+
+function showAddModal() { document.getElementById('addModal').classList.add('show'); document.getElementById('merchantName').focus(); }
+function closeAddModal() { document.getElementById('addModal').classList.remove('show'); document.getElementById('merchantName').value = ''; document.getElementById('modalErr').classList.remove('show'); }
+
+async function createMerchant() {
+  const name = document.getElementById('merchantName').value.trim();
+  if (!name) { document.getElementById('modalErr').textContent = 'Please enter a merchant name'; document.getElementById('modalErr').classList.add('show'); return; }
+  const btn = document.getElementById('createBtn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    const r = await authFetch(`${API}/portal/applications`, { method: 'POST', body: JSON.stringify({ merchantName: name }) });
+    const d = await r.json();
+    if (!d.status) throw new Error(d.message);
+    closeAddModal();
+    window.location.href = `mpgs-merchant.html?id=${d.data.id}`;
+  } catch (e) {
+    document.getElementById('modalErr').textContent = e.message;
+    document.getElementById('modalErr').classList.add('show');
+    btn.disabled = false; btn.textContent = 'Create Submission';
+  }
+}
+
+// Allow Enter in modal
+document.getElementById('merchantName').addEventListener('keypress', e => { if (e.key === 'Enter') createMerchant(); });
+
+load();
+</script>
+</body>
+</html>

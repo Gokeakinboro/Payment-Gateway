@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPGS Portal — Verify Email</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--navy:#1a2744;--lime:#7dc534;--g50:#f8fafc;--g200:#e2e8f0;--g400:#94a3b8;--g500:#64748b;--g800:#1e293b;--red:#ef4444;--font:'DM Sans',sans-serif}
+body{font-family:var(--font);background:var(--g50);color:var(--g800);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--navy);height:56px;display:flex;align-items:center;padding:0 32px;gap:12px}
+.logo-box{width:32px;height:32px;background:var(--lime);border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--navy);font-size:14px}
+.logo-name{color:#fff;font-weight:700;font-size:15px}
+.logo-sep{color:rgba(255,255,255,.3);margin:0 4px}
+.logo-sub{color:rgba(255,255,255,.6);font-size:13px}
+.wrap{flex:1;display:flex;align-items:center;justify-content:center;padding:40px 20px}
+.card{background:#fff;border:1.5px solid var(--g200);border-radius:14px;padding:40px;width:100%;max-width:420px;text-align:center;box-shadow:0 4px 24px rgba(26,39,68,.07)}
+.icon-wrap{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}
+.icon-wrap.loading{background:#f1f5f9}
+.icon-wrap.ok{background:#f0fdf4}
+.icon-wrap.err{background:#fef2f2}
+h2{font-size:20px;font-weight:700;color:var(--navy);margin-bottom:8px}
+p{font-size:14px;color:var(--g500);line-height:1.7;margin-bottom:20px}
+.btn{display:inline-block;background:var(--navy);color:#fff;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-family:var(--font)}
+.btn.lime{background:var(--lime);color:var(--navy)}
+footer{text-align:center;padding:20px;font-size:12px;color:var(--g400)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo-box">P</div>
+  <span class="logo-name">Paylode</span>
+  <span class="logo-sep">|</span>
+  <span class="logo-sub">MPGS Onboarding Portal</span>
+</div>
+<div class="wrap">
+  <div class="card" id="card">
+    <div class="icon-wrap loading" id="iconWrap">
+      <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" d="M12 6v6l4 2"/></svg>
+    </div>
+    <h2 id="title">Verifying your email…</h2>
+    <p id="msg">Please wait while we confirm your email address.</p>
+  </div>
+</div>
+<footer>Powered by Paylode Services Limited &mdash; MPGS Parallex Bank Onboarding Portal</footer>
+
+<script>
+const API = '/api/v1/mpgs-portal';
+
+(async () => {
+  const token = new URLSearchParams(window.location.search).get('token');
+  const iconWrap = document.getElementById('iconWrap');
+  const title    = document.getElementById('title');
+  const msg      = document.getElementById('msg');
+  const card     = document.getElementById('card');
+
+  if (!token) {
+    iconWrap.className = 'icon-wrap err';
+    iconWrap.innerHTML = '<svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="#dc2626" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>';
+    title.textContent = 'Invalid link';
+    msg.textContent = 'This verification link is invalid or missing a token.';
+    card.insertAdjacentHTML('beforeend', '<a href="mpgs-register.html" class="btn">Register again</a>');
+    return;
+  }
+
+  try {
+    const r = await fetch(`${API}/auth/verify-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const d = await r.json();
+
+    if (d.status) {
+      iconWrap.className = 'icon-wrap ok';
+      iconWrap.innerHTML = '<svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="#16a34a" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
+      title.textContent = 'Email verified!';
+      msg.textContent = 'Your email address has been confirmed. You can now log in and start your MPGS onboarding.';
+      card.insertAdjacentHTML('beforeend', '<a href="mpgs-login.html" class="btn lime">Log In</a>');
+    } else {
+      throw new Error(d.message || 'Verification failed');
+    }
+  } catch (err) {
+    iconWrap.className = 'icon-wrap err';
+    iconWrap.innerHTML = '<svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="#dc2626" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>';
+    title.textContent = 'Verification failed';
+    msg.textContent = err.message || 'This link may have expired. Please register again to get a new link.';
+    card.insertAdjacentHTML('beforeend', '<a href="mpgs-register.html" class="btn">Register again</a>');
+  }
+})();
+</script>
+</body>
+</html>
