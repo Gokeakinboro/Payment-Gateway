@@ -533,6 +533,7 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
               <div class="card-logos">
                 <div class="card-logo-chip visa" id="logo-visa">VISA</div>
                 <div class="card-logo-chip mc" id="logo-mc">MC</div>
+                <div class="card-logo-chip" id="logo-verve" style="background:#1a6b3c;color:#fff;opacity:.3">VERVE</div>
               </div>
             </div>
           </div>
@@ -554,11 +555,22 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
                 onfocus="this.placeholder=''" onblur="this.placeholder='• • •'">
             </div>
           </div>
-          <div class="field">
-            <label>Card PIN <span style="color:var(--g400);font-weight:400">(Nigerian cards · leave blank for international)</span></label>
+          <!-- PIN field — shown for Verve/local, hidden for Visa/Mastercard (auto-detected) -->
+          <div class="field" id="card-pin-field">
+            <label>Card PIN</label>
             <input type="tel" id="card-pin" class="mono-input" placeholder="• • • •"
               maxlength="4" inputmode="numeric">
-            <div class="hint">4-digit ATM PIN for Nigerian cards — leave blank for Visa/Mastercard international cards</div>
+            <div class="hint">Your 4-digit ATM PIN — encrypted and never stored</div>
+          </div>
+          <!-- 3DS notice — shown when Visa or Mastercard is detected -->
+          <div id="card-3ds-notice" style="display:none;background:#f0f7ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;margin-bottom:8px">
+            <div style="display:flex;align-items:flex-start;gap:10px">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:3px">No PIN required</div>
+                <div style="font-size:12px;color:#1d4ed8;line-height:1.5">Your bank will send a push notification or OTP to verify this payment. You will be redirected to complete the verification.</div>
+              </div>
+            </div>
           </div>
           <button class="pay-btn" id="pay-btn-card" onclick="payWithCard()">
             <div class="spinner"></div>
@@ -1143,13 +1155,37 @@ function backToTransferChoose() {
 }
 
 // ─── CARD FORMATTING ─────────────────────────────────────────────────────────
+function detectCardScheme(pan) {
+  // Verve: starts with 6, or Mastercard BINs 5061/5062/5063 (local Nigerian Verve)
+  if (pan.startsWith('6')) return 'verve';
+  if (pan.startsWith('5061') || pan.startsWith('5062') || pan.startsWith('5063')) return 'verve';
+  if (pan.startsWith('4')) return 'visa';
+  if (pan.startsWith('5') || pan.startsWith('2')) return 'mastercard';
+  return null;
+}
+
 function formatCard(input) {
   let v = input.value.replace(/\D/g,'').substring(0,16);
   input.value = v.match(/.{1,4}/g)?.join('  ') || v;
-  // Detect card type
-  const first = v[0];
-  document.getElementById('logo-visa').style.opacity = first==='4'?'1':'0.3';
-  document.getElementById('logo-mc').style.opacity   = first==='5'?'1':'0.3';
+
+  const scheme = detectCardScheme(v);
+  document.getElementById('logo-visa').style.opacity   = scheme === 'visa'       ? '1' : '0.3';
+  document.getElementById('logo-mc').style.opacity     = scheme === 'mastercard' ? '1' : '0.3';
+  document.getElementById('logo-verve').style.opacity  = scheme === 'verve'      ? '1' : '0.3';
+
+  const isIntl    = scheme === 'visa' || scheme === 'mastercard';
+  const pinField  = document.getElementById('card-pin-field');
+  const notice    = document.getElementById('card-3ds-notice');
+  const pinInput  = document.getElementById('card-pin');
+
+  if (isIntl) {
+    pinField.style.display  = 'none';
+    notice.style.display    = 'block';
+    pinInput.value          = ''; // clear any previously entered PIN
+  } else {
+    pinField.style.display  = '';
+    notice.style.display    = 'none';
+  }
 }
 
 function formatExpiry(input) {
@@ -1188,9 +1224,11 @@ async function payWithCard() {
   if (expiry.length < 4)   { shake('card-expiry'); return; }
   if (cvv.length < 3)      { shake('card-cvv');    return; }
 
-  // No PIN → international card flow via MPGS 3DS2
-  if (!pin) return payWithMpgsCard(number, name, expiry, cvv);
+  // Route by detected card scheme — Verve/local needs PIN; Visa/Mastercard goes via MPGS 3DS2
+  const scheme = detectCardScheme(number);
+  if (scheme === 'visa' || scheme === 'mastercard') return payWithMpgsCard(number, name, expiry, cvv);
 
+  // Verve / unknown — require PIN
   if (pin.length < 4) { shake('card-pin'); return; }
 
   const btn = document.getElementById('pay-btn-card');
