@@ -555,10 +555,10 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
             </div>
           </div>
           <div class="field">
-            <label>Card PIN <span style="color:var(--g400);font-weight:400">(required for Nigerian cards)</span></label>
+            <label>Card PIN <span style="color:var(--g400);font-weight:400">(Nigerian cards · leave blank for international)</span></label>
             <input type="tel" id="card-pin" class="mono-input" placeholder="• • • •"
               maxlength="4" inputmode="numeric">
-            <div class="hint">Your 4-digit ATM PIN — encrypted and never stored</div>
+            <div class="hint">4-digit ATM PIN for Nigerian cards — leave blank for Visa/Mastercard international cards</div>
           </div>
           <button class="pay-btn" id="pay-btn-card" onclick="payWithCard()">
             <div class="spinner"></div>
@@ -595,6 +595,29 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
           <button class="back-btn" style="width:100%;margin-top:10px;text-align:center" onclick="cancelOtp()">
             ← Back to card entry
           </button>
+        </div>
+
+        <!-- ── 3DS METHOD PANEL (hidden iframe fingerprinting — user sees spinner) ── -->
+        <div class="panel" id="panel-3ds-method">
+          <div style="text-align:center;padding:24px 0 16px">
+            <div class="spinner" style="display:inline-block;width:40px;height:40px;border-width:3px;border-color:var(--navy) transparent var(--navy) transparent;animation:spin .8s linear infinite;border-radius:50%"></div>
+            <div style="font-size:15px;font-weight:600;color:var(--navy);margin-top:20px">Verifying your card…</div>
+            <div style="font-size:13px;color:var(--g500);margin-top:8px;line-height:1.6">This takes a few seconds.<br>Please do not close this page.</div>
+          </div>
+          <!-- Target iframe for 3DS Method form submission — invisible to user -->
+          <iframe name="mpgs-method-frame" id="mpgs-method-frame" style="display:none" width="1" height="1" title="3DS Method"></iframe>
+        </div>
+
+        <!-- ── 3DS CHALLENGE REDIRECT PANEL ── -->
+        <div class="panel" id="panel-3ds-challenge">
+          <div style="text-align:center;padding:24px 0 16px">
+            <div style="width:56px;height:56px;border-radius:50%;background:rgba(26,39,68,.08);display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/><circle cx="12" cy="16" r="1" fill="var(--navy)"/></svg>
+            </div>
+            <div style="font-size:15px;font-weight:600;color:var(--navy);margin-bottom:8px">Redirecting to your bank…</div>
+            <div style="font-size:13px;color:var(--g500);line-height:1.6">You will be asked to verify this payment<br>on your banking app or by SMS.</div>
+            <div style="margin-top:20px"><div class="spinner" style="display:inline-block;width:24px;height:24px;border-width:2px;border-color:var(--navy) transparent var(--navy) transparent;animation:spin .8s linear infinite;border-radius:50%"></div></div>
+          </div>
         </div>
 
         <!-- ── TRANSFER PANEL (sub-methods: PalmPay wallet / bank transfer VA) ── -->
@@ -838,6 +861,22 @@ document.addEventListener('DOMContentLoaded', () => {
   // (and amount, for open-amount links), mint a transaction, then continue as ?ref.
   const linkSlug = params.get('link');
   if (linkSlug && !params.get('ref') && !params.get('reference')) { initPaymentLink(linkSlug); return; }
+
+  // ── Return from 3DS challenge — callback redirects here with ?result=SUCCESS/FAILED
+  const challengeResult = params.get('result');
+  if (challengeResult === 'SUCCESS' || challengeResult === 'FAILED') {
+    state.reference = params.get('ref') || params.get('reference') || '';
+    // Show result immediately without re-entering the card form
+    window.addEventListener('DOMContentLoaded', () => {
+      if (challengeResult === 'SUCCESS') showSuccess('card');
+      else showFailed('Payment authentication was not completed. Please try again.');
+    });
+    if (document.readyState !== 'loading') {
+      if (challengeResult === 'SUCCESS') setTimeout(() => showSuccess('card'), 100);
+      else setTimeout(() => showFailed('Payment authentication was not completed. Please try again.'), 100);
+    }
+    // Still set reference so any polling continues normally
+  }
 
   const hasRefParam = !!(params.get('ref') || params.get('reference'));
   state.reference   = params.get('ref')        || params.get('reference') || generateDemoRef();
@@ -1125,6 +1164,17 @@ function validateCard(input) {
 }
 
 // ─── PAY WITH CARD ────────────────────────────────────────────────────────────
+function getBrowserData() {
+  return {
+    screen_width:  window.screen.width,
+    screen_height: window.screen.height,
+    color_depth:   window.screen.colorDepth,
+    timezone:      new Date().getTimezoneOffset(),
+    java_enabled:  !!(navigator.javaEnabled && navigator.javaEnabled()),
+    language:      navigator.language || 'en-NG',
+  };
+}
+
 async function payWithCard() {
   const number = document.getElementById('card-number').value.replace(/\D/g,'');
   const name   = document.getElementById('card-name').value.trim();
@@ -1133,11 +1183,15 @@ async function payWithCard() {
   const pin    = document.getElementById('card-pin').value;
 
   // Basic validation
-  if (number.length < 16) { shake('card-number'); return; }
+  if (number.length < 15) { shake('card-number'); return; }
   if (!name)               { shake('card-name');   return; }
   if (expiry.length < 4)   { shake('card-expiry'); return; }
   if (cvv.length < 3)      { shake('card-cvv');    return; }
-  if (pin.length < 4)      { shake('card-pin');    return; }
+
+  // No PIN → international card flow via MPGS 3DS2
+  if (!pin) return payWithMpgsCard(number, name, expiry, cvv);
+
+  if (pin.length < 4) { shake('card-pin'); return; }
 
   const btn = document.getElementById('pay-btn-card');
   setLoading(btn, true);
@@ -1241,6 +1295,97 @@ function cancelOtp() {
   document.getElementById('otp-input').value = '';
   hideAllPanels();
   document.getElementById('panel-card').classList.add('active');
+}
+
+// ─── MPGS 3DS2 CARD FLOW (international cards — no PIN) ───────────────────────
+async function payWithMpgsCard(number, name, expiry, cvv) {
+  const btn = document.getElementById('pay-btn-card');
+  setLoading(btn, true);
+
+  const parts = expiry.replace(/\s/g,'').split('/');
+  const expMonth = (parts[0] || '').trim();
+  const expYear  = (parts[1] || '').trim();
+
+  try {
+    const res = await fetch(`${API_URL}/checkout/${state.reference}/charge/mpgs-card`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        card_number:       number,
+        card_name:         name,
+        card_expiry_month: expMonth,
+        card_expiry_year:  expYear,
+        card_cvv:          cvv,
+        browser_data:      getBrowserData(),
+      }),
+    });
+    const data = await res.json();
+    setLoading(btn, false);
+
+    if (!data.status) { showFailed(data.message || 'Card payment unavailable.'); return; }
+
+    if (data.data?.status === 'NEEDS_METHOD') {
+      await mpgs3dsMethod(data.data.method_url, data.data.method_data, expMonth, expYear, cvv);
+    } else if (data.data?.status === 'PENDING_AUTHENTICATION') {
+      mpgs3dsChallenge(data.data.challenge_url);
+    } else if (data.data?.status === 'SUCCESS') {
+      showSuccess('card');
+    } else {
+      showFailed(data.message || 'Card authentication failed. Please try another card.');
+    }
+  } catch (e) {
+    setLoading(btn, false);
+    showFailed('Network error. Please check your connection and try again.');
+  }
+}
+
+async function mpgs3dsMethod(methodUrl, methodData, expMonth, expYear, cvv) {
+  // Show "Verifying your card…" spinner — method iframe runs silently in background
+  hideAllPanels();
+  document.getElementById('panel-3ds-method').classList.add('active');
+
+  // Submit method form to the hidden iframe (browser fingerprinting)
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = methodUrl;
+  form.target = 'mpgs-method-frame';
+  form.style.display = 'none';
+  const inp = document.createElement('input');
+  inp.type = 'hidden'; inp.name = 'threeDSMethodData'; inp.value = methodData;
+  form.appendChild(inp);
+  document.body.appendChild(form);
+  form.submit();
+  document.body.removeChild(form);
+
+  // Wait 10 seconds for method to complete (industry-standard timeout)
+  await new Promise(r => setTimeout(r, 10000));
+
+  // AUTHENTICATE_PAYER via step2
+  try {
+    const res = await fetch(`${API_URL}/checkout/${state.reference}/mpgs-step2`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ browser_data: getBrowserData() }),
+    });
+    const data = await res.json();
+
+    if (data.data?.status === 'PENDING_AUTHENTICATION') {
+      mpgs3dsChallenge(data.data.challenge_url);
+    } else if (data.data?.status === 'SUCCESS') {
+      showSuccess('card');
+    } else {
+      showFailed(data.message || 'Card authentication failed. Please try another card.');
+    }
+  } catch (e) {
+    showFailed('Network error during card verification. Please try again.');
+  }
+}
+
+function mpgs3dsChallenge(challengeUrl) {
+  // Show brief "Redirecting to your bank…" panel then full-page redirect
+  hideAllPanels();
+  document.getElementById('panel-3ds-challenge').classList.add('active');
+  setTimeout(() => { window.location.href = challengeUrl; }, 1200);
 }
 
 // ─── CHECK TRANSFER STATUS ────────────────────────────────────────────────────

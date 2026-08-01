@@ -12,8 +12,9 @@ const { dispatchWebhook }    = require('../../../services/webhookService');
 const { computeFeesForTxn, channelToServiceType, computeFeesForPayin, resolvePayinRail, resolvePayinRateConfig } = require('../services/feeEngine');
 const { resolveCardProcessor } = require('../services/cardRouter');
 const compliance = require('../../../services/complianceService');
-const palmpay = require('../services/palmpayService');
+const palmpay  = require('../services/palmpayService');
 const parallex = require('../services/parallexService');
+const mpgsSvc  = require('../services/parallexMpgsService');
 const { finalizePayinSuccess } = require('../services/payinFinalize');
 const { sendCustomerReceipt } = require('../services/receiptEmail');
 
@@ -705,6 +706,186 @@ router.post('/:reference/charge/palmpay', async (req, res, next) => {
       checkout_url: order.checkoutUrl,
       order_no:     order.orderNo,
     }, 'Redirect to PalmPay to complete payment');
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/checkout/:reference/charge/mpgs-card ────────────────────────
+// International card payment (Mastercard/Visa) via Parallex MPGS + 3DS2.
+// No PIN required — authentication is handled by 3DS2 challenge instead.
+// Returns NEEDS_METHOD (browser must run 3DS Method iframe then call mpgs-step2)
+// or PENDING_AUTHENTICATION (redirect to challenge URL) or SUCCESS/FAILED.
+router.post('/:reference/charge/mpgs-card', async (req, res, next) => {
+  try {
+    const txn = await prisma.transaction.findUnique({
+      where:   { reference: req.params.reference },
+      include: { merchant: true },
+    });
+    if (!txn)                     return notFound(res, 'Transaction');
+    if (txn.status !== 'PENDING') return fail(res, 'Transaction already processed', 'ALREADY_PROCESSED');
+
+    const { card_number, card_expiry_month, card_expiry_year, card_cvv, card_name, browser_data } = req.body;
+    if (!card_number || card_number.replace(/\D/g,'').length < 15) return fail(res, 'Invalid card number', 'INVALID_CARD');
+    if (!card_cvv    || card_cvv.length < 3)                       return fail(res, 'Invalid CVV',         'INVALID_CVV');
+    if (!card_expiry_month || !card_expiry_year)                   return fail(res, 'Invalid expiry',      'INVALID_EXPIRY');
+
+    const mpgsCfg = await prisma.merchantMpgsConfig.findUnique({ where: { merchantId: txn.merchantId } });
+    if (!mpgsCfg || !mpgsCfg.isActive)
+      return fail(res, 'International card payments are not enabled for this merchant', 'NO_MPGS_CONFIG', 503);
+
+    const cleanCard = card_number.replace(/\D/g, '');
+    const config    = { mpgsMid: mpgsCfg.mpgsMid, mpgsApiPassword: mpgsCfg.mpgsApiPassword, mpgsBaseUrl: mpgsCfg.mpgsBaseUrl };
+    const appUrl    = process.env.APP_URL || 'https://api.paylodeservices.com';
+
+    // Store card + redirect target in metadata — needed by step2 and 3DS callback
+    await prisma.transaction.update({
+      where: { id: txn.id },
+      data: {
+        metadata: {
+          ...txn.metadata,
+          cardFull: {
+            number:       cleanCard,
+            expiry_month: card_expiry_month,
+            expiry_year:  card_expiry_year,
+            cvv:          card_cvv,
+            name:         card_name || null,
+          },
+          merchantRedirectUrl: CHECKOUT_URL + '?ref=' + txn.reference,
+          apiOperation: 'PAY',
+        },
+      },
+    });
+
+    // INITIATE_AUTHENTICATION — get 3DS Method details if required by issuer
+    const init = await mpgsSvc.initiateFor3ds(config, {
+      reference: txn.reference,
+      currency:  txn.currency,
+      card:      { number: cleanCard, expiry_month: card_expiry_month, expiry_year: card_expiry_year },
+    });
+
+    if (!init.ok) return fail(res, 'Card authentication could not be started', 'MPGS_INIT_FAILED', 502);
+
+    if (init.needsMethod) {
+      return ok(res, {
+        status:      'NEEDS_METHOD',
+        method_url:  init.methodUrl,
+        method_data: init.methodData,
+      }, '3DS Method required — run iframe then call mpgs-step2');
+    }
+
+    // Method not required — go straight to AUTHENTICATE_PAYER
+    const bd = browser_data || {};
+    const authResult = await mpgsSvc.authenticatePayer(config, {
+      reference:    txn.reference,
+      amount:       txn.amount,
+      currency:     txn.currency,
+      apiOperation: 'PAY',
+      card:         { number: cleanCard, expiry_month: card_expiry_month, expiry_year: card_expiry_year, cvv: card_cvv, name: card_name },
+      browserData:  {
+        screenWidth:  bd.screen_width  || 390,
+        screenHeight: bd.screen_height || 844,
+        colorDepth:   bd.color_depth   || 24,
+        timeZone:     bd.timezone      || 0,
+        language:     bd.language      || 'en-NG',
+        javaEnabled:  bd.java_enabled  || false,
+        acceptHeaders: 'application/json',
+        ipAddress:    req.ip,
+      },
+    });
+
+    if (authResult.pending3ds) {
+      await prisma.transaction.update({
+        where: { id: txn.id },
+        data: { metadata: { ...(txn.metadata || {}), cardFull: { number: cleanCard, expiry_month: card_expiry_month, expiry_year: card_expiry_year, cvv: card_cvv, name: card_name || null }, merchantRedirectUrl: CHECKOUT_URL + '?ref=' + txn.reference, apiOperation: 'PAY', authRedirectHtml: authResult.authRedirectHtml } },
+      });
+      return ok(res, {
+        status:        'PENDING_AUTHENTICATION',
+        challenge_url: `${appUrl}/api/rest/3ds/challenge?ref=${encodeURIComponent(txn.reference)}`,
+      }, '3DS challenge required');
+    }
+
+    if (authResult.ok) {
+      const payResult = await mpgsSvc.payAfterChallenge(config, {
+        reference: txn.reference, amount: txn.amount, currency: txn.currency,
+        apiOperation: 'PAY',
+        card: { number: cleanCard, expiry_month: card_expiry_month, expiry_year: card_expiry_year, cvv: card_cvv },
+      });
+      if (payResult.ok) {
+        await prisma.transaction.update({ where: { id: txn.id }, data: { status: 'SUCCESS', paidAt: new Date() } });
+        return ok(res, { status: 'SUCCESS', reference: txn.reference });
+      }
+    }
+
+    await prisma.transaction.update({ where: { id: txn.id }, data: { status: 'FAILED', failureReason: authResult.declineReason || 'Authentication failed' } });
+    return fail(res, 'Card authentication failed. Please try another card.', 'AUTH_FAILED');
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/checkout/:reference/mpgs-step2 ──────────────────────────────
+// Called by the checkout page after the 3DS Method iframe has completed (or
+// timed out). Runs AUTHENTICATE_PAYER and returns the challenge URL or result.
+router.post('/:reference/mpgs-step2', async (req, res, next) => {
+  try {
+    const txn = await prisma.transaction.findUnique({
+      where:   { reference: req.params.reference },
+      include: { merchant: true },
+    });
+    if (!txn)                     return notFound(res, 'Transaction');
+    if (txn.status !== 'PENDING') return fail(res, 'Transaction already processed', 'ALREADY_PROCESSED');
+
+    const meta = txn.metadata || {};
+    if (!meta.cardFull) return fail(res, 'Session expired — please start over', 'SESSION_EXPIRED');
+
+    const mpgsCfg = await prisma.merchantMpgsConfig.findUnique({ where: { merchantId: txn.merchantId } });
+    if (!mpgsCfg) return fail(res, 'MPGS configuration not found', 'NO_MPGS_CONFIG', 503);
+
+    const config = { mpgsMid: mpgsCfg.mpgsMid, mpgsApiPassword: mpgsCfg.mpgsApiPassword, mpgsBaseUrl: mpgsCfg.mpgsBaseUrl };
+    const appUrl = process.env.APP_URL || 'https://api.paylodeservices.com';
+    const cf     = meta.cardFull;
+    const bd     = req.body.browser_data || {};
+
+    const authResult = await mpgsSvc.authenticatePayer(config, {
+      reference:    txn.reference,
+      amount:       txn.amount,
+      currency:     txn.currency,
+      apiOperation: 'PAY',
+      card:         { number: cf.number, expiry_month: cf.expiry_month, expiry_year: cf.expiry_year, cvv: cf.cvv, name: cf.name },
+      browserData:  {
+        screenWidth:  bd.screen_width  || 390,
+        screenHeight: bd.screen_height || 844,
+        colorDepth:   bd.color_depth   || 24,
+        timeZone:     bd.timezone      || 0,
+        language:     bd.language      || 'en-NG',
+        javaEnabled:  bd.java_enabled  || false,
+        acceptHeaders: 'application/json',
+        ipAddress:    req.ip,
+      },
+    });
+
+    if (authResult.pending3ds) {
+      await prisma.transaction.update({
+        where: { id: txn.id },
+        data:  { metadata: { ...meta, authRedirectHtml: authResult.authRedirectHtml } },
+      });
+      return ok(res, {
+        status:        'PENDING_AUTHENTICATION',
+        challenge_url: `${appUrl}/api/rest/3ds/challenge?ref=${encodeURIComponent(txn.reference)}`,
+      }, '3DS challenge required');
+    }
+
+    if (authResult.ok) {
+      const payResult = await mpgsSvc.payAfterChallenge(config, {
+        reference: txn.reference, amount: txn.amount, currency: txn.currency,
+        apiOperation: 'PAY',
+        card: { number: cf.number, expiry_month: cf.expiry_month, expiry_year: cf.expiry_year, cvv: cf.cvv },
+      });
+      if (payResult.ok) {
+        await prisma.transaction.update({ where: { id: txn.id }, data: { status: 'SUCCESS', paidAt: new Date() } });
+        return ok(res, { status: 'SUCCESS', reference: txn.reference });
+      }
+    }
+
+    await prisma.transaction.update({ where: { id: txn.id }, data: { status: 'FAILED', failureReason: authResult.declineReason || 'Authentication failed' } });
+    return fail(res, 'Card authentication failed. Please try another card.', 'AUTH_FAILED');
   } catch (e) { next(e); }
 });
 
