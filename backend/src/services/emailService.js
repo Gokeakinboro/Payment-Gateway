@@ -9,7 +9,7 @@ const transporter = nodemailer.createTransport({
   auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
 });
 
-async function sendEmail({ to, subject, html, text, attachments }) {
+async function sendEmail({ to, cc, subject, html, text, attachments }) {
   if (!process.env.SMTP_USER) {
     logger.warn({ to, subject }, 'SMTP not configured — email skipped');
     return { skipped: true };
@@ -17,7 +17,7 @@ async function sendEmail({ to, subject, html, text, attachments }) {
   try {
     const info = await transporter.sendMail({
       from: `"Paylode Services" <${process.env.EMAIL_FROM || 'product@paylodeservices.com'}>`,
-      to, subject, html, text, attachments,
+      to, cc, subject, html, text, attachments,
     });
     logger.info({ to, subject, messageId: info.messageId }, 'Email sent');
     return info;

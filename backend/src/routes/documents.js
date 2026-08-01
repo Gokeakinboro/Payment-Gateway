@@ -6,6 +6,7 @@ const router = require('express').Router();
 const { prisma } = require('../utils/db');
 const { ok, fail, notFound } = require('../utils/helpers');
 const { requireAuth, requireCompliance, requireSuperAdmin, requireAdminOrCompliance } = require('../middleware/auth');
+const { verifyBvn, verifyNin, verifyCac } = require('../services/youverifyService');
 const path = require('path');
 const fs   = require('fs');
 const UPLOAD_DIR = process.env.ONBOARDING_UPLOAD_DIR || path.join(__dirname, '../../uploads/onboarding');
@@ -182,18 +183,117 @@ router.post('/item/:docId/request-reupload', requireAuth, requireCompliance, asy
   } catch (e) { next(e); }
 });
 
-// ── POST /api/v1/documents/item/:docId/run-check — automated 3rd-party verify ──
-// STUB until the Interswitch marketplace APIs are wired. Marks the check as needing
-// manual review; real integration will set verified/failed from the provider result.
+// ── POST /api/v1/documents/item/:docId/run-check — YouVerify identity check ─────
+const YV_ELEMENT = { check_bvn: 'bvn', check_nin: 'nin', check_cac: 'cac' };
+
 router.post('/item/:docId/run-check', requireAuth, requireCompliance, async (req, res, next) => {
   try {
-    const [doc] = await prisma.$queryRaw`SELECT entity_type, entity_id::text FROM kyc_documents WHERE id = ${req.params.docId}::uuid`;
+    const [doc] = await prisma.$queryRaw`
+      SELECT id::text, doc_key, entity_type, entity_id::text
+      FROM kyc_documents WHERE id = ${req.params.docId}::uuid`;
     if (!doc) return notFound(res, 'Document');
+
+    const element = YV_ELEMENT[doc.doc_key];
+    if (!element) {
+      await prisma.$executeRaw`
+        UPDATE kyc_documents SET status='submitted',
+               notes='Manual review required for this check type.', updated_at=now()
+        WHERE id = ${req.params.docId}::uuid`;
+      return ok(res, await listDocs(doc.entity_type, doc.entity_id), 'Marked for manual review.');
+    }
+
+    // Resolve the id_number for the element being checked
+    let idNumber = null;
+    let businessName = null;
+    let businessType = 'limited_liability';
+
+    if (element === 'bvn' || element === 'nin') {
+      const rows = await prisma.$queryRaw`
+        SELECT id_number FROM kyc_documents
+        WHERE entity_type = ${doc.entity_type} AND entity_id = ${doc.entity_id}::uuid AND doc_key = ${element}`;
+      idNumber = rows[0]?.id_number || null;
+    } else if (element === 'cac') {
+      const rcRows = await prisma.$queryRaw`
+        SELECT id_number FROM kyc_documents
+        WHERE entity_type = ${doc.entity_type} AND entity_id = ${doc.entity_id}::uuid AND doc_key = 'rc_number'`;
+      idNumber = rcRows[0]?.id_number || null;
+      if (!idNumber && doc.entity_type === 'merchant') {
+        const mRows = await prisma.$queryRaw`
+          SELECT rc_number, business_name, business_type FROM merchants WHERE id = ${doc.entity_id}::uuid`;
+        idNumber     = mRows[0]?.rc_number    || null;
+        businessName = mRows[0]?.business_name || null;
+        const bt = (mRows[0]?.business_type || '').toLowerCase();
+        businessType = bt.includes('sole') || bt.includes('business name') ? 'business_name' : 'limited_liability';
+      }
+      if (!businessName) {
+        const mRows = await prisma.$queryRaw`SELECT business_name, business_type FROM merchants WHERE id = ${doc.entity_id}::uuid`;
+        businessName = mRows[0]?.business_name || '';
+        const bt = (mRows[0]?.business_type || '').toLowerCase();
+        businessType = bt.includes('sole') || bt.includes('business name') ? 'business_name' : 'limited_liability';
+      }
+    }
+
+    if (!idNumber) {
+      return fail(res, `No ${element.toUpperCase()} number on file. Enter it on the document row first.`);
+    }
+
+    // Create a pending check record
+    const checkRows = await prisma.$queryRaw`
+      INSERT INTO kyc_yv_checks (doc_id, merchant_id, element, id_number, status, triggered_by)
+      VALUES (${req.params.docId}::uuid, ${doc.entity_id}::uuid, ${element}, ${idNumber}, 'pending', ${req.user.id}::uuid)
+      RETURNING id::text`;
+    const checkId = checkRows[0].id;
+
+    // Call YouVerify
+    let yvResult = { success: false, message: 'Unknown error', requestId: null, raw: null };
+    try {
+      if (element === 'bvn') yvResult = await verifyBvn(idNumber);
+      else if (element === 'nin') yvResult = await verifyNin(idNumber);
+      else if (element === 'cac') yvResult = await verifyCac(idNumber, businessName, businessType);
+    } catch (e) {
+      yvResult = { success: false, message: e.message, requestId: null, raw: null };
+    }
+
+    const checkStatus = yvResult.success ? 'verified' : 'failed';
+    const docResult   = yvResult.success ? 'pass'     : 'fail';
+    const notes       = yvResult.success
+      ? `YouVerify: ${element.toUpperCase()} verified (ref: ${yvResult.requestId || 'n/a'})`
+      : `YouVerify: ${element.toUpperCase()} failed — ${yvResult.message || 'not found'}`;
+
     await prisma.$executeRaw`
-      UPDATE kyc_documents SET status='submitted',
-             notes='Automated verification pending Interswitch integration — manual review required', updated_at=now()
+      UPDATE kyc_yv_checks SET status=${checkStatus}, yv_request_id=${yvResult.requestId || null},
+             raw_response=${JSON.stringify(yvResult.raw || {})}::jsonb, completed_at=now()
+      WHERE id = ${checkId}::uuid`;
+
+    await prisma.$executeRaw`
+      UPDATE kyc_documents SET status=${checkStatus}, result=${docResult}, notes=${notes}, updated_at=now()
       WHERE id = ${req.params.docId}::uuid`;
-    ok(res, await listDocs(doc.entity_type, doc.entity_id), 'Check queued (3rd-party integration pending — manual review for now).');
+
+    await logAudit(req.user.id, 'KYC_YV_CHECK_RUN', 'kyc_documents', req.params.docId, {},
+      { element, id_number: idNumber, status: checkStatus, yv_ref: yvResult.requestId });
+
+    ok(res, await listDocs(doc.entity_type, doc.entity_id),
+      yvResult.success
+        ? `${element.toUpperCase()} verified via YouVerify.`
+        : `${element.toUpperCase()} check failed — ${yvResult.message || 'not found on YouVerify.'}`);
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/documents/:entityType/:id/yv-checks — check history ────────────
+router.get('/:entityType/:id/yv-checks', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { entityType, id } = req.params;
+    if (!entityCol(entityType)) return fail(res, 'entityType must be merchant or aggregator');
+    const checks = await prisma.$queryRaw`
+      SELECT c.id::text, c.element, c.id_number, c.yv_request_id, c.status,
+             c.raw_response, c.triggered_at, c.completed_at,
+             u.email AS triggered_by_email
+      FROM kyc_yv_checks c
+      LEFT JOIN users u ON u.id = c.triggered_by
+      WHERE c.merchant_id = ${id}::uuid
+      ORDER BY c.triggered_at DESC
+      LIMIT 100`;
+    ok(res, { checks });
   } catch (e) { next(e); }
 });
 

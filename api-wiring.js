@@ -1106,6 +1106,486 @@ async function saveMerchantEdit(id) {
   }
 }
 
+// ── PARTNERS ─────────────────────────────────────────────────────────────────
+
+async function loadPartners() {
+  const el = document.getElementById('partners-content');
+  if (!el) return;
+  el.innerHTML = '<div style="text-align:center;padding:40px;color:#999">Loading…</div>';
+  const res = await apiFetch('/partners');
+  if (!res?.data) { el.innerHTML = errorBox('Could not load partners'); return; }
+  const partners = res.data;
+  if (!partners.length) {
+    el.innerHTML = '<div class="card" style="text-align:center;padding:40px;color:#999">No partners yet. Click <strong>+ Add Partner</strong> to create one.</div>';
+    return;
+  }
+  el.innerHTML = '<div class="card"><div class="table-wrap"><table>' +
+    '<thead><tr><th>Name</th><th>Slug</th><th>KYC Policy</th><th>Merchants</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
+    partners.map(p => {
+      const kycBadge = p.kyc_requirement === 'full' ? '<span class="badge badge-red">Full KYC</span>'
+        : p.kyc_requirement === 'basic' ? '<span class="badge badge-amber">Basic KYC</span>'
+        : '<span class="badge badge-gray">No KYC</span>';
+      return `<tr>
+        <td style="font-weight:600">${p.name}</td>
+        <td class="mono" style="font-size:12px">${p.slug}</td>
+        <td>${kycBadge}</td>
+        <td>${p.merchant_count}</td>
+        <td>${statusBadge(p.status)}</td>
+        <td>
+          <button class="btn btn-outline btn-sm" onclick="viewPartner('${p.id}')">View</button>&nbsp;
+          <button class="btn btn-outline btn-sm" onclick="viewPartnerMerchants('${p.id}','${p.name}')">Merchants</button>
+        </td></tr>`;
+    }).join('') +
+    '</tbody></table></div></div>';
+}
+
+async function viewPartner(id) {
+  const res = await apiFetch('/partners/' + id);
+  if (!res?.data) { alert('Could not load partner'); return; }
+  const p = res.data;
+  const kycLabel = { none: 'None — partner handles KYC', basic: 'Basic — Paylode collects business info', full: 'Full — Paylode KYC review required' }[p.kyc_requirement] || p.kyc_requirement;
+  document.getElementById('modal-inner').innerHTML =
+    `<div class="modal-header"><div class="modal-title">${p.name}</div>
+      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+    <div class="rev-row"><span class="rev-label">Slug</span><span class="rev-value mono">${p.slug}</span></div>
+    <div class="rev-row"><span class="rev-label">KYC Policy</span><span class="rev-value">${kycLabel}</span></div>
+    <div class="rev-row"><span class="rev-label">Contact Email</span><span class="rev-value">${p.contact_email || '—'}</span></div>
+    <div class="rev-row"><span class="rev-label">Contact Phone</span><span class="rev-value">${p.contact_phone || '—'}</span></div>
+    <div class="rev-row"><span class="rev-label">API Key Prefix</span><span class="rev-value mono">${p.api_key_prefix || '—'}…</span></div>
+    <div class="rev-row"><span class="rev-label">Status</span><span class="rev-value">${statusBadge(p.status)}</span></div>
+    <div class="rev-row"><span class="rev-label">Merchants</span><span class="rev-value">${p.merchant_count}</span></div>
+    ${p.notes ? `<div class="rev-row"><span class="rev-label">Notes</span><span class="rev-value" style="font-size:12px">${p.notes}</span></div>` : ''}
+    <div class="divider"></div>
+    <div class="flex-between">
+      <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Close</button>
+      <div class="flex" style="gap:8px">
+        <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none';viewPartnerMerchants('${p.id}','${p.name}')">View Merchants</button>
+        ${p.status === 'active'
+          ? `<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="suspendPartner('${p.id}','${p.name}')">Suspend</button>`
+          : `<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="activatePartner('${p.id}','${p.name}')">Activate</button>`}
+        <button class="btn btn-outline" onclick="rotatePartnerKey('${p.id}','${p.name}')">&#128273; Rotate Key</button>
+      </div>
+    </div>`;
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function viewPartnerMerchants(partnerId, partnerName) {
+  const el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  const res = await apiFetch('/partners/' + partnerId + '/merchants');
+  if (!res?.data) { el.innerHTML = errorBox('Could not load merchants'); return; }
+  const merchants = res.data;
+
+  const kycBadge = s => s === 'approved' ? '<span class="badge badge-green">KYC Approved</span>'
+    : s === 'rejected' ? '<span class="badge badge-red">KYC Rejected</span>'
+    : s === 'pending'  ? '<span class="badge badge-amber">KYC Pending</span>'
+    : '<span class="badge badge-gray">No KYC</span>';
+
+  el.innerHTML =
+    `<div class="page-header flex-between">
+      <div><div class="page-title">${partnerName} — Merchants</div>
+        <div class="page-desc">${merchants.length} merchant${merchants.length !== 1 ? 's' : ''}</div></div>
+      <button class="btn btn-outline btn-sm" onclick="navigate('partners')">&#8592; Partners</button>
+    </div>
+    <div class="card"><div class="table-wrap"><table>
+      <thead><tr><th>Business</th><th>MCC</th><th>KYC</th><th>MID</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>` +
+    (merchants.length ? merchants.map(m =>
+      `<tr>
+        <td style="font-weight:500">${m.business_name}<br><span style="font-size:11px;color:#999">${m.contact_email || ''}</span></td>
+        <td class="mono">${m.mcc || '—'}</td>
+        <td>${kycBadge(m.kyc_status)}</td>
+        <td class="mono" style="font-size:11px">${m.mpgs_mid || '<span style="color:#999">Not assigned</span>'}</td>
+        <td>${statusBadge(m.status)}</td>
+        <td>
+          ${m.kyc_status === 'pending' ? `<button class="btn btn-outline btn-sm" onclick="reviewPartnerMerchantKyc('${partnerId}','${m.id}','${m.business_name.replace(/'/g,'')}')">KYC Review</button>&nbsp;` : ''}
+          ${m.status === 'pending_mid' && m.kyc_status !== 'pending' && m.kyc_status !== 'rejected'
+            ? `<button class="btn btn-lime btn-sm" onclick="configurePartnerMerchant('${partnerId}','${m.id}','${m.business_name.replace(/'/g,'')}')">Configure MID</button>`
+            : m.status === 'active' ? '<span class="badge badge-green">Active</span>' : ''}
+        </td></tr>`
+    ).join('') : '<tr><td colspan="6" style="text-align:center;color:#999;padding:20px">No merchants submitted yet</td></tr>') +
+    '</tbody></table></div></div>';
+}
+
+async function openCreatePartner() {
+  document.getElementById('modal-inner').innerHTML =
+    `<div class="modal-header"><div class="modal-title">Add Partner</div>
+      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+    <div class="form-group"><label class="form-label">Partner Name <span style="color:var(--red)">*</span></label>
+      <input class="form-input" id="cp-name" placeholder="e.g. Payonus"></div>
+    <div class="form-group"><label class="form-label">Slug <span style="color:var(--red)">*</span></label>
+      <input class="form-input" id="cp-slug" placeholder="e.g. payonus (lowercase, no spaces)">
+      <div class="form-hint">Used in API references. Lowercase letters, numbers, hyphens only.</div></div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Contact Email</label>
+        <input class="form-input" type="email" id="cp-email" placeholder="tech@partner.com"></div>
+      <div class="form-group"><label class="form-label">Contact Phone</label>
+        <input class="form-input" id="cp-phone" placeholder="08012345678"></div>
+    </div>
+    <div class="form-group"><label class="form-label">KYC Policy for their merchants</label>
+      <select class="form-input form-select" id="cp-kyc">
+        <option value="none">None — partner handles all KYC themselves</option>
+        <option value="basic">Basic — Paylode collects business info before activating</option>
+        <option value="full">Full — Paylode does a complete KYC review</option>
+      </select></div>
+    <div class="form-group"><label class="form-label">Notes</label>
+      <input class="form-input" id="cp-notes" placeholder="Internal notes about this partner"></div>
+    <div class="divider"></div>
+    <div class="flex-between">
+      <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Cancel</button>
+      <button class="btn btn-lime" onclick="saveCreatePartner()">Create Partner + Issue API Key</button>
+    </div>`;
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function saveCreatePartner() {
+  const name = document.getElementById('cp-name').value.trim();
+  const slug = document.getElementById('cp-slug').value.trim().toLowerCase();
+  if (!name || !slug) { alert('Name and slug are required'); return; }
+  const res = await apiFetch('/partners', { method: 'POST', body: JSON.stringify({
+    name, slug,
+    contact_email: document.getElementById('cp-email').value.trim() || null,
+    contact_phone: document.getElementById('cp-phone').value.trim() || null,
+    kyc_requirement: document.getElementById('cp-kyc').value,
+    notes: document.getElementById('cp-notes').value.trim() || null,
+  })});
+  if (!res?.status) { alert('Error: ' + (res?.message || 'Failed')); return; }
+  const d = res.data;
+  document.getElementById('modal-inner').innerHTML =
+    `<div class="modal-header"><div class="modal-title">Partner Created</div>
+      <button class="modal-close" onclick="document.getElementById('modal').style.display='none';loadPartners()">&#10005;</button></div>
+    <div class="info-box" style="margin-bottom:16px">Partner created. Copy the API key below — it will not be shown again.</div>
+    <div class="rev-row"><span class="rev-label">Partner Name</span><span class="rev-value">${d.name}</span></div>
+    <div class="rev-row"><span class="rev-label">Slug</span><span class="rev-value mono">${d.slug}</span></div>
+    <div class="rev-row"><span class="rev-label">KYC Policy</span><span class="rev-value">${d.kyc_requirement}</span></div>
+    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px;margin:16px 0">
+      <div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:6px">&#9888; API KEY — SHOW ONCE</div>
+      <div class="mono" style="font-size:13px;word-break:break-all;color:#166534">${d.api_key}</div>
+      <div style="font-size:11px;color:#166534;margin-top:6px">Share this securely with ${d.name}. They must include it as <strong>X-Partner-Key</strong> in all API requests.</div>
+    </div>
+    <div class="divider"></div>
+    <div class="flex-between">
+      <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none';loadPartners()">Done</button>
+    </div>`;
+  loadPartners();
+}
+
+async function configurePartnerMerchant(partnerId, merchantId, name) {
+  document.getElementById('modal-inner').innerHTML =
+    `<div class="modal-header"><div class="modal-title">Configure MID — ${name}</div>
+      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+    <div class="info-box" style="margin-bottom:16px;font-size:12px">Enter the MPGS credentials Parallex issued for this merchant. Paylode will issue a separate gateway password that the partner uses.</div>
+    <div class="form-group"><label class="form-label">MPGS Merchant ID (MID) <span style="color:var(--red)">*</span></label>
+      <input class="form-input" id="pm-mid" placeholder="e.g. PSLPBL1"></div>
+    <div class="form-group"><label class="form-label">MPGS API Password (Parallex-issued) <span style="color:var(--red)">*</span></label>
+      <input class="form-input" id="pm-pw" type="password" placeholder="Parallex MPGS API password"></div>
+    <div class="form-group"><label class="form-label">MPGS Base URL</label>
+      <input class="form-input" id="pm-url" value="https://na-gateway.mastercard.com/api/rest/version/77">
+      <div class="form-hint">Leave as default unless Parallex specifies a different host.</div></div>
+    <div class="divider"></div>
+    <div class="flex-between">
+      <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Cancel</button>
+      <button class="btn btn-lime" onclick="savePartnerMerchantConfig('${partnerId}','${merchantId}')">Activate Merchant + Issue Gateway Password</button>
+    </div>`;
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function savePartnerMerchantConfig(partnerId, merchantId) {
+  const mid = document.getElementById('pm-mid').value.trim();
+  const pw  = document.getElementById('pm-pw').value.trim();
+  const url = document.getElementById('pm-url').value.trim();
+  if (!mid || !pw) { alert('MID and MPGS API password are required'); return; }
+  const res = await apiFetch(`/partners/${partnerId}/merchants/${merchantId}/configure`, {
+    method: 'PUT', body: JSON.stringify({ mpgs_mid: mid, mpgs_api_password: pw, mpgs_base_url: url }),
+  });
+  if (!res?.status) { alert('Error: ' + (res?.message || 'Failed')); return; }
+  const d = res.data;
+  document.getElementById('modal-inner').innerHTML =
+    `<div class="modal-header"><div class="modal-title">Merchant Activated</div>
+      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+    <div class="rev-row"><span class="rev-label">MID</span><span class="rev-value mono">${d.mpgs_mid}</span></div>
+    <div class="rev-row"><span class="rev-label">Gateway URL</span><span class="rev-value mono" style="font-size:11px">${d.connection_parameters?.gateway_url}</span></div>
+    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px;margin:16px 0">
+      <div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:6px">&#9888; GATEWAY PASSWORD — SHOW ONCE</div>
+      <div class="mono" style="font-size:13px;word-break:break-all;color:#166534">${d.gateway_api_password}</div>
+      <div style="font-size:11px;color:#166534;margin-top:6px">Share with the partner for this merchant. Authentication: <strong>merchant.${d.mpgs_mid}:{this password}</strong></div>
+    </div>
+    <div class="divider"></div>
+    <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Done</button>`;
+}
+
+async function reviewPartnerMerchantKyc(partnerId, merchantId, name) {
+  document.getElementById('modal-inner').innerHTML =
+    `<div class="modal-header"><div class="modal-title">KYC Review — ${name}</div>
+      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+    <div class="form-group"><label class="form-label">Decision</label>
+      <select class="form-input form-select" id="kyc-decision">
+        <option value="approved">Approve</option>
+        <option value="rejected">Reject</option>
+      </select></div>
+    <div class="form-group"><label class="form-label">Notes (required if rejecting)</label>
+      <input class="form-input" id="kyc-notes" placeholder="Reason for decision"></div>
+    <div class="divider"></div>
+    <div class="flex-between">
+      <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Cancel</button>
+      <button class="btn btn-lime" onclick="savePartnerKycDecision('${partnerId}','${merchantId}')">Submit Decision</button>
+    </div>`;
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function savePartnerKycDecision(partnerId, merchantId) {
+  const decision = document.getElementById('kyc-decision').value;
+  const notes    = document.getElementById('kyc-notes').value.trim();
+  if (decision === 'rejected' && !notes) { alert('Notes are required when rejecting'); return; }
+  const res = await apiFetch(`/partners/${partnerId}/merchants/${merchantId}/kyc`, {
+    method: 'PUT', body: JSON.stringify({ decision, notes }),
+  });
+  if (res?.status) {
+    alert(`KYC ${decision} successfully`);
+    document.getElementById('modal').style.display = 'none';
+  } else { alert('Error: ' + (res?.message || 'Failed')); }
+}
+
+async function suspendPartner(id, name) {
+  if (!confirm(`Suspend ${name}? Their gateway access will stop immediately.`)) return;
+  const res = await apiFetch('/partners/' + id + '/suspend', { method: 'PUT' });
+  if (res?.status) { document.getElementById('modal').style.display = 'none'; loadPartners(); }
+  else alert('Error: ' + (res?.message || 'Failed'));
+}
+
+async function activatePartner(id, name) {
+  const res = await apiFetch('/partners/' + id + '/activate', { method: 'PUT' });
+  if (res?.status) { document.getElementById('modal').style.display = 'none'; loadPartners(); }
+  else alert('Error: ' + (res?.message || 'Failed'));
+}
+
+async function rotatePartnerKey(id, name) {
+  if (!confirm(`Rotate API key for ${name}? The old key will be invalidated immediately.`)) return;
+  const res = await apiFetch('/partners/' + id + '/rotate-key', { method: 'POST' });
+  if (!res?.status) { alert('Error: ' + (res?.message || 'Failed')); return; }
+  document.getElementById('modal-inner').innerHTML =
+    `<div class="modal-header"><div class="modal-title">New API Key — ${name}</div>
+      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px;margin:16px 0">
+      <div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:6px">&#9888; NEW API KEY — SHOW ONCE</div>
+      <div class="mono" style="font-size:13px;word-break:break-all;color:#166534">${res.data.new_api_key}</div>
+    </div>
+    <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Done</button>`;
+}
+
+// Trigger partners load when page renders
+document.addEventListener('navigate:partners', function() { loadPartners(); });
+
+// ── MPGS ACTIVITY REPORT ─────────────────────────────────────────────────────
+
+async function loadMpgsActivityReport() {
+  const el = document.getElementById('mpgs-activity-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  const from = document.getElementById('mpgs-from')?.value || '';
+  const to   = document.getElementById('mpgs-to')?.value   || '';
+  const ccy  = document.getElementById('mpgs-ccy')?.value  || '';
+  const src  = document.getElementById('mpgs-src')?.value  || '';
+  let qs = `?from=${from}&to=${to}`;
+  if (ccy) qs += `&currency=${ccy}`;
+  if (src) qs += `&source_type=${src}`;
+
+  const res = await apiFetch('/reports/mpgs-activity' + qs);
+  if (!res?.data) { el.innerHTML = errorBox('Could not load MPGS activity'); return; }
+  const d = res.data;
+
+  const fmtN = (v, ccy) => ccy === 'USD' ? '$' + Number(v||0).toLocaleString('en-NG', {minimumFractionDigits:2}) : '₦' + Number(v||0).toLocaleString('en-NG', {minimumFractionDigits:2});
+  const srcBadge = s => s === 'partner' ? '<span class="badge badge-blue">Partner</span>' : s === 'aggregator' ? '<span class="badge badge-purple">Aggregator</span>' : '<span class="badge badge-gray">Direct</span>';
+  const schemeBadge = s => `<span class="badge badge-gray">${s||'—'}</span>`;
+
+  // Source-type summary cards
+  const summaryCards = d.by_source_type.map(r =>
+    `<div class="stat-card card-sm">
+      <div class="stat-label">${r.label || r.source_type}</div>
+      <div class="stat-value" style="font-size:18px">₦${Number(r.volume_ngn||0).toLocaleString('en-NG',{minimumFractionDigits:0})}</div>
+      ${r.volume_usd > 0 ? `<div style="font-size:12px;color:#666">$${Number(r.volume_usd).toLocaleString('en-NG',{minimumFractionDigits:2})} USD</div>` : ''}
+      <div class="stat-sub">${r.txns} txns · ${r.approval_rate_pct}% approval</div>
+    </div>`
+  ).join('');
+
+  // Per-MID table
+  const midRows = d.by_mid.map(r =>
+    `<tr>
+      <td class="mono" style="font-size:12px">${r.mpgs_mid || '—'}</td>
+      <td>${srcBadge(r.source_type)}</td>
+      <td style="font-size:12px">${r.entity_name || '—'}</td>
+      <td>${schemeBadge(r.card_scheme)}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.total_txns}</td>
+      <td class="mono" style="color:var(--green)">${r.approved}</td>
+      <td class="mono" style="color:var(--red)">${r.declined}</td>
+      <td><span class="badge ${r.approval_rate_pct >= 80 ? 'badge-green' : r.approval_rate_pct >= 60 ? 'badge-amber' : 'badge-red'}">${r.approval_rate_pct}%</span></td>
+      <td class="mono">${fmtN(r.volume, r.currency)}</td>
+    </tr>`
+  ).join('');
+
+  // Decline reasons
+  const declineRows = d.decline_reasons.map(r =>
+    `<tr><td>${r.reason || 'DECLINED'}</td><td>${srcBadge(r.source_type)}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.count}</td></tr>`
+  ).join('');
+
+  el.innerHTML =
+    `<div class="grid-3" style="margin-bottom:16px">${summaryCards}</div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">By MID / User Type / Currency</div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>MID</th><th>Type</th><th>Entity</th><th>Scheme</th><th>CCY</th><th>Total</th><th>Approved</th><th>Declined</th><th>Approval %</th><th>Volume</th></tr></thead>
+        <tbody>${midRows || '<tr><td colspan="10" style="text-align:center;color:#999;padding:20px">No MPGS transactions in this period</td></tr>'}</tbody>
+      </table></div>
+    </div>
+    ${declineRows ? `<div class="card">
+      <div class="card-header"><div class="card-title">Decline Reasons</div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Reason</th><th>Type</th><th>Currency</th><th>Count</th></tr></thead>
+        <tbody>${declineRows}</tbody>
+      </table></div>
+    </div>` : ''}`;
+}
+
+// ── PARTNER REVENUE REPORT ────────────────────────────────────────────────────
+
+async function loadPartnerRevenueReport() {
+  const el = document.getElementById('partner-revenue-content');
+  if (!el) return;
+  el.innerHTML = loading();
+
+  // Populate partner filter dropdown on first load
+  const partnerSel = document.getElementById('pr-partner');
+  if (partnerSel && partnerSel.options.length === 1) {
+    const pRes = await apiFetch('/partners');
+    if (pRes?.data) {
+      pRes.data.forEach(p => {
+        const o = document.createElement('option'); o.value = p.id; o.textContent = p.name;
+        partnerSel.appendChild(o);
+      });
+    }
+  }
+
+  const from = document.getElementById('pr-from')?.value || '';
+  const to   = document.getElementById('pr-to')?.value   || '';
+  const pid  = document.getElementById('pr-partner')?.value || '';
+  let qs = `?from=${from}&to=${to}`;
+  if (pid) qs += `&partner_id=${pid}`;
+
+  const res = await apiFetch('/reports/partner-revenue' + qs);
+  if (!res?.data) { el.innerHTML = errorBox('Could not load partner revenue'); return; }
+  const d = res.data;
+  const s = d.summary;
+  const fmtN = v => '₦' + Number(v||0).toLocaleString('en-NG', {minimumFractionDigits:2});
+
+  const partnerRows = d.by_partner.map(r =>
+    `<tr>
+      <td style="font-weight:600">${r.partner_name}</td>
+      <td class="mono" style="font-size:11px">${r.slug}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.success_txns} / ${r.total_txns}</td>
+      <td><span class="badge ${r.approval_rate_pct >= 80 ? 'badge-green' : r.approval_rate_pct >= 60 ? 'badge-amber' : 'badge-red'}">${r.approval_rate_pct}%</span></td>
+      <td class="mono">${r.currency === 'USD' ? '$'+Number(r.volume||0).toLocaleString('en-NG',{minimumFractionDigits:2}) : fmtN(r.volume)}</td>
+      <td class="mono">${r.currency === 'USD' ? '$'+Number(r.fee_revenue||0).toLocaleString('en-NG',{minimumFractionDigits:2}) : fmtN(r.fee_revenue)}</td>
+    </tr>`
+  ).join('');
+
+  const merchantRows = d.by_merchant.map(r =>
+    `<tr>
+      <td style="font-size:12px">${r.business_name}</td>
+      <td class="mono" style="font-size:11px">${r.mpgs_mid || '—'}</td>
+      <td class="mono" style="font-size:11px">${r.mcc || '—'}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.success_txns} / ${r.total_txns}</td>
+      <td><span class="badge ${r.approval_rate_pct >= 80 ? 'badge-green' : r.approval_rate_pct >= 60 ? 'badge-amber' : 'badge-red'}">${r.approval_rate_pct}%</span></td>
+      <td class="mono">${r.currency === 'USD' ? '$'+Number(r.volume||0).toLocaleString('en-NG',{minimumFractionDigits:2}) : fmtN(r.volume)}</td>
+    </tr>`
+  ).join('');
+
+  el.innerHTML =
+    `<div class="grid-3" style="margin-bottom:16px">
+      <div class="stat-card card-sm"><div class="stat-label">NGN Volume</div><div class="stat-value" style="font-size:18px">${fmtN(s.volume_ngn)}</div><div class="stat-sub">Fee: ${fmtN(s.fee_ngn)}</div></div>
+      <div class="stat-card card-sm"><div class="stat-label">USD Volume</div><div class="stat-value" style="font-size:18px">$${Number(s.volume_usd||0).toLocaleString('en-NG',{minimumFractionDigits:2})}</div><div class="stat-sub">Fee: $${Number(s.fee_usd||0).toLocaleString('en-NG',{minimumFractionDigits:2})}</div></div>
+      <div class="stat-card card-sm"><div class="stat-label">Active Merchants</div><div class="stat-value" style="font-size:22px">${s.total_merchants}</div><div class="stat-sub">across ${s.total_partners} partner${s.total_partners !== 1 ? 's' : ''}</div></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">By Partner</div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Partner</th><th>Slug</th><th>CCY</th><th>Txns (OK/Total)</th><th>Approval</th><th>Volume</th><th>Fee Revenue</th></tr></thead>
+        <tbody>${partnerRows || '<tr><td colspan="7" style="text-align:center;color:#999;padding:20px">No partner transactions in this period</td></tr>'}</tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">By Merchant</div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Business</th><th>MID</th><th>MCC</th><th>CCY</th><th>Txns (OK/Total)</th><th>Approval</th><th>Volume</th></tr></thead>
+        <tbody>${merchantRows || '<tr><td colspan="7" style="text-align:center;color:#999;padding:20px">No data</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+}
+
+// ── USER TYPE SUMMARY ─────────────────────────────────────────────────────────
+
+async function loadUserTypeSummary() {
+  const el = document.getElementById('user-type-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  const from = document.getElementById('uts-from')?.value || '';
+  const to   = document.getElementById('uts-to')?.value   || '';
+  const res = await apiFetch(`/reports/user-type-summary?from=${from}&to=${to}`);
+  if (!res?.data) { el.innerHTML = errorBox('Could not load summary'); return; }
+  const d = res.data;
+  const fmtN = v => '₦' + Number(v||0).toLocaleString('en-NG', {minimumFractionDigits:2});
+  const total = d.summary.reduce((s, r) => s + r.txns, 0);
+
+  const summaryCards = d.summary.map(r => {
+    const pct = total > 0 ? ((r.txns / total) * 100).toFixed(1) : 0;
+    return `<div class="stat-card card-sm">
+      <div class="stat-label">${r.label}</div>
+      <div class="stat-value" style="font-size:18px">${fmtN(r.volume_ngn)}</div>
+      ${r.volume_usd > 0 ? `<div style="font-size:12px;color:#666">+ $${Number(r.volume_usd).toLocaleString('en-NG',{minimumFractionDigits:2})} USD</div>` : ''}
+      <div class="stat-sub">${r.txns.toLocaleString()} txns (${pct}%) · Fee ${fmtN(r.fee_ngn)}</div>
+    </div>`;
+  }).join('');
+
+  const aggRows = d.by_aggregator.map(r =>
+    `<tr><td style="font-weight:500">${r.company_name}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.channel}</td>
+      <td class="mono">${r.txns}</td>
+      <td class="mono">${fmtN(r.volume)}</td></tr>`
+  ).join('');
+
+  const partnerRows = d.by_partner.map(r =>
+    `<tr><td style="font-weight:500">${r.partner_name}</td>
+      <td><span class="badge ${r.currency === 'USD' ? 'badge-blue' : 'badge-gray'}">${r.currency}</span></td>
+      <td class="mono">${r.txns}</td>
+      <td class="mono">${fmtN(r.volume)}</td></tr>`
+  ).join('');
+
+  el.innerHTML =
+    `<div class="grid-3" style="margin-bottom:20px">${summaryCards}</div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-header"><div class="card-title">By Aggregator</div></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Aggregator</th><th>CCY</th><th>Channel</th><th>Txns</th><th>Volume</th></tr></thead>
+          <tbody>${aggRows || '<tr><td colspan="5" style="text-align:center;color:#999;padding:16px">No aggregator transactions</td></tr>'}</tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">By Partner</div></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Partner</th><th>CCY</th><th>Txns</th><th>Volume</th></tr></thead>
+          <tbody>${partnerRows || '<tr><td colspan="4" style="text-align:center;color:#999;padding:16px">No partner transactions</td></tr>'}</tbody>
+        </table></div>
+      </div>
+    </div>`;
+}
+
 // ── AGGREGATORS ───────────────────────────────────────────────────────────────
 async function loadAggregators() {
   const el = document.getElementById('main-content');
@@ -4822,8 +5302,12 @@ function loadPageData(page) {
     case 'transactions':     loadTransactions(); break;
     case 'merchants':        loadMerchants(); break;
     case 'aggregators':      loadAggregators(); break;
+    case 'partners':         loadPartners(); break;
     case 'compliance':       loadCompliance(); break;
     case 'revenue':          loadRevenueReport(); break;
+    case 'mpgs_activity':    loadMpgsActivityReport(); break;
+    case 'partner_revenue':  loadPartnerRevenueReport(); break;
+    case 'user_type_summary': loadUserTypeSummary(); break;
     case 'settlement':       loadSettlements(); break;
     case 'sa_connections':   loadMerchantActivity(); break;
     case 'sa_reconciliation': loadReconciliation(); break;
@@ -6859,6 +7343,9 @@ async function openDocsModal(entityType, id, name) {
 
   // Actual files the applicant uploaded at onboarding — reviewers VIEW these before acting.
   var upRes = await apiFetch('/documents/uploaded/' + entityType + '/' + id);
+  // YouVerify check history (all runs for this merchant)
+  var yvRes    = (entityType === 'merchant') ? await apiFetch('/documents/' + entityType + '/' + id + '/yv-checks') : null;
+  var yvChecks = (yvRes && yvRes.data && yvRes.data.checks) ? yvRes.data.checks : [];
   var uploaded = (upRes && upRes.data) ? upRes.data : { reference: null, files: [] };
   var uploadedHtml = (uploaded.files && uploaded.files.length)
     ? '<div style="font-weight:600;margin:2px 0 6px">Uploaded documents (' + uploaded.files.length + ')</div>' +
@@ -6934,6 +7421,29 @@ async function openDocsModal(entityType, id, name) {
           '<div><label class="form-label">Reason</label><input class="form-input" id="doc-reason" placeholder="Reason"></div>' +
           '<div><button class="btn btn-lime" onclick="deferSelectedDocs()">Defer ticked &amp; activate</button></div>' +
         '</div>'
+      : '') +
+    (entityType === 'merchant'
+      ? '<div class="divider"></div>' +
+        '<div style="font-weight:600;margin:4px 0 8px">YouVerify Check History</div>' +
+        (yvChecks.length
+          ? '<div class="table-wrap"><table style="width:100%;font-size:13px"><thead><tr>' +
+              '<th>Element</th><th>ID Number</th><th>Status</th><th>Triggered by</th><th>Date</th><th></th>' +
+            '</tr></thead><tbody>' +
+            yvChecks.map(function(c) {
+              var stMap = { verified:'badge-green', failed:'badge-red', pending:'badge-amber', error:'badge-red' };
+              var dt = c.triggered_at ? new Date(c.triggered_at).toLocaleString('en-NG', { dateStyle:'medium', timeStyle:'short' }) : '—';
+              var raw = c.raw_response ? JSON.stringify(c.raw_response, null, 2) : '{}';
+              return '<tr>' +
+                '<td><span class="tag">' + (c.element || '').toUpperCase() + '</span></td>' +
+                '<td style="font-family:monospace;font-size:12px">' + _escA(c.id_number || '—') + '</td>' +
+                '<td><span class="badge ' + (stMap[c.status] || 'badge-gray') + '">' + (c.status || '—') + '</span></td>' +
+                '<td style="font-size:12px">' + _escA(String(c.triggered_by_email || 'system').split('@')[0]) + '</td>' +
+                '<td style="font-size:12px;white-space:nowrap">' + dt + '</td>' +
+                '<td><button class="btn btn-outline btn-sm" onclick="alert(' + JSON.stringify(raw) + ')">Raw</button></td>' +
+              '</tr>';
+            }).join('') +
+            '</tbody></table></div>'
+          : '<div style="color:var(--gray-400);font-size:13px;padding:6px 0">No YouVerify checks run yet. Use "Run check" on any CHECK row above.</div>')
       : '')
   );
 }
@@ -6999,9 +7509,12 @@ async function viewDocReport(docId) {
 }
 
 async function runCheck(docId) {
+  var btn = document.activeElement; if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
   var res = await apiFetch('/documents/item/' + docId + '/run-check', { method:'POST' });
-  if (res && res.status) { alert(res.message || 'Check queued.'); var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
-  else alert('Error: ' + ((res && res.message) || 'Run check failed'));
+  if (btn) { btn.disabled = false; btn.textContent = 'Run check'; }
+  var c = window._docCtx;
+  if (res && res.status) { openDocsModal(c.entityType, c.id, c.name); }
+  else alert('YouVerify check failed: ' + ((res && res.message) || 'Unknown error'));
 }
 
 async function requestReupload(docId) {

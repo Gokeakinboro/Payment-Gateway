@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPGS Portal — Forgot Password</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--navy:#1a2744;--lime:#7dc534;--g50:#f8fafc;--g200:#e2e8f0;--g300:#cbd5e1;--g400:#94a3b8;--g500:#64748b;--g600:#475569;--g800:#1e293b;--red:#ef4444;--font:'DM Sans',sans-serif}
+body{font-family:var(--font);background:var(--g50);color:var(--g800);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--navy);height:56px;display:flex;align-items:center;padding:0 32px;gap:12px}
+.logo-box{width:32px;height:32px;background:var(--lime);border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--navy);font-size:14px}
+.logo-name{color:#fff;font-weight:700;font-size:15px}
+.logo-sep{color:rgba(255,255,255,.3);margin:0 4px}
+.logo-sub{color:rgba(255,255,255,.6);font-size:13px}
+.wrap{flex:1;display:flex;align-items:center;justify-content:center;padding:40px 20px}
+.card{background:#fff;border:1.5px solid var(--g200);border-radius:14px;padding:40px;width:100%;max-width:420px;box-shadow:0 4px 24px rgba(26,39,68,.07)}
+.back{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--g500);text-decoration:none;margin-bottom:24px}
+.back:hover{color:var(--navy)}
+.card-title{font-size:22px;font-weight:700;color:var(--navy);margin-bottom:6px}
+.card-sub{font-size:14px;color:var(--g500);margin-bottom:28px;line-height:1.6}
+.field{margin-bottom:18px}
+label{display:block;font-size:12px;font-weight:600;color:var(--g600);margin-bottom:5px;letter-spacing:.3px;text-transform:uppercase}
+input{width:100%;padding:11px 14px;border:1.5px solid var(--g300);border-radius:8px;font-size:14px;font-family:var(--font);color:var(--g800);background:#fff;outline:none;transition:border-color .15s}
+input:focus{border-color:var(--navy);box-shadow:0 0 0 3px rgba(26,39,68,.07)}
+input.err{border-color:var(--red)}
+.err-msg{font-size:12px;color:var(--red);margin-top:4px;display:none}
+.err-msg.show{display:block}
+.btn{width:100%;padding:13px;background:var(--navy);color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;font-family:var(--font);cursor:pointer;margin-top:8px;transition:background .15s}
+.btn:hover{background:#253360}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+.alert{padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:18px;display:none}
+.alert.show{display:block}
+.alert.err{background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.alert.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a}
+footer{text-align:center;padding:20px;font-size:12px;color:var(--g400)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo-box">P</div>
+  <span class="logo-name">Paylode</span>
+  <span class="logo-sep">|</span>
+  <span class="logo-sub">MPGS Onboarding Portal</span>
+</div>
+<div class="wrap">
+  <div class="card">
+    <a href="mpgs-login.html" class="back">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+      Back to login
+    </a>
+    <h1 class="card-title">Forgot your password?</h1>
+    <p class="card-sub">Enter your email address and we'll send you a link to reset your password.</p>
+
+    <div class="alert err" id="alertErr"></div>
+    <div class="alert ok" id="alertOk"></div>
+
+    <form id="forgotForm" novalidate>
+      <div class="field">
+        <label for="email">Email address</label>
+        <input type="email" id="email" autocomplete="email" placeholder="you@company.com">
+        <span class="err-msg" id="emailErr">Please enter a valid email address</span>
+      </div>
+      <button type="submit" class="btn" id="submitBtn">Send Reset Link</button>
+    </form>
+  </div>
+</div>
+<footer>Powered by Paylode Services Limited &mdash; MPGS Parallex Bank Onboarding Portal</footer>
+
+<script>
+const API = '/api/v1/mpgs-portal';
+
+document.getElementById('forgotForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  document.getElementById('email').classList.remove('err');
+  document.getElementById('emailErr').classList.remove('show');
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    document.getElementById('email').classList.add('err');
+    document.getElementById('emailErr').classList.add('show');
+    return;
+  }
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  document.getElementById('alertErr').classList.remove('show');
+  document.getElementById('alertOk').classList.remove('show');
+
+  try {
+    const r = await fetch(`${API}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const d = await r.json();
+    const ok = document.getElementById('alertOk');
+    ok.textContent = d.message || 'If that email is registered you will receive a reset link shortly.';
+    ok.classList.add('show');
+    document.getElementById('forgotForm').style.display = 'none';
+  } catch {
+    const el = document.getElementById('alertErr');
+    el.textContent = 'Something went wrong. Please try again.';
+    el.classList.add('show');
+    btn.disabled = false; btn.textContent = 'Send Reset Link';
+  }
+});
+</script>
+</body>
+</html>
