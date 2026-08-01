@@ -11,6 +11,12 @@ metadata:
 
 Single place to pick up. Each links to its detail memory. Supersedes stale [[outstanding-tasks]] (2026-06-13). Address him as **Goke** ([[feedback-address-by-name]]).
 
+## 🔴 OPEN — YouVerify activation (2026-08-01)
+- **Run DB migration** — `ssh root@176.57.188.45 "cd /opt/paylode-api/backend && node run_yv_migration.js"` creates `kyc_yv_checks` table. Then `pm2 reload paylode-core --update-env` to pick up new documents.js.
+- **Subscribe BVN/NIN/CAC products in YouVerify dashboard** — current API key (`joVZAMAF…`) returns 500 "no subscription" on live checks. Log in at dashboard.youverify.co and subscribe to identity verification plan.
+- **Deploy api-wiring.js (v126) to 45** — push branch / merge to main triggers GH Action. Contains YouVerify check history section in docs modal.
+- **Context:** YouVerify was abandoned 2026-06-17 (too expensive); reinstated 2026-07-31 on favorable commercial terms. New production key set; `YOUVERIFY_BASE_URL` → `https://api.youverify.co/v2` on 176. Interswitch KYC scaffold (`interswitchKycService.js`) remains dormant. See [[reference-youverify-creds]] + [[project-paylode-kyc-verification]].
+
 ## 🔴 OPEN — blocked on Goke / external
 - **Parallex payout NIP + balance (2026-07-12/13 session)** — [[project-parallex-integration]]. NameEnquiry returns `X91` for ALL banks (OPay + GTBank both fail) — NIP connectivity broken on Transfer APIM subscription. Transfer debit account `2001096025` shows ₦0 available via API despite ₦500k ledger. **Action: Goke to raise with Parallex:** (1) fix NIP X91; (2) why ₦0 available vs ₦500k ledger; (3) confirm VA settlement account ≠ payout debit account `2001096025`. Also: set `PARALLEX_VA_WEBHOOK_SECRET` once Parallex provides it (currently scaffold mode). VA pay-in FULLY LIVE for Drinks Arena ✅.
 - **Parallex rail + routing/pricing** — [[project-parallex-integration]], [[project-rail-routing-matrix]]. **4 OPEN PRs off main, NONE merged:** **#100** Parallex Transfer PAYOUT rail (adapter+`payoutRailAdapter` map, dormant); **#101** per-channel routing matrix (CARDS/VA/PAYOUT); **#102** Parallex rail costs + merchant pricing seeds; **#103** pay-in cost calc honours rail flat/min. **PR #108 merged 2026-07-12** (sandbox bypass + Transfer service + migration). Merge #100–103 once payout NIP is unblocked.
