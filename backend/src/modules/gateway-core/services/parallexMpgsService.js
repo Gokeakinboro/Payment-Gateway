@@ -179,6 +179,26 @@ async function charge(config, payload, sandbox = false) {
     return fromMpgsResponse(direct);
   }
 
+  // ── 3DS Method (browser fingerprinting) ──────────────────────────────────────
+  // Some issuers (e.g. UBA) require the 3DS Method iframe to complete before
+  // AUTHENTICATE_PAYER or the ACS immediately returns transactionStatus N (timeout).
+  // For server-side flows we POST to the methodUrl directly — this sets
+  // methodCompleted=true on the MPGS 3DS server so the ACS doesn't reject the auth.
+  const m3ds = init.authentication?.['3ds2'] || {};
+  if (m3ds.methodSupported === 'SUPPORTED' && m3ds.methodUrl && m3ds['3dsServerTransactionId']) {
+    const notifyUrl = `${appUrl}/api/rest/3ds/method-notify`;
+    const methodData = Buffer.from(JSON.stringify({
+      threeDSServerTransId: m3ds['3dsServerTransactionId'],
+      threeDSMethodNotificationURL: notifyUrl,
+    })).toString('base64url');
+    await fetch(m3ds.methodUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `threeDSMethodData=${encodeURIComponent(methodData)}`,
+    }).catch(() => {});
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
   // ── Step 2: AUTHENTICATE_PAYER ───────────────────────────────────────────────
   const callbackUrl = `${appUrl}/api/rest/3ds/callback?ref=${encodeURIComponent(payload.reference)}`;
   const auth2 = await fetch(
@@ -212,26 +232,31 @@ async function charge(config, payload, sandbox = false) {
 
   const txnStatus        = auth2.authentication?.['3ds2']?.transactionStatus;
   const payerInteraction = auth2.authentication?.payerInteraction;
+  const serverTransId    = auth2.authentication?.['3ds2']?.['3dsServerTransactionId'] || null;
   if (auth2.result === 'PENDING' || txnStatus === 'C' || payerInteraction === 'REQUIRED') {
     const redirect = auth2.authentication?.redirect || {};
     return {
       ok: false, pending3ds: true, result: 'PENDING',
-      gatewayCode:      'PENDING_AUTHENTICATION',
-      authRedirectUrl:  redirect?.customizedHtml?.['3ds2']?.acsUrl || null,
-      authRedirectHtml: redirect?.html || auth2.authentication?.redirectHtml || null,
-      auth3dsVersion:   auth2.authentication?.version || '3DS2',
-      mpgsOrderId:      orderId, mpgsTransactionId: '1',
+      gatewayCode:              'PENDING_AUTHENTICATION',
+      threeDSServerTransactionId: serverTransId,
+      authRedirectUrl:          redirect?.customizedHtml?.['3ds2']?.acsUrl || null,
+      authRedirectHtml:         redirect?.html || auth2.authentication?.redirectHtml || null,
+      auth3dsVersion:           auth2.authentication?.version || '3DS2',
+      mpgsOrderId:              orderId, mpgsTransactionId: '1',
       raw: auth2,
     };
   }
 
   // ── Step 3: PAY (frictionless — no challenge needed) ─────────────────────────
+  // txnId=2: MPGS uses txnId=1 for AUTHENTICATE_PAYER; PAY must be a different transaction slot.
+  // authentication.transactionId links this PAY to the completed 3DS session on MPGS's side.
   const pay = await fetch(
-    `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/1`,
+    `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/2`,
     {
       method: 'PUT', headers,
       body: JSON.stringify({
         apiOperation: payload.apiOperation || 'PAY',
+        authentication: { transactionId: '1' },
         order: { amount: nairaFromKobo(payload.amount), currency: payload.currency, description: payload.description || 'Paylode payment' },
         transaction: { reference: payload.reference },
       }),
@@ -295,11 +320,12 @@ async function authenticatePayer(config, payload) {
     const redirect = auth2.authentication?.redirect || {};
     return {
       ok: false, pending3ds: true, result: 'PENDING',
-      gatewayCode:      'PENDING_AUTHENTICATION',
-      authRedirectUrl:  redirect?.customizedHtml?.['3ds2']?.acsUrl || null,
-      authRedirectHtml: redirect?.html || auth2.authentication?.redirectHtml || null,
-      auth3dsVersion:   auth2.authentication?.version || '3DS2',
-      mpgsOrderId:      orderId, mpgsTransactionId: '1',
+      gatewayCode:              'PENDING_AUTHENTICATION',
+      threeDSServerTransactionId: auth2.authentication?.['3ds2']?.['3dsServerTransactionId'] || null,
+      authRedirectUrl:          redirect?.customizedHtml?.['3ds2']?.acsUrl || null,
+      authRedirectHtml:         redirect?.html || auth2.authentication?.redirectHtml || null,
+      auth3dsVersion:           auth2.authentication?.version || '3DS2',
+      mpgsOrderId:              orderId, mpgsTransactionId: '1',
       raw: auth2,
     };
   }
@@ -315,27 +341,44 @@ async function authenticatePayer(config, payload) {
 
 /**
  * Complete a PAY after a 3DS challenge — called from the 3DS callback endpoint.
- * Uses txnId=1 (same order, same transaction — MPGS links the 3DS auth to it).
- * Card data is already stored in the MPGS session from AUTHENTICATE_PAYER; minimal
- * body avoids "transaction already processed with different params" errors.
+ * Uses txnId=2 (new slot in same order; txnId=1 was consumed by AUTHENTICATE_PAYER).
+ * sourceOfFunds must be re-provided — MPGS requires card data on the PAY call.
  */
-async function payAfterChallenge(config, { reference, amount, currency, description, apiOperation }) {
+async function payAfterChallenge(config, { reference, amount, currency, description, apiOperation, card, threeDSServerTransactionId }) {
   const { mpgsMid, mpgsApiPassword, mpgsBaseUrl } = config;
   const baseUrl = mpgsBaseUrl.replace(/\/$/, '');
   const orderId = mpgsOrderId(reference);
-  const url     = `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/1`;
+  const url     = `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/2`;
+
+  const body = {
+    apiOperation: apiOperation || 'PAY',
+    // authentication.transactionId = the MPGS txnId used for AUTHENTICATE_PAYER (always "1").
+    // This links the PAY to the completed 3DS session for this order.
+    // Do NOT use the 3dsServerTransactionId UUID here — MPGS expects the simple txnId string.
+    authentication: { transactionId: '1' },
+    order: { amount: nairaFromKobo(amount), currency, description: description || 'Paylode payment' },
+    transaction: { reference },
+  };
+
+  if (card) {
+    body.sourceOfFunds = {
+      type: 'CARD',
+      provided: { card: {
+        number:       String(card.number).replace(/\s/g, ''),
+        expiry:       { month: String(card.expiry_month).padStart(2, '0'), year: String(card.expiry_year).slice(-2) },
+        securityCode: String(card.cvv),
+      }},
+    };
+  }
 
   const res = await fetch(url, {
     method: 'PUT',
     headers: { Authorization: basicAuth(mpgsMid, mpgsApiPassword), 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      apiOperation: apiOperation || 'PAY',
-      order: { amount: nairaFromKobo(amount), currency, description: description || 'Paylode payment' },
-      transaction: { reference },
-    }),
+    body: JSON.stringify(body),
   });
 
   const json = await res.json().catch(() => ({ result: 'FAILURE', error: { cause: 'NON_JSON_RESPONSE' } }));
+  console.error('[payAfterChallenge] MPGS raw:', JSON.stringify(json));
   return fromMpgsResponse(json);
 }
 
@@ -354,8 +397,59 @@ async function getOrder(config, reference) {
   return { ok: json.result === 'SUCCESS', raw: json };
 }
 
+/**
+ * Browser-checkout entry point — INITIATE_AUTHENTICATION only.
+ * Returns method details so the browser can run the 3DS Method iframe,
+ * then call authenticatePayer() via the /mpgs-step2 checkout endpoint.
+ *
+ * Returns:
+ *   { ok:false, error }                                   — MPGS rejected init
+ *   { ok:true, needsMethod:true,  methodUrl, methodData } — browser must run iframe
+ *   { ok:true, needsMethod:false }                        — skip straight to step2
+ */
+async function initiateFor3ds(config, { reference, currency, card }) {
+  const { mpgsMid, mpgsApiPassword, mpgsBaseUrl } = config;
+  const baseUrl = mpgsBaseUrl.replace(/\/$/, '');
+  const orderId = mpgsOrderId(reference);
+  const auth    = basicAuth(mpgsMid, mpgsApiPassword);
+  const headers = { Authorization: auth, 'Content-Type': 'application/json', Accept: 'application/json' };
+  const appUrl  = process.env.APP_URL || 'https://api.paylodeservices.com';
+
+  const pan = String(card.number).replace(/\s/g, '');
+  const exp = { month: String(card.expiry_month).padStart(2, '0'), year: String(card.expiry_year).slice(-2) };
+
+  const init = await fetch(
+    `${baseUrl}/merchant/${mpgsMid}/order/${orderId}/transaction/1`,
+    {
+      method: 'PUT', headers,
+      body: JSON.stringify({
+        apiOperation: 'INITIATE_AUTHENTICATION',
+        authentication: { channel: 'PAYER_BROWSER', purpose: 'PAYMENT_TRANSACTION' },
+        order: { currency },
+        sourceOfFunds: { type: 'CARD', provided: { card: { number: pan, expiry: exp } } },
+      }),
+    }
+  ).then(r => r.json()).catch(() => ({ result: 'ERROR', error: { cause: 'NON_JSON_RESPONSE' } }));
+
+  if (init.result === 'ERROR') return { ok: false, error: init.error };
+
+  const m3ds       = init.authentication?.['3ds2'] || {};
+  const methodUrl  = m3ds.methodUrl || null;
+  const transId    = m3ds['3dsServerTransactionId'] || null;
+  const needsMethod = m3ds.methodSupported === 'SUPPORTED' && !!methodUrl && !!transId;
+
+  const methodData = needsMethod
+    ? Buffer.from(JSON.stringify({
+        threeDSServerTransId: transId,
+        threeDSMethodNotificationURL: `${appUrl}/api/rest/3ds/method-notify`,
+      })).toString('base64url')
+    : null;
+
+  return { ok: true, needsMethod, methodUrl, methodData };
+}
+
 module.exports = {
-  charge, authenticatePayer, payAfterChallenge, getOrder,
+  charge, authenticatePayer, payAfterChallenge, getOrder, initiateFor3ds,
   toMpgsPayload, fromMpgsResponse, buildSandboxResponse,
   cardTypeFromNumber, nairaFromKobo, mpgsOrderId, MPGS_VERSION,
 };

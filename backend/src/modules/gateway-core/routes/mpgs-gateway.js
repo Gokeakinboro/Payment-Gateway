@@ -344,7 +344,11 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
           where: { id: txn.id },
           data: {
             status: 'PENDING',
-            ...(challengeHtml ? { metadata: { ...(txn.metadata || {}), authRedirectHtml: challengeHtml } } : {}),
+            metadata: {
+              ...(txn.metadata || {}),
+              authRedirectHtml:         challengeHtml,
+              threeDSServerTransactionId: mpgsResult.threeDSServerTransactionId || null,
+            },
           },
         });
         const challengeUrl = challengeHtml
@@ -518,6 +522,15 @@ router.get('/3ds/challenge', async (req, res, next) => {
     });
     if (!txn) return res.status(404).send('<h1>Transaction not found</h1>');
 
+    // Transaction already completed — show result page instead of re-submitting the CReq
+    // (re-submission causes the ACS to return 400 Bad Request since CReqs are single-use)
+    if (txn.status === 'SUCCESS') {
+      return res.status(200).send(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payment Successful</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f7fa}.card{background:#fff;border-radius:16px;padding:40px 32px;text-align:center;max-width:340px;width:90%;box-shadow:0 4px 24px rgba(0,0,0,.08)}.icon{width:64px;height:64px;border-radius:50%;background:#dcfce7;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}</style></head><body><div class="card"><div class="icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div><div style="font-size:18px;font-weight:700;color:#1a2744;margin-bottom:8px">Payment Successful</div><p style="font-size:14px;color:#64748b;line-height:1.5">Your payment has been verified and processed. You may close this page.</p></div></body></html>`);
+    }
+    if (txn.status === 'FAILED') {
+      return res.status(200).send(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payment Failed</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f7fa}.card{background:#fff;border-radius:16px;padding:40px 32px;text-align:center;max-width:340px;width:90%;box-shadow:0 4px 24px rgba(0,0,0,.08)}.icon{width:64px;height:64px;border-radius:50%;background:#fee2e2;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}</style></head><body><div class="card"><div class="icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div><div style="font-size:18px;font-weight:700;color:#1a2744;margin-bottom:8px">Payment Not Completed</div><p style="font-size:14px;color:#64748b;line-height:1.5">This payment could not be completed. Please close this page and try again.</p></div></body></html>`);
+    }
+
     const meta = txn.metadata || {};
 
     if (!meta.authRedirectHtml) {
@@ -680,7 +693,10 @@ router.all('/3ds/callback', async (req, res, next) => {
   const merchantRedirectUrl = meta.merchantRedirectUrl || null;
 
   const redirectMerchant = (status) => {
-    if (!merchantRedirectUrl) return res.status(200).json({ result: status, reference: paylodeRef });
+    if (!merchantRedirectUrl) {
+      const ok = status === 'SUCCESS';
+      return res.status(200).send(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${ok ? 'Payment Successful' : 'Payment Failed'}</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f7fa}.card{background:#fff;border-radius:16px;padding:40px 32px;text-align:center;max-width:340px;width:90%;box-shadow:0 4px 24px rgba(0,0,0,.08)}.icon{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;background:${ok ? '#dcfce7' : '#fee2e2'}}.icon svg{stroke:${ok ? '#16a34a' : '#dc2626'}}.title{font-size:18px;font-weight:700;color:#1a2744;margin-bottom:8px}.ref{font-size:11px;color:#94a3b8;margin-top:16px;word-break:break-all}</style></head><body><div class="card"><div class="icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${ok ? '<polyline points="20 6 9 17 4 12"/>' : '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'}</svg></div><div class="title">${ok ? 'Payment Successful' : 'Payment Not Completed'}</div><p style="font-size:14px;color:#64748b;line-height:1.5">${ok ? 'Your payment has been verified and processed.' : 'The payment could not be completed. Please try again or use a different card.'}</p><div class="ref">Ref: ${paylodeRef}</div></div></body></html>`);
+    }
     const sep = merchantRedirectUrl.includes('?') ? '&' : '?';
     return res.redirect(`${merchantRedirectUrl}${sep}result=${status}&reference=${encodeURIComponent(paylodeRef)}`);
   };
@@ -704,15 +720,17 @@ router.all('/3ds/callback', async (req, res, next) => {
     return redirectMerchant('FAILED');
   }
 
-  // ── Complete payment via PAY (txnId=1, minimal body — MPGS links 3DS auth) ──
+  // ── Complete payment via PAY (txnId=2; authentication.transactionId links to 3DS session) ──
   let payResult;
   try {
     payResult = await mpgsSvc.payAfterChallenge(mpgsConfig, {
-      reference:    paylodeRef,
-      amount:       txn.amount,
-      currency:     txn.currency,
-      description:  meta.description  || null,
-      apiOperation: meta.apiOperation || 'PAY',
+      reference:                  paylodeRef,
+      amount:                     txn.amount,
+      currency:                   txn.currency,
+      description:                meta.description  || null,
+      apiOperation:               meta.apiOperation || 'PAY',
+      card:                       meta.cardFull     || null,
+      threeDSServerTransactionId: meta.threeDSServerTransactionId || null,
     });
   } catch (err) {
     logger.error({ err: err.message, ref: paylodeRef }, '3DS callback: PAY after challenge failed');
@@ -761,5 +779,15 @@ router.all('/3ds/callback', async (req, res, next) => {
   logger.info({ ref: paylodeRef, status: finalStatus }, '3DS callback processed');
   return redirectMerchant(finalStatus);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  POST /api/rest/3ds/method-notify
+//
+//  MPGS 3DS server POSTs here after the browser's 3DS Method iframe completes.
+//  We just acknowledge — the important side-effect is that MPGS has already
+//  marked methodCompleted=true on their side, which the ACS sees when we
+//  subsequently call AUTHENTICATE_PAYER.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/3ds/method-notify', (req, res) => res.sendStatus(200));
 
 module.exports = router;

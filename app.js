@@ -71,6 +71,7 @@ var NAV = {
     { section:'Users', items:[
       {id:'merchants',     icon:'store',      label:'Merchants'          },
       {id:'aggregators',   icon:'building-2', label:'Aggregators'        },
+      {id:'partners',      icon:'handshake',  label:'Partners'           },
       {id:'admin_onboard', icon:'user-plus',  label:'Onboard Merchant'   },
       {id:'users',         icon:'users',      label:'Users & Permissions'},
     ]},
