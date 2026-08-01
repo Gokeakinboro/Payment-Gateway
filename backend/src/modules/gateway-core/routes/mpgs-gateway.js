@@ -35,6 +35,8 @@ const { prisma }  = require('../../../utils/db');
 const { screenTransaction } = require('../../../services/complianceService');
 const { dispatchWebhook }   = require('../../../services/webhookService');
 const mpgsSvc = require('../services/parallexMpgsService');
+const { sendCustomerReceipt } = require('../services/receiptEmail');
+const { computeFeesForTxn, getMerchantRateConfig } = require('../services/feeEngine');
 const appUrlBase = () => process.env.APP_URL || 'https://api.paylodeservices.com';
 const { logger } = require('../../../utils/logger');
 
@@ -744,15 +746,42 @@ router.all('/3ds/callback', async (req, res, next) => {
   const acquirerCode = payResult.acquirerCode || null;
 
   try {
+    let feeData = {};
+    if (finalStatus === 'SUCCESS' && txn.merchantId) {
+      try {
+        const cardProduct = txn.currency === 'USD' ? 'CARD_INTL' : 'CARD_LOCAL';
+        const rateOverride = await getMerchantRateConfig(prisma, txn.merchantId, cardProduct);
+        let platRate = null;
+        if (!rateOverride) {
+          platRate = await prisma.platformRateConfig.findFirst({
+            where: { channel: { in: [cardProduct, 'ALL'] } },
+            orderBy: { channel: 'desc' },
+          });
+        }
+        const rc = rateOverride || (platRate ? { rate: Number(platRate.rate), flatFee: Number(platRate.flatFee || 0), cap: Number(platRate.cap || 0) } : null);
+        const merchant = await prisma.merchant.findUnique({ where: { id: txn.merchantId }, include: { aggregator: true } });
+        const fees = computeFeesForTxn(BigInt(txn.amount), merchant,
+          rc ? { merchantRate: rc.rate, flatFee: rc.flatFee, merchantCap: rc.cap } : null, cardProduct);
+        feeData = {
+          amount:        fees.chargeAmount,
+          merchantFee:   fees.feePlusVat,
+          railCost:      fees.railPlusVat,
+          vatOutput:     fees.vatOnFee,
+          vatInput:      fees.vatOnRail,
+          aggShare:      fees.aggShare,
+          paylodeMargin: fees.paylodeMargin,
+          netRevenue:    fees.netPool,
+        };
+      } catch (_) { /* fee computation optional — don't block settlement */ }
+    }
+
     await prisma.transaction.update({
       where: { id: txn.id },
       data: {
         status:        finalStatus,
         paidAt:        finalStatus === 'SUCCESS' ? new Date() : null,
         failureReason: finalStatus === 'FAILED'  ? (gatewayCode || 'DECLINED') : null,
-        netRevenue:    finalStatus === 'SUCCESS'
-          ? (BigInt(txn.amount) - BigInt(txn.merchantFee || 0))
-          : BigInt(0),
+        ...feeData,
         metadata: {
           ...meta,
           mpgs: { gatewayCode, acquirerCode, authorizationCode: authCode },
@@ -777,6 +806,7 @@ router.all('/3ds/callback', async (req, res, next) => {
   }
 
   logger.info({ ref: paylodeRef, status: finalStatus }, '3DS callback processed');
+  if (finalStatus === 'SUCCESS') sendCustomerReceipt(paylodeRef).catch(() => {});
   return redirectMerchant(finalStatus);
 });
 
