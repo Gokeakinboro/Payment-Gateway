@@ -215,6 +215,7 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
   position: absolute; right: 10px; top: 50%;
   transform: translateY(-50%);
   display: flex; gap: 4px;
+  pointer-events: none;
 }
 .card-logo-chip {
   width: 30px; height: 20px;
@@ -531,8 +532,8 @@ input.mono-input { font-family: var(--mono); font-size: 15px; letter-spacing: 2p
                 maxlength="19" autocomplete="cc-number" inputmode="numeric"
                 oninput="formatCard(this)" onblur="validateCard(this)">
               <div class="card-logos">
-                <div class="card-logo-chip visa" id="logo-visa">VISA</div>
-                <div class="card-logo-chip mc" id="logo-mc">MC</div>
+                <div class="card-logo-chip visa" id="logo-visa" style="opacity:.3">VISA</div>
+                <div class="card-logo-chip mc" id="logo-mc" style="opacity:.3">MC</div>
                 <div class="card-logo-chip" id="logo-verve" style="background:#1a6b3c;color:#fff;opacity:.3">VERVE</div>
               </div>
             </div>

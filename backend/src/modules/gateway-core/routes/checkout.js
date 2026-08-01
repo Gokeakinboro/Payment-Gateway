@@ -18,9 +18,7 @@ const mpgsSvc  = require('../services/parallexMpgsService');
 const { finalizePayinSuccess } = require('../services/payinFinalize');
 const { sendCustomerReceipt } = require('../services/receiptEmail');
 
-const CHECKOUT_URL = process.env.APP_URL
-  ? process.env.APP_URL.replace(/\/$/, '') + '/checkout.html'
-  : 'https://paylodeservices.com/checkout.html';
+const CHECKOUT_URL = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '') + '/checkout.html';
 
 // Breakdown stored on a pay-in txn (metadata.payin) so the finalizer records EXACTLY
 // what the customer was charged — matches whatever the VA / wallet order was minted
@@ -67,17 +65,32 @@ router.get('/:reference', async (req, res, next) => {
       });
     }
 
-    // The headline amount = what the customer actually pays for a collection = face +
-    // our fee + VAT (the gross). Config-driven; shown so the order summary and the
-    // transfer/wallet panels all display the SAME number. (Card not live yet.)
+    // The headline amount = what the customer pays = face + Paylode fee + VAT.
+    // CARD uses CARD_LOCAL platform rate (1.5% + 7.5% VAT).
+    // VA/transfer uses the payin rail rate resolved from platform_rate_configs.
     let amountToPay = Number(txn.amount);
-    if (!txn.isSandbox && palmpay.isConfigured()) {
-      try {
+    try {
+      const ch = (txn.channel || '').toUpperCase();
+      if (ch === 'CARD') {
+        const cardProduct = txn.currency === 'USD' ? 'CARD_INTL' : 'CARD_LOCAL';
+        const platRate = await prisma.platformRateConfig.findFirst({
+          where: { channel: { in: [cardProduct, 'ALL'] } },
+          orderBy: { channel: 'desc' },
+        });
+        if (platRate) {
+          const fees = computeFeesForTxn(BigInt(txn.amount), txn.merchant, {
+            merchantRate: Number(platRate.rate),
+            merchantCap:  Number(platRate.cap  || 0),
+            flatFee:      Number(platRate.flatFee || 0),
+          }, cardProduct);
+          amountToPay = Number(fees.chargeAmount);
+        }
+      } else if (!txn.isSandbox && palmpay.isConfigured()) {
         const rail = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', txn.merchant);
         const cfg  = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id);
         amountToPay = Number(computeFeesForPayin(BigInt(txn.amount), cfg).chargeAmount);
-      } catch (e) { /* fall back to face amount */ }
-    }
+      }
+    } catch (e) { /* fall back to face amount */ }
 
     ok(res, {
       reference:     txn.reference,
