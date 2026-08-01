@@ -552,6 +552,9 @@ function showErr(msg) {
 
 document.getElementById('appForm').addEventListener('submit', e => { e.preventDefault(); save(true); });
 
+// Autosave draft every 5 minutes
+setInterval(() => { if (appId && token()) save(false); }, 5 * 60 * 1000);
+
 (async () => {
   if (!token()) { window.location.href = 'mpgs-login.html'; return; }
   if (!appId) { window.location.href = 'mpgs-dashboard.html'; return; }

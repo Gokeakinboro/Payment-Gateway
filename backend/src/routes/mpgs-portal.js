@@ -26,6 +26,8 @@ const { prisma }  = require('../utils/db');
 const { ok, fail, created, notFound } = require('../utils/helpers');
 const { requireAuth, requireAdminOrCompliance } = require('../middleware/auth');
 const { sendEmail } = require('../services/emailService');
+const { generateQuestionnairePDF, generateApplicationFormPDF } = require('../utils/mpgsPdf');
+const { generateCustomerDataSheetXlsx } = require('../utils/mpgsExcel');
 const { logger } = require('../utils/logger');
 
 // ── Upload directory ───────────────────────────────────────────────────────
@@ -698,9 +700,22 @@ router.post('/admin/applications/:id/send-to-bank', requireAuth, requireAdminOrC
       }
     }
 
-    let formHtml = '';
-    if (includeQuestionnaire && app.questionnaire)    formHtml += buildQuestionnaireHtml(app.questionnaire);
-    if (includeApplicationForm && app.applicationForm) formHtml += buildApplicationFormHtml(app.applicationForm);
+    if (includeQuestionnaire && app.questionnaire) {
+      const buf = await generateQuestionnairePDF(app.questionnaire, app.merchantName);
+      attachments.push({ filename: 'MPGS_Questionnaire.pdf', content: buf, contentType: 'application/pdf' });
+    }
+    if (includeApplicationForm && app.applicationForm) {
+      const buf = await generateApplicationFormPDF(app.applicationForm, app.merchantName);
+      attachments.push({ filename: 'Parallex_Application_Form.pdf', content: buf, contentType: 'application/pdf' });
+    }
+
+    // Always attach the filled Customer Data Sheet (Excel)
+    try {
+      const xlsBuf = generateCustomerDataSheetXlsx(app.questionnaire, app.applicationForm, app.merchantName);
+      attachments.push({ filename: 'Customer_Data_Sheet.xlsx', content: xlsBuf, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    } catch (e) {
+      logger.warn({ err: e }, 'Could not generate Customer Data Sheet xlsx — skipping');
+    }
 
     const toStr = emailList.join(', ');
     await sendEmail({
@@ -717,8 +732,7 @@ router.post('/admin/applications/:id/send-to-bank', requireAuth, requireAdminOrC
           ${app.parallexMerchantId ? `<p><strong>Parallex Merchant ID:</strong> ${app.parallexMerchantId}</p>` : ''}
           ${app.parallexOperatorId ? `<p><strong>Parallex Operator ID:</strong> ${app.parallexOperatorId}</p>` : ''}
           ${note ? `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:12px 16px;margin:12px 0"><p style="margin:0;color:#334155">${note}</p></div>` : ''}
-          <p><strong>Attachments:</strong> ${attachments.length ? attachments.map(a => a.filename).join(', ') : 'None'}</p>
-          ${formHtml}
+          <p><strong>Attachments (${attachments.length}):</strong> ${attachments.length ? attachments.map(a => a.filename).join(', ') : 'None'}</p>
         </div>
       </div>`,
       attachments,
