@@ -7343,6 +7343,9 @@ async function openDocsModal(entityType, id, name) {
 
   // Actual files the applicant uploaded at onboarding — reviewers VIEW these before acting.
   var upRes = await apiFetch('/documents/uploaded/' + entityType + '/' + id);
+  // YouVerify check history (all runs for this merchant)
+  var yvRes    = (entityType === 'merchant') ? await apiFetch('/documents/' + entityType + '/' + id + '/yv-checks') : null;
+  var yvChecks = (yvRes && yvRes.data && yvRes.data.checks) ? yvRes.data.checks : [];
   var uploaded = (upRes && upRes.data) ? upRes.data : { reference: null, files: [] };
   var uploadedHtml = (uploaded.files && uploaded.files.length)
     ? '<div style="font-weight:600;margin:2px 0 6px">Uploaded documents (' + uploaded.files.length + ')</div>' +
@@ -7418,6 +7421,29 @@ async function openDocsModal(entityType, id, name) {
           '<div><label class="form-label">Reason</label><input class="form-input" id="doc-reason" placeholder="Reason"></div>' +
           '<div><button class="btn btn-lime" onclick="deferSelectedDocs()">Defer ticked &amp; activate</button></div>' +
         '</div>'
+      : '') +
+    (entityType === 'merchant'
+      ? '<div class="divider"></div>' +
+        '<div style="font-weight:600;margin:4px 0 8px">YouVerify Check History</div>' +
+        (yvChecks.length
+          ? '<div class="table-wrap"><table style="width:100%;font-size:13px"><thead><tr>' +
+              '<th>Element</th><th>ID Number</th><th>Status</th><th>Triggered by</th><th>Date</th><th></th>' +
+            '</tr></thead><tbody>' +
+            yvChecks.map(function(c) {
+              var stMap = { verified:'badge-green', failed:'badge-red', pending:'badge-amber', error:'badge-red' };
+              var dt = c.triggered_at ? new Date(c.triggered_at).toLocaleString('en-NG', { dateStyle:'medium', timeStyle:'short' }) : '—';
+              var raw = c.raw_response ? JSON.stringify(c.raw_response, null, 2) : '{}';
+              return '<tr>' +
+                '<td><span class="tag">' + (c.element || '').toUpperCase() + '</span></td>' +
+                '<td style="font-family:monospace;font-size:12px">' + _escA(c.id_number || '—') + '</td>' +
+                '<td><span class="badge ' + (stMap[c.status] || 'badge-gray') + '">' + (c.status || '—') + '</span></td>' +
+                '<td style="font-size:12px">' + _escA(String(c.triggered_by_email || 'system').split('@')[0]) + '</td>' +
+                '<td style="font-size:12px;white-space:nowrap">' + dt + '</td>' +
+                '<td><button class="btn btn-outline btn-sm" onclick="alert(' + JSON.stringify(raw) + ')">Raw</button></td>' +
+              '</tr>';
+            }).join('') +
+            '</tbody></table></div>'
+          : '<div style="color:var(--gray-400);font-size:13px;padding:6px 0">No YouVerify checks run yet. Use "Run check" on any CHECK row above.</div>')
       : '')
   );
 }
@@ -7483,9 +7509,12 @@ async function viewDocReport(docId) {
 }
 
 async function runCheck(docId) {
+  var btn = document.activeElement; if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
   var res = await apiFetch('/documents/item/' + docId + '/run-check', { method:'POST' });
-  if (res && res.status) { alert(res.message || 'Check queued.'); var c = window._docCtx; openDocsModal(c.entityType, c.id, c.name); }
-  else alert('Error: ' + ((res && res.message) || 'Run check failed'));
+  if (btn) { btn.disabled = false; btn.textContent = 'Run check'; }
+  var c = window._docCtx;
+  if (res && res.status) { openDocsModal(c.entityType, c.id, c.name); }
+  else alert('YouVerify check failed: ' + ((res && res.message) || 'Unknown error'));
 }
 
 async function requestReupload(docId) {
