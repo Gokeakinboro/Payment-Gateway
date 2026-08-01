@@ -8,6 +8,18 @@ const path = require('path');
 
 const TEMPLATE_PATH = path.join(__dirname, '../../assets/mpgs/customer-data-sheet-template.xlsx');
 
+// ── Asset check (fails at startup, not at send time) ──────────────────────
+const fs = require('fs');
+if (!fs.existsSync(TEMPLATE_PATH)) {
+  throw new Error(
+    '[mpgsExcel] Missing asset: assets/mpgs/customer-data-sheet-template.xlsx\n' +
+    'Deploy it to the server manually:\n' +
+    '  scp -r "C:\\Users\\Goke\\Desktop\\Sub merchant forms\\*" \\\n' +
+    '      root@176.57.188.45:/opt/paylode-api/backend/assets/mpgs/\n' +
+    'Then re-run: pm2 reload paylode-core'
+  );
+}
+
 function val(v) { return Array.isArray(v) ? v.join(', ') : (v || ''); }
 
 /**
