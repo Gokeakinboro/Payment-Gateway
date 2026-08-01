@@ -8,6 +8,18 @@ const path        = require('path');
 
 const PARALLEX_LOGO = path.join(__dirname, '../../assets/mpgs/parallex-logo.png');
 
+// ── Asset check (fails at startup, not at send time) ──────────────────────
+const fs = require('fs');
+if (!fs.existsSync(PARALLEX_LOGO)) {
+  throw new Error(
+    '[mpgsPdf] Missing asset: assets/mpgs/parallex-logo.png\n' +
+    'Deploy it to the server manually:\n' +
+    '  scp -r "C:\\Users\\Goke\\Desktop\\Sub merchant forms\\*" \\\n' +
+    '      root@176.57.188.45:/opt/paylode-api/backend/assets/mpgs/\n' +
+    'Then re-run: pm2 reload paylode-core'
+  );
+}
+
 // ── Colour palette ─────────────────────────────────────────────────────────
 const NAVY  = '#1a2744';
 const PBLUE = '#1c2b6e';
