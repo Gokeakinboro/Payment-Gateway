@@ -563,6 +563,9 @@ function showErr(msg) {
 
 document.getElementById('qForm').addEventListener('submit', e => { e.preventDefault(); save(true); });
 
+// Autosave draft every 5 minutes
+setInterval(() => { if (appId && token()) save(false); }, 5 * 60 * 1000);
+
 // Load existing data
 (async () => {
   if (!token()) { window.location.href = 'mpgs-login.html'; return; }
