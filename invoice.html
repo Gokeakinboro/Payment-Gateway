@@ -33,7 +33,6 @@
 <script>
 const API = window.location.origin + '/api/v1/invoicing/public';
 const token = new URLSearchParams(location.search).get('t');
-const ngn = (k) => '₦' + (Number(k)/100).toLocaleString('en-NG', {minimumFractionDigits:2});
 
 async function load() {
   if (!token) return show('<div class="body err">Invalid invoice link.</div>');
@@ -41,10 +40,13 @@ async function load() {
   try { r = await (await fetch(`${API}/invoice/${token}`)).json(); } catch(e) { return show('<div class="body err">Could not load invoice.</div>'); }
   if (!r.status) return show(`<div class="body err">${r.message||'Invoice not found.'}</div>`);
   const d = r.data, m = d.merchant || {};
+  const isUSD = d.currency === 'USD';
+  const money = (k) => (isUSD ? '$' : '₦') + (Number(k)/100).toLocaleString(isUSD ? 'en-US' : 'en-NG', {minimumFractionDigits:2});
   const balance = d.balance;
   const isPaid = d.status === 'paid' || balance <= 0;
+  const curLabel = isUSD ? 'USD ($)' : '₦';
   const partField = (d.allow_part_payment && !isPaid)
-    ? `<label>Amount to pay (₦) — full balance is ${ngn(balance)}</label><input id="amt" type="number" min="1" placeholder="${(balance/100).toFixed(2)}">` : '';
+    ? `<label>Amount to pay (${curLabel}) — full balance is ${money(balance)}</label><input id="amt" type="number" min="1" placeholder="${(balance/100).toFixed(2)}">` : '';
   show(`
     <div class="head">
       ${m.logo_url ? `<img src="${m.logo_url}" alt="">` : ''}
@@ -54,18 +56,18 @@ async function load() {
       <div class="num">Invoice ${esc(d.invoice_number)} <span class="badge ${isPaid?'paid':'due'}">${isPaid?'Paid':'Due'}</span></div>
       ${d.description ? `<div class="muted" style="margin-bottom:10px">${esc(d.description)}</div>` : ''}
       ${(d.line_items&&d.line_items.length)
-        ? d.line_items.map(it=>{const q=Number(it.quantity||it.qty||1)||1;const u=it.unit_amount!=null?Number(it.unit_amount):(it.amount!=null?Math.round(Number(it.amount)/q):0);const a=it.amount!=null?Number(it.amount):u*q;const nm=esc(it.name||it.description||'Item');return `<div class="row"><span>${nm}<br><span class="muted" style="font-size:12px">${q} × ${ngn(u)}</span></span><span>${ngn(a)}</span></div>`;}).join('') + `<div class="row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Subtotal</span><span>${ngn(d.amount-(d.service_charge_amount||0))}</span></div>`
-        : `<div class="row"><span>Amount</span><span>${ngn(d.amount)}</span></div>`}
-      ${d.service_charge_amount>0?`<div class="row"><span>${esc(d.service_charge_label||'Service charge')}</span><span>${ngn(d.service_charge_amount)}</span></div>`:''}
-      ${d.vat_amount>0?`<div class="row"><span>VAT</span><span>${ngn(d.vat_amount)}</span></div>`:''}
-      ${d.amount_paid>0?`<div class="row"><span>Paid so far</span><span>-${ngn(d.amount_paid)}</span></div>`:''}
-      <div class="row total"><span>${isPaid?'Total':'Balance due'}</span><span>${ngn(isPaid?d.total_amount:balance)}</span></div>
+        ? d.line_items.map(it=>{const q=Number(it.quantity||it.qty||1)||1;const u=it.unit_amount!=null?Number(it.unit_amount):(it.amount!=null?Math.round(Number(it.amount)/q):0);const a=it.amount!=null?Number(it.amount):u*q;const nm=esc(it.name||it.description||'Item');return `<div class="row"><span>${nm}<br><span class="muted" style="font-size:12px">${q} × ${money(u)}</span></span><span>${money(a)}</span></div>`;}).join('') + `<div class="row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Subtotal</span><span>${money(d.amount-(d.service_charge_amount||0))}</span></div>`
+        : `<div class="row"><span>Amount</span><span>${money(d.amount)}</span></div>`}
+      ${d.service_charge_amount>0?`<div class="row"><span>${esc(d.service_charge_label||'Service charge')}</span><span>${money(d.service_charge_amount)}</span></div>`:''}
+      ${d.vat_amount>0?`<div class="row"><span>VAT</span><span>${money(d.vat_amount)}</span></div>`:''}
+      ${d.amount_paid>0?`<div class="row"><span>Paid so far</span><span>-${money(d.amount_paid)}</span></div>`:''}
+      <div class="row total"><span>${isPaid?'Total':'Balance due'}</span><span>${money(isPaid?d.total_amount:balance)}</span></div>
       ${d.due_at?`<div class="muted" style="margin-top:8px">Due by ${new Date(d.due_at).toDateString()}</div>`:''}
       ${isPaid ? '<div class="muted" style="margin-top:18px">This invoice has been paid in full. Thank you.</div>' : `
         ${partField}
         <label>Your email (optional, for a receipt)</label>
         <input id="email" type="email" placeholder="you@example.com">
-        <button id="pay" onclick="pay()">Pay ${ngn(balance)}</button>
+        <button id="pay" onclick="pay()">Pay ${money(balance)}</button>
         <div class="err" id="err"></div>`}
     </div>`);
 }
