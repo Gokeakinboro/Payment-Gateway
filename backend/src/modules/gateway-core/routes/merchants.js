@@ -955,6 +955,8 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res, next) => {
         data.isActive  = data.kycStatus === 'ACTIVE';
       }
       if (aggregatorId !== undefined) data.aggregatorId = aggregatorId || null;
+      if (req.body.cardAcceptanceScope !== undefined)
+        data.cardAcceptanceScope = req.body.cardAcceptanceScope === 'international' ? 'international' : 'local';
     }
 
     if (!Object.keys(data).length) return fail(res, 'No updatable fields provided');

@@ -201,6 +201,13 @@ router.put('/version/:v/merchant/:mid/order/:orderId/transaction/:txnId',
         });
       }
 
+      // ── International card gate ───────────────────────────────────────────
+      // Partner merchants bypass this check (they're pre-approved at integration time).
+      if (!req.isPartner && merchant && order.currency !== 'NGN' && merchant.cardAcceptanceScope !== 'international') {
+        return mpgsError(res, 400, 'INVALID_REQUEST',
+          'Merchant is not enabled for international card acceptance. Contact Paylode to activate USD/international card processing for your account.');
+      }
+
       // ── Convert amounts ────────────────────────────────────────────────────
       const amountKobo = nairaToKobo(order.amount);
       const processingRate = req.isPartner ? null : merchant?.processingRate;

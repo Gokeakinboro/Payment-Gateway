@@ -935,6 +935,13 @@ async function editMerchant(id) {
           '<input class="form-input" id="em-bank" value="' + (m.settlementBank || '') + '"></div>' +
         '<div class="form-group"><label class="form-label">Assign to Aggregator</label>' +
           '<select class="form-input form-select" id="em-agg">' + aggOpts + '</select></div>' +
+      '</div>' +
+      '<div class="form-group" style="margin-top:4px"><label class="form-label">Card Acceptance Scope</label>' +
+        '<select class="form-input form-select" id="em-card-scope">' +
+          '<option value="local"' + (m.cardAcceptanceScope !== 'international' ? ' selected' : '') + '>Domestic only (NGN / Naira cards)</option>' +
+          '<option value="international"' + (m.cardAcceptanceScope === 'international' ? ' selected' : '') + '>International enabled (USD / Mastercard)</option>' +
+        '</select>' +
+        '<div class="form-hint" style="margin-top:4px">Enabling international requires CBN approval. Allows the merchant to accept USD card charges via the MPGS gateway.</div>' +
       '</div>';
   }
 
@@ -1074,8 +1081,9 @@ async function saveMerchantEdit(id) {
   };
   if (feePayer) body.feePaidBy = feePayer.value;
   // Super-admin-only fields (elements won't exist in aggregator modal)
-  if (document.getElementById('em-status')) body.kycStatus      = _val('em-status');
-  if (document.getElementById('em-agg'))    body.aggregatorId   = _val('em-agg') || null;
+  if (document.getElementById('em-status'))     body.kycStatus           = _val('em-status');
+  if (document.getElementById('em-agg'))        body.aggregatorId        = _val('em-agg') || null;
+  if (document.getElementById('em-card-scope')) body.cardAcceptanceScope = _val('em-card-scope');
 
   // Save per-product pricing (full model) — SA only; the inputs exist only then.
   if (document.getElementById('em-rc-CARD_LOCAL-rate')) {
