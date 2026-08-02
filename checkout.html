@@ -1049,7 +1049,8 @@ async function loadTransaction() {
       const paid = txn.amount_to_pay != null ? txn.amount_to_pay : txn.amount;
       if (paid != null) {
         state.amount          = txn.amount != null ? txn.amount : state.amount;
-        state.amountFormatted = formatNaira(paid);
+        state.currency        = txn.currency || state.currency;
+        state.amountFormatted = formatAmount(paid, state.currency);
         state.merchantName    = txn.merchant_name || state.merchantName;
         state.description     = txn.description   || state.description;
       }
@@ -1064,7 +1065,8 @@ async function loadTransaction() {
     const payAmount       = txn.amount_to_pay != null ? txn.amount_to_pay : txn.amount;
     state.amount          = txn.amount;            // face / principal
     state.amountToPay     = payAmount;
-    state.amountFormatted = formatNaira(payAmount);
+    state.currency        = txn.currency || state.currency;
+    state.amountFormatted = formatAmount(payAmount, state.currency);
     state.merchantName    = txn.merchant_name || state.merchantName;
     // Use the txn's email authoritatively — '' means the payer skipped it (don't
     // fall back to the demo placeholder).
@@ -1583,8 +1585,12 @@ function stopPolling() {
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 function formatNaira(kobo) {
-  const naira = kobo / 100;
-  return new Intl.NumberFormat('en-NG', { style:'currency', currency:'NGN', minimumFractionDigits:2 }).format(naira);
+  return formatAmount(kobo, 'NGN');
+}
+function formatAmount(smallestUnit, currency) {
+  const val = smallestUnit / 100;
+  const ccy = (currency || 'NGN').toUpperCase();
+  return new Intl.NumberFormat(ccy === 'USD' ? 'en-US' : 'en-NG', { style:'currency', currency: ccy, minimumFractionDigits:2 }).format(val);
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
