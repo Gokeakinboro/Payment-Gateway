@@ -76,7 +76,7 @@ function invoiceEmailHtml({ bizName, inv, payUrl, isReminder }) {
 //   - error     : human-readable failure reason when sent=false (null otherwise)
 // The invoice is only flipped to 'sent' when the email genuinely goes out — a failed
 // or recipient-less send never falsely reports "sent".
-async function sendInvoice(invoiceId, { isReminder = false } = {}) {
+async function sendInvoice(invoiceId, { isReminder = false, cc = null, ccPhone = null } = {}) {
   const rows = await prisma.$queryRawUnsafe(
     `SELECT i.*, m.business_name, m.notification_settings, d.service_charge_label
        FROM inv_invoices i
@@ -97,6 +97,7 @@ async function sendInvoice(invoiceId, { isReminder = false } = {}) {
   try {
     await sendEmail({
       to: inv.recipient_email,
+      cc: cc || undefined,
       subject: `${isReminder ? 'Reminder: ' : ''}Invoice ${inv.invoice_number} from ${bizName}`.slice(0, 160),
       html: invoiceEmailHtml({ bizName, inv, payUrl, isReminder }),
       text: `${bizName} — Invoice ${inv.invoice_number}. Total due ${inv.currency} ${koboToNairaStr(inv.total_amount)}. Pay: ${payUrl}`,
@@ -107,12 +108,17 @@ async function sendInvoice(invoiceId, { isReminder = false } = {}) {
 
   // WhatsApp notification — only if merchant has opted in (whatsapp_invoice toggle ON).
   const notifSettings = inv.notification_settings || {};
+  const waParams = {
+    recipientName: inv.recipient_name, businessName: bizName,
+    invoiceNumber: inv.invoice_number, amount: inv.total_amount, currency: inv.currency, payUrl,
+    merchantId: inv.merchant_id,
+  };
   if (inv.recipient_phone && notifSettings.whatsapp_invoice) {
-    whatsapp.notifyInvoice({
-      phone: inv.recipient_phone, recipientName: inv.recipient_name, businessName: bizName,
-      invoiceNumber: inv.invoice_number, amount: inv.total_amount, currency: inv.currency, payUrl,
-      merchantId: inv.merchant_id,
-    }).catch(() => {});
+    whatsapp.notifyInvoice({ phone: inv.recipient_phone, ...waParams }).catch(() => {});
+  }
+  // Optional CC phone — always send if provided (not gated by merchant whatsapp_invoice toggle).
+  if (ccPhone) {
+    whatsapp.notifyInvoice({ phone: ccPhone, ...waParams }).catch(() => {});
   }
 
   if (sendError) {

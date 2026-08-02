@@ -139,7 +139,8 @@ router.post('/', async (req, res, next) => {
       const id = rows[0].id;
       let outcome = { sent: false, error: null };
       if (!isScheduled) {
-        try { outcome = await sendInvoice(id); }
+        const sendOpts = { cc: b.cc_email || null, ccPhone: b.cc_phone || null };
+        try { outcome = await sendInvoice(id, sendOpts); }
         catch (e) { outcome = { sent: false, error: (e && e.message) || 'Send failed' }; }
       }
       createdInvoices.push({ id, invoice_number: number, recipient_email: r.email,
@@ -260,7 +261,7 @@ router.post('/:id/send', async (req, res, next) => {
   try {
     const own = await prisma.$queryRawUnsafe(`SELECT id::text FROM inv_invoices WHERE id=$1::uuid AND merchant_id=$2::uuid`, req.params.id, req.invTenant.merchantId);
     if (!own.length) return notFound(res, 'Invoice');
-    const rr = await sendInvoice(req.params.id);
+    const rr = await sendInvoice(req.params.id, { cc: req.body?.cc_email || null, ccPhone: req.body?.cc_phone || null });
     const msg = rr.sent ? `Invoice sent to ${rr.email}`
       : (!rr.recipient ? (rr.error || 'Invoice has no email recipient')
                        : `Could not send invoice: ${rr.error}`);
