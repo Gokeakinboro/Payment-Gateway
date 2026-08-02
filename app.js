@@ -2336,6 +2336,7 @@ function setupInactivityTimeout() {
   var timer;
 
   function doLogout() {
+    console.warn('[Paylode] Session timeout — logging out due to inactivity');
     sessionStorage.removeItem('paylode_token');
     sessionStorage.removeItem('paylode_user');
     sessionStorage.removeItem('paylode_selected_role');
@@ -2363,7 +2364,18 @@ function setupInactivityTimeout() {
   window.addEventListener('focus', checkElapsed);
   window.addEventListener('pageshow', checkElapsed);
 
-  ['mousemove', 'mousedown', 'keypress', 'touchstart', 'scroll', 'click'].forEach(function(evt) {
+  // Significant-movement mousemove guard: only reset on moves > 5px to prevent
+  // OS-level cursor micro-jitter or assistive-tech synthetic events from keeping
+  // the session alive when the user isn't actually present.
+  var _lastMX = 0, _lastMY = 0;
+  function onMouseMove(e) {
+    if (Math.abs(e.clientX - _lastMX) >= 5 || Math.abs(e.clientY - _lastMY) >= 5) {
+      _lastMX = e.clientX; _lastMY = e.clientY;
+      resetTimer();
+    }
+  }
+  document.addEventListener('mousemove', onMouseMove, true);
+  ['mousedown', 'keypress', 'touchstart', 'scroll', 'click'].forEach(function(evt) {
     document.addEventListener(evt, resetTimer, true);
   });
 
