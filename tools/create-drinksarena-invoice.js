@@ -31,7 +31,7 @@ async function main() {
   // 1. Find DrinksArena merchant
   const merchants = await prisma.merchant.findMany({
     where: { businessName: { contains: 'drink', mode: 'insensitive' } },
-    select: { id: true, businessName: true, merchantCode: true, cardAcceptanceScope: true },
+    select: { id: true, businessName: true, merchantCode: true, cardAcceptanceScope: true, isActive: true },
   });
 
   if (!merchants.length) {
@@ -41,9 +41,9 @@ async function main() {
     process.exit(1);
   }
 
-  // Pick the best match
-  const da = merchants.find(m => /drink.*arena/i.test(m.businessName)) || merchants[0];
-  console.log(`Found merchant: ${da.businessName} (${da.id})`);
+  // Pick the ACTIVE one — there are two "Drinks Arena" records; only one is live
+  const da = merchants.find(m => m.isActive) || merchants.find(m => /drink.*arena/i.test(m.businessName)) || merchants[0];
+  console.log(`Found merchant: ${da.businessName} (${da.id}) isActive=${da.isActive}`);
   console.log(`Current card scope: ${da.cardAcceptanceScope}`);
 
   // 2. Enable international cards
@@ -101,6 +101,20 @@ async function main() {
     `SELECT merchant_code FROM merchants WHERE id = $1::uuid`, da.id
   );
   const merchantCode = mcode[0]?.merchant_code || 'DA';
+
+  // Cancel any prior test invoices for this recipient in any DrinksArena account
+  await prisma.$executeRawUnsafe(
+    `UPDATE inv_invoices SET status='cancelled', updated_at=now()
+      WHERE merchant_id IN (
+        SELECT id FROM merchants WHERE LOWER(business_name) LIKE '%drink%'
+      )
+      AND LOWER(recipient_email)=$1
+      AND status IN ('draft','sent','viewed')
+      AND currency='USD'
+      AND amount=100`,
+    RECIPIENT_EMAIL.toLowerCase()
+  );
+  console.log('Cancelled any prior open $1 USD test invoices for this recipient.');
 
   // 6. Create the invoice
   const number = await nextInvoiceNumber(da.id, merchantCode);

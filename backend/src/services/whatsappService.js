@@ -172,14 +172,14 @@ function formatMoney(kobo, currency) {
   return sym + (Number(kobo || 0) / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 });
 }
 
-// Invoice notification — params ORDER must match WHATSAPP_TEMPLATE_INVOICE.
+// Invoice notification — named params matching paylode_invoice_notification template.
 function notifyInvoice({ phone, recipientName, businessName, invoiceNumber, amount, currency, payUrl, merchantId }) {
   return sendTemplate(phone, T_INVOICE, T_INVOICE_LANG, [
-    { name: 'customer_name',   value: recipientName || 'there' },
-    { name: 'business_name',   value: businessName || 'Paylode' },
-    { name: 'invoice_number',  value: invoiceNumber || '' },
-    { name: 'amount_due',      value: formatMoney(amount, currency) },
-    { name: 'pay_url',         value: payUrl || '' },
+    { name: 'customer_name',  value: recipientName || 'there' },
+    { name: 'business_name',  value: businessName || 'Paylode' },
+    { name: 'invoice_number', value: invoiceNumber || '' },
+    { name: 'amount_due',     value: formatMoney(amount, currency) },
+    { name: 'pay_url',        value: payUrl || '' },
   ], { merchantId, eventType: 'invoice' });
 }
 
@@ -231,12 +231,11 @@ async function notifyCheckoutReceipt(reference) {
     const ccy   = txn.currency || 'NGN';
     const paidKobo = (txn.metadata?.payin?.charge != null) ? txn.metadata.payin.charge : txn.amount;
     const dateStr  = new Date(txn.paidAt || Date.now()).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
+    // Named params matching paylode_checkout_receipt template.
     return sendTemplate(phone, T_CHECKOUT_RECEIPT, T_CHECKOUT_LANG, [
-      { name: 'customer_name',  value: txn.customerEmail ? txn.customerEmail.split('@')[0] : 'there' },
-      { name: 'amount_paid',    value: formatMoney(paidKobo, ccy) },
-      { name: 'business_name',  value: txn.merchant?.businessName || 'Paylode' },
-      { name: 'reference',      value: txn.reference },
-      { name: 'date_time',      value: dateStr },
+      { name: 'customer_name', value: txn.customerEmail ? txn.customerEmail.split('@')[0] : 'there' },
+      { name: 'amount_paid',   value: formatMoney(paidKobo, ccy) },
+      { name: 'business_name', value: txn.merchant?.businessName || 'Paylode' },
     ], { merchantId: txn.merchant?.id, eventType: 'checkout_receipt' });
   } catch (e) {
     logger.warn({ err: e.message, reference }, 'WhatsApp checkout receipt failed');
@@ -260,6 +259,7 @@ async function notifyMerchantPayoutSummary(batchId) {
     const total    = formatMoney(batch.totalAmount, 'NGN');
     const count    = String(batch.totalItems || 0);
     const sentAt   = new Date().toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
+    // Named params matching paylode_payout template.
     return sendTemplate(phone, T_PAYOUT_SUMMARY, T_PAYOUT_SUM_LANG, [
       { name: 'merchant_name',  value: batch.merchant?.businessName || 'Merchant' },
       { name: 'total_amount',   value: total },
