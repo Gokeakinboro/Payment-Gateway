@@ -168,8 +168,8 @@ async function sendTemplate(recipient, templateName, languageCode, params = [], 
 }
 
 function formatMoney(kobo, currency) {
-  const sym = currency === 'USD' ? '$' : '₦';
-  return sym + (Number(kobo || 0) / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 });
+  const amount = (Number(kobo || 0) / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 });
+  return (currency === 'USD' ? '$' : 'NGN ') + amount;
 }
 
 // Invoice notification — named params matching paylode_invoice_notification template.
