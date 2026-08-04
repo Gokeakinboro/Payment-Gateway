@@ -100,22 +100,64 @@ async function _countTodayMessages(merchantId) {
   } catch { return 0; }
 }
 
+// 30-day test-mode global daily cap policy loaded from platform_settings key 'whatsapp_test_policy'.
+// Returns null when absent, inactive, or expired — falling back to per-merchant free-tier logic.
+async function _getTestPolicy() {
+  try {
+    const row = await prisma.platformSettings.findUnique({ where: { key: 'whatsapp_test_policy' } });
+    const p = row?.value;
+    if (!p || !p.active) return null;
+    if (p.expires_at && new Date(p.expires_at) < new Date()) return null;
+    return p;
+  } catch { return null; }
+}
+
+async function _getTodayGlobalCount() {
+  try {
+    const todayUtc = new Date(); todayUtc.setUTCHours(0, 0, 0, 0);
+    const result = await prisma.$queryRawUnsafe(
+      `SELECT COUNT(*) AS cnt FROM whatsapp_message_log WHERE sent_at >= $1 AND succeeded = TRUE`,
+      todayUtc);
+    return Number(result[0]?.cnt || 0);
+  } catch { return 0; }
+}
+
 async function _billMessage(merchantId, eventType, metaMessageId, succeeded) {
   try {
-    const [metaCostKobo, merchant] = await Promise.all([
+    const [metaCostKobo, policy] = await Promise.all([
       _getWhatsappPlatformCost(),
-      prisma.merchant.findUnique({ where: { id: merchantId }, select: { notificationSettings: true } }),
+      _getTestPolicy(),
     ]);
-    const ns = merchant?.notificationSettings || {};
-    const pricePerMsg = Number(ns.whatsapp_price_per_message_kobo || 0);
-    const freeTier    = Number(ns.whatsapp_free_tier_per_day || 0);
-    const todayCount  = freeTier > 0 ? await _countTodayMessages(merchantId) : 0;
-    const isFreeTier  = freeTier > 0 && todayCount < freeTier;
+
+    let isFreeTier = true;
+    let merchantChargeKobo = 0;
+
+    if (policy) {
+      // Test-mode global cap: first N messages/day free (Paylode bears cost),
+      // over-cap messages charged to the merchant at the configured rate.
+      const globalCount = await _getTodayGlobalCount();
+      if (globalCount >= (policy.daily_free_global_cap || 50)) {
+        isFreeTier = false;
+        merchantChargeKobo = policy.merchant_charge_kobo || 2500;
+      }
+    } else if (merchantId) {
+      // No active test policy — fall back to per-merchant free-tier settings.
+      const merchant = await prisma.merchant.findUnique({
+        where: { id: merchantId }, select: { notificationSettings: true },
+      });
+      const ns = merchant?.notificationSettings || {};
+      const pricePerMsg = Number(ns.whatsapp_price_per_message_kobo || 0);
+      const freeTier    = Number(ns.whatsapp_free_tier_per_day || 0);
+      const todayCount  = freeTier > 0 ? await _countTodayMessages(merchantId) : 0;
+      isFreeTier = freeTier > 0 && todayCount < freeTier;
+      merchantChargeKobo = isFreeTier ? 0 : pricePerMsg;
+    }
+
     await prisma.whatsappMessageLog.create({
       data: {
-        merchantId, eventType,
+        merchantId: merchantId || null, eventType,
         isFreeTier,
-        merchantChargeKobo: BigInt(isFreeTier ? 0 : pricePerMsg),
+        merchantChargeKobo: BigInt(merchantChargeKobo),
         metaCostKobo: BigInt(metaCostKobo),
         metaMessageId: metaMessageId || null,
         succeeded,
