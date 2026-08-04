@@ -1274,28 +1274,25 @@ function renderMerchWebhooks() {
     '<div class="flex" style="gap:6px"><span class="badge badge-green">Active</span><button class="btn btn-outline btn-sm">Test</button></div></div></div>';
 }
 
-var _NOTIF_EVENTS = [
-  {key:'whatsapp_invoice',         label:'Invoice',         desc:'Customer receives a WhatsApp notification when you send them an invoice'},
-  {key:'whatsapp_checkout_receipt',label:'Receipt',         desc:'Customer receives a WhatsApp receipt when their payment on your checkout page is confirmed'},
-  {key:'whatsapp_payout',          label:'Payout',          desc:'Beneficiary receives a WhatsApp notification when you send them a payout'},
-  {key:'whatsapp_payout_summary',  label:'Payout summary',  desc:'You receive a WhatsApp summary when your payout batch completes (sent to your business phone)'},
-];
-
 function renderMerchNotifications() {
   setTimeout(loadMerchNotifSettings, 0);
   return '<div class="page-header"><div class="page-title">Notifications</div>' +
-    '<div class="page-subtitle">Control which events trigger WhatsApp messages to your customers.</div></div>' +
+    '<div class="page-subtitle">Choose which events send email or WhatsApp notifications. Email is on by default. <strong style="color:#b45309">WhatsApp costs NGN 25/message after the first 50/day free.</strong></div></div>' +
     '<div class="card" style="margin-bottom:16px">' +
-      '<table style="width:100%;border-collapse:collapse">' +
+      '<table style="width:100%;border-collapse:collapse" id="notif-table">' +
         '<thead><tr>' +
           '<th style="text-align:left;padding:10px 16px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Event</th>' +
-          '<th style="text-align:center;padding:10px 16px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">SMS<br><span style="font-size:10px;font-weight:400;opacity:.6">Coming soon</span></th>' +
-          '<th style="text-align:center;padding:10px 16px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">WhatsApp</th>' +
+          '<th style="text-align:center;padding:10px 16px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">Email</th>' +
+          '<th style="text-align:center;padding:10px 16px;font-size:12px;color:var(--gray-400);font-weight:600;border-bottom:1px solid var(--gray-200)">WhatsApp<br><span style="font-size:10px;font-weight:400;color:#b45309">NGN 25/msg</span></th>' +
         '</tr></thead>' +
         '<tbody id="notif-rows"><tr><td colspan="3" style="text-align:center;padding:32px;color:var(--gray-400)">Loading…</td></tr></tbody>' +
       '</table>' +
     '</div>' +
-    '<div id="notif-pricing" style="display:none" class="card">' +
+    '<div style="display:flex;gap:10px;align-items:center">' +
+      '<button onclick="saveNotifSettings()" style="padding:9px 22px;background:var(--lime);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500">Save Settings</button>' +
+      '<span id="notif-save-msg" style="font-size:13px;color:var(--lime)"></span>' +
+    '</div>' +
+    '<div id="notif-pricing" style="display:none;margin-top:16px" class="card">' +
       '<div class="card-header"><div class="card-title">WhatsApp Pricing (set by Paylode)</div></div>' +
       '<div id="notif-pricing-body" style="padding:4px 0"></div>' +
     '</div>';
@@ -1303,49 +1300,38 @@ function renderMerchNotifications() {
 
 async function loadMerchNotifSettings() {
   var r = await apiFetch('/merchants/me/notification-settings');
-  if (!r) return;
-  var s = (r.data && r.data.settings) || {};
-  var html = _NOTIF_EVENTS.map(function(ev) {
-    var on = !!s[ev.key];
+  if (!r || !r.data) return;
+  var events = r.data.events || {};
+  var defs = r.data.eventDefs || [];
+  var html = defs.map(function(d) {
+    var ev = events[d.key] || { email: true, whatsapp: false };
     return '<tr style="border-bottom:1px solid var(--gray-100)">' +
       '<td style="padding:14px 16px">' +
-        '<div style="font-weight:500;font-size:13px">' + ev.label + '</div>' +
-        '<div style="font-size:11px;color:var(--gray-400);margin-top:2px">' + ev.desc + '</div>' +
+        '<div style="font-weight:500;font-size:13px">' + d.label + '</div>' +
       '</td>' +
-      '<td style="text-align:center;padding:14px 16px"><span style="color:var(--gray-300);font-size:12px">—</span></td>' +
       '<td style="text-align:center;padding:14px 16px">' +
-        '<label style="display:inline-flex;align-items:center;cursor:pointer">' +
-          '<input type="checkbox" ' + (on ? 'checked ' : '') + 'data-key="' + ev.key + '" ' +
-          'onchange="toggleMerchNotif(this.dataset.key,this.checked,this)" ' +
-          'style="width:36px;height:20px;cursor:pointer;accent-color:var(--lime)">' +
-        '</label>' +
+        '<input type="checkbox" class="notif-chk" data-event="' + d.key + '" data-channel="email"' + (ev.email ? ' checked' : '') + ' style="width:18px;height:18px;cursor:pointer;accent-color:var(--lime)">' +
+      '</td>' +
+      '<td style="text-align:center;padding:14px 16px">' +
+        '<input type="checkbox" class="notif-chk" data-event="' + d.key + '" data-channel="whatsapp"' + (ev.whatsapp ? ' checked' : '') + ' style="width:18px;height:18px;cursor:pointer;accent-color:var(--lime)">' +
       '</td>' +
     '</tr>';
-  }).join('');
+  }).join('') || '<tr><td colspan="3" style="padding:20px;text-align:center;color:#999">No events available.</td></tr>';
   var rowsEl = document.getElementById('notif-rows');
   if (rowsEl) rowsEl.innerHTML = html;
-
-  var price = Number(s.whatsapp_price_per_message_kobo || 0);
-  var tier  = Number(s.whatsapp_free_tier_per_day || 0);
-  var pricingEl = document.getElementById('notif-pricing');
-  var pricingBody = document.getElementById('notif-pricing-body');
-  if (pricingEl && pricingBody) {
-    pricingEl.style.display = 'block';
-    pricingBody.innerHTML =
-      '<div class="rev-row"><span class="rev-label">Price per WhatsApp message</span>' +
-      '<span class="rev-value">' + (price ? '&#8358;' + (price/100).toFixed(2) : 'Not set') + '</span></div>' +
-      '<div class="rev-row"><span class="rev-label">Daily free messages (borne by Paylode)</span>' +
-      '<span class="rev-value">' + (tier ? tier + ' messages/day' : 'None') + '</span></div>';
-  }
 }
 
-async function toggleMerchNotif(key, val, el) {
-  var body = {}; body[key] = val;
-  var r = await apiFetch('/merchants/me/notification-settings', { method: 'PATCH', body: JSON.stringify(body) });
-  if (!r || !r.status) {
-    alert('Could not save notification setting');
-    if (el) el.checked = !val;
-  }
+async function saveNotifSettings() {
+  var chks = document.querySelectorAll('.notif-chk');
+  var payload = {};
+  chks.forEach(function(c) {
+    var ev = c.dataset.event, ch = c.dataset.channel;
+    if (!payload[ev]) payload[ev] = {};
+    payload[ev][ch] = c.checked;
+  });
+  var r = await apiFetch('/merchants/me/notification-settings', { method: 'PATCH', body: JSON.stringify({ events: payload }) });
+  var msg = document.getElementById('notif-save-msg');
+  if (msg) { msg.textContent = (r && r.status) ? 'Saved!' : 'Error saving'; setTimeout(function(){ msg.textContent=''; }, 3000); }
 }
 
 // ── SA WhatsApp Billing page ──────────────────────────────────────────────────

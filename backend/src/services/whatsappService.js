@@ -80,6 +80,30 @@ function postJson(path, body) {
   });
 }
 
+// ── Notification preference helper ───────────────────────────────────────────
+// Reads structured events preferences with fallback to legacy flat keys + safe defaults.
+// channel = 'email' | 'whatsapp'   event = one of NOTIF_EVENTS keys
+// Defaults: email=true (all events), whatsapp=false (all events, must opt-in).
+const LEGACY_WA_KEY = {
+  invoice_sent:        'whatsapp_invoice',
+  invoice_paid:        'whatsapp_payment_received',
+  checkout_paid:       'whatsapp_checkout_receipt',
+  payout_dispatched:   'whatsapp_payout_summary',
+  qr_shared:           null,
+  payment_link_shared: null,
+};
+function getNotifPref(ns, event, channel) {
+  const events = ns && ns.events;
+  if (events && events[event] && channel in events[event]) return !!events[event][channel];
+  // Fallback to legacy WA flat key for whatsapp channel.
+  if (channel === 'whatsapp') {
+    const legacy = LEGACY_WA_KEY[event];
+    if (legacy && legacy in (ns || {})) return !!(ns[legacy]);
+    return false; // whatsapp default = OFF
+  }
+  return true; // email default = ON
+}
+
 // ── Billing helpers ───────────────────────────────────────────────────────────
 
 async function _getWhatsappPlatformCost() {
@@ -266,8 +290,7 @@ async function notifyCheckoutReceipt(reference) {
     });
     if (!txn || txn.status !== 'SUCCESS') return;
     const ns = txn.merchant?.notificationSettings || {};
-    // Honour per-merchant opt-in. Also accept the legacy whatsapp_payment_received key.
-    if (!ns.whatsapp_checkout_receipt && !ns.whatsapp_payment_received) return;
+    if (!getNotifPref(ns, 'checkout_paid', 'whatsapp')) return;
     const phone = (txn.metadata && (txn.metadata.customer_phone || txn.metadata.customerPhone)) || null;
     if (!phone) return;
     const ccy   = txn.currency || 'NGN';
@@ -295,7 +318,7 @@ async function notifyMerchantPayoutSummary(batchId) {
     });
     if (!batch || !['completed', 'partially_failed', 'failed'].includes(batch.status)) return;
     const ns = batch.merchant?.notificationSettings || {};
-    if (!ns.whatsapp_payout_summary) return;
+    if (!getNotifPref(ns, 'payout_dispatched', 'whatsapp')) return;
     const phone = batch.merchant?.businessPhone;
     if (!phone) return;
     const total    = formatMoney(batch.totalAmount, 'NGN');
@@ -314,4 +337,4 @@ async function notifyMerchantPayoutSummary(batchId) {
 }
 
 module.exports = { sendTemplate, notifyInvoice, notifyReceipt, notifyPaymentLink, notifyQr,
-  notifyCheckoutReceipt, notifyMerchantPayoutSummary, normalizePhone, isConfigured };
+  notifyCheckoutReceipt, notifyMerchantPayoutSummary, normalizePhone, isConfigured, getNotifPref };

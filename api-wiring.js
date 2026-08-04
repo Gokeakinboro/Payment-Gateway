@@ -480,7 +480,7 @@ async function viewMerchant(id) {
       '</div>' +
     '</div>';
 
-  var tabs = [{ id:'overview', label:'Overview' }, { id:'rates', label:'Rate Config' }, { id:'outlets', label:'Outlets' }];
+  var tabs = [{ id:'overview', label:'Overview' }, { id:'rates', label:'Rate Config' }, { id:'outlets', label:'Outlets' }, { id:'notifications', label:'Notifications' }];
   var tabNav = '<div class="tab-nav">' + tabs.map(function(t) {
     return '<button class="tab-btn' + (t.id === 'overview' ? ' active' : '') + '" onclick="switchMerchantTab(\'' + t.id + '\',\'' + id + '\')">' + t.label + '</button>';
   }).join('') + '</div>';
@@ -500,9 +500,10 @@ function switchMerchantTab(tab, merchantId) {
   document.querySelectorAll('#modal-inner .tab-btn').forEach(function(b) {
     b.classList.toggle('active', b.textContent.toLowerCase().replace(' ','') === tab || b.textContent.toLowerCase() === tab);
   });
-  if (tab === 'overview')  viewMerchant(merchantId);
-  if (tab === 'rates')     loadMerchantRates(merchantId);
-  if (tab === 'outlets')   loadMerchantOutlets(merchantId);
+  if (tab === 'overview')       viewMerchant(merchantId);
+  if (tab === 'rates')          loadMerchantRates(merchantId);
+  if (tab === 'outlets')        loadMerchantOutlets(merchantId);
+  if (tab === 'notifications')  openMerchantNotifSettings(merchantId);
 }
 
 // ── MERCHANT APPLICATION FORM (SA / Compliance) ───────────────────────────────
@@ -3256,6 +3257,141 @@ async function saveSettlementChange() {
     alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + ((res && res.message) || 'Submission failed') + '</div>';
     btn.textContent = 'Submit for Verification'; btn.disabled = false;
   }
+}
+
+// ── MERCHANT NOTIFICATION SETTINGS ───────────────────────────────────────────
+async function loadMerchNotifSettings() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/merchants/me/notification-settings');
+    if (!res || !res.data) { el.innerHTML = '<p class="text-muted">Could not load settings.</p>'; return; }
+    el.innerHTML = _renderNotifSettingsPage(res.data, false, null);
+  } catch(e) { el.innerHTML = '<p class="text-muted">Error loading settings.</p>'; }
+}
+
+async function _saveNotifSettings(merchantId, eventsPayload) {
+  var url = merchantId ? '/merchants/' + merchantId + '/notification-settings' : '/merchants/me/notification-settings';
+  var res = await apiFetch(url, { method: 'PATCH', body: JSON.stringify({ events: eventsPayload }) });
+  return res;
+}
+
+function _renderNotifSettingsPage(data, isSA, merchantId) {
+  var events = data.events || {};
+  var defs = data.eventDefs || [];
+  var costNote = data.waCostNote || 'WhatsApp costs NGN 25/message (first 50/day free during test mode)';
+  var pricing = data.pricing || {};
+
+  var rows = defs.map(function(d) {
+    var ev = events[d.key] || { email: true, whatsapp: false };
+    return '<tr>' +
+      '<td style="padding:10px 12px;font-size:14px">' + _escA(d.label) + '</td>' +
+      '<td style="text-align:center;padding:10px">' +
+        '<label class="toggle-label"><input type="checkbox" class="notif-toggle" data-event="' + d.key + '" data-channel="email"' + (ev.email ? ' checked' : '') + '><span class="toggle-slider"></span></label>' +
+      '</td>' +
+      '<td style="text-align:center;padding:10px">' +
+        '<label class="toggle-label"><input type="checkbox" class="notif-toggle" data-event="' + d.key + '" data-channel="whatsapp"' + (ev.whatsapp ? ' checked' : '') + '><span class="toggle-slider"></span></label>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+
+  var pricingBlock = isSA ? '<div style="margin-top:20px;padding:14px;background:#f8f9fa;border-radius:8px;font-size:13px">' +
+    '<strong>SA: Per-merchant WhatsApp pricing</strong><br><br>' +
+    '<label style="display:block;margin-bottom:8px">Price per message (kobo): ' +
+      '<input id="wa-price-kobo" type="number" min="0" value="' + (pricing.whatsapp_price_per_message_kobo || 0) + '" style="width:120px;margin-left:8px;padding:4px 8px;border:1px solid #ddd;border-radius:4px">' +
+    '</label>' +
+    '<label style="display:block;margin-bottom:8px">Daily free tier (messages): ' +
+      '<input id="wa-free-tier" type="number" min="0" value="' + (pricing.whatsapp_free_tier_per_day || 0) + '" style="width:120px;margin-left:8px;padding:4px 8px;border:1px solid #ddd;border-radius:4px">' +
+    '</label></div>' : '';
+
+  return '<div style="max-width:700px">' +
+    '<h2 style="margin-bottom:4px">Notification Settings</h2>' +
+    '<p style="color:#666;font-size:13px;margin-bottom:20px">Choose which events trigger email and WhatsApp notifications. Email is on by default. <strong style="color:#b45309">' + costNote + '</strong></p>' +
+    '<table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">' +
+      '<thead><tr style="background:#f1f5f9">' +
+        '<th style="text-align:left;padding:10px 12px;font-size:13px;font-weight:600">Event</th>' +
+        '<th style="text-align:center;padding:10px;font-size:13px;font-weight:600">Email</th>' +
+        '<th style="text-align:center;padding:10px;font-size:13px;font-weight:600">WhatsApp<br><span style="font-weight:400;font-size:11px;color:#b45309">NGN 25/msg</span></th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>' +
+    pricingBlock +
+    '<div style="margin-top:16px;display:flex;gap:10px;align-items:center">' +
+      '<button onclick="_submitNotifSettings(' + (merchantId ? "'" + merchantId + "'" : 'null') + ')" style="padding:10px 24px;background:#16a34a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">Save Settings</button>' +
+      '<span id="notif-save-msg" style="font-size:13px;color:#16a34a"></span>' +
+    '</div></div>';
+}
+
+async function _submitNotifSettings(merchantId) {
+  var toggles = document.querySelectorAll('.notif-toggle');
+  var payload = {};
+  toggles.forEach(function(t) {
+    var ev = t.dataset.event, ch = t.dataset.channel;
+    if (!payload[ev]) payload[ev] = {};
+    payload[ev][ch] = t.checked;
+  });
+  var extra = {};
+  if (merchantId) {
+    var priceEl = document.getElementById('wa-price-kobo');
+    var freeEl = document.getElementById('wa-free-tier');
+    if (priceEl) extra.whatsapp_price_per_message_kobo = parseInt(priceEl.value, 10) || 0;
+    if (freeEl) extra.whatsapp_free_tier_per_day = parseInt(freeEl.value, 10) || 0;
+  }
+  var body = { events: payload };
+  if (Object.keys(extra).length) Object.assign(body, extra);
+  var res = await apiFetch(
+    merchantId ? '/merchants/' + merchantId + '/notification-settings' : '/merchants/me/notification-settings',
+    { method: 'PATCH', body: JSON.stringify(body) }
+  );
+  var msg = document.getElementById('notif-save-msg');
+  if (msg) msg.textContent = (res && res.status) ? 'Saved!' : ('Error: ' + (res && res.message || 'failed'));
+}
+
+// SA: open notification settings for a specific merchant (called from merchant modal).
+async function openMerchantNotifSettings(merchantId) {
+  var modal = document.getElementById('modal');
+  var modalContent = document.getElementById('modal-content');
+  if (!modal || !modalContent) return;
+  modalContent.innerHTML = loading();
+  modal.style.display = 'flex';
+  var res = await apiFetch('/merchants/' + merchantId + '/notification-settings');
+  if (!res || !res.data) { modalContent.innerHTML = '<p>Could not load settings.</p>'; return; }
+  modalContent.innerHTML = '<div style="padding:20px">' + _renderNotifSettingsPage(res.data, true, merchantId) + '</div>';
+}
+
+// SA WhatsApp billing page.
+async function loadSaWhatsappPage() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/merchants/whatsapp-billing');
+    var rows = (res && res.data && res.data.rows) || [];
+    var total = (res && res.data && res.data.total) || {};
+    var tableRows = rows.map(function(r) {
+      return '<tr><td>' + _escA(r.merchant_name || '—') + '</td>' +
+        '<td style="text-align:right">' + (r.messages_today||0) + '</td>' +
+        '<td style="text-align:right">' + (r.messages_total||0) + '</td>' +
+        '<td style="text-align:right">NGN ' + ((r.charge_kobo_total||0)/100).toLocaleString('en-NG',{minimumFractionDigits:2}) + '</td>' +
+        '<td style="text-align:right">NGN ' + ((r.unsettled_kobo||0)/100).toLocaleString('en-NG',{minimumFractionDigits:2}) + '</td>' +
+        '<td><button onclick="openMerchantNotifSettings(\'' + r.merchant_id + '\')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:4px;cursor:pointer;background:#fff">Settings</button></td>' +
+      '</tr>';
+    }).join('') || '<tr><td colspan="6" style="text-align:center;color:#999;padding:20px">No WhatsApp activity yet.</td></tr>';
+    el.innerHTML = '<h2>WhatsApp Billing</h2>' +
+      '<p style="color:#666;font-size:13px;margin-bottom:20px">Per-merchant WhatsApp message usage and accumulated charges. Charges are auto-deducted at settlement.</p>' +
+      '<table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">' +
+        '<thead><tr style="background:#f1f5f9">' +
+          '<th style="text-align:left;padding:10px 12px">Merchant</th>' +
+          '<th style="text-align:right;padding:10px">Today</th>' +
+          '<th style="text-align:right;padding:10px">All-time</th>' +
+          '<th style="text-align:right;padding:10px">Total Charged</th>' +
+          '<th style="text-align:right;padding:10px">Unsettled</th>' +
+          '<th style="padding:10px">Actions</th>' +
+        '</tr></thead>' +
+        '<tbody>' + tableRows + '</tbody>' +
+      '</table>';
+  } catch(e) { el.innerHTML = '<p class="text-muted">Error loading billing data.</p>'; }
 }
 
 // ── MERCHANT API KEYS ─────────────────────────────────────────────────────────
@@ -6873,8 +7009,8 @@ loadPageData = function(page) {
     case 'sdk_mobile':
     case 'sdk_errors':
     case 'sdk_test':
-    case 'merch_notifications': // self-loads via loadMerchNotifSettings()
-    case 'sa_whatsapp':         // self-loads via loadSaWhatsappPage()
+    case 'merch_notifications': loadMerchNotifSettings(); break;
+    case 'sa_whatsapp':         loadSaWhatsappPage(); break;
     case 'merch_webhooks':
     case 'merch_profile':
       break;

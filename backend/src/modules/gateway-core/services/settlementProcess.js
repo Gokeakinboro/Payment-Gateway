@@ -55,15 +55,33 @@ async function generateSettlements({ date, sandbox = false } = {}) {
 
     const gross = g._sum.amount || 0n;
     const fees = g._sum.merchantFee || 0n;
-    const net = gross - fees;
+
+    // Deduct accumulated unsettled WhatsApp charges for this merchant (NGN only).
+    let waDeduction = 0n;
+    if (ccy === 'NGN') {
+      const waRows = await prisma.$queryRawUnsafe(
+        `SELECT COALESCE(SUM(merchant_charge_kobo),0)::bigint AS total
+           FROM whatsapp_message_log
+          WHERE merchant_id = $1::uuid AND settled = FALSE AND merchant_charge_kobo > 0`,
+        g.merchantId);
+      waDeduction = BigInt(waRows[0]?.total || 0);
+      if (waDeduction > 0n) {
+        await prisma.$executeRawUnsafe(
+          `UPDATE whatsapp_message_log SET settled = TRUE
+            WHERE merchant_id = $1::uuid AND settled = FALSE AND merchant_charge_kobo > 0`,
+          g.merchantId);
+      }
+    }
+
+    const net = gross - fees - waDeduction;
     await prisma.settlement.create({ data: {
       merchantId: g.merchantId, currency: ccy, periodStart, periodEnd,
-      grossAmount: gross, feesDeducted: fees, netSettled: net,
+      grossAmount: gross, feesDeducted: fees + waDeduction, netSettled: net,
       txnCount: g._count, status: 'PENDING',
       settlementRef: generateRef(ccy === 'USD' ? 'SETUSD' : 'SET'),
     }});
     processed++;
-    results.push({ merchant_id: g.merchantId, currency: ccy, txn_count: g._count, net_kobo: Number(net), net_major: Number(net) / 100 });
+    results.push({ merchant_id: g.merchantId, currency: ccy, txn_count: g._count, wa_deduction_kobo: Number(waDeduction), net_kobo: Number(net), net_major: Number(net) / 100 });
   }
   return { date: periodStart.toISOString().split('T')[0], processed, skipped, results };
 }

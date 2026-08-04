@@ -54,14 +54,17 @@ async function recordForTransaction(txn) {
       invoice_number: inv.invoice_number, status: inv.status,
       amount_paid: Number(inv.paid), total: Number(inv.total_amount), reference: txn.reference,
     });
-    // WhatsApp receipt to the payer once fully paid (best-effort; no-ops until configured).
+    // WhatsApp receipt — only if merchant has opted in for invoice_paid.whatsapp.
     if (inv && inv.status === 'paid' && inv.recipient_phone) {
-      prisma.merchant.findUnique({ where: { id: inv.merchant_id }, select: { businessName: true } })
-        .then((m) => whatsapp.notifyReceipt({
-          phone: inv.recipient_phone, recipientName: inv.recipient_name,
-          businessName: (m && m.businessName) || 'Paylode', invoiceNumber: inv.invoice_number,
-          amount: inv.total_amount, currency: inv.currency,
-        }).catch(() => {}))
+      prisma.merchant.findUnique({ where: { id: inv.merchant_id }, select: { businessName: true, notificationSettings: true } })
+        .then((m) => {
+          if (!whatsapp.getNotifPref(m?.notificationSettings || {}, 'invoice_paid', 'whatsapp')) return;
+          return whatsapp.notifyReceipt({
+            phone: inv.recipient_phone, recipientName: inv.recipient_name,
+            businessName: (m && m.businessName) || 'Paylode', invoiceNumber: inv.invoice_number,
+            amount: inv.total_amount, currency: inv.currency, merchantId: inv.merchant_id,
+          }).catch(() => {});
+        })
         .catch(() => {});
     }
     return { recorded: true, invoice: inv };
