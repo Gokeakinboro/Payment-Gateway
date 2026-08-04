@@ -997,17 +997,40 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 // GET  /api/v1/merchants/:id/notification-settings — SA reads any merchant
 // PATCH /api/v1/merchants/:id/notification-settings — SA updates any merchant
 
-const NOTIF_KEYS = [
-  'whatsapp_invoice',           // invoice sent → recipient (customer)
-  'whatsapp_checkout_receipt',  // checkout payment confirmed → payer (customer)
-  'whatsapp_payment_received',  // legacy alias for checkout_receipt (kept for compat)
-  'whatsapp_payout',            // payout dispatched → beneficiary
-  'whatsapp_payout_summary',    // payout batch completed → merchant
+// Canonical notification events. Each has email (default ON) and whatsapp (default OFF).
+const NOTIF_EVENTS = [
+  { key: 'invoice_sent',        label: 'Invoice sent to customer',          emailDefault: true,  waDefault: false },
+  { key: 'invoice_paid',        label: 'Invoice payment received (receipt)', emailDefault: true,  waDefault: false },
+  { key: 'checkout_paid',       label: 'Checkout payment received',          emailDefault: true,  waDefault: false },
+  { key: 'qr_shared',           label: 'QR code shared to recipient',        emailDefault: true,  waDefault: false },
+  { key: 'payment_link_shared', label: 'Payment link shared to recipient',   emailDefault: true,  waDefault: false },
+  { key: 'payout_dispatched',   label: 'Payout batch dispatched',            emailDefault: true,  waDefault: false },
 ];
-// SA-only pricing fields stored in the same JSONB column (merchants cannot set their own price).
+
+// Build the default events object (all merchant-editable).
+function defaultEvents() {
+  const ev = {};
+  NOTIF_EVENTS.forEach(({ key, emailDefault, waDefault }) => { ev[key] = { email: emailDefault, whatsapp: waDefault }; });
+  return ev;
+}
+
+// Merge stored events with defaults so missing keys always resolve correctly.
+function resolveEvents(stored) {
+  const base = defaultEvents();
+  const storedEv = (stored && stored.events) || {};
+  NOTIF_EVENTS.forEach(({ key }) => {
+    if (storedEv[key]) {
+      if ('email'    in storedEv[key]) base[key].email    = !!storedEv[key].email;
+      if ('whatsapp' in storedEv[key]) base[key].whatsapp = !!storedEv[key].whatsapp;
+    }
+  });
+  return base;
+}
+
+// SA-only pricing fields.
 const SA_PRICING_KEYS = [
-  'whatsapp_price_per_message_kobo', // what merchant is charged per outbound WA message
-  'whatsapp_free_tier_per_day',      // daily free messages borne by Paylode
+  'whatsapp_price_per_message_kobo',
+  'whatsapp_free_tier_per_day',
 ];
 
 router.get('/me/notification-settings', requireAuth, async (req, res, next) => {
@@ -1016,7 +1039,8 @@ router.get('/me/notification-settings', requireAuth, async (req, res, next) => {
     if (!merchantId) return fail(res, 'No merchant account');
     const m = await prisma.merchant.findUnique({ where: { id: merchantId }, select: { notificationSettings: true } });
     if (!m) return notFound(res, 'Merchant');
-    ok(res, { settings: m.notificationSettings || {}, availableKeys: NOTIF_KEYS });
+    const ns = m.notificationSettings || {};
+    ok(res, { events: resolveEvents(ns), eventDefs: NOTIF_EVENTS, waCostNote: 'WhatsApp costs NGN 25 per message (first 50/day free)' });
   } catch (e) { next(e); }
 });
 
@@ -1026,12 +1050,22 @@ router.patch('/me/notification-settings', requireAuth, async (req, res, next) =>
     if (!merchantId) return fail(res, 'No merchant account');
     const current = await prisma.merchant.findUnique({ where: { id: merchantId }, select: { notificationSettings: true } });
     if (!current) return notFound(res, 'Merchant');
-    const updates = {};
-    NOTIF_KEYS.forEach((k) => { if (k in req.body) updates[k] = !!req.body[k]; });
-    const merged = { ...(current.notificationSettings || {}), ...updates };
+    const ns = current.notificationSettings || {};
+    // Merge incoming events patch (only known event keys, only boolean channel values).
+    const incoming = req.body.events || {};
+    const existing = ns.events || {};
+    const merged_events = { ...existing };
+    NOTIF_EVENTS.forEach(({ key }) => {
+      if (incoming[key]) {
+        merged_events[key] = merged_events[key] || {};
+        if ('email'    in incoming[key]) merged_events[key].email    = !!incoming[key].email;
+        if ('whatsapp' in incoming[key]) merged_events[key].whatsapp = !!incoming[key].whatsapp;
+      }
+    });
+    const merged = { ...ns, events: merged_events };
     const m = await prisma.merchant.update({ where: { id: merchantId }, data: { notificationSettings: merged } });
     await logAudit(req.user.id, 'UPDATE_NOTIFICATION_SETTINGS', 'Merchant', merchantId, null, merged);
-    ok(res, { settings: m.notificationSettings });
+    ok(res, { events: resolveEvents(merged) });
   } catch (e) { next(e); }
 });
 
@@ -1039,7 +1073,8 @@ router.get('/:id/notification-settings', requireAuth, requireSuperAdmin, async (
   try {
     const m = await prisma.merchant.findUnique({ where: { id: req.params.id }, select: { notificationSettings: true } });
     if (!m) return notFound(res, 'Merchant');
-    ok(res, { settings: m.notificationSettings || {}, availableKeys: NOTIF_KEYS });
+    const ns = m.notificationSettings || {};
+    ok(res, { events: resolveEvents(ns), eventDefs: NOTIF_EVENTS, waCostNote: 'WhatsApp costs NGN 25 per message (first 50/day free)', pricing: { whatsapp_price_per_message_kobo: ns.whatsapp_price_per_message_kobo || 0, whatsapp_free_tier_per_day: ns.whatsapp_free_tier_per_day || 0 } });
   } catch (e) { next(e); }
 });
 
@@ -1047,13 +1082,22 @@ router.patch('/:id/notification-settings', requireAuth, requireSuperAdmin, async
   try {
     const current = await prisma.merchant.findUnique({ where: { id: req.params.id }, select: { notificationSettings: true } });
     if (!current) return notFound(res, 'Merchant');
-    const updates = {};
-    NOTIF_KEYS.forEach((k) => { if (k in req.body) updates[k] = !!req.body[k]; });
-    SA_PRICING_KEYS.forEach((k) => { if (k in req.body) updates[k] = Math.max(0, Number(req.body[k]) || 0); });
-    const merged = { ...(current.notificationSettings || {}), ...updates };
+    const ns = current.notificationSettings || {};
+    const incoming = req.body.events || {};
+    const existing = ns.events || {};
+    const merged_events = { ...existing };
+    NOTIF_EVENTS.forEach(({ key }) => {
+      if (incoming[key]) {
+        merged_events[key] = merged_events[key] || {};
+        if ('email'    in incoming[key]) merged_events[key].email    = !!incoming[key].email;
+        if ('whatsapp' in incoming[key]) merged_events[key].whatsapp = !!incoming[key].whatsapp;
+      }
+    });
+    const merged = { ...ns, events: merged_events };
+    SA_PRICING_KEYS.forEach((k) => { if (k in req.body) merged[k] = Math.max(0, Number(req.body[k]) || 0); });
     const m = await prisma.merchant.update({ where: { id: req.params.id }, data: { notificationSettings: merged } });
     await logAudit(req.user.id, 'UPDATE_NOTIFICATION_SETTINGS', 'Merchant', req.params.id, null, merged);
-    ok(res, { settings: m.notificationSettings });
+    ok(res, { events: resolveEvents(merged) });
   } catch (e) { next(e); }
 });
 
@@ -1081,6 +1125,31 @@ router.get('/:id/whatsapp-stats', requireAuth, requireSuperAdmin, async (req, re
       metaCostKobo:        cost,
       netMarginKobo:       revenue - cost,
     });
+  } catch (e) { next(e); }
+});
+
+// SA: per-merchant WhatsApp billing summary for the billing dashboard page.
+router.get('/whatsapp-billing', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const todayUtc = new Date(); todayUtc.setUTCHours(0, 0, 0, 0);
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT m.id::text AS merchant_id, m.business_name AS merchant_name,
+        COUNT(w.id) FILTER (WHERE w.succeeded AND w.sent_at >= $1)                                  AS messages_today,
+        COUNT(w.id) FILTER (WHERE w.succeeded)                                                       AS messages_total,
+        COALESCE(SUM(w.merchant_charge_kobo) FILTER (WHERE w.succeeded), 0)                         AS charge_kobo_total,
+        COALESCE(SUM(w.merchant_charge_kobo) FILTER (WHERE w.succeeded AND NOT w.settled), 0)       AS unsettled_kobo
+      FROM merchants m
+      LEFT JOIN whatsapp_message_log w ON w.merchant_id = m.id
+      GROUP BY m.id, m.business_name
+      HAVING COUNT(w.id) > 0
+      ORDER BY messages_total DESC
+    `, todayUtc);
+    const total = rows.reduce((acc, r) => {
+      acc.charge_kobo_total += Number(r.charge_kobo_total || 0);
+      acc.unsettled_kobo    += Number(r.unsettled_kobo || 0);
+      return acc;
+    }, { charge_kobo_total: 0, unsettled_kobo: 0 });
+    ok(res, { rows: rows.map((r) => ({ ...r, messages_today: Number(r.messages_today), messages_total: Number(r.messages_total), charge_kobo_total: Number(r.charge_kobo_total), unsettled_kobo: Number(r.unsettled_kobo) })), total });
   } catch (e) { next(e); }
 });
 

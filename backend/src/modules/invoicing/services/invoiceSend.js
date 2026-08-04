@@ -93,30 +93,32 @@ async function sendInvoice(invoiceId, { isReminder = false, cc = null, ccPhone =
       error: 'No email address on this invoice — share the payment link or QR instead.' };
   }
 
+  const notifSettings = inv.notification_settings || {};
   let sendError = null;
-  try {
-    await sendEmail({
-      to: inv.recipient_email,
-      cc: cc || undefined,
-      subject: `${isReminder ? 'Reminder: ' : ''}Invoice ${inv.invoice_number} from ${bizName}`.slice(0, 160),
-      html: invoiceEmailHtml({ bizName, inv, payUrl, isReminder }),
-      text: `${bizName} — Invoice ${inv.invoice_number}. Total due ${inv.currency} ${koboToNairaStr(inv.total_amount)}. Pay: ${payUrl}`,
-    });
-  } catch (e) {
-    sendError = (e && e.message) ? e.message : 'Email delivery failed';
+  if (whatsapp.getNotifPref(notifSettings, 'invoice_sent', 'email')) {
+    try {
+      await sendEmail({
+        to: inv.recipient_email,
+        cc: cc || undefined,
+        subject: `${isReminder ? 'Reminder: ' : ''}Invoice ${inv.invoice_number} from ${bizName}`.slice(0, 160),
+        html: invoiceEmailHtml({ bizName, inv, payUrl, isReminder }),
+        text: `${bizName} — Invoice ${inv.invoice_number}. Total due ${inv.currency} ${koboToNairaStr(inv.total_amount)}. Pay: ${payUrl}`,
+      });
+    } catch (e) {
+      sendError = (e && e.message) ? e.message : 'Email delivery failed';
+    }
   }
 
-  // WhatsApp notification — only if merchant has opted in (whatsapp_invoice toggle ON).
-  const notifSettings = inv.notification_settings || {};
+  // WhatsApp notification — only if merchant has opted in for invoice_sent.whatsapp.
   const waParams = {
     recipientName: inv.recipient_name, businessName: bizName,
     invoiceNumber: inv.invoice_number, amount: inv.total_amount, currency: inv.currency, payUrl,
     merchantId: inv.merchant_id,
   };
-  if (inv.recipient_phone && notifSettings.whatsapp_invoice) {
+  if (inv.recipient_phone && whatsapp.getNotifPref(notifSettings, 'invoice_sent', 'whatsapp')) {
     whatsapp.notifyInvoice({ phone: inv.recipient_phone, ...waParams }).catch(() => {});
   }
-  // Optional CC phone — always send if provided (not gated by merchant whatsapp_invoice toggle).
+  // Optional CC phone — always send if provided (direct share action, not subject to toggle).
   if (ccPhone) {
     whatsapp.notifyInvoice({ phone: ccPhone, ...waParams }).catch(() => {});
   }
