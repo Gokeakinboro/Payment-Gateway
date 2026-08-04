@@ -5,6 +5,7 @@ const { prisma, tenantAuth, randToken, escapeHtml, koboToNairaStr, isValidEmail,
 const { ok, fail, created, notFound } = require('../../../utils/helpers');
 const { renderQr, qrPayUrl } = require('../services/qrService');
 const { sendEmail } = require('../../../services/emailService');
+const { notifyQr, isConfigured: waConfigured } = require('../../../services/whatsappService');
 
 router.use(tenantAuth);
 
@@ -115,8 +116,34 @@ router.delete('/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Share a saved QR by email via SMTP (branded, QR image inline). WhatsApp sharing
-// stays a client-side wa.me deep link on the dashboard.
+// Share a saved QR via WhatsApp — server-side send using paylode_qr template.
+router.post('/:id/share-whatsapp', async (req, res, next) => {
+  try {
+    if (!waConfigured()) return fail(res, 'WhatsApp is not configured', 'WA_NOT_CONFIGURED', 503);
+    const phone = String((req.body && req.body.phone) || '').trim();
+    if (!phone) return fail(res, 'A recipient phone number is required');
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT q.access_token, q.label, m.business_name, m.id::text AS merchant_id
+         FROM inv_qr_codes q JOIN merchants m ON m.id = q.merchant_id
+        WHERE q.id = $1::uuid AND q.merchant_id = $2::uuid`,
+      req.params.id, req.invTenant.merchantId);
+    if (!rows.length) return notFound(res, 'QR code');
+    const r = rows[0];
+    const result = await notifyQr({
+      phone,
+      businessName: r.business_name,
+      label: r.label || 'Scan to pay',
+      payUrl: qrPayUrl(r.access_token),
+      merchantId: r.merchant_id,
+    });
+    if (result.skipped) return fail(res, 'WhatsApp send skipped — check configuration', 'WA_SKIPPED', 503);
+    if (!result.ok) return fail(res, 'WhatsApp send failed', 'WA_SEND_FAILED', 502);
+    return ok(res, { sent: true }, `QR code shared via WhatsApp to ${phone}`);
+  } catch (e) { next(e); }
+});
+
+// Share a saved QR by email via SMTP (branded, QR image inline).
+// WhatsApp sharing uses POST /:id/share-whatsapp above.
 router.post('/:id/share', async (req, res, next) => {
   try {
     const email = String((req.body && req.body.email) || '').trim().toLowerCase();

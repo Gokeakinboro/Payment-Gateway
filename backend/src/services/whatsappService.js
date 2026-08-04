@@ -183,32 +183,32 @@ function notifyInvoice({ phone, recipientName, businessName, invoiceNumber, amou
   ], { merchantId, eventType: 'invoice' });
 }
 
-// Payment-link share — params ORDER must match WHATSAPP_TEMPLATE_PAYMENT_LINK.
+// Payment-link share — named params matching paylode_payment_link template.
 function notifyPaymentLink({ phone, businessName, title, amount, currency, payUrl, merchantId }) {
   return sendTemplate(phone, T_PAYLINK, T_PAYLINK_LANG, [
-    businessName || 'Paylode',
-    title || 'Payment request',
-    amount == null ? 'any amount' : formatMoney(amount, currency),
-    payUrl || '',
+    { name: 'business_name', value: businessName || 'Paylode' },
+    { name: 'title',         value: title || 'Payment request' },
+    { name: 'amount',        value: amount == null ? 'any amount' : formatMoney(amount, currency) },
+    { name: 'pay_url',       value: payUrl || '' },
   ], { merchantId, eventType: 'payment_link' });
 }
 
-// QR-code share — params ORDER must match WHATSAPP_TEMPLATE_QR.
+// QR-code share — named params matching paylode_qr template.
 function notifyQr({ phone, businessName, label, payUrl, merchantId }) {
   return sendTemplate(phone, T_QR, T_QR_LANG, [
-    businessName || 'Paylode',
-    label || 'Scan to pay',
-    payUrl || '',
+    { name: 'business_name', value: businessName || 'Paylode' },
+    { name: 'label',         value: label || 'Scan to pay' },
+    { name: 'pay_url',       value: payUrl || '' },
   ], { merchantId, eventType: 'qr' });
 }
 
-// Payment receipt — params ORDER must match WHATSAPP_TEMPLATE_RECEIPT.
+// Payment receipt — named params matching paylode_receipt template.
 function notifyReceipt({ phone, recipientName, businessName, invoiceNumber, amount, currency, merchantId }) {
   return sendTemplate(phone, T_RECEIPT, T_RECEIPT_LANG, [
-    recipientName || 'there',
-    businessName || 'Paylode',
-    invoiceNumber || '',
-    formatMoney(amount, currency),
+    { name: 'customer_name',   value: recipientName || 'there' },
+    { name: 'amount_paid',     value: formatMoney(amount, currency) },
+    { name: 'business_name',   value: businessName || 'Paylode' },
+    { name: 'invoice_number',  value: invoiceNumber || '' },
   ], { merchantId, eventType: 'payment_received' });
 }
 
