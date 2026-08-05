@@ -468,6 +468,8 @@ async function viewMerchant(id) {
         (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')">&#128196; KYC Documents</button>' : '') +
         (canReview ? '<button class="btn btn-outline" onclick="openKycReports(\'' + id + '\',\'' + nameEsc + '\')">&#128203; KYC Reports</button>' : '') +
         (isSA ? '<button class="btn btn-outline" onclick="toggleLivenessExemption(\'' + id + '\',' + (m.notificationSettings && m.notificationSettings.liveness_exempted ? 'false' : 'true') + ')" title="Toggle liveness check exemption for this merchant">&#128247; ' + (m.notificationSettings && m.notificationSettings.liveness_exempted ? 'Reinstate Liveness' : 'Exempt from Liveness') + '</button>' : '') +
+        (isSA && !(m.notificationSettings && m.notificationSettings.settlement_name_override) ? '<button class="btn btn-outline" style="color:#dc2626;border-color:#fca5a5" onclick="grantSettlementNameOverride(\'' + id + '\')" title="Grant settlement name mismatch override — case by case only">&#9888; Settlement Name Override</button>' : '') +
+        (isSA && m.notificationSettings && m.notificationSettings.settlement_name_override ? '<span style="font-size:12px;color:#16a34a;padding:6px 10px;border:1px solid #86efac;border-radius:6px">&#9989; Settlement Name Override Active</span>' : '') +
         (canViewApp ? '<button class="btn btn-outline" onclick="loadMerchantApplication(\'' + id + '\')">&#128203; Application Form</button>' : '') +
         (canReview ? '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\';resendSandbox(\'' + id + '\',\'' + nameEsc + '\')">&#128231; Resend Sandbox</button>' : '') +
         (canManage && m.isActive ? (m.liveEnabled
@@ -7106,6 +7108,14 @@ async function removeWatchlistEntry(id) {
 }
 
 // ── Liveness exemption from SA merchant modal ─────────────────────────────────
+async function grantSettlementNameOverride(merchantId) {
+  var reason = prompt('Enter reason for settlement name override (required — this is logged to audit trail and reviewed on a case-by-case basis):');
+  if (!reason || reason.trim().length < 10) { alert('A reason of at least 10 characters is required.'); return; }
+  var res = await apiFetch('/merchants/' + merchantId + '/settlement-name-override', { method: 'POST', body: JSON.stringify({ reason: reason.trim() }) });
+  alert((res && res.message) || ((res && res.status) ? 'Override granted.' : 'Failed: ' + (res && res.message)));
+  if (res && res.status) viewMerchant(merchantId);
+}
+
 async function toggleLivenessExemption(merchantId, exempt) {
   var res = await apiFetch('/merchants/' + merchantId + '/liveness-exemption', { method: 'PATCH', body: JSON.stringify({ exempted: exempt }) });
   var msg = (res && res.message) || (exempt ? 'Exempted' : 'Requirement reinstated');
