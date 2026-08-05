@@ -111,19 +111,29 @@ async function verifyLiveness(base64Image) {
 function normalise(res, type) {
   const body = res.data;
   const d    = body?.data || {};
+
+  // AML checks return status 'cleared' | 'not_cleared' and hit arrays.
+  // A 'not_cleared' with only low-accuracy fuzzy hits (< 0.70) is treated as PASS —
+  // only confirmed high-accuracy hits are genuine flags.
+  let amlSuccess = body?.success === true;
+  if (type === 'aml' && amlSuccess) {
+    const hasHighAccuracyHit = ['sanctions', 'pep', 'crime', 'debarment'].some((cat) =>
+      Array.isArray(d[cat]) && d[cat].some((h) => Number(h.accuracy || 0) >= 0.70));
+    amlSuccess = !hasHighAccuracyHit; // true = PASS (no confirmed hits)
+  }
+
   return {
-    success:            body?.success === true,
-    requestId:          d.requestId || body?.requestId || null,
+    success:            amlSuccess,
+    requestId:          d.requestId || d.id || body?.requestId || null,
     status:             d.status || (body?.success ? 'found' : 'not_found'),
     message:            body?.message || '',
     raw:                body,
     type,
-    // Embedded screening fields returned alongside BVN/NIN identity checks.
-    watchListed:        d.watchListed || null,          // 'YES' | 'NO' | null
-    amlReport:          d.amlReport   || null,           // object or null
-    adverseMediaReport: d.adverseMediaReport || null,   // object or null
+    // Embedded screening fields alongside BVN/NIN identity checks.
+    watchListed:        d.watchListed || null,
+    amlReport:          d.amlReport   || null,
+    adverseMediaReport: d.adverseMediaReport || null,
     entityId:           d.entityId    || null,
-    // Returned subject details for name-match on our side.
     firstName:          d.firstName   || null,
     middleName:         d.middleName  || null,
     lastName:           d.lastName    || null,
