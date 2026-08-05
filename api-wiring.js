@@ -466,6 +466,7 @@ async function viewMerchant(id) {
       '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Close</button>' +
       '<div class="flex" style="gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
         (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')">&#128196; KYC Documents</button>' : '') +
+        (canReview ? '<button class="btn btn-outline" onclick="openKycReports(\'' + id + '\',\'' + nameEsc + '\')">&#128203; KYC Reports</button>' : '') +
         (canViewApp ? '<button class="btn btn-outline" onclick="loadMerchantApplication(\'' + id + '\')">&#128203; Application Form</button>' : '') +
         (canReview ? '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\';resendSandbox(\'' + id + '\',\'' + nameEsc + '\')">&#128231; Resend Sandbox</button>' : '') +
         (canManage && m.isActive ? (m.liveEnabled
@@ -7478,6 +7479,44 @@ async function loadDeferrals() {
   } catch (e) {
     el.innerHTML = errorBox('Failed to load KYC Documents & Deferrals: ' + (e && e.message ? e.message : e));
   }
+}
+
+// ── KYC Verification Reports modal ──────────────────────────────────────────
+async function openKycReports(merchantId, merchantName) {
+  var modal = document.getElementById('modal');
+  var inner = document.getElementById('modal-inner');
+  if (!modal || !inner) return;
+  inner.innerHTML = '<div style="padding:20px"><h3>KYC Verification Reports — ' + _escA(merchantName) + '</h3><p style="color:#999">Loading…</p></div>';
+  modal.style.display = 'flex';
+  var res = await apiFetch('/onboarding/kyc-reports/' + merchantId);
+  var reports = (res && res.data) ? res.data : [];
+  var resultColour = { PASS:'#16a34a', FAIL:'#dc2626', PENDING:'#d97706', ERROR:'#6b7280', SKIPPED:'#9ca3af' };
+  var checkLabel = { BVN:'BVN Verification', NIN:'NIN Verification', CAC:'CAC/RC Verification', PEP:'PEP Screening', SANCTIONS:'Sanctions Screening', ADVERSE_MEDIA:'Adverse Media', COMPLETENESS:'Form Completeness', WATCHLIST:'Watchlist' };
+  var rows = reports.map(function(r) {
+    var col = resultColour[r.result] || '#6b7280';
+    return '<tr style="border-bottom:1px solid #f1f5f9">' +
+      '<td style="padding:10px 8px;font-size:13px">' + (checkLabel[r.checkType] || r.checkType) + '</td>' +
+      '<td style="padding:10px 8px;font-size:12px;color:#666">' + _escA(r.subjectName || r.subjectId || '—') + '</td>' +
+      '<td style="padding:10px 8px"><span style="background:' + col + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">' + r.result + '</span></td>' +
+      '<td style="padding:10px 8px;font-size:12px;color:#b45309">' + _escA(r.matchNotes || '') + '</td>' +
+      '<td style="padding:10px 8px;font-size:11px;color:#999">' + new Date(r.createdAt).toLocaleString('en-NG') + '</td>' +
+    '</tr>';
+  }).join('') || '<tr><td colspan="5" style="padding:24px;text-align:center;color:#999">No verification reports found for this merchant.</td></tr>';
+  inner.innerHTML = '<div style="padding:20px;min-width:700px">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
+      '<h3 style="margin:0">KYC Verification Reports — ' + _escA(merchantName) + '</h3>' +
+      '<button onclick="document.getElementById(\'modal\').style.display=\'none\'" style="background:none;border:none;font-size:20px;cursor:pointer">&#10005;</button>' +
+    '</div>' +
+    '<table style="width:100%;border-collapse:collapse">' +
+      '<thead><tr style="background:#f1f5f9">' +
+        '<th style="text-align:left;padding:10px 8px;font-size:12px">Check</th>' +
+        '<th style="text-align:left;padding:10px 8px;font-size:12px">Subject</th>' +
+        '<th style="text-align:left;padding:10px 8px;font-size:12px">Result</th>' +
+        '<th style="text-align:left;padding:10px 8px;font-size:12px">Notes</th>' +
+        '<th style="text-align:left;padding:10px 8px;font-size:12px">Date</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table></div>';
 }
 
 async function openDocsModal(entityType, id, name) {

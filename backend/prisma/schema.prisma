@@ -503,6 +503,30 @@ model OnboardingSubmission {
   @@map("onboarding_submissions")
 }
 
+model KycVerificationReport {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  submissionRef    String    @map("submission_ref")
+  merchantId       String?   @map("merchant_id") @db.Uuid
+  checkType        String    @map("check_type")
+  result           String    @default("PENDING")
+  subjectId        String?   @map("subject_id")
+  subjectName      String?   @map("subject_name")
+  provider         String    @default("youverify")
+  providerRef      String?   @map("provider_ref")
+  requestPayload   Json?     @map("request_payload")
+  responsePayload  Json?     @map("response_payload")
+  matchNotes       String?   @map("match_notes")
+  internalEmailedAt DateTime? @map("internal_emailed_at")
+  merchantEmailedAt DateTime? @map("merchant_emailed_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([submissionRef])
+  @@index([merchantId])
+  @@index([providerRef])
+  @@map("kyc_verification_reports")
+}
+
 // ─── EMAIL TEMPLATES (SA-authored lifecycle emails) ───────────────────────────
 
 model EmailTemplate {

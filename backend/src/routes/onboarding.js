@@ -12,6 +12,7 @@ const { logger } = require('../utils/logger');
 const { requireAuth, requireCompliance } = require('../middleware/auth');
 const { CHECK_ITEMS } = require('./documents');
 const compliance = require('../services/complianceService');
+const { runOnboardingChecks } = require('../services/kycOrchestrator');
 
 // Required documents seeded into kyc_documents when a merchant is provisioned,
 // keyed by entity sub-type. Uploaded application docs are marked 'submitted'.
@@ -468,6 +469,9 @@ router.post('/submit', async (req, res, next) => {
       sendEmail({ to: signupProv.email, subject: content.subject, html: content.html })
         .catch(e => logger.error({ err: e }, 'sandbox welcome email failed'));
     }
+
+    // Fire ALL KYC/PEP/AML/completeness checks async — every submission, not just deltas.
+    setImmediate(() => runOnboardingChecks(reference).catch((e) => logger.error({ err: e.message, reference }, 'KYC orchestrator failed')));
 
     created(res, {
       reference,
@@ -993,9 +997,23 @@ router.put('/my-application', requireAuth, async (req, res, next) => {
       html: `<h2>Application resubmitted</h2><p><strong>${summary.businessName}</strong> (${reference}) has corrected and resubmitted their application. Please review it again in the compliance dashboard.</p>`,
     }).catch(e => logger.error({ err: e }, 'resubmit notification failed'));
 
+    // Re-fire ALL checks on resubmission (not just what changed).
+    setImmediate(() => runOnboardingChecks(reference).catch((e) => logger.error({ err: e.message, reference }, 'KYC orchestrator (resubmit) failed')));
+
     await pushHistory(prisma, { reference }, 'resubmitted', merchantId, 'merchant corrected & resubmitted');
     logAudit(req.user.id, 'ONBOARDING_RESUBMITTED', 'onboarding', reference, null, { reference }, null, req.ip).catch(() => {});
     ok(res, { reference, status: updated.status }, 'Application resubmitted — our team will review it again');
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/onboarding/kyc-reports/:merchantId — SA/compliance/admin ──────
+router.get('/kyc-reports/:merchantId', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const reports = await prisma.kycVerificationReport.findMany({
+      where: { merchantId: req.params.merchantId },
+      orderBy: { createdAt: 'desc' },
+    });
+    ok(res, reports);
   } catch (e) { next(e); }
 });
 

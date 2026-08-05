@@ -31,56 +31,62 @@ router.post('/', async (req, res, next) => {
     const { requestId, status, type, data } = body;
     if (!requestId) return res.status(400).json({ status: false, message: 'Missing requestId' });
 
-    // Find the KYC submission linked to this requestId
-    const submission = await prisma.kycSubmission.findFirst({
-      where: {
-        OR: [
-          { yvBvnRef: requestId },
-          { yvNinRef: requestId },
-          { yvCacRef: requestId },
-        ],
-      },
-      include: { merchant: true },
+    const verified = status === 'found' || status === 'verified' || status === 'completed';
+    const result   = verified ? 'PASS' : 'FAIL';
+
+    // Match against kyc_verification_reports (primary — new onboarding flow).
+    const report = await prisma.kycVerificationReport.findFirst({
+      where: { providerRef: requestId },
     });
 
-    if (!submission) {
-      // Unknown requestId — acknowledge but don't error
-      return ok(res, { received: true, matched: false });
+    if (report) {
+      await prisma.kycVerificationReport.update({
+        where: { id: report.id },
+        data: {
+          result,
+          responsePayload: data ? { ...((report.responsePayload || {})), webhook: data } : report.responsePayload,
+          updatedAt: new Date(),
+        },
+      });
+      await logAudit(null, 'YOUVERIFY_WEBHOOK', 'kyc_verification_reports', report.id, {},
+        { requestId, type, status, result });
+
+      // If a check just flipped to FAIL, email internal team immediately.
+      if (result === 'FAIL') {
+        const sub = await prisma.onboardingSubmission.findUnique({
+          where: { reference: report.submissionRef },
+          select: { businessName: true },
+        }).catch(() => null);
+        const { sendEmail: mail } = require('../services/emailService');
+        const REPORT_EMAIL = process.env.KYC_REPORT_EMAIL || process.env.COMPLIANCE_EMAIL || 'compliance@paylodeservices.com';
+        mail({
+          to: REPORT_EMAIL,
+          subject: `[KYC FAIL via webhook] ${report.checkType} — ${sub?.businessName || report.submissionRef}`,
+          html: `<p>YouVerify webhook returned <strong>FAIL</strong> for <strong>${report.checkType}</strong> (ref: ${requestId}) on submission <strong>${report.submissionRef}</strong>.</p><pre>${JSON.stringify(data || {}, null, 2)}</pre>`,
+        }).catch(() => {});
+      }
+
+      return ok(res, { received: true, matched: true, source: 'kyc_verification_reports', result });
     }
 
-    const verified = status === 'found' || status === 'verified' || status === 'completed';
-    const updates  = {};
+    // Legacy fallback: match against old kyc_submissions table if it exists.
+    const submission = await prisma.kycSubmission.findFirst({
+      where: { OR: [{ yvBvnRef: requestId }, { yvNinRef: requestId }, { yvCacRef: requestId }] },
+      include: { merchant: true },
+    }).catch(() => null);
 
-    if (submission.yvBvnRef === requestId) {
-      updates.bvnCheckStatus = verified ? 'verified' : 'failed';
-      updates.bvnVerified    = verified;
-    } else if (submission.yvNinRef === requestId) {
-      updates.ninCheckStatus = verified ? 'verified' : 'failed';
-      updates.ninVerified    = verified;
-    } else if (submission.yvCacRef === requestId) {
-      updates.cacCheckStatus = verified ? 'verified' : 'failed';
-      updates.cacVerified    = verified;
-    }
+    if (!submission) return ok(res, { received: true, matched: false });
 
-    if (data) {
-      if (submission.yvBvnRef === requestId) updates.bvnData = data;
-      if (submission.yvNinRef === requestId) updates.ninData = data;
-      if (submission.yvCacRef === requestId) updates.cacData = data;
-    }
+    const updates = {};
+    if (submission.yvBvnRef === requestId) { updates.bvnCheckStatus = verified ? 'verified' : 'failed'; updates.bvnVerified = verified; if (data) updates.bvnData = data; }
+    else if (submission.yvNinRef === requestId) { updates.ninCheckStatus = verified ? 'verified' : 'failed'; updates.ninVerified = verified; if (data) updates.ninData = data; }
+    else if (submission.yvCacRef === requestId) { updates.cacCheckStatus = verified ? 'verified' : 'failed'; updates.cacVerified = verified; if (data) updates.cacData = data; }
 
     await prisma.kycSubmission.update({ where: { id: submission.id }, data: updates });
+    await logAudit(null, 'YOUVERIFY_WEBHOOK_LEGACY', 'kyc_submissions', submission.id, {}, { requestId, type, status, verified });
 
-    await logAudit(null, 'YOUVERIFY_WEBHOOK', 'kyc_submissions', submission.id, {},
-      { requestId, type, status, verified });
-
-    // Re-check for Tier 1 auto-approval after this webhook update
     const fresh = await prisma.kycSubmission.findUnique({ where: { id: submission.id } });
-    if (
-      fresh?.tierApplied === 1 &&
-      fresh?.status === 'submitted' &&
-      fresh?.bvnCheckStatus === 'verified' &&
-      fresh?.ninCheckStatus === 'verified'
-    ) {
+    if (fresh?.tierApplied === 1 && fresh?.status === 'submitted' && fresh?.bvnCheckStatus === 'verified' && fresh?.ninCheckStatus === 'verified') {
       await autoApproveTier1(fresh, submission.merchant);
     }
 

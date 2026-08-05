@@ -68,6 +68,37 @@ async function verifyCac(rcNumber, businessName, businessType = 'limited_liabili
   return normalise(res, 'cac');
 }
 
+/**
+ * Real-time PEP screening.
+ * Endpoint path confirmed on YouVerify activation — set YOUVERIFY_PEP_PATH env var if different.
+ * Default path based on YouVerify Cowork API pattern.
+ */
+async function screenPep(fullName, country = 'NG') {
+  const path = process.env.YOUVERIFY_PEP_PATH || '/api/identity/pep';
+  const res = await request('POST', path, { name: fullName, country, isSubjectConsent: true });
+  return normalise(res, 'pep');
+}
+
+/**
+ * Real-time sanctions screening.
+ * Endpoint path confirmed on YouVerify activation — set YOUVERIFY_SANCTIONS_PATH env var if different.
+ */
+async function screenSanctions(fullName, country = 'NG') {
+  const path = process.env.YOUVERIFY_SANCTIONS_PATH || '/api/identity/sanctions';
+  const res = await request('POST', path, { name: fullName, country, isSubjectConsent: true });
+  return normalise(res, 'sanctions');
+}
+
+/**
+ * AI adverse-media screening.
+ * Endpoint path confirmed on YouVerify activation.
+ */
+async function screenAdverseMedia(fullName, country = 'NG') {
+  const path = process.env.YOUVERIFY_ADVERSE_MEDIA_PATH || '/api/identity/adverse-media';
+  const res = await request('POST', path, { name: fullName, country, isSubjectConsent: true });
+  return normalise(res, 'adverse_media');
+}
+
 function normalise(res, type) {
   const body = res.data;
   return {
@@ -96,4 +127,4 @@ function verifyWebhookSignature(rawBody, signatureHeader) {
   );
 }
 
-module.exports = { verifyBvn, verifyNin, verifyCac, verifyWebhookSignature };
+module.exports = { verifyBvn, verifyNin, verifyCac, screenPep, screenSanctions, screenAdverseMedia, verifyWebhookSignature };
