@@ -467,6 +467,7 @@ async function viewMerchant(id) {
       '<div class="flex" style="gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
         (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')">&#128196; KYC Documents</button>' : '') +
         (canReview ? '<button class="btn btn-outline" onclick="openKycReports(\'' + id + '\',\'' + nameEsc + '\')">&#128203; KYC Reports</button>' : '') +
+        (isSA ? '<button class="btn btn-outline" onclick="toggleLivenessExemption(\'' + id + '\',' + (m.notificationSettings && m.notificationSettings.liveness_exempted ? 'false' : 'true') + ')" title="Toggle liveness check exemption for this merchant">&#128247; ' + (m.notificationSettings && m.notificationSettings.liveness_exempted ? 'Reinstate Liveness' : 'Exempt from Liveness') + '</button>' : '') +
         (canViewApp ? '<button class="btn btn-outline" onclick="loadMerchantApplication(\'' + id + '\')">&#128203; Application Form</button>' : '') +
         (canReview ? '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\';resendSandbox(\'' + id + '\',\'' + nameEsc + '\')">&#128231; Resend Sandbox</button>' : '') +
         (canManage && m.isActive ? (m.liveEnabled
@@ -6997,6 +6998,7 @@ loadPageData = function(page) {
     case 'compliance_centre':    break;                            // renderCompliance() self-loads its tabs
     case 'compliance_exceptions':
       if ((window.__cmplExcTab || 'exceptions') === 'matrix') loadComplianceMatrix(); else loadComplianceExceptions(); break;
+    case 'compliance_watchlist': loadComplianceWatchlist(); break;
     case 'deferrals':            loadDeferrals(); break;
     case 'activity_log':         loadActivityLog(); break;
     // Static pages / self-loading pages — renderPage() already rendered them, do not overwrite
@@ -7033,6 +7035,81 @@ function _sevBadge(sev) {
 function _excStatusBadge(st) {
   var m = { open:'badge-amber', deferred:'badge-blue', cleared:'badge-green', blocked:'badge-red' };
   return '<span class="badge ' + (m[st] || 'badge-gray') + '">' + _escA((st || '').toUpperCase()) + '</span>';
+}
+
+// ── Compliance Watchlist ─────────────────────────────────────────────────────
+async function loadComplianceWatchlist() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  var res = await apiFetch('/compliance/watchlist');
+  var rows = (res && res.data) ? res.data : [];
+  var typeColours = { BVN:'#1d4ed8', NIN:'#7c3aed', RC:'#b45309', NAME:'#dc2626', EMAIL:'#0891b2', PHONE:'#16a34a' };
+  var tableRows = rows.map(function(r) {
+    return '<tr style="border-bottom:1px solid #f1f5f9">' +
+      '<td style="padding:10px 8px"><span style="background:' + (typeColours[r.entryType]||'#6b7280') + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">' + r.entryType + '</span></td>' +
+      '<td style="padding:10px 8px;font-family:monospace;font-size:13px">' + _escA(r.value) + '</td>' +
+      '<td style="padding:10px 8px;font-size:13px;color:#666">' + _escA(r.reason || '—') + '</td>' +
+      '<td style="padding:10px 8px;font-size:12px;color:#999">' + new Date(r.createdAt).toLocaleDateString('en-NG') + '</td>' +
+      '<td style="padding:10px 8px"><button onclick="removeWatchlistEntry(\'' + r.id + '\')" style="padding:4px 10px;font-size:12px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:4px;cursor:pointer">Remove</button></td>' +
+    '</tr>';
+  }).join('') || '<tr><td colspan="5" style="text-align:center;padding:24px;color:#999">No entries on the watchlist.</td></tr>';
+
+  el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
+    '<div><h2 style="margin:0">Compliance Watchlist</h2><p style="color:#666;font-size:13px;margin:4px 0 0">Local blacklist — BVN, NIN, RC, names, emails screened on every merchant submission.</p></div>' +
+    '<div style="display:flex;gap:8px">' +
+      '<a href="/api/v1/compliance/watchlist/export" style="padding:8px 16px;border:1px solid #ddd;border-radius:6px;font-size:13px;text-decoration:none;color:#333;background:#fff">&#11015; Export CSV</a>' +
+      '<button onclick="showAddWatchlistForm()" style="padding:8px 16px;background:#16a34a;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">+ Add Entry</button>' +
+    '</div></div>' +
+    '<div id="watchlist-add-form" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:16px">' +
+      '<h4 style="margin:0 0 12px">Add to watchlist</h4>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">' +
+        '<div><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Type</label>' +
+          '<select id="wl-type" style="padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px">' +
+            '<option>BVN</option><option>NIN</option><option>RC</option><option>NAME</option><option>EMAIL</option><option>PHONE</option>' +
+          '</select></div>' +
+        '<div style="flex:1;min-width:160px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Value</label>' +
+          '<input id="wl-value" type="text" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px" placeholder="e.g. 22123456789"></div>' +
+        '<div style="flex:2;min-width:200px"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Reason</label>' +
+          '<input id="wl-reason" type="text" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px" placeholder="e.g. Fraud confirmed 2026-08-05"></div>' +
+        '<button onclick="addWatchlistEntry()" style="padding:8px 16px;background:#1d4ed8;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;height:36px">Add</button>' +
+        '<button onclick="document.getElementById(\'watchlist-add-form\').style.display=\'none\'" style="padding:8px 16px;border:1px solid #ddd;border-radius:6px;font-size:13px;cursor:pointer;background:#fff;height:36px">Cancel</button>' +
+      '</div><p id="wl-add-msg" style="font-size:13px;margin:8px 0 0"></p>' +
+    '</div>' +
+    '<table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">' +
+      '<thead><tr style="background:#f1f5f9"><th style="text-align:left;padding:10px 8px;font-size:12px">Type</th><th style="text-align:left;padding:10px 8px;font-size:12px">Value</th><th style="text-align:left;padding:10px 8px;font-size:12px">Reason</th><th style="text-align:left;padding:10px 8px;font-size:12px">Added</th><th style="padding:10px 8px;font-size:12px"></th></tr></thead>' +
+      '<tbody>' + tableRows + '</tbody>' +
+    '</table>';
+}
+
+function showAddWatchlistForm() {
+  var f = document.getElementById('watchlist-add-form');
+  if (f) f.style.display = 'block';
+}
+
+async function addWatchlistEntry() {
+  var t = (document.getElementById('wl-type') || {}).value;
+  var v = ((document.getElementById('wl-value') || {}).value || '').trim();
+  var r = ((document.getElementById('wl-reason') || {}).value || '').trim();
+  var msg = document.getElementById('wl-add-msg');
+  if (!v) { if (msg) msg.textContent = 'Value is required.'; return; }
+  var res = await apiFetch('/compliance/watchlist', { method: 'POST', body: JSON.stringify({ entry_type: t, value: v, reason: r }) });
+  if (msg) msg.textContent = (res && res.status) ? 'Added.' : ('Error: ' + (res && res.message || 'failed'));
+  if (res && res.status) setTimeout(loadComplianceWatchlist, 800);
+}
+
+async function removeWatchlistEntry(id) {
+  if (!confirm('Remove this entry from the watchlist?')) return;
+  var res = await apiFetch('/compliance/watchlist/' + id, { method: 'DELETE' });
+  if (res && res.status) loadComplianceWatchlist();
+  else alert((res && res.message) || 'Failed to remove');
+}
+
+// ── Liveness exemption from SA merchant modal ─────────────────────────────────
+async function toggleLivenessExemption(merchantId, exempt) {
+  var res = await apiFetch('/merchants/' + merchantId + '/liveness-exemption', { method: 'PATCH', body: JSON.stringify({ exempted: exempt }) });
+  var msg = (res && res.message) || (exempt ? 'Exempted' : 'Requirement reinstated');
+  alert(msg);
 }
 
 async function loadComplianceExceptions() {

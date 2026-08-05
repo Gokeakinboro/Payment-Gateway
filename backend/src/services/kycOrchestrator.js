@@ -7,9 +7,13 @@
  *   2. BVN verification     (eID — natural persons + entity principals)
  *   3. NIN verification     (eID — natural persons + entity principals)
  *   4. CAC verification     (eID — entities only, by RC number)
- *   5. PEP screening        (all names)
- *   6. Sanctions screening  (all names)
- *   7. Adverse media        (all names — Startup plan allows 200/mo)
+ *   5. Local compliance watchlist (our DB — BVN/NIN/RC/name/email; no API quota)
+ *   6. PEP screening        (all names — YouVerify)
+ *   7. Sanctions screening  (all names — YouVerify)
+ *   8. Adverse media        (all names — YouVerify)
+ *   9. YouVerify custom watchlist (screens against watchlists configured in YV platform)
+ *  10. Facial liveness (new web merchants only — skipped for existing active merchants
+ *      and for merchants marked liveness_exempted by SA/admin)
  *
  * Each check result:
  *   - Saved to kyc_verification_reports (with full request/response)
@@ -169,6 +173,51 @@ async function emailInternalSummary(submissionRef, businessName, reports) {
   } catch (e) {
     logger.warn({ err: e.message }, 'Failed to send KYC summary email');
   }
+}
+
+// ── local compliance watchlist check ─────────────────────────────────────────
+// Screens BVN, NIN, RC number, names and email against our internal compliance_watchlist table.
+// Zero YouVerify quota — runs before any external API calls.
+async function checkLocalWatchlist(sub) {
+  const hits = [];
+  try {
+    const data       = sub.data || {};
+    const principals = Array.isArray(sub.principals) ? sub.principals : [];
+    const checks     = [];
+
+    // BVN / NIN for natural persons
+    const np = data.np_identity || {};
+    if (np.bvn) checks.push({ entryType: 'BVN',   value: String(np.bvn).trim() });
+    if (np.nin) checks.push({ entryType: 'NIN',    value: String(np.nin).trim() });
+
+    // Entity: RC number + per-principal BVN/NIN
+    const ent = data.entity_details || {};
+    if (ent.rc_number || sub.regNumber)
+      checks.push({ entryType: 'RC', value: String(ent.rc_number || sub.regNumber).trim().toUpperCase() });
+    for (const p of principals) {
+      if (p.bvn) checks.push({ entryType: 'BVN', value: String(p.bvn).trim() });
+      if (p.nin) checks.push({ entryType: 'NIN', value: String(p.nin).trim() });
+    }
+
+    // Email + phone (all forms)
+    if (sub.contactEmail) checks.push({ entryType: 'EMAIL', value: sub.contactEmail.toLowerCase() });
+    if (sub.contactPhone) checks.push({ entryType: 'PHONE', value: sub.contactPhone.replace(/\s+/g, '') });
+
+    // Name screening (business name + principal names)
+    const names = [sub.businessName, ...principals.map((p) => fullName(p))].filter(Boolean);
+    for (const n of names)
+      checks.push({ entryType: 'NAME', value: n.toLowerCase().trim() });
+
+    for (const c of checks) {
+      const hit = await prisma.complianceWatchlist.findFirst({
+        where: { entryType: c.entryType, value: c.value, isActive: true },
+      });
+      if (hit) hits.push(hit);
+    }
+  } catch (e) {
+    logger.warn({ err: e.message }, 'Local watchlist check failed (non-fatal)');
+  }
+  return hits;
 }
 
 // ── completeness check ────────────────────────────────────────────────────────
@@ -344,7 +393,21 @@ async function runOnboardingChecks(reference) {
     }
   }
 
-  // ── 3. PEP + sanctions + adverse media (all unique names) ────────────────────
+  // ── 3. Local compliance watchlist (our DB — free, no YouVerify quota) ──────────
+  const localHits = await checkLocalWatchlist(sub);
+  if (localHits.length) {
+    const localReport = await saveReport({
+      submissionRef: reference, merchantId, checkType: 'WATCHLIST',
+      result: 'FAIL', provider: 'internal',
+      matchNotes: localHits.map((h) => `${h.entryType}:${h.value} — ${h.reason || 'On compliance blacklist'}`).join(' | '),
+    });
+    if (localReport) {
+      await emailInternalReport(localReport, reference, businessName);
+      allReports.push(localReport);
+    }
+  }
+
+  // ── 4. PEP + sanctions + adverse media + YV custom watchlist (all unique names) ─
   const uniqueNames = [...new Set(allNames.filter(Boolean))];
   for (const name of uniqueNames) {
     const pepReport = await runCheck(reference, merchantId, businessName, 'PEP',
@@ -358,12 +421,43 @@ async function runOnboardingChecks(reference) {
     const amReport = await runCheck(reference, merchantId, businessName, 'ADVERSE_MEDIA',
       () => yv.screenAdverseMedia(name), null, name);
     if (amReport) allReports.push(amReport);
+
+    const wlReport = await runCheck(reference, merchantId, businessName, 'WATCHLIST',
+      () => yv.screenCustomWatchlist(name), null, name);
+    if (wlReport) allReports.push(wlReport);
   }
 
-  // ── 4. Summary email to internal ─────────────────────────────────────────────
+  // ── 5. Facial liveness (new web merchants only) ───────────────────────────────
+  // Skip if: merchant already active, OR liveness_exempted by SA/admin, OR no selfie submitted.
+  const merchant = merchantId ? await prisma.merchant.findUnique({
+    where: { id: merchantId }, select: { kycStatus: true, notificationSettings: true },
+  }).catch(() => null) : null;
+
+  const isExistingMerchant  = merchant && merchant.kycStatus === 'ACTIVE';
+  const isLivenessExempted  = !!(merchant?.notificationSettings?.liveness_exempted);
+  const selfieBase64        = sub.data?._liveness_selfie || null;
+
+  if (!isExistingMerchant && !isLivenessExempted && selfieBase64) {
+    const livenessReport = await runCheck(reference, merchantId, businessName, 'LIVENESS',
+      () => yv.verifyLiveness(selfieBase64), null, sub.contactEmail || businessName);
+    if (livenessReport) allReports.push(livenessReport);
+  } else if (!isExistingMerchant && !isLivenessExempted && !selfieBase64) {
+    // No selfie submitted — flag as incomplete (but don't fail — merchant may not have camera)
+    const noSelfieReport = await saveReport({
+      submissionRef: reference, merchantId, checkType: 'LIVENESS',
+      result: 'SKIPPED', provider: 'internal',
+      matchNotes: 'No selfie submitted — liveness check skipped. SA can exempt this merchant or request resubmission.',
+    });
+    if (noSelfieReport) {
+      await emailInternalReport(noSelfieReport, reference, businessName);
+      allReports.push(noSelfieReport);
+    }
+  }
+
+  // ── 6. Summary email to internal ─────────────────────────────────────────────
   if (allReports.length) await emailInternalSummary(reference, businessName, allReports);
 
-  // ── 5. Merchant notification for failures + completeness ──────────────────────
+  // ── 7. Merchant notification for failures + completeness ──────────────────────
   const failedChecks = allReports.filter((r) => r && r.result === 'FAIL' && r.checkType !== 'COMPLETENESS');
   if (failedChecks.length || completenessIssues.length) {
     await emailMerchantFailures(sub.contactEmail, businessName, reference, failedChecks, completenessIssues);

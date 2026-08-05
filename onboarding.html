@@ -299,6 +299,7 @@ const MERCHANT_STEPS_NATURAL = [
   { id:'np_business',  label:'Business'     },
   { id:'payments',     label:'Payments'     },
   { id:'tnc',          label:'Terms'        },
+  { id:'liveness',     label:'Liveness'     },
   { id:'signature',    label:'Sign & Submit'},
 ];
 
@@ -310,6 +311,7 @@ const MERCHANT_STEPS_ENTITY = [
   { id:'np_business',    label:'Business'    },
   { id:'payments',       label:'Payments'    },
   { id:'tnc',            label:'Terms'       },
+  { id:'liveness',       label:'Liveness'    },
   { id:'signature',      label:'Sign & Submit'},
 ];
 
@@ -523,6 +525,7 @@ function renderStep() {
   else if (stepId === 'portfolio')      { el.innerHTML = renderPortfolio(); }
   else if (stepId === 'documents')      { el.innerHTML = renderDocuments(); }
   else if (stepId === 'tnc')            { el.innerHTML = renderTnC(); setupTnC(); }
+  else if (stepId === 'liveness')        { el.innerHTML = renderLiveness(); setupCamera(); }
   else if (stepId === 'signature')      { el.innerHTML = renderSignature(); setupCanvas(); }
   else if (stepId === 'dd_institution') { el.innerHTML = renderDDInstitution(); }
   else if (stepId === 'dd_questions')   { el.innerHTML = renderDDQuestions(); }
@@ -1448,6 +1451,118 @@ function setupTnC() {
   });
 }
 
+// ── Step: Facial Liveness & Biometric ──────────────────────────────────────────
+let _livenessStream = null;
+let _livenessCaptured = false;
+
+function renderLiveness() {
+  return `<div class="card">
+  <div class="card-title">&#128247; Identity Liveness Check</div>
+  <p style="color:var(--g500);font-size:13px;margin-bottom:16px">
+    We need to verify that you are a real person. Please allow camera access and take a clear selfie.
+    Your face should be well-lit, centred, and unobscured. This takes less than a minute.
+  </p>
+  <div id="liveness-status" style="margin-bottom:12px"></div>
+  <div id="liveness-preview" style="position:relative;width:100%;max-width:380px;margin:0 auto 16px">
+    <video id="liveness-video" autoplay playsinline muted
+      style="width:100%;border-radius:12px;background:#000;display:block"></video>
+    <canvas id="liveness-canvas" style="display:none"></canvas>
+    <div id="liveness-overlay" style="display:none;position:absolute;inset:0;border-radius:12px;background:rgba(16,185,129,.15);border:3px solid var(--green);display:flex;align-items:center;justify-content:center">
+      <span style="font-size:48px">&#9989;</span>
+    </div>
+  </div>
+  <div id="liveness-captured-preview" style="display:none;text-align:center;margin-bottom:12px">
+    <img id="liveness-img-preview" style="width:180px;height:180px;object-fit:cover;border-radius:50%;border:3px solid var(--green)" src="">
+    <p style="color:var(--green);font-weight:600;margin-top:8px">Selfie captured &#10003;</p>
+  </div>
+  <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+    <button id="btn-start-cam" class="btn btn-outline" onclick="startCamera()" type="button">&#128247; Start Camera</button>
+    <button id="btn-capture" class="btn btn-primary" onclick="captureSelfie()" type="button" style="display:none">&#128248; Capture Selfie</button>
+    <button id="btn-retake" class="btn btn-outline" onclick="retakeSelfie()" type="button" style="display:none">&#8635; Retake</button>
+  </div>
+  <p style="font-size:12px;color:var(--g400);text-align:center;margin-top:12px">
+    Camera access is used only for this verification. No video is recorded or stored — only the captured image is submitted.
+  </p>
+</div>`;
+}
+
+function setupCamera() {
+  _livenessCaptured = false;
+  // Auto-start camera when step renders
+  setTimeout(startCamera, 300);
+}
+
+async function startCamera() {
+  const status = document.getElementById('liveness-status');
+  try {
+    _livenessStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
+    const video = document.getElementById('liveness-video');
+    if (!video) return;
+    video.srcObject = _livenessStream;
+    const startBtn = document.getElementById('btn-start-cam');
+    const captureBtn = document.getElementById('btn-capture');
+    if (startBtn) startBtn.style.display = 'none';
+    if (captureBtn) captureBtn.style.display = 'inline-flex';
+    if (status) status.innerHTML = '<p style="color:var(--green);font-size:13px">&#10003; Camera active — position your face in frame then capture.</p>';
+  } catch (e) {
+    if (status) status.innerHTML = '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px;font-size:13px;color:#dc2626">' +
+      '&#9888; Camera access denied or unavailable. You can skip this step and our compliance team will contact you for identity verification.</div>';
+    // Show skip option
+    const captureBtn = document.getElementById('btn-capture');
+    const startBtn = document.getElementById('btn-start-cam');
+    if (captureBtn) captureBtn.style.display = 'none';
+    if (startBtn) startBtn.style.display = 'none';
+  }
+}
+
+function captureSelfie() {
+  const video = document.getElementById('liveness-video');
+  const canvas = document.getElementById('liveness-canvas');
+  if (!video || !canvas) return;
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const base64 = canvas.toDataURL('image/jpeg', 0.85);
+
+  // Stop camera stream
+  if (_livenessStream) { _livenessStream.getTracks().forEach((t) => t.stop()); _livenessStream = null; }
+
+  // Store in formData
+  if (!window.formData) window.formData = {};
+  if (!window.formData['_liveness']) window.formData['_liveness'] = {};
+  window.formData['_liveness'].selfie = base64;
+  _livenessCaptured = true;
+
+  // Show preview
+  const videoEl = document.getElementById('liveness-video');
+  const previewEl = document.getElementById('liveness-captured-preview');
+  const imgEl = document.getElementById('liveness-img-preview');
+  const captureBtn = document.getElementById('btn-capture');
+  const retakeBtn = document.getElementById('btn-retake');
+  if (videoEl) videoEl.style.display = 'none';
+  if (previewEl) { previewEl.style.display = 'block'; }
+  if (imgEl) imgEl.src = base64;
+  if (captureBtn) captureBtn.style.display = 'none';
+  if (retakeBtn) retakeBtn.style.display = 'inline-flex';
+  const status = document.getElementById('liveness-status');
+  if (status) status.innerHTML = '<p style="color:var(--green);font-weight:600;font-size:13px">&#9989; Selfie captured — you can retake or continue.</p>';
+}
+
+function retakeSelfie() {
+  _livenessCaptured = false;
+  if (window.formData && window.formData['_liveness']) delete window.formData['_liveness'].selfie;
+  const videoEl = document.getElementById('liveness-video');
+  const previewEl = document.getElementById('liveness-captured-preview');
+  const retakeBtn = document.getElementById('btn-retake');
+  const captureBtn = document.getElementById('btn-capture');
+  if (videoEl) videoEl.style.display = 'block';
+  if (previewEl) previewEl.style.display = 'none';
+  if (retakeBtn) retakeBtn.style.display = 'none';
+  if (captureBtn) captureBtn.style.display = 'inline-flex';
+  startCamera();
+}
+
 // ── Step: Signature ────────────────────────────────────────────────────────────
 function renderSignature() {
   return `<div class="card">
@@ -1798,6 +1913,10 @@ async function submitForm() {
       }
       return;
     }
+
+    // Include liveness selfie in form data if captured.
+    const livenessData = formData['_liveness'] || {};
+    if (livenessData.selfie) formData['_liveness_selfie'] = livenessData.selfie;
 
     const payload = {
       form_type:      formType,

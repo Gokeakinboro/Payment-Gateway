@@ -1128,6 +1128,19 @@ router.get('/:id/whatsapp-stats', requireAuth, requireSuperAdmin, async (req, re
   } catch (e) { next(e); }
 });
 
+// SA/Admin: toggle liveness exemption for a merchant (big/marketed merchants skip selfie check).
+router.patch('/:id/liveness-exemption', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const exempt = req.body.exempted === true || req.body.exempted === 'true';
+    const current = await prisma.merchant.findUnique({ where: { id: req.params.id }, select: { notificationSettings: true } });
+    if (!current) return notFound(res, 'Merchant');
+    const merged = { ...(current.notificationSettings || {}), liveness_exempted: exempt };
+    await prisma.merchant.update({ where: { id: req.params.id }, data: { notificationSettings: merged } });
+    await logAudit(req.user.id, exempt ? 'LIVENESS_EXEMPTED' : 'LIVENESS_EXEMPTION_REMOVED', 'Merchant', req.params.id, null, { exempt });
+    ok(res, { id: req.params.id, liveness_exempted: exempt }, exempt ? 'Merchant exempted from liveness check' : 'Liveness check requirement reinstated');
+  } catch (e) { next(e); }
+});
+
 // SA: per-merchant WhatsApp billing summary for the billing dashboard page.
 router.get('/whatsapp-billing', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {

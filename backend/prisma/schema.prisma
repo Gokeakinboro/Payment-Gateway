@@ -503,6 +503,20 @@ model OnboardingSubmission {
   @@map("onboarding_submissions")
 }
 
+model ComplianceWatchlist {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entryType  String   @map("entry_type")   // BVN | NIN | RC | NAME | EMAIL | PHONE
+  value      String
+  reason     String?
+  addedBy    String?  @map("added_by") @db.Uuid
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([entryType, value])
+  @@index([entryType, value])
+  @@map("compliance_watchlist")
+}
+
 model KycVerificationReport {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   submissionRef    String    @map("submission_ref")
