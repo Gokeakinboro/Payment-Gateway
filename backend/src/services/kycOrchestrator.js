@@ -194,6 +194,76 @@ async function checkLocalWatchlist(sub) {
   return hits;
 }
 
+// ── settlement account name matching ─────────────────────────────────────────
+// Compares the settlement account name the merchant provided against the name
+// returned by YouVerify (BVN/NIN for natural persons, CAC for entities).
+// Uses word-overlap matching — handles bank abbreviations, title omissions etc.
+// Returns { pass, submittedName, verifiedName, score, reason }.
+function matchSettlementName(submittedName, verifiedName) {
+  if (!submittedName || !verifiedName) return { pass: false, reason: 'One or both names are missing' };
+
+  const normalize = (s) => String(s).toUpperCase()
+    .replace(/\bLIMITED\b/g, 'LTD').replace(/\bCOMPANY\b/g, 'CO')
+    .replace(/\bAND\b/g, '&').replace(/[^A-Z0-9&\s]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+
+  const sWords = new Set(normalize(submittedName).split(' ').filter((w) => w.length > 1));
+  const vWords = new Set(normalize(verifiedName).split(' ').filter((w) => w.length > 1));
+  if (!sWords.size || !vWords.size) return { pass: false, reason: 'Name could not be parsed' };
+
+  const overlap = [...sWords].filter((w) => vWords.has(w)).length;
+  const score = overlap / Math.max(sWords.size, vWords.size);
+  const pass = score >= 0.5; // ≥50% word overlap required
+  return {
+    pass, score: Math.round(score * 100),
+    submittedName, verifiedName,
+    reason: pass
+      ? `Name match (${Math.round(score * 100)}% overlap)`
+      : `Name mismatch — settlement account "${submittedName}" does not sufficiently match verified name "${verifiedName}" (${Math.round(score * 100)}% overlap)`,
+  };
+}
+
+async function runSettlementNameCheck(submissionRef, merchantId, sub, eidReports) {
+  // Get settlement account name from form data
+  const settlementAccountName = (sub.data?.np_business?.account_name || '').trim();
+  if (!settlementAccountName) {
+    return saveReport({
+      submissionRef, merchantId, checkType: 'SETTLEMENT_NAME', result: 'SKIPPED',
+      provider: 'internal', matchNotes: 'No settlement account name provided',
+    });
+  }
+
+  // For natural persons — match against BVN/NIN returned name
+  if (sub.applicantType === 'natural') {
+    const bvnReport = eidReports.find((r) => r.checkType === 'BVN' && r.result === 'PASS');
+    const verifiedName = bvnReport
+      ? [bvnReport.responsePayload?.data?.firstName, bvnReport.responsePayload?.data?.lastName].filter(Boolean).join(' ')
+      : null;
+    const match = matchSettlementName(settlementAccountName, verifiedName);
+    return saveReport({
+      submissionRef, merchantId, checkType: 'SETTLEMENT_NAME',
+      result: match.pass ? 'PASS' : 'FAIL', provider: 'internal',
+      subjectName: settlementAccountName,
+      matchNotes: match.reason,
+    });
+  }
+
+  // For entities — match against CAC returned company name
+  if (sub.applicantType === 'entity') {
+    const cacReport = eidReports.find((r) => r.checkType === 'CAC' && r.result === 'PASS');
+    const verifiedName = cacReport?.responsePayload?.data?.name || cacReport?.responsePayload?.data?.companyName || null;
+    const match = matchSettlementName(settlementAccountName, verifiedName);
+    return saveReport({
+      submissionRef, merchantId, checkType: 'SETTLEMENT_NAME',
+      result: match.pass ? 'PASS' : 'FAIL', provider: 'internal',
+      subjectName: settlementAccountName,
+      matchNotes: match.reason,
+    });
+  }
+
+  return null;
+}
+
 // ── completeness check ────────────────────────────────────────────────────────
 
 function checkCompleteness(sub) {
@@ -347,8 +417,14 @@ async function runOnboardingChecks(reference) {
     }
   }
 
+  // ── 3b. Settlement account name check ───────────────────────────────────────
+  // Must run after eID checks so we have verified names to compare against.
+  const eidReports = allReports.filter((r) => r && ['BVN', 'NIN', 'CAC'].includes(r.checkType));
+  const snReport = await runSettlementNameCheck(reference, merchantId, sub, eidReports);
+  if (snReport) allReports.push(snReport);
+
   // ── 4. Embedded BVN/NIN screening (watchlist / AML bundled in response) ──────
-  for (const eidR of allReports.filter((r) => r && (r.checkType === 'BVN' || r.checkType === 'NIN'))) {
+  for (const eidR of eidReports.filter((r) => r.checkType === 'BVN' || r.checkType === 'NIN')) {
     const raw = eidR.responsePayload?.data || {};
     if (raw.watchListed !== undefined) {
       const r = await saveReport({

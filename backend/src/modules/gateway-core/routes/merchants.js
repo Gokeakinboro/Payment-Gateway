@@ -533,10 +533,27 @@ router.post('/me/activate', requireAuth, async (req, res, next) => {
     if (req.body.accept_terms !== true)
       return fail(res, 'You must accept the go-live terms to activate.', 'TERMS_REQUIRED');
 
-    // Settlement account must be on file (captured at onboarding). Block if missing —
-    // we cannot pay out settlements without it.
+    // Settlement account must be on file.
     if (!m.settlementBank || !m.settlementAccount || !m.settlementAccountName)
       return fail(res, 'Your settlement bank account is missing. Please add it before activating.', 'SETTLEMENT_MISSING');
+
+    // Settlement account name must match verified identity (BVN/NIN/CAC).
+    // Settling merchant funds to an unverified third-party account is not permitted.
+    // SA must grant a case-by-case override (settlement_name_override) if names differ.
+    const nsCheck = m.notificationSettings || {};
+    if (!nsCheck.settlement_name_override) {
+      const snFail = await prisma.$queryRawUnsafe(
+        `SELECT id FROM kyc_verification_reports
+          WHERE merchant_id = $1::uuid AND check_type = 'SETTLEMENT_NAME' AND result = 'FAIL'
+          ORDER BY created_at DESC LIMIT 1`,
+        merchantId);
+      if (snFail.length > 0) {
+        return fail(res,
+          'Your settlement account name does not match your verified identity. ' +
+          'Please contact support@paylodeservices.com to resolve this before activating.',
+          'SETTLEMENT_NAME_MISMATCH', 409);
+      }
+    }
 
     const updated = await prisma.merchant.update({
       where: { id: merchantId },
@@ -1125,6 +1142,30 @@ router.get('/:id/whatsapp-stats', requireAuth, requireSuperAdmin, async (req, re
       metaCostKobo:        cost,
       netMarginKobo:       revenue - cost,
     });
+  } catch (e) { next(e); }
+});
+
+// SA ONLY: grant settlement account name override — case-by-case, requires written reason.
+// This permits activation when the settlement name doesn't match verified identity.
+// Every override is logged to the audit trail; there is no global bypass.
+router.post('/:id/settlement-name-override', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { reason } = req.body || {};
+    if (!reason || String(reason).trim().length < 10)
+      return fail(res, 'A reason of at least 10 characters is required for a settlement name override.');
+    const current = await prisma.merchant.findUnique({ where: { id: req.params.id }, select: { notificationSettings: true, businessName: true } });
+    if (!current) return notFound(res, 'Merchant');
+    const merged = {
+      ...(current.notificationSettings || {}),
+      settlement_name_override: true,
+      settlement_name_override_reason: String(reason).trim(),
+      settlement_name_override_by: req.user.id,
+      settlement_name_override_at: new Date().toISOString(),
+    };
+    await prisma.merchant.update({ where: { id: req.params.id }, data: { notificationSettings: merged } });
+    await logAudit(req.user.id, 'SETTLEMENT_NAME_OVERRIDE_GRANTED', 'Merchant', req.params.id, null,
+      { reason, merchantName: current.businessName });
+    ok(res, { id: req.params.id, override: true }, 'Settlement name override granted — merchant may now activate');
   } catch (e) { next(e); }
 });
 
