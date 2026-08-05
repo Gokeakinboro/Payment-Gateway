@@ -60,53 +60,41 @@ async function verifyNin(nin) {
 }
 
 /**
- * Verify CAC RC number against YouVerify (returns company name to match locally).
- * businessType: 'limited_liability' | 'business_name' | 'incorporated_trustee'
+ * Verify CAC registration number against YouVerify.
+ * registrationNumber must include prefix: RC (Ltd), BN (business name), IT (incorporated trustee),
+ * LP (limited partnership), LLP (limited liability partnership). No space between prefix and number.
+ * e.g. RC1234567, BN1234567
  */
-async function verifyCac(rcNumber, businessName, businessType = 'limited_liability') {
-  const res = await request('POST', '/api/identity/ng/cac', { id: rcNumber, isSubjectConsent: true, businessType });
+async function verifyCac(rcNumber, businessName) {
+  // Ensure RC prefix — add if not already prefixed
+  const prefixes = ['RC', 'BN', 'IT', 'LP', 'LLP'];
+  const clean = String(rcNumber || '').trim().toUpperCase();
+  const prefixed = prefixes.some((p) => clean.startsWith(p)) ? clean : `RC${clean}`;
+  const res = await request('POST', '/api/verifications/ng/company/basic', {
+    registrationNumber: prefixed, isConsent: true,
+  });
   return normalise(res, 'cac');
 }
 
 /**
- * Real-time PEP screening.
- * Endpoint path confirmed on YouVerify activation — set YOUVERIFY_PEP_PATH env var if different.
- * Default path based on YouVerify Cowork API pattern.
+ * PEP + Sanctions screening by name.
+ * Covers both PEP and sanctions in a single call — type: 'individual' or 'business'.
  */
-async function screenPep(fullName, country = 'NG') {
-  const path = process.env.YOUVERIFY_PEP_PATH || '/api/identity/pep';
-  const res = await request('POST', path, { name: fullName, country, isSubjectConsent: true });
-  return normalise(res, 'pep');
+async function screenAml(fullName, type = 'individual') {
+  const res = await request('POST', '/api/verifications/advanced/name/aml-checks', {
+    query: fullName, isSubjectConsent: true, type,
+  });
+  return normalise(res, 'aml');
 }
 
 /**
- * Real-time sanctions screening.
- * Endpoint path confirmed on YouVerify activation — set YOUVERIFY_SANCTIONS_PATH env var if different.
+ * Adverse media intelligence screening by name.
  */
-async function screenSanctions(fullName, country = 'NG') {
-  const path = process.env.YOUVERIFY_SANCTIONS_PATH || '/api/identity/sanctions';
-  const res = await request('POST', path, { name: fullName, country, isSubjectConsent: true });
-  return normalise(res, 'sanctions');
-}
-
-/**
- * AI adverse-media screening.
- * Endpoint path confirmed on YouVerify activation.
- */
-async function screenAdverseMedia(fullName, country = 'NG') {
-  const path = process.env.YOUVERIFY_ADVERSE_MEDIA_PATH || '/api/identity/adverse-media';
-  const res = await request('POST', path, { name: fullName, country, isSubjectConsent: true });
+async function screenAdverseMedia(fullName, type = 'individual') {
+  const res = await request('POST', '/api/identity/adverse-media', {
+    query: fullName, isSubjectConsent: true, type,
+  });
   return normalise(res, 'adverse_media');
-}
-
-/**
- * Custom watchlist screening — screens against watchlists you configure in YouVerify's platform.
- * Separate from the local compliance_watchlist table (which is our own DB).
- */
-async function screenCustomWatchlist(fullName, country = 'NG') {
-  const path = process.env.YOUVERIFY_WATCHLIST_PATH || '/api/identity/watchlist';
-  const res = await request('POST', path, { name: fullName, country, isSubjectConsent: true });
-  return normalise(res, 'watchlist');
 }
 
 /**
@@ -161,4 +149,4 @@ function verifyWebhookSignature(rawBody, signatureHeader) {
   );
 }
 
-module.exports = { verifyBvn, verifyNin, verifyCac, screenPep, screenSanctions, screenAdverseMedia, screenCustomWatchlist, verifyLiveness, verifyWebhookSignature };
+module.exports = { verifyBvn, verifyNin, verifyCac, screenAml, screenAdverseMedia, verifyLiveness, verifyWebhookSignature };

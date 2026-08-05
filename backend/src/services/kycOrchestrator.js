@@ -76,35 +76,9 @@ async function saveReport({ submissionRef, merchantId, checkType, result, subjec
   }
 }
 
-// ── email one check report to internal users ──────────────────────────────────
-
-async function emailInternalReport(report, submissionRef, businessName) {
-  const subject = `[KYC] ${checkLabel(report.checkType)} — ${report.result} — ${businessName} (${submissionRef})`;
-  const html = `
-    <div style="font-family:system-ui,Arial,sans-serif;max-width:640px;color:#1a1a1a">
-      <h2 style="margin-bottom:4px">KYC Verification Report</h2>
-      <p style="color:#666;font-size:13px;margin-top:0">${submissionRef} · ${new Date().toLocaleString('en-NG')}</p>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
-        <tr><td style="padding:8px;background:#f9fafb;font-weight:600;width:40%">Business</td><td style="padding:8px">${businessName}</td></tr>
-        <tr><td style="padding:8px;background:#f9fafb;font-weight:600">Check type</td><td style="padding:8px">${checkLabel(report.checkType)}</td></tr>
-        <tr><td style="padding:8px;background:#f9fafb;font-weight:600">Result</td><td style="padding:8px">${resultBadge(report.result)}</td></tr>
-        ${report.subjectId ? `<tr><td style="padding:8px;background:#f9fafb;font-weight:600">Subject ID</td><td style="padding:8px">${report.subjectId}</td></tr>` : ''}
-        ${report.subjectName ? `<tr><td style="padding:8px;background:#f9fafb;font-weight:600">Subject name</td><td style="padding:8px">${report.subjectName}</td></tr>` : ''}
-        ${report.providerRef ? `<tr><td style="padding:8px;background:#f9fafb;font-weight:600">Provider ref</td><td style="padding:8px;font-size:12px">${report.providerRef}</td></tr>` : ''}
-        ${report.matchNotes ? `<tr><td style="padding:8px;background:#f9fafb;font-weight:600">Notes</td><td style="padding:8px;color:#b45309">${report.matchNotes}</td></tr>` : ''}
-      </table>
-      ${report.responsePayload ? `<details><summary style="cursor:pointer;font-size:13px;color:#666">Raw provider response</summary><pre style="font-size:11px;background:#f1f5f9;padding:10px;border-radius:4px;overflow-x:auto;margin-top:8px">${JSON.stringify(report.responsePayload, null, 2)}</pre></details>` : ''}
-      <p style="font-size:12px;color:#999;margin-top:24px">Paylode Compliance · paylodeservices.com</p>
-    </div>`;
-  try {
-    await sendEmail({ to: REPORT_EMAIL, subject, html });
-    await prisma.kycVerificationReport.update({
-      where: { id: report.id }, data: { internalEmailedAt: new Date() },
-    });
-  } catch (e) {
-    logger.warn({ err: e.message }, 'Failed to send internal KYC report email');
-  }
-}
+// Per-check emails removed — only the summary email is sent to compliance.
+// Individual check results are stored in kyc_verification_reports and visible
+// in the SA merchant modal → KYC Reports tab.
 
 // ── email merchant about failures ─────────────────────────────────────────────
 
@@ -254,33 +228,25 @@ function checkCompleteness(sub) {
   return issues;
 }
 
-// ── fire one YouVerify check + save + email ───────────────────────────────────
+// ── fire one YouVerify check + save (no per-check email) ─────────────────────
 
-async function runCheck(submissionRef, merchantId, businessName, checkType, yvCall, subjectId, subjectName) {
-  let result = 'PENDING';
-  let providerRef = null;
-  let requestPayload = null;
-  let responsePayload = null;
-  let matchNotes = null;
+async function runCheck(submissionRef, merchantId, checkType, yvCall, subjectId, subjectName) {
+  let result = 'PENDING', providerRef = null, requestPayload = null, responsePayload = null, matchNotes = null;
 
   try {
     const yvResult = await yvCall();
-    providerRef   = yvResult.requestId;
+    providerRef     = yvResult.requestId;
     responsePayload = yvResult.raw;
     requestPayload  = { id: subjectId };
 
     if (!yvResult.success) {
       result = 'FAIL';
-      matchNotes = yvResult.message || 'Verification failed — ID not found or not verified';
+      matchNotes = yvResult.message || 'Verification failed — not found or not verified';
     } else {
-      // YouVerify returns data about the subject — no name-matching needed on our side for screening
-      // For eID checks the result is PASS if the ID was found; manual review catches mismatches
       result = 'PASS';
-      const d = yvResult.raw?.data;
-      if (d) {
-        const returnedName = [d.firstName, d.middleName, d.lastName, d.fullName].filter(Boolean).join(' ').trim();
-        if (returnedName) matchNotes = `Returned name: ${returnedName}`;
-      }
+      const d = yvResult.raw?.data || {};
+      const returnedName = [d.firstName, d.middleName, d.lastName].filter(Boolean).join(' ').trim();
+      if (returnedName) matchNotes = `Returned name: ${returnedName}`;
     }
   } catch (e) {
     result = 'ERROR';
@@ -288,13 +254,8 @@ async function runCheck(submissionRef, merchantId, businessName, checkType, yvCa
     logger.warn({ err: e.message, checkType, subjectId }, 'YouVerify check error');
   }
 
-  const report = await saveReport({
-    submissionRef, merchantId, checkType, result, subjectId, subjectName,
-    provider: 'youverify', providerRef, requestPayload, responsePayload, matchNotes,
-  });
-
-  if (report) await emailInternalReport(report, submissionRef, businessName);
-  return report;
+  return saveReport({ submissionRef, merchantId, checkType, result, subjectId, subjectName,
+    provider: 'youverify', providerRef, requestPayload, responsePayload, matchNotes });
 }
 
 // ── main entry point ──────────────────────────────────────────────────────────
@@ -322,41 +283,44 @@ async function runOnboardingChecks(reference) {
 
   if (!sub) { logger.warn({ reference }, 'kycOrchestrator: submission not found'); return; }
 
-  const merchantId = sub.merchantId;
+  const merchantId   = sub.merchantId;
   const businessName = sub.businessName || 'Unknown Business';
-  const allReports = [];
+  const allReports   = [];
+  const data         = sub.data || {};
+  const principals   = Array.isArray(sub.principals) ? sub.principals : [];
+  const allNames     = []; // collect all names for AML/adverse media
 
-  // ── 1. Completeness check ────────────────────────────────────────────────────
+  // ── 1. Completeness ──────────────────────────────────────────────────────────
   const completenessIssues = checkCompleteness(sub);
-  const completenessResult = completenessIssues.length ? 'FAIL' : 'PASS';
-  const completenessReport = await saveReport({
+  const cr = await saveReport({
     submissionRef: reference, merchantId, checkType: 'COMPLETENESS',
-    result: completenessResult, provider: 'internal',
+    result: completenessIssues.length ? 'FAIL' : 'PASS', provider: 'internal',
     matchNotes: completenessIssues.length ? completenessIssues.join(' | ') : null,
   });
-  if (completenessReport) {
-    await emailInternalReport(completenessReport, reference, businessName);
-    allReports.push(completenessReport);
+  if (cr) allReports.push(cr);
+
+  // ── 2. Local compliance watchlist (free, no API quota) ───────────────────────
+  const localHits = await checkLocalWatchlist(sub);
+  if (localHits.length) {
+    const wr = await saveReport({
+      submissionRef: reference, merchantId, checkType: 'WATCHLIST', result: 'FAIL', provider: 'internal',
+      matchNotes: localHits.map((h) => `${h.entryType}:${h.value} — ${h.reason || 'On compliance blacklist'}`).join(' | '),
+    });
+    if (wr) allReports.push(wr);
   }
 
-  const data = sub.data || {};
-  const principals = Array.isArray(sub.principals) ? sub.principals : [];
-  const allNames = []; // names to screen for PEP/sanctions
-
-  // ── 2. eID checks ────────────────────────────────────────────────────────────
+  // ── 3. eID checks (BVN / NIN / CAC) ─────────────────────────────────────────
   if (sub.formType === 'merchant' && sub.applicantType === 'natural') {
     const np = data.np_identity || {};
     const name = fullName(np) || sub.businessName;
     allNames.push(name);
 
     if (np.bvn && /^\d{11}$/.test(np.bvn)) {
-      const r = await runCheck(reference, merchantId, businessName, 'BVN',
-        () => yv.verifyBvn(np.bvn), np.bvn, name);
+      const r = await runCheck(reference, merchantId, 'BVN', () => yv.verifyBvn(np.bvn), np.bvn, name);
       if (r) allReports.push(r);
     }
     if (np.nin && /^\d{11}$/.test(np.nin)) {
-      const r = await runCheck(reference, merchantId, businessName, 'NIN',
-        () => yv.verifyNin(np.nin), np.nin, name);
+      const r = await runCheck(reference, merchantId, 'NIN', () => yv.verifyNin(np.nin), np.nin, name);
       if (r) allReports.push(r);
     }
 
@@ -364,124 +328,95 @@ async function runOnboardingChecks(reference) {
     const ent = data.entity_details || {};
     allNames.push(sub.businessName);
 
-    // CAC check
     const rcNum = ent.rc_number || sub.regNumber;
     if (rcNum) {
-      const bizType = ent.entity_sub_type === 'sole_prop' ? 'business_name'
-        : ent.entity_sub_type === 'trust' ? 'incorporated_trustee' : 'limited_liability';
-      const r = await runCheck(reference, merchantId, businessName, 'CAC',
-        () => yv.verifyCac(rcNum, sub.businessName, bizType), rcNum, sub.businessName);
+      const r = await runCheck(reference, merchantId, 'CAC', () => yv.verifyCac(rcNum, sub.businessName), rcNum, sub.businessName);
       if (r) allReports.push(r);
     }
-
-    // Per-principal BVN + NIN
-    for (let i = 0; i < principals.length; i++) {
-      const p = principals[i] || {};
+    for (const p of principals) {
       const pName = fullName(p);
       allNames.push(pName);
-
       if (p.bvn && /^\d{11}$/.test(p.bvn)) {
-        const r = await runCheck(reference, merchantId, businessName, 'BVN',
-          () => yv.verifyBvn(p.bvn), p.bvn, pName);
+        const r = await runCheck(reference, merchantId, 'BVN', () => yv.verifyBvn(p.bvn), p.bvn, pName);
         if (r) allReports.push(r);
       }
       if (p.nin && /^\d{11}$/.test(p.nin)) {
-        const r = await runCheck(reference, merchantId, businessName, 'NIN',
-          () => yv.verifyNin(p.nin), p.nin, pName);
+        const r = await runCheck(reference, merchantId, 'NIN', () => yv.verifyNin(p.nin), p.nin, pName);
         if (r) allReports.push(r);
       }
     }
   }
 
-  // ── 3. Local compliance watchlist (our DB — free, no YouVerify quota) ──────────
-  const localHits = await checkLocalWatchlist(sub);
-  if (localHits.length) {
-    const localReport = await saveReport({
-      submissionRef: reference, merchantId, checkType: 'WATCHLIST',
-      result: 'FAIL', provider: 'internal',
-      matchNotes: localHits.map((h) => `${h.entryType}:${h.value} — ${h.reason || 'On compliance blacklist'}`).join(' | '),
-    });
-    if (localReport) {
-      await emailInternalReport(localReport, reference, businessName);
-      allReports.push(localReport);
-    }
-  }
-
-  // ── 4. Extract embedded screening from BVN/NIN responses ────────────────────
-  // YouVerify bundles watchListed + amlReport + adverseMediaReport directly in
-  // the BVN/NIN verification response — no separate API calls needed.
-  // We read these from the saved response_payload in kyc_verification_reports.
-  const eidReports = allReports.filter((r) => r && (r.checkType === 'BVN' || r.checkType === 'NIN'));
-  for (const eidReport of eidReports) {
-    const raw = eidReport.responsePayload?.data || {};
-
-    // Watchlist (only present in BVN response)
+  // ── 4. Embedded BVN/NIN screening (watchlist / AML bundled in response) ──────
+  for (const eidR of allReports.filter((r) => r && (r.checkType === 'BVN' || r.checkType === 'NIN'))) {
+    const raw = eidR.responsePayload?.data || {};
     if (raw.watchListed !== undefined) {
-      const wlResult = raw.watchListed === 'YES' ? 'FAIL' : 'PASS';
-      const wlRep = await saveReport({
+      const r = await saveReport({
         submissionRef: reference, merchantId, checkType: 'WATCHLIST',
-        result: wlResult, provider: 'youverify', subjectName: eidReport.subjectName,
-        matchNotes: `YouVerify watchListed: ${raw.watchListed}`,
+        result: raw.watchListed === 'YES' ? 'FAIL' : 'PASS', provider: 'youverify',
+        subjectName: eidR.subjectName, matchNotes: `YouVerify watchListed: ${raw.watchListed}`,
       });
-      if (wlRep) { await emailInternalReport(wlRep, reference, businessName); allReports.push(wlRep); }
+      if (r) allReports.push(r);
     }
-
-    // AML report
     if (raw.amlReport !== null && raw.amlReport !== undefined) {
-      const amlResult = raw.amlReport ? 'FAIL' : 'PASS';
-      const amlRep = await saveReport({
+      const r = await saveReport({
         submissionRef: reference, merchantId, checkType: 'SANCTIONS',
-        result: amlResult, provider: 'youverify', subjectName: eidReport.subjectName,
-        responsePayload: raw.amlReport || {},
-        matchNotes: amlResult === 'FAIL' ? 'AML hit detected — review report' : 'No AML hits',
+        result: raw.amlReport ? 'FAIL' : 'PASS', provider: 'youverify',
+        subjectName: eidR.subjectName, responsePayload: raw.amlReport || {},
+        matchNotes: raw.amlReport ? 'AML hit detected — review report' : 'No AML hits',
       });
-      if (amlRep) { await emailInternalReport(amlRep, reference, businessName); allReports.push(amlRep); }
+      if (r) allReports.push(r);
     }
-
-    // Adverse media
     if (raw.adverseMediaReport !== null && raw.adverseMediaReport !== undefined) {
-      const amResult = raw.adverseMediaReport ? 'FAIL' : 'PASS';
-      const amRep = await saveReport({
+      const r = await saveReport({
         submissionRef: reference, merchantId, checkType: 'ADVERSE_MEDIA',
-        result: amResult, provider: 'youverify', subjectName: eidReport.subjectName,
-        responsePayload: raw.adverseMediaReport || {},
-        matchNotes: amResult === 'FAIL' ? 'Adverse media hit — review report' : 'No adverse media hits',
+        result: raw.adverseMediaReport ? 'FAIL' : 'PASS', provider: 'youverify',
+        subjectName: eidR.subjectName, responsePayload: raw.adverseMediaReport || {},
+        matchNotes: raw.adverseMediaReport ? 'Adverse media hit — review' : 'No adverse media hits',
       });
-      if (amRep) { await emailInternalReport(amRep, reference, businessName); allReports.push(amRep); }
+      if (r) allReports.push(r);
     }
   }
 
-  // ── 5. Facial liveness (new web merchants only) ───────────────────────────────
-  // Skip if: merchant already active, OR liveness_exempted by SA/admin, OR no selfie submitted.
+  // ── 5. AML (PEP + sanctions) + adverse media via direct API ──────────────────
+  const uniqueNames = [...new Set(allNames.filter(Boolean))];
+  for (const name of uniqueNames) {
+    const entityType = sub.applicantType === 'entity' ? 'business' : 'individual';
+    const amlR = await runCheck(reference, merchantId, 'AML',
+      () => yv.screenAml(name, entityType), null, name);
+    if (amlR) allReports.push(amlR);
+
+    const amR = await runCheck(reference, merchantId, 'ADVERSE_MEDIA',
+      () => yv.screenAdverseMedia(name, entityType), null, name);
+    if (amR) allReports.push(amR);
+  }
+
+  // ── 6. Liveness (new merchants only, if selfie submitted) ────────────────────
   const merchant = merchantId ? await prisma.merchant.findUnique({
     where: { id: merchantId }, select: { kycStatus: true, notificationSettings: true },
   }).catch(() => null) : null;
+  const isActive   = merchant?.kycStatus === 'ACTIVE';
+  const isExempted = !!(merchant?.notificationSettings?.liveness_exempted);
+  const selfie     = sub.data?._liveness_selfie || null;
 
-  const isExistingMerchant  = merchant && merchant.kycStatus === 'ACTIVE';
-  const isLivenessExempted  = !!(merchant?.notificationSettings?.liveness_exempted);
-  const selfieBase64        = sub.data?._liveness_selfie || null;
-
-  if (!isExistingMerchant && !isLivenessExempted && selfieBase64) {
-    const livenessReport = await runCheck(reference, merchantId, businessName, 'LIVENESS',
-      () => yv.verifyLiveness(selfieBase64), null, sub.contactEmail || businessName);
-    if (livenessReport) allReports.push(livenessReport);
-  } else if (!isExistingMerchant && !isLivenessExempted && !selfieBase64) {
-    // No selfie submitted — flag as incomplete (but don't fail — merchant may not have camera)
-    const noSelfieReport = await saveReport({
-      submissionRef: reference, merchantId, checkType: 'LIVENESS',
-      result: 'SKIPPED', provider: 'internal',
-      matchNotes: 'No selfie submitted — liveness check skipped. SA can exempt this merchant or request resubmission.',
-    });
-    if (noSelfieReport) {
-      await emailInternalReport(noSelfieReport, reference, businessName);
-      allReports.push(noSelfieReport);
+  if (!isActive && !isExempted) {
+    if (selfie) {
+      const r = await runCheck(reference, merchantId, 'LIVENESS',
+        () => yv.verifyLiveness(selfie), null, sub.contactEmail || businessName);
+      if (r) allReports.push(r);
+    } else {
+      const r = await saveReport({
+        submissionRef: reference, merchantId, checkType: 'LIVENESS', result: 'SKIPPED', provider: 'internal',
+        matchNotes: 'No selfie submitted — liveness skipped. SA may exempt or request resubmission.',
+      });
+      if (r) allReports.push(r);
     }
   }
 
-  // ── 6. Summary email to internal ─────────────────────────────────────────────
+  // ── 7. ONE summary email to compliance ───────────────────────────────────────
   if (allReports.length) await emailInternalSummary(reference, businessName, allReports);
 
-  // ── 7. Merchant notification for failures + completeness ──────────────────────
+  // ── 8. Notify merchant only if there are failures ────────────────────────────
   const failedChecks = allReports.filter((r) => r && r.result === 'FAIL' && r.checkType !== 'COMPLETENESS');
   if (failedChecks.length || completenessIssues.length) {
     await emailMerchantFailures(sub.contactEmail, businessName, reference, failedChecks, completenessIssues);
