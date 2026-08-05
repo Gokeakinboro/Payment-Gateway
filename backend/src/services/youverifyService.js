@@ -99,6 +99,27 @@ async function screenAdverseMedia(fullName, country = 'NG') {
   return normalise(res, 'adverse_media');
 }
 
+/**
+ * Custom watchlist screening — screens against watchlists you configure in YouVerify's platform.
+ * Separate from the local compliance_watchlist table (which is our own DB).
+ */
+async function screenCustomWatchlist(fullName, country = 'NG') {
+  const path = process.env.YOUVERIFY_WATCHLIST_PATH || '/api/identity/watchlist';
+  const res = await request('POST', path, { name: fullName, country, isSubjectConsent: true });
+  return normalise(res, 'watchlist');
+}
+
+/**
+ * Facial liveness + biometric verification.
+ * Accepts a base64-encoded JPEG/PNG selfie image.
+ * Endpoint confirmed on YouVerify activation — set YOUVERIFY_LIVENESS_PATH if different.
+ */
+async function verifyLiveness(base64Image) {
+  const path = process.env.YOUVERIFY_LIVENESS_PATH || '/api/v2/faces/liveliness';
+  const res = await request('POST', path, { image: base64Image, isSubjectConsent: true });
+  return normalise(res, 'liveness');
+}
+
 function normalise(res, type) {
   const body = res.data;
   return {
@@ -127,4 +148,4 @@ function verifyWebhookSignature(rawBody, signatureHeader) {
   );
 }
 
-module.exports = { verifyBvn, verifyNin, verifyCac, screenPep, screenSanctions, screenAdverseMedia, verifyWebhookSignature };
+module.exports = { verifyBvn, verifyNin, verifyCac, screenPep, screenSanctions, screenAdverseMedia, screenCustomWatchlist, verifyLiveness, verifyWebhookSignature };

@@ -325,4 +325,59 @@ router.get('/matrix', requireAuth, requireCompliance, async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
+// ─── Compliance Watchlist (local blacklist) ────────────────────────────────────
+// SA + Compliance can view and add entries; only SA can remove.
+
+router.get('/watchlist', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const rows = await prisma.complianceWatchlist.findMany({
+      where: req.query.inactive === 'true' ? {} : { isActive: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    ok(res, rows);
+  } catch (e) { next(e); }
+});
+
+router.post('/watchlist', requireAuth, requireCompliance, async (req, res, next) => {
+  try {
+    const { entry_type, value, reason } = req.body || {};
+    const VALID_TYPES = ['BVN', 'NIN', 'RC', 'NAME', 'EMAIL', 'PHONE'];
+    if (!VALID_TYPES.includes(entry_type)) return fail(res, 'entry_type must be one of: ' + VALID_TYPES.join(', '));
+    if (!value || !String(value).trim()) return fail(res, 'value is required');
+    const clean = entry_type === 'EMAIL' ? String(value).toLowerCase().trim()
+      : entry_type === 'NAME' ? String(value).toLowerCase().trim()
+      : String(value).trim();
+    const row = await prisma.complianceWatchlist.upsert({
+      where: { entryType_value: { entryType: entry_type, value: clean } },
+      create: { entryType: entry_type, value: clean, reason: reason || null, addedBy: req.user.id, isActive: true },
+      update: { isActive: true, reason: reason || undefined, addedBy: req.user.id },
+    });
+    await logAudit(req.user.id, 'WATCHLIST_ADD', 'compliance_watchlist', row.id, null, { entry_type, value: clean, reason });
+    created(res, row, 'Entry added to compliance watchlist');
+  } catch (e) { next(e); }
+});
+
+router.delete('/watchlist/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const row = await prisma.complianceWatchlist.update({
+      where: { id: req.params.id }, data: { isActive: false },
+    });
+    await logAudit(req.user.id, 'WATCHLIST_REMOVE', 'compliance_watchlist', row.id, null, { entryType: row.entryType, value: row.value });
+    ok(res, { id: row.id }, 'Entry removed from watchlist');
+  } catch (e) { next(e); }
+});
+
+// Export watchlist as CSV (SA only)
+router.get('/watchlist/export', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const rows = await prisma.complianceWatchlist.findMany({ where: { isActive: true }, orderBy: { createdAt: 'desc' } });
+    const csv = ['id,entry_type,value,reason,added_at',
+      ...rows.map((r) => [r.id, r.entryType, `"${(r.value||'').replace(/"/g,'""')}"`, `"${(r.reason||'').replace(/"/g,'""')}"`, r.createdAt.toISOString()].join(','))
+    ].join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="paylode-compliance-watchlist.csv"');
+    res.send(csv);
+  } catch (e) { next(e); }
+});
+
 module.exports = router;

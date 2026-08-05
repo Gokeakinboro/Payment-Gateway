@@ -82,6 +82,7 @@ var NAV = {
       {id:'sa_merchant_funding', icon:'landmark', label:'Merchant Funding & Routing'},
       {id:'compliance',      icon:'scale', label:'KYC Review'      },
       {id:'deferrals',       icon:'file-clock', label:'KYC Docs & Deferrals'},
+      {id:'compliance_watchlist', icon:'shield-alert', label:'Compliance Watchlist'},
       {id:'compliance_exceptions', icon:'flag', label:'Intl / Mastercard Compliance'},
       {id:'compliance_centre', icon:'shield-check', label:'Compliance Centre'},
       {id:'onboarding_apps', icon:'file-text',      label:'Applications'    },
