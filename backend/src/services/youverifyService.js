@@ -122,13 +122,26 @@ async function verifyLiveness(base64Image) {
 
 function normalise(res, type) {
   const body = res.data;
+  const d    = body?.data || {};
   return {
-    success:   body?.success === true,
-    requestId: body?.data?.requestId || body?.requestId || null,
-    status:    body?.data?.status || (body?.success ? 'found' : 'not_found'),
-    message:   body?.message || '',
-    raw:       body,
+    success:            body?.success === true,
+    requestId:          d.requestId || body?.requestId || null,
+    status:             d.status || (body?.success ? 'found' : 'not_found'),
+    message:            body?.message || '',
+    raw:                body,
     type,
+    // Embedded screening fields returned alongside BVN/NIN identity checks.
+    watchListed:        d.watchListed || null,          // 'YES' | 'NO' | null
+    amlReport:          d.amlReport   || null,           // object or null
+    adverseMediaReport: d.adverseMediaReport || null,   // object or null
+    entityId:           d.entityId    || null,
+    // Returned subject details for name-match on our side.
+    firstName:          d.firstName   || null,
+    middleName:         d.middleName  || null,
+    lastName:           d.lastName    || null,
+    dateOfBirth:        d.dateOfBirth || null,
+    mobile:             d.mobile      || null,
+    address:            d.address     || null,
   };
 }
 

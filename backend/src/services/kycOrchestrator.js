@@ -407,24 +407,48 @@ async function runOnboardingChecks(reference) {
     }
   }
 
-  // ── 4. PEP + sanctions + adverse media + YV custom watchlist (all unique names) ─
-  const uniqueNames = [...new Set(allNames.filter(Boolean))];
-  for (const name of uniqueNames) {
-    const pepReport = await runCheck(reference, merchantId, businessName, 'PEP',
-      () => yv.screenPep(name), null, name);
-    if (pepReport) allReports.push(pepReport);
+  // ── 4. Extract embedded screening from BVN/NIN responses ────────────────────
+  // YouVerify bundles watchListed + amlReport + adverseMediaReport directly in
+  // the BVN/NIN verification response — no separate API calls needed.
+  // We read these from the saved response_payload in kyc_verification_reports.
+  const eidReports = allReports.filter((r) => r && (r.checkType === 'BVN' || r.checkType === 'NIN'));
+  for (const eidReport of eidReports) {
+    const raw = eidReport.responsePayload?.data || {};
 
-    const sanctionsReport = await runCheck(reference, merchantId, businessName, 'SANCTIONS',
-      () => yv.screenSanctions(name), null, name);
-    if (sanctionsReport) allReports.push(sanctionsReport);
+    // Watchlist (only present in BVN response)
+    if (raw.watchListed !== undefined) {
+      const wlResult = raw.watchListed === 'YES' ? 'FAIL' : 'PASS';
+      const wlRep = await saveReport({
+        submissionRef: reference, merchantId, checkType: 'WATCHLIST',
+        result: wlResult, provider: 'youverify', subjectName: eidReport.subjectName,
+        matchNotes: `YouVerify watchListed: ${raw.watchListed}`,
+      });
+      if (wlRep) { await emailInternalReport(wlRep, reference, businessName); allReports.push(wlRep); }
+    }
 
-    const amReport = await runCheck(reference, merchantId, businessName, 'ADVERSE_MEDIA',
-      () => yv.screenAdverseMedia(name), null, name);
-    if (amReport) allReports.push(amReport);
+    // AML report
+    if (raw.amlReport !== null && raw.amlReport !== undefined) {
+      const amlResult = raw.amlReport ? 'FAIL' : 'PASS';
+      const amlRep = await saveReport({
+        submissionRef: reference, merchantId, checkType: 'SANCTIONS',
+        result: amlResult, provider: 'youverify', subjectName: eidReport.subjectName,
+        responsePayload: raw.amlReport || {},
+        matchNotes: amlResult === 'FAIL' ? 'AML hit detected — review report' : 'No AML hits',
+      });
+      if (amlRep) { await emailInternalReport(amlRep, reference, businessName); allReports.push(amlRep); }
+    }
 
-    const wlReport = await runCheck(reference, merchantId, businessName, 'WATCHLIST',
-      () => yv.screenCustomWatchlist(name), null, name);
-    if (wlReport) allReports.push(wlReport);
+    // Adverse media
+    if (raw.adverseMediaReport !== null && raw.adverseMediaReport !== undefined) {
+      const amResult = raw.adverseMediaReport ? 'FAIL' : 'PASS';
+      const amRep = await saveReport({
+        submissionRef: reference, merchantId, checkType: 'ADVERSE_MEDIA',
+        result: amResult, provider: 'youverify', subjectName: eidReport.subjectName,
+        responsePayload: raw.adverseMediaReport || {},
+        matchNotes: amResult === 'FAIL' ? 'Adverse media hit — review report' : 'No adverse media hits',
+      });
+      if (amRep) { await emailInternalReport(amRep, reference, businessName); allReports.push(amRep); }
+    }
   }
 
   // ── 5. Facial liveness (new web merchants only) ───────────────────────────────
