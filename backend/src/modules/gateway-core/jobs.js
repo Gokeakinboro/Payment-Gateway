@@ -63,6 +63,20 @@ function startCoreJobs({ logger }) {
     logger.error({ err: e }, '  ✗ settlement firing job failed to start (continuing)');
   }
 
+  // Parallex VA pay-in poller — backstop for when Parallex webhook delivery fails.
+  // Queries TemporaryVirtualAccountRequery for every PENDING parallex_va transaction
+  // and finalizes or expires it via the same shared logic as the webhook handler.
+  try {
+    const { pollParallexVaPending } = require('./services/parallexVaPoller');
+    const VA_POLL_MS = Number(process.env.PARALLEX_VA_POLL_MS || 60 * 1000); // 1 min — remove once Parallex webhook is reliable
+    const run = () => pollParallexVaPending().catch(e => logger.error({ err: e }, 'Parallex VA poll failed'));
+    setTimeout(run, 20000);
+    setInterval(run, VA_POLL_MS);
+    logger.info(`  Parallex VA pay-in poll every ${Math.round(VA_POLL_MS / 1000)}s (worker 0)`);
+  } catch (e) {
+    logger.error({ err: e }, '  ✗ Parallex VA poller failed to start (continuing)');
+  }
+
   // Auto-dispatch DUE payouts — normal payouts auto-fire (no manual SA release); this
   // also fires SCHEDULED payouts when their time arrives + backstops any immediate
   // batch whose post-response fire didn't complete. HELD batches (rail down / no float)
