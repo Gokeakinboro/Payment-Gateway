@@ -61,15 +61,34 @@ async function verifyNin(nin) {
 
 /**
  * Verify CAC registration number against YouVerify.
- * registrationNumber must include prefix: RC (Ltd), BN (business name), IT (incorporated trustee),
- * LP (limited partnership), LLP (limited liability partnership). No space between prefix and number.
- * e.g. RC1234567, BN1234567
+ * businessType drives the prefix applied to bare numeric RC numbers:
+ *   Limited Company / LLC / Ltd           → RC
+ *   Business Name / Sole Proprietorship /
+ *     Partnership                         → BN
+ *   Incorporated Trustee / NGO            → IT
+ *   Limited Partnership                   → LP
+ *   Limited Liability Partnership         → LLP
+ * If rcNumber already carries a valid prefix it is used as-is.
  */
-async function verifyCac(rcNumber, businessName) {
-  // Ensure RC prefix — add if not already prefixed
-  const prefixes = ['RC', 'BN', 'IT', 'LP', 'LLP'];
+async function verifyCac(rcNumber, businessName, businessType) {
+  const KNOWN_PREFIXES = ['LLP', 'LP', 'BN', 'IT', 'RC']; // longest-first for startsWith
   const clean = String(rcNumber || '').trim().toUpperCase();
-  const prefixed = prefixes.some((p) => clean.startsWith(p)) ? clean : `RC${clean}`;
+
+  let prefixed;
+  if (KNOWN_PREFIXES.some((p) => clean.startsWith(p))) {
+    // RC number already has a recognised prefix — use as-is
+    prefixed = clean;
+  } else {
+    // Derive prefix from businessType
+    const type = String(businessType || '').toLowerCase();
+    let prefix = 'RC'; // default for limited companies
+    if (/sole.prop|business.name|partnership|bn/i.test(type)) prefix = 'BN';
+    else if (/trustee|incorporated.trustee|ngo|it\b/i.test(type))  prefix = 'IT';
+    else if (/limited.liability.partnership|llp/i.test(type))       prefix = 'LLP';
+    else if (/limited.partnership|\blp\b/i.test(type))              prefix = 'LP';
+    prefixed = `${prefix}${clean}`;
+  }
+
   const res = await request('POST', '/api/verifications/ng/company/basic', {
     registrationNumber: prefixed, isConsent: true,
   });

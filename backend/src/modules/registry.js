@@ -66,6 +66,7 @@ const MODULES = [
   { name: 'invoicing', basePath: '/api/v1/invoicing', load: () => require('./invoicing'), enabledEnv: 'MODULE_INVOICING_ENABLED', category: 'product' },
   { name: 'wallet',    basePath: '/api/v1/wallet',    load: () => require('./wallet'),    enabledEnv: 'MODULE_WALLET_ENABLED',    category: 'product' },
   { name: 'assistant', basePath: '/api/v1/assistant', load: () => require('./assistant'), enabledEnv: 'MODULE_ASSISTANT_ENABLED', category: 'product' },
+  { name: 'chat',      basePath: '/api/v1/chat',      load: () => require('../routes/chat'),  enabledEnv: 'MODULE_CHAT_ENABLED',      category: 'core' },
 ];
 
 const isDisabled = (m) => String(process.env[m.enabledEnv] || '').toLowerCase() === 'off';
