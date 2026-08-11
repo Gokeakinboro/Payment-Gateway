@@ -61,5 +61,6 @@ async function reject(id){if(!confirm('Reject this request?'))return;
   var r=await api('/wallet/admin/'+id+'/reject',{method:'POST'});msg(r.ok,r.ok?'Request rejected':(r.message||'Failed'));if(r.ok)load();}
 load();
 </script>
+<script src="/chat-widget.js"></script>
 </body>
 </html>

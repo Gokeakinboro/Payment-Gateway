@@ -400,7 +400,8 @@ async function runOnboardingChecks(reference) {
 
     const rcNum = ent.rc_number || sub.regNumber;
     if (rcNum) {
-      const r = await runCheck(reference, merchantId, 'CAC', () => yv.verifyCac(rcNum, sub.businessName), rcNum, sub.businessName);
+      const bizType = ent.business_type || sub.businessType || '';
+      const r = await runCheck(reference, merchantId, 'CAC', () => yv.verifyCac(rcNum, sub.businessName, bizType), rcNum, sub.businessName);
       if (r) allReports.push(r);
     }
     for (const p of principals) {
