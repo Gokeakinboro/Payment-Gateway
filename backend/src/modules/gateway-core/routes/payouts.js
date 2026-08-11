@@ -15,13 +15,30 @@ const { logger } = require('../../../utils/logger');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 // ── "On-us" payout destinations ──────────────────────────────────────────────
-// A payout to one of these banks settles inside our own rail network (currently
-// PalmPay, NIBSS code 100033), so it is cheaper for the rail to move and we price
-// it lower for the merchant. On-us payouts resolve the PAYOUT_ONUS fee config;
-// everything else uses the standard PAYOUT config. Identifier only — the actual
-// FEE amounts live in editable rate config, never hardcoded.
-const ON_US_BANK_CODES = new Set(['100033']);  // PalmPay
-const isOnUsBank = (code) => ON_US_BANK_CODES.has(String(code || '').trim());
+// On-us bank codes per rail — a transfer TO these codes settles inside that
+// rail's own network (cheaper). PAYOUT_ONUS fee config applies; everything else
+// uses PAYOUT. Codes are CBN/NIBSS institution codes. Parallex's code comes from
+// env so it stays in sync with parallexTransferService.js.
+const ON_US_CODES_BY_RAIL = {
+  palmpay:  new Set(['100033']),
+  parallex: new Set([process.env.PARALLEX_TRANSFER_BANK_CODE || '999015']),
+};
+// Union of all on-us codes across every rail — used for merchant fee pricing at
+// payout creation time (before a specific rail is assigned). A destination that
+// is on-us for ANY rail gets the cheaper merchant rate.
+const ALL_ON_US_CODES = new Set(Object.values(ON_US_CODES_BY_RAIL).flatMap(s => [...s]));
+
+// railName supplied → rail-specific check (float guard at dispatch).
+// railName omitted  → checks all on-us codes (merchant fee pricing at creation).
+function isOnUsBank(bankCode, railName) {
+  const code = String(bankCode || '').trim();
+  if (!railName) return ALL_ON_US_CODES.has(code);
+  const n = railName.toLowerCase();
+  for (const [key, codes] of Object.entries(ON_US_CODES_BY_RAIL)) {
+    if (n.includes(key)) return codes.has(code);
+  }
+  return false;
+}
 
 // ── Per-rail payout liquidity helpers ─────────────────────────────────────────
 // Payouts are pre-funded PER RAIL: a merchant holds one merchant_wallets row per
@@ -1109,7 +1126,7 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         // beneficiary amounts PLUS (rail flat cost + 7.5% VAT) per transfer. The rail
         // cost is destination-tiered: on-us (PalmPay) transfers cost less than
         // other-bank transfers, so it's computed PER ITEM by the beneficiary's bank.
-        const costForItem = (bankCode) => isOnUsBank(bankCode) ? r.payoutFlatCostOnUs : r.payoutFlatCost;
+        const costForItem = (bankCode) => isOnUsBank(bankCode, r.name) ? r.payoutFlatCostOnUs : r.payoutFlatCost;
         const itemLegs = t.items.map(it => {
           const base = BigInt(costForItem(it.bank_code));
           const vat  = (base * 75n) / 1000n;                 // 7.5% VAT on the flat cost
