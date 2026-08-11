@@ -26,7 +26,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const crypto = require('crypto');
 
-const BASE_URL           = (process.env.PARALLEX_VA_BASE_URL || 'https://parallex-apim.azure-api.net/VirtualAccount/v1/VirtualAccount').replace(/\/$/, '');
+const BASE_URL           = (process.env.PARALLEX_VA_BASE_URL || 'https://tptintegration.parallexbank.com/VirtualAccountAPI/V2/VirtualAccount').replace(/\/$/, '');
 const USERNAME           = process.env.PARALLEX_VA_USERNAME || '';
 const PASSWORD           = process.env.PARALLEX_VA_PASSWORD || '';
 const SUBKEY             = process.env.PARALLEX_VA_SUBKEY || '';
@@ -43,7 +43,7 @@ const okCode        = (r) => !!r && r.responseCode === '00';
 
 // Base (non-authed) headers shared by every call, incl. /Login.
 function baseHeaders() {
-  const h = { Accept: 'application/json', 'Content-Type': 'application/json' };
+  const h = { Accept: 'application/json', 'Content-Type': 'application/json', Connection: 'close' };
   if (SUBKEY) h[SUBKEY_HEADER] = SUBKEY;
   if (MERCHANT_ID) h['MerchantId'] = MERCHANT_ID;
   return h;
@@ -52,13 +52,22 @@ function baseHeaders() {
 // ── token cache (30-min JWT, refreshed 2 min early) ───────────────────────────
 let _token = null, _tokenExp = 0;
 async function login() {
-  const res = await fetch(BASE_URL + '/Login', {
-    method: 'POST', headers: baseHeaders(),
-    body: JSON.stringify({ username: USERNAME, password: b64(PASSWORD) }),
-  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30000);
+  let res;
+  try {
+    res = await fetch(BASE_URL + '/Login', {
+      method: 'POST', headers: baseHeaders(),
+      body: JSON.stringify({ username: USERNAME, password: b64(PASSWORD) }),
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Parallex VA login timed out');
+    throw err;
+  } finally { clearTimeout(timer); }
   const r = await res.json().catch(() => ({ responseCode: 'PARSE', responseDescription: 'Non-JSON (HTTP ' + res.status + ')' }));
   if (r.responseCode !== '00' || !r.data || !r.data.token)
-    throw new Error('Parallex login failed: ' + (r.responseDescription || r.responseCode));
+    throw new Error('Parallex VA login failed: ' + (r.responseDescription || r.responseCode));
   _token = r.data.token;
   const exp = Date.parse(String(r.data.validTo || '').replace(' ', 'T'));   // server time
   _tokenExp = Number.isFinite(exp) ? exp - 120000 : Date.now() + 28 * 60000;
@@ -69,20 +78,28 @@ async function token() {
   return login();
 }
 
-// Authed request. GET carries no body. Retries ONCE on an expired-token signal.
+// Authed request. GET carries no body. Retries ONCE on 401 (stale token only).
 async function call(method, path, body) {
   if (!isConfigured()) throw new Error('Parallex VA not configured — set PARALLEX_VA_USERNAME/PASSWORD/SUBKEY');
   const doFetch = async (tok) => {
-    const res = await fetch(BASE_URL + path, {
-      method, headers: Object.assign(baseHeaders(), { Authorization: 'Bearer ' + tok }),
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const json = await res.json().catch(() => ({ responseCode: 'PARSE', responseDescription: 'Non-JSON (HTTP ' + res.status + ')' }));
-    return { status: res.status, json };
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    try {
+      const res = await fetch(BASE_URL + path, {
+        method, headers: Object.assign(baseHeaders(), { Authorization: 'Bearer ' + tok }),
+        body: body ? JSON.stringify(body) : undefined,
+        signal: ctrl.signal,
+      });
+      const json = await res.json().catch(() => ({ responseCode: 'PARSE', responseDescription: 'Non-JSON (HTTP ' + res.status + ')' }));
+      return { status: res.status, json };
+    } catch (err) {
+      if (err.name === 'AbortError') return { status: 408, json: { responseCode: 'TIMEOUT', responseDescription: 'Request timed out' } };
+      throw err;
+    } finally { clearTimeout(timer); }
   };
   let { status, json } = await doFetch(await token());
-  if ((status === 401 || json.responseCode === '90' || json.responseCode === '34') && _token) {
-    _token = null;                                   // stale token → re-login once
+  if (status === 401 && _token) {
+    _token = null;
     ({ json } = await doFetch(await token()));
   }
   return json;
