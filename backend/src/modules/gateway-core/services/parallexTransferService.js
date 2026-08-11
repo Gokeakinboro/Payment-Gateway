@@ -47,8 +47,29 @@ const LOCATION      = process.env.PARALLEX_TRANSFER_LOCATION || 'Lagos';
 // through would double-pay on retry. All env-overridable pending TODO-CONFIRM
 // of Parallex's real code list.
 const codeSet = (v, d) => new Set(String(v == null ? d : v).split(',').map(s => s.trim()).filter(Boolean));
-const PENDING_CODES = codeSet(process.env.PARALLEX_TRANSFER_PENDING_CODES, '09,25,26,91,99');
-const FAIL_CODES    = codeSet(process.env.PARALLEX_TRANSFER_FAIL_CODES, '05,06,12,51,57,94,95,96,97');
+const PENDING_CODES = codeSet(process.env.PARALLEX_TRANSFER_PENDING_CODES, '09,25,26,99');
+const FAIL_CODES    = codeSet(process.env.PARALLEX_TRANSFER_FAIL_CODES, '05,06,12,16,51,57,90,94,95,96,97,TIMEOUT');
+
+// CBN 3-digit codes → 6-digit NIP institution codes used by Parallex (and PalmPay).
+// Commercial banks share the same code on both rails (e.g. Access 000014, GTBank 000013);
+// fintech/mobile-money banks use institution codes that differ from their CBN codes.
+// Sources: Parallex GetBanks, PalmPay queryBankList (tested 2026-08-11).
+const INSTITUTION_CODE_MAP = {
+  '328': '100004',    // OPay (CBN 305 in Parallex list, institution 100004)
+  '305': '100004',    // OPay alternate CBN code
+  '999991': '100003', // PalmPay
+  '090267': '100002', // Kuda Bank
+  '50515': '110005',  // Moniepoint
+  '044': '000014',    // Access Bank
+  '058': '000013',    // GTBank
+  '057': '000015',    // Zenith Bank
+  '011': '000016',    // First Bank
+  '033': '000009',    // UBA
+  '035': '000017',    // Wema Bank
+  '232': '000001',    // Sterling Bank
+};
+// Resolve CBN/short code to 6-digit NIP institution code. Falls back to the code as-is.
+const toNipCode = (code) => INSTITUTION_CODE_MAP[String(code)] || String(code);
 
 function isConfigured() { return !!(USERNAME && PASSWORD && SUBKEY); }
 
@@ -60,8 +81,10 @@ const codeOf = (r) => String((r && (r.responseCode ?? r.ResponseCode)) ?? '');
 const msgOf  = (r) => (r && (r.responseMessage || r.responseDescription || r.ResponseDescription)) || '';
 
 // Base (non-authed) headers shared by every call, incl. /Login.
+// Connection: close forces a fresh TCP connection per request — required because the
+// VPN tunnel (IPSec DNAT) can desync keep-alive connections, causing node.js fetch to hang.
 function baseHeaders() {
-  const h = { Accept: 'application/json', 'Content-Type': 'application/json' };
+  const h = { Accept: 'application/json', 'Content-Type': 'application/json', Connection: 'close' };
   if (SUBKEY) h[SUBKEY_HEADER] = SUBKEY;
   return h;
 }
@@ -95,15 +118,28 @@ async function call(method, path, { body, query } = {}) {
   if (!isConfigured()) throw new Error('Parallex transfer not configured — set PARALLEX_TRANSFER_USERNAME/PASSWORD/SUBKEY');
   const qs = query ? '?' + new URLSearchParams(query).toString() : '';
   const doFetch = async (tok) => {
-    const res = await fetch(BASE_URL + path + qs, {
-      method, headers: Object.assign(baseHeaders(), { Authorization: 'Bearer ' + tok }),
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const json = await res.json().catch(() => ({ responseCode: 'PARSE', responseMessage: 'Non-JSON (HTTP ' + res.status + ')' }));
-    return { status: res.status, json };
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 45000); // 45s hard timeout per call
+    try {
+      const res = await fetch(BASE_URL + path + qs, {
+        method, headers: Object.assign(baseHeaders(), { Authorization: 'Bearer ' + tok }),
+        body: body ? JSON.stringify(body) : undefined,
+        signal: ctrl.signal,
+      });
+      const json = await res.json().catch(() => ({ responseCode: 'PARSE', responseMessage: 'Non-JSON (HTTP ' + res.status + ')' }));
+      return { status: res.status, json };
+    } catch (err) {
+      if (err.name === 'AbortError') return { status: 408, json: { responseCode: 'TIMEOUT', responseMessage: 'Request timed out' } };
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   };
   let { status, json } = await doFetch(await token());
-  if ((status === 401 || codeOf(json) === '90' || codeOf(json) === '34') && _token) {
+  // Re-login only on HTTP 401 — code 90 in the response body means "token expired"
+  // only on the /Login endpoint itself; for transfer endpoints it means a transaction
+  // failure and must NOT trigger a retry (double-spend risk).
+  if (status === 401 && _token) {
     _token = null;                                   // stale token → re-login once
     ({ json } = await doFetch(await token()));
   }
@@ -178,6 +214,7 @@ async function sendPayout(item) {
           beneficiaryAccountName: item.account_name || '',
           beneficiaryAccountNumber: item.account_number,
           transactionReference: item.orderId,
+          transactionDate: (() => { const d = new Date(); return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`; })(),
           narration: item.narration || 'Payout',
         }],
         transactionLocation: LOCATION,
@@ -185,10 +222,18 @@ async function sendPayout(item) {
       },
     });
   } else {
-    // Interbank needs a name-enquiry session for the beneficiary bank.
-    const ne = await nameEnquiry(beneficiaryBankCode, item.account_number);
-    if (!ne.ok || !ne.sessionId)
-      return { ok: false, code: ne.raw && codeOf(ne.raw), reason: 'Name enquiry failed: ' + (ne.reason || 'no session'), orderStatus: null };
+    // Interbank: translate the CBN 3-digit bank code to the 6-digit NIP institution
+    // code that Parallex requires. Try Parallex NIP; fall back to PalmPay NIP if
+    // Parallex still can't resolve the account (bank not on their list).
+    const nipCode = toNipCode(beneficiaryBankCode);
+    let ne = await nameEnquiry(nipCode, item.account_number);
+    if (!ne.ok || !ne.sessionId) {
+      const palmpay = require('./palmpayService');
+      const pmNe = await palmpay.nameEnquiry(nipCode, item.account_number);
+      if (!pmNe.ok)
+        return { ok: false, code: 'NIP_FAILED', reason: 'Name enquiry failed on all rails: ' + (pmNe.reason || ne.reason || 'unknown'), orderStatus: null };
+      ne = { ok: true, accountName: pmNe.accountName, sessionId: null, kycLevel: '1' };
+    }
     r = await call('POST', '/api/ThirdPartyTransfer/InterbankTransfer', {
       body: {
         accountToDebit: DEBIT_ACCOUNT,
@@ -197,8 +242,8 @@ async function sendPayout(item) {
           amount: amountNaira,
           beneficiaryAccountName: item.account_name || ne.accountName || '',
           beneficiaryAccountNumber: item.account_number,
-          beneficiaryBankCode,
-          nameEnquirySessionID: ne.sessionId,
+          beneficiaryBankCode: nipCode,
+          nameEnquirySessionID: ne.sessionId || '',
           transactionReference: item.orderId,
           beneficiaryKYC: ne.kycLevel || '0',
           customerRemark: item.narration || 'Payout',
