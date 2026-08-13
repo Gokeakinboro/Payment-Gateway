@@ -19,7 +19,7 @@
 //  in-flight de-dupe so a burst of parallel payouts triggers ONE /Login, not N).
 //
 //  Env (all PARALLEX_TRANSFER_*):
-//   PARALLEX_TRANSFER_BASE_URL      default https://parallex-apim.azure-api.net/thirdpartytransfer
+//   PARALLEX_TRANSFER_BASE_URL      default https://tptintegration.parallexbank.com/ThirdPartyTransferAPI (VPN direct; port 443)
 //   PARALLEX_TRANSFER_USERNAME      /Login username (⚠ working sandbox value: PayloadeVirtualAcc)
 //   PARALLEX_TRANSFER_PASSWORD      /Login password PLAINTEXT (NOT base64)
 //   PARALLEX_TRANSFER_SUBKEY        APIM subscription key for the Transfer product
@@ -31,7 +31,7 @@
 //   PARALLEX_TRANSFER_FAIL_CODES    extra responseCodes to treat as hard-fail (comma list)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BASE_URL      = (process.env.PARALLEX_TRANSFER_BASE_URL || 'https://parallex-apim.azure-api.net/thirdpartytransfer').replace(/\/$/, '');
+const BASE_URL      = (process.env.PARALLEX_TRANSFER_BASE_URL || 'https://tptintegration.parallexbank.com/ThirdPartyTransferAPI').replace(/\/$/, '');
 const USERNAME      = process.env.PARALLEX_TRANSFER_USERNAME || '';
 const PASSWORD      = process.env.PARALLEX_TRANSFER_PASSWORD || '';
 const SUBKEY        = process.env.PARALLEX_TRANSFER_SUBKEY || '';
@@ -70,6 +70,22 @@ const INSTITUTION_CODE_MAP = {
 };
 // Resolve CBN/short code to 6-digit NIP institution code. Falls back to the code as-is.
 const toNipCode = (code) => INSTITUTION_CODE_MAP[String(code)] || String(code);
+
+// Lazy bank-name cache: loaded from GetBanks on first interbank payout.
+// Parallex requires BeneficiaryBankName in InterbankTransfer.
+let _bankNameCache = null;
+async function resolveBankName(nipCode) {
+  if (!_bankNameCache) {
+    try {
+      const list = await getBanks();
+      _bankNameCache = {};
+      for (const b of (list.banks || list)) {
+        if (b.institutionCode) _bankNameCache[b.institutionCode] = b.institutionName || '';
+      }
+    } catch (_) { _bankNameCache = {}; }
+  }
+  return _bankNameCache[String(nipCode)] || '';
+}
 
 function isConfigured() { return !!(USERNAME && PASSWORD && SUBKEY); }
 
@@ -234,6 +250,7 @@ async function sendPayout(item) {
         return { ok: false, code: 'NIP_FAILED', reason: 'Name enquiry failed on all rails: ' + (pmNe.reason || ne.reason || 'unknown'), orderStatus: null };
       ne = { ok: true, accountName: pmNe.accountName, sessionId: null, kycLevel: '1' };
     }
+    const bankName = await resolveBankName(nipCode);
     r = await call('POST', '/api/ThirdPartyTransfer/InterbankTransfer', {
       body: {
         accountToDebit: DEBIT_ACCOUNT,
@@ -243,6 +260,7 @@ async function sendPayout(item) {
           beneficiaryAccountName: item.account_name || ne.accountName || '',
           beneficiaryAccountNumber: item.account_number,
           beneficiaryBankCode: nipCode,
+          beneficiaryBankName: bankName,
           nameEnquirySessionID: ne.sessionId || '',
           transactionReference: item.orderId,
           beneficiaryKYC: ne.kycLevel || '0',
