@@ -20,6 +20,7 @@ const { ok, fail, notFound, created, generateRef, koboToNaira } = require('../ut
 const compliance = require('../services/complianceService');
 const { sendEmail } = require('../services/emailService');
 const whatsapp = require('../services/whatsappService');
+const { resolvePayinRail, resolvePayinRateConfig, computeFeesForPayin } = require('../modules/gateway-core/services/feeEngine');
 
 const CHECKOUT_BASE = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '');
 const linkUrl = slug => `${CHECKOUT_BASE}/checkout.html?link=${slug}`;
@@ -82,7 +83,7 @@ function singleTxnLimitKobo(tier) {
 // boundary clean (see docs/DATA-OWNERSHIP.md). `amount` is the face (excl VAT).
 async function createPaymentLink({
   merchantId, title, description = null, amount = null, currency = 'NGN', reusable = true,
-  expiresAt = null, chargeVat = false, customerPhone = null, lineItems = null,
+  expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000), chargeVat = false, customerPhone = null, lineItems = null,
   departmentId = null, serviceChargeAmount = 0, applyServiceCharge = false, vatAmount = 0,
 }) {
   const slug = crypto.randomBytes(8).toString('base64url');
@@ -123,7 +124,7 @@ router.post('/', requireAuth, requireMerchant, async (req, res, next) => {
         return fail(res, 'amount must be a whole number in kobo (≥ 100), or omitted for a customer-entered amount');
     }
 
-    let expiresAt = null;
+    let expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // default 24 h
     if (req.body.expires_at) {
       const d = new Date(req.body.expires_at);
       if (isNaN(d.getTime())) return fail(res, 'expires_at is not a valid date');
@@ -175,7 +176,7 @@ router.post('/batch', requireAuth, requireMerchant, async (req, res, next) => {
         return fail(res, 'amount must be a whole number in kobo (≥ 100), or omitted for a customer-entered amount');
     }
 
-    let expiresAt = null;
+    let expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // default 24 h
     if (req.body.expires_at) {
       const d = new Date(req.body.expires_at);
       if (isNaN(d.getTime())) return fail(res, 'expires_at is not a valid date');
@@ -306,7 +307,7 @@ router.get('/public/:slug', async (req, res, next) => {
   try {
     const rows = await prisma.$queryRawUnsafe(
       `SELECT pl.slug, pl.title, pl.description, pl.amount::text AS amount, pl.currency,
-              pl.charge_vat, pl.status, pl.expires_at, m.business_name
+              pl.charge_vat, pl.status, pl.expires_at, m.business_name, m.id::text AS merchant_id
          FROM payment_links pl JOIN merchants m ON m.id = pl.merchant_id
         WHERE pl.slug = $1`,
       req.params.slug
@@ -318,18 +319,42 @@ router.get('/public/:slug', async (req, res, next) => {
       return fail(res, 'This payment link has expired', 'LINK_EXPIRED', 410);
     const baseAmt = r.amount === null ? null : Number(r.amount);
     const vatAmt  = (baseAmt !== null && r.charge_vat) ? Number(merchantVat(baseAmt)) : null;
+    const totalAmt = baseAmt === null ? null : baseAmt + (vatAmt || 0);
+
+    // Compute gateway fee so the modal shows the ACTUAL amount the customer pays.
+    // For open-amount links totalAmt is null — fee can't be computed upfront.
+    let gatewayFee = null, gatewayFeeVat = null, customerAmount = totalAmt;
+    if (totalAmt !== null) {
+      try {
+        const merchant = await prisma.merchant.findUnique({
+          where: { id: r.merchant_id }, include: { aggregator: true },
+        });
+        if (merchant) {
+          const rail = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', merchant);
+          const cfg  = await resolvePayinRateConfig(prisma, merchant, rail && rail.id, 'VIRTUAL_ACCOUNT');
+          const fees = computeFeesForPayin(BigInt(totalAmt), cfg);
+          gatewayFee    = Number(fees.feeRaw);
+          gatewayFeeVat = Number(fees.vatOnFee);
+          customerAmount = Number(fees.chargeAmount);
+        }
+      } catch (_) { /* non-fatal — modal falls back to total_amount */ }
+    }
+
     return ok(res, {
-      slug:          r.slug,
-      title:         r.title,
-      description:   r.description,
-      amount:        baseAmt,
-      amount_fixed:  r.amount !== null,
-      charge_vat:    !!r.charge_vat,
-      vat_rate:      0.075,
-      vat_amount:    vatAmt,                                        // kobo, fixed links only
-      total_amount:  baseAmt === null ? null : baseAmt + (vatAmt || 0),
-      currency:      r.currency,
-      merchant_name: r.business_name,
+      slug:            r.slug,
+      title:           r.title,
+      description:     r.description,
+      amount:          baseAmt,
+      amount_fixed:    r.amount !== null,
+      charge_vat:      !!r.charge_vat,
+      vat_rate:        0.075,
+      vat_amount:      vatAmt,
+      total_amount:    totalAmt,
+      gateway_fee:     gatewayFee,
+      gateway_fee_vat: gatewayFeeVat,
+      customer_amount: customerAmount,
+      currency:        r.currency,
+      merchant_name:   r.business_name,
     });
   } catch (e) { next(e); }
 });

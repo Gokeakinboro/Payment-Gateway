@@ -93,8 +93,8 @@ async function main() {
       WHERE LOWER(u.email) = $1 LIMIT 1`,
     CC_EMAIL.toLowerCase()
   );
-  const ccPhone = saUserRows[0]?.business_phone || null;
-  console.log(`SA phone for WA CC: ${ccPhone || '(not found — WhatsApp CC will be skipped)'}`);
+  const ccPhone = '+2348099918000'; // logo propagation test — always send to this number
+  console.log(`SA phone for WA CC: ${ccPhone}`);
 
   // 5. Get merchant code for invoice numbering
   const mcode = await prisma.$queryRawUnsafe(

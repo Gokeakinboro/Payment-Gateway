@@ -1,0 +1,23 @@
+User-agent: *
+Disallow: /login.html
+Disallow: /dashboard.html
+Disallow: /onboarding.html
+Disallow: /checkout.html
+Disallow: /invoicing.html
+Disallow: /wallet.html
+Disallow: /wallet-admin.html
+Disallow: /wallet-sa.html
+Disallow: /mpgs-login.html
+Disallow: /mpgs-register.html
+Disallow: /mpgs-dashboard.html
+Disallow: /mpgs-admin.html
+Disallow: /mpgs-merchant.html
+Disallow: /mpgs-application.html
+Disallow: /mpgs-documents.html
+Disallow: /mpgs-questionnaire.html
+Disallow: /mpgs-forgot.html
+Disallow: /mpgs-reset.html
+Disallow: /mpgs-verify.html
+Disallow: /sandbox.html
+
+Sitemap: https://paylodeservices.com/sitemap.xml

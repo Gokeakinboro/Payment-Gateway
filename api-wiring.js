@@ -3593,6 +3593,13 @@ function showCreatePaymentLinkModal() {
       '<div class="form-group"><label style="font-size:13px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="pl-f-reusable" checked> Reusable (uncheck for a one-time link). Ignored when you add recipients below — those are always one-off.</label></div>' +
       '<div class="form-group"><label class="form-label">Expires (optional)</label>' +
         '<input class="form-input" id="pl-f-expires" type="date"></div>' +
+      '<div class="form-group"><label class="form-label">Add from contacts (optional)</label>' +
+        '<div style="position:relative">' +
+          '<input class="form-input" id="pl-f-contact-search" placeholder="Search saved contacts by name, email or phone…" oninput="plContactSearch()" onfocusout="setTimeout(function(){var d=document.getElementById(\'pl-f-contact-dropdown\');if(d)d.style.display=\'none\'},220)" autocomplete="off">' +
+          '<div id="pl-f-contact-dropdown" style="display:none;position:absolute;z-index:200;width:100%;background:var(--bg-card,#fff);border:1px solid var(--gray-200,#e5e7eb);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;top:calc(100% + 2px);left:0"></div>' +
+        '</div>' +
+        '<div id="pl-f-contact-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>' +
+      '</div>' +
       '<div class="form-group"><label class="form-label">Recipients (optional) — leave blank for a plain shareable link</label>' +
         '<textarea class="form-input" id="pl-f-recipients" rows="3" placeholder="Emails separated by comma or new line. Each gets a UNIQUE link, emailed to them." oninput="plRecipientPreview()"></textarea></div>' +
       '<div class="flex" style="gap:8px;align-items:center;margin:-4px 0 8px;flex-wrap:wrap">' +
@@ -3693,6 +3700,78 @@ function plDownloadSampleXls() {
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Recipients');
   XLSX.writeFile(wb, 'paylode_recipients_sample.xlsx');
+}
+
+// ── Contact picker for payment-link / batch recipient field ──────────────────
+var _plContactTimer = null;
+async function plContactSearch() {
+  var q   = (document.getElementById('pl-f-contact-search').value || '').trim();
+  var dd  = document.getElementById('pl-f-contact-dropdown');
+  if (!dd) return;
+  if (!q) { dd.style.display = 'none'; return; }
+  if (_plContactTimer) clearTimeout(_plContactTimer);
+  _plContactTimer = setTimeout(async function() {
+    var r = await apiFetch('/invoicing/contacts?q=' + encodeURIComponent(q));
+    if (!r || !r.status || !r.data || !r.data.length) {
+      dd.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--gray-500)">No contacts found</div>';
+      dd.style.display = 'block'; return;
+    }
+    dd.innerHTML = r.data.slice(0, 12).map(function(c) {
+      var sub = [c.email, c.phone].filter(Boolean).join(' · ');
+      return '<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--gray-100,#f1f5f9)" ' +
+        'onmouseover="this.style.background=\'var(--gray-50,#f8fafc)\'" onmouseout="this.style.background=\'\'" ' +
+        'onmousedown=\'plContactPick(' + JSON.stringify(c.name) + ',' + JSON.stringify(c.email || '') + ',' + JSON.stringify(c.phone || '') + ')\'>' +
+        '<div style="font-size:13px;font-weight:500">' + _escA(c.name) + '</div>' +
+        (sub ? '<div style="font-size:11px;color:var(--gray-500)">' + _escA(sub) + '</div>' : '') +
+      '</div>';
+    }).join('');
+    dd.style.display = 'block';
+  }, 200);
+}
+function plContactPick(name, email, phone) {
+  var dd = document.getElementById('pl-f-contact-dropdown');
+  if (dd) dd.style.display = 'none';
+  var srch = document.getElementById('pl-f-contact-search');
+  if (srch) srch.value = '';
+  var emailLc = (email || '').toLowerCase();
+  // Fill phone if the field is empty
+  if (phone) { var ph = document.getElementById('pl-f-phone'); if (ph && !ph.value) ph.value = phone; }
+  // Add email to recipients textarea (deduplicated)
+  if (emailLc) {
+    var ta = document.getElementById('pl-f-recipients');
+    if (ta) {
+      var existing = plParseEmails(ta.value);
+      if (existing.indexOf(emailLc) === -1) {
+        ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + emailLc;
+        plRecipientPreview();
+      }
+    }
+  }
+  // Render chip (deduplicated by email)
+  var chips = document.getElementById('pl-f-contact-chips');
+  if (chips) {
+    var already = chips.querySelector('[data-cemail="' + emailLc + '"]');
+    if (already) return;
+    var chip = document.createElement('span');
+    chip.dataset.cemail = emailLc;
+    chip.dataset.cphone = phone || '';
+    chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;background:var(--gray-100,#f1f5f9);border-radius:20px;padding:3px 8px 3px 10px;font-size:12px;line-height:1.4';
+    chip.innerHTML = _escA(name) +
+      '<button type="button" onclick="plContactRemove(this.parentNode)" ' +
+      'style="background:none;border:none;cursor:pointer;padding:0 0 0 2px;font-size:15px;line-height:1;color:var(--gray-400)">×</button>';
+    chips.appendChild(chip);
+  }
+}
+function plContactRemove(chip) {
+  var emailLc = chip.dataset.cemail;
+  if (emailLc) {
+    var ta = document.getElementById('pl-f-recipients');
+    if (ta) {
+      ta.value = plParseEmails(ta.value).filter(function(e){ return e !== emailLc; }).join('\n');
+      plRecipientPreview();
+    }
+  }
+  chip.remove();
 }
 
 async function submitCreatePaymentLink() {

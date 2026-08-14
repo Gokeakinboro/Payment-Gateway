@@ -66,13 +66,28 @@ router.get('/:reference', async (req, res, next) => {
     }
 
     // The headline amount = what the customer pays = face + Paylode fee + VAT.
-    // CARD uses CARD_LOCAL platform rate (1.5% + 7.5% VAT).
-    // VA/transfer uses the payin rail rate resolved from platform_rate_configs.
+    // Payment-link / invoice / QR transactions are created with channel='CARD' as a
+    // placeholder — the real channel is set when the customer picks a method. We must
+    // NOT use txn.channel to decide the fee type for those sources. Instead:
+    //   • payment_link / invoice / qr → always compute VA fee (they use bank transfer)
+    //   • true card-initiated (no link/invoice source) → compute card fee
+    //   • already-minted VA (payin.charge in metadata) → use the stored charge directly
     let amountToPay = Number(txn.amount);
     try {
       const ch = (txn.channel || '').toUpperCase();
-      if (ch === 'CARD') {
-        const cardProduct = txn.currency === 'USD' ? 'CARD_INTL' : 'CARD_LOCAL';
+      const isWalletFund = txn.metadata?.source === 'wallet_fund';
+      const isBankTransferSource = ['payment_link', 'invoice', 'qr'].includes(txn.metadata?.source);
+
+      if (txn.metadata?.parallex_va_total_kobo) {
+        // Parallex VA minted — use totalAmount (what customer actually transfers, incl. Parallex NIP fee).
+        amountToPay = Number(txn.metadata.parallex_va_total_kobo);
+      } else if (txn.metadata?.payin?.charge) {
+        // VA already minted this session — use the exact stored charge amount.
+        amountToPay = Number(txn.metadata.payin.charge);
+      } else if (ch === 'CARD' && !isBankTransferSource) {
+        // True card-initiated transaction (not a placeholder): compute card fee.
+        const cardProduct = isWalletFund ? 'WALLET_FUND_CARD'
+          : txn.currency === 'USD' ? 'CARD_INTL' : 'CARD_LOCAL';
         const platRate = await prisma.platformRateConfig.findFirst({
           where: { channel: { in: [cardProduct, 'ALL'] } },
           orderBy: { channel: 'desc' },
@@ -82,13 +97,21 @@ router.get('/:reference', async (req, res, next) => {
             merchantRate: Number(platRate.rate),
             merchantCap:  Number(platRate.cap  || 0),
             flatFee:      Number(platRate.flatFee || 0),
+            minCharge:    Number(platRate.minCharge || 0),
           }, cardProduct);
           amountToPay = Number(fees.chargeAmount);
         }
       } else if (!txn.isSandbox && palmpay.isConfigured()) {
+        // Payment-link / invoice / QR or already-bank-transfer channel: compute VA fee.
         const rail = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', txn.merchant);
-        const cfg  = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id);
+        const cfg  = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id, 'VIRTUAL_ACCOUNT', isWalletFund ? 'WALLET_FUND_VA' : null);
         amountToPay = Number(computeFeesForPayin(BigInt(txn.amount), cfg).chargeAmount);
+        // Parallex charges a flat ₦8 (800 kobo) NIP collection fee on top of settlement.
+        // Add it here so amount_to_pay reflects the true customer transfer amount even
+        // before a VA is minted (parallex_va_total_kobo takes over once VA is minted).
+        if (rail && /parallex/i.test(rail.name || '') && parallex.isConfigured()) {
+          amountToPay += 800;
+        }
       }
     } catch (e) { /* fall back to face amount */ }
 
@@ -149,21 +172,6 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
         expires_at:     displayExp,
       });
     }
-    // Cached Parallex VA (same behaviour as the PalmPay cache above).
-    const pxCachedVa = txn.metadata?.parallex_va_no;
-    const pxOrderExp = txn.metadata?.parallex_va_order_expires_at;
-    if (pxCachedVa && pxOrderExp && new Date(pxOrderExp) > new Date()) {
-      const displayExp = new Date(Math.min(Date.now() + 15 * 60 * 1000, new Date(pxOrderExp).getTime())).toISOString();
-      return ok(res, {
-        account_number: pxCachedVa,
-        account_name:   txn.metadata.parallex_va_name || ('PAYLODE/' + txn.merchantId.slice(0, 8).toUpperCase()),
-        bank_name:      'Parallex Bank',
-        amount:         Number(txn.metadata?.payin?.charge ?? txn.amount),
-        reference:      txn.reference,
-        expires_at:     displayExp,
-      });
-    }
-
     // ── SANDBOX / not-yet-configured: deterministic stub VA (no PalmPay call) ──
     // Bypass for Parallex-routed merchants — Parallex APIM works in sandbox mode.
     if ((txn.isSandbox || !palmpay.isConfigured()) && !(txn.merchant.payinRailId && parallex.isConfigured())) {
@@ -188,7 +196,7 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
     // LIVE rail with a collection cost), cost against it, and stamp it on the txn.
     // Customer pays the GROSS = face + our fee + VAT; the VA is minted for that gross.
     const rail   = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', txn.merchant);
-    const payCfg = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id);
+    const payCfg = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id, 'VIRTUAL_ACCOUNT', txn.metadata?.source === 'wallet_fund' ? 'WALLET_FUND_VA' : null);
     const fees   = computeFeesForPayin(BigInt(txn.amount), payCfg);
     const chargeKobo = Number(fees.chargeAmount);
 
@@ -199,15 +207,20 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
 
     // ── Parallex VA rail — used ONLY when the resolved pay-in rail is Parallex AND
     // the adapter is configured; otherwise the default PalmPay path below runs. The
-    // Parallex INFLOW webhook (keyed by referenceId = txn.reference) finalizes it.
+    // Parallex INFLOW webhook (keyed by beneficiaryAccountNumber) finalizes it.
+    // Fresh VA every page load — Parallex VA expires after 30 min (no caching).
+    // Each mint uses a unique referenceId suffix so Parallex never rejects code 97.
     if (rail && /parallex/i.test(rail.name || '') && parallex.isConfigured()) {
+      const mintCount = (txn.metadata?.parallex_va_mint || 0) + 1;
+      const mintRef   = txn.reference + '-V' + mintCount;
       let va;
       try {
         va = await parallex.createTimedAccount({
-          firstName:     (txn.merchant.businessName || 'Customer').slice(0, 50),
-          lastName:      'Payment',
-          amountKobo:    chargeKobo,            // customer transfers the gross
-          referenceId:   txn.reference,
+          firstName:     (txn.merchant.parallexVaNameFormat === 'name_only'
+            ? (txn.merchant.businessName || 'Paylode')
+            : (txn.merchant.businessName || 'Paylode') + '/Paylode').slice(0, 50),
+          amountKobo:    chargeKobo,
+          referenceId:   mintRef,
           expiryMinutes: 30,
           feeBearer:     'Customer',
         });
@@ -216,26 +229,29 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
       }
       if (!va.ok || !va.accountNumber)
         return fail(res, va.reason || 'Bank transfer is temporarily unavailable', 'PARALLEX_DECLINED');
-      const pxOrderExpiresAt = new Date(Date.now() + ORDER_TTL_MS).toISOString();
+      // totalAmountKobo = what the customer must actually transfer (settlement + Parallex NIP fee).
+      // settlementAmount is what Paylode receives after Parallex deducts their ₦8 fee.
+      const totalAmountKobo = va.totalAmount != null ? Math.round(va.totalAmount * 100) : chargeKobo;
       await prisma.transaction.update({
         where: { id: txn.id },
         data: {
           channel: 'BANK_TRANSFER', railId: rail.id,
           metadata: { ...txn.metadata,
-            method:                       'parallex_va',
-            parallex_va_no:               va.accountNumber,
-            parallex_va_name:             va.accountName,
-            parallex_va_order_expires_at: pxOrderExpiresAt,
-            payin: payinMetaFrom(fees) },
+            method:                  'parallex_va',
+            parallex_va_no:          va.accountNumber,
+            parallex_va_name:        va.accountName,
+            parallex_va_mint:        mintCount,
+            parallex_va_total_kobo:  totalAmountKobo,
+            payin:                   payinMetaFrom(fees) },
         },
       });
       return ok(res, {
         account_number: va.accountNumber,
         account_name:   va.accountName || ('PAYLODE/' + txn.merchantId.slice(0, 8).toUpperCase()),
         bank_name:      'Parallex Bank',
-        amount:         chargeKobo,
+        amount:         totalAmountKobo,
         reference:      txn.reference,
-        expires_at:     new Date(Date.now() + DISPLAY_TTL_MS).toISOString(),
+        expires_at:     new Date(Date.now() + ORDER_TTL_MS).toISOString(),
       });
     }
 
@@ -688,7 +704,7 @@ router.post('/:reference/charge/palmpay', async (req, res, next) => {
     // PAYER-FUNDED (same as bank transfer): the customer's wallet is charged the GROSS
     // (face + our fee + VAT); the merchant settles the full face. Config-driven rail.
     const rail   = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', txn.merchant);
-    const payCfg = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id);
+    const payCfg = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id, 'VIRTUAL_ACCOUNT', txn.metadata?.source === 'wallet_fund' ? 'WALLET_FUND_VA' : null);
     const fees   = computeFeesForPayin(BigInt(txn.amount), payCfg);
 
     const callbackUrl = CHECKOUT_URL + '?ref=' + txn.reference + '&status=callback';
