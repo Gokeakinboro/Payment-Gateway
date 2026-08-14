@@ -5548,6 +5548,8 @@ function loadPageData(page) {
     case 'merch_apikeys':       loadMerchApiKeys(); break;
     case 'merch_webhooks':      loadMerchWebhooks(); break;
     case 'merch_profile':       loadMerchProfile(); break;
+    case 'sc_plans':            loadSCPlans(); break;
+    case 'sc_report':           loadSCReport(); break;
     case 'agg_transactions':    loadTransactions(); break;
     case 'agg_revenue':         loadAggRevenue(); break;
     case 'agg_merchants':
@@ -5792,11 +5794,7 @@ async function showPayoutUpload() {
         <div class="form-grid beneficiary-row" style="margin-bottom:8px;align-items:end">
           <div class="form-group" style="margin:0"><label class="form-label">Account Number</label><input class="form-input ben-acct" placeholder="10 digits" maxlength="10"></div>
           <div class="form-group" style="margin:0"><label class="form-label">Bank</label>
-            <select class="form-input form-select ben-bank">
-              <option value="">Select bank</option>
-              ${bankList.map(b=>`<option value="${b.bank_code}">${b.bank_name}</option>`).join('')}
-            </select>
-          </div>
+            ${buildBankSearchWidget('ben-bank')}</div>
           <div class="form-group" style="margin:0"><label class="form-label">Amount (₦)</label><input class="form-input ben-amount" type="number" placeholder="e.g. 5000"></div>
           <div class="form-group" style="margin:0"><label class="form-label">Narration</label><input class="form-input ben-narration" placeholder="Defaults to 'Payment from ...'"></div>
         </div>
@@ -5829,8 +5827,112 @@ function addBeneficiaryRow() {
   const container = document.getElementById('beneficiary-rows');
   const first = container.querySelector('.beneficiary-row');
   const clone = first.cloneNode(true);
-  clone.querySelectorAll('input').forEach(i=>i.value='');
+  clone.querySelectorAll('input').forEach(i => i.value = '');
+  clone.querySelectorAll('.bank-search-drop').forEach(d => { d.innerHTML = ''; d.style.display = 'none'; });
   container.appendChild(clone);
+}
+
+// ── Bank search typeahead widget ──────────────────────────────────────────────
+// Universal multi-word prefix search used throughout the portal.
+// Each space-separated token in the query must be a prefix of at least one word
+// in the bank name — so "g t" matches "Guaranty Trust Bank", "first city" matches
+// "First City Monument Bank" but not "First Bank".
+function _injectBankCSS() {
+  if (document.getElementById('_bsw-css')) return;
+  var s = document.createElement('style'); s.id = '_bsw-css';
+  s.textContent = [
+    '.bank-search-wrap{position:relative}',
+    '.bank-search-drop{position:absolute;top:calc(100% + 2px);left:0;right:0;max-height:220px;overflow-y:auto;',
+    'background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:300;',
+    'box-shadow:0 6px 16px rgba(0,0,0,.14);display:none}',
+    '.bank-search-item{padding:8px 12px;cursor:pointer;font-size:13px;line-height:1.4;',
+    'border-bottom:1px solid var(--border)}',
+    '.bank-search-item:last-child{border-bottom:none}',
+    '.bank-search-item:hover,.bank-search-item.bsi-on{background:var(--primary-50,#eff6ff);color:var(--primary)}',
+    '.bank-search-more{padding:5px 12px;font-size:11px;color:var(--gray-400);border-top:1px solid var(--border)}',
+  ].join('');
+  document.head.appendChild(s);
+}
+
+// Returns the HTML fragment for a bank typeahead widget.
+// cls is applied to the hidden <input> that stores the bank_code —
+// existing code that reads .ben-bank continues to work unchanged.
+function buildBankSearchWidget(cls) {
+  _injectBankCSS();
+  return '<div class="bank-search-wrap">' +
+    '<input class="form-input bank-search-input" placeholder="Type to search bank…" autocomplete="off"' +
+    ' oninput="filterBankSearch(this)" onfocus="filterBankSearch(this)" onblur="closeBankSearch(this)"' +
+    ' onkeydown="bankSearchKey(event,this)">' +
+    '<input type="hidden" class="' + cls + '">' +
+    '<div class="bank-search-drop"></div>' +
+    '</div>';
+}
+
+// Called on every keystroke/focus. Filters window._payoutBanks by multi-word prefix.
+function filterBankSearch(inp) {
+  var wrap = inp.closest('.bank-search-wrap');
+  var drop = wrap.querySelector('.bank-search-drop');
+  var banks = window._payoutBanks || [];
+  var q = inp.value.trim().toLowerCase();
+  var tokens = q.split(/\s+/).filter(Boolean);
+  var matches;
+  if (!tokens.length) {
+    matches = banks.slice(0, 8);
+  } else {
+    matches = banks.filter(function(b) {
+      var words = b.bank_name.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/);
+      return tokens.every(function(t) { return words.some(function(w) { return w.startsWith(t); }); });
+    });
+  }
+  var MAX = 10;
+  var html = matches.slice(0, MAX).map(function(b, i) {
+    return '<div class="bank-search-item' + (i === 0 ? ' bsi-on' : '') + '"' +
+      ' data-code="' + b.bank_code + '"' +
+      ' data-name="' + b.bank_name.replace(/"/g, '&quot;') + '"' +
+      ' onmousedown="selectBankItem(this)" ontouchstart="selectBankItem(this)">' +
+      b.bank_name + '</div>';
+  }).join('');
+  if (matches.length > MAX) html += '<div class="bank-search-more">+' + (matches.length - MAX) + ' more — keep typing to narrow</div>';
+  drop.innerHTML = html;
+  drop.style.display = matches.length ? 'block' : 'none';
+}
+
+function selectBankItem(item) {
+  var wrap = item.closest('.bank-search-wrap');
+  wrap.querySelector('.bank-search-input').value = item.dataset.name;
+  wrap.querySelector('input[type="hidden"]').value = item.dataset.code;
+  wrap.querySelector('.bank-search-drop').style.display = 'none';
+}
+
+function closeBankSearch(inp) {
+  // Delay so onmousedown/ontouchstart on the item fires before blur hides the drop.
+  setTimeout(function() {
+    var wrap = inp && inp.closest && inp.closest('.bank-search-wrap');
+    if (wrap) wrap.querySelector('.bank-search-drop').style.display = 'none';
+  }, 220);
+}
+
+function bankSearchKey(e, inp) {
+  var wrap = inp.closest('.bank-search-wrap');
+  var drop = wrap.querySelector('.bank-search-drop');
+  var items = [].slice.call(drop.querySelectorAll('.bank-search-item'));
+  if (!items.length) return;
+  var cur = drop.querySelector('.bsi-on');
+  var idx = cur ? items.indexOf(cur) : -1;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (cur) cur.classList.remove('bsi-on');
+    var next = items[Math.min(idx + 1, items.length - 1)];
+    next.classList.add('bsi-on'); next.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (cur) cur.classList.remove('bsi-on');
+    if (idx > 0) { var prev = items[idx - 1]; prev.classList.add('bsi-on'); prev.scrollIntoView({ block: 'nearest' }); }
+  } else if (e.key === 'Enter') {
+    e.preventDefault(); if (cur) selectBankItem(cur);
+  } else if (e.key === 'Escape') {
+    drop.style.display = 'none';
+  }
 }
 
 async function submitManualPayout() {
@@ -7107,6 +7209,7 @@ loadPageData = function(page) {
 // ════════════════════════════════════════════════════════════════════════════
 
 function _escA(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function _escH(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ── Compliance Exceptions (Mastercard Rules dispositions) ────────────────────
 function _sevBadge(sev) {
@@ -7935,6 +8038,345 @@ async function deferSelectedDocs() {
   });
   if (res && res.status) { alert(res.message || 'Deferred.'); openDocsModal(c.entityType, c.id, c.name); }
   else alert('Error: ' + ((res && res.message) || 'Deferral failed'));
+}
+
+// ── SOCIAL CLUB — Subscription Plans ─────────────────────────────────────────
+var _scPlans = [];  // in-memory cache for the current page session
+
+function fmtKobo(k) {
+  return '₦' + (Number(k) / 100).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function loadSCPlans() {
+  var el = document.getElementById('main-content');
+  el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--gray-400)">Loading plans…</div>';
+  apiFetch('/wallet/plans').then(function(r) {
+    _scPlans = (r && r.data) ? r.data : [];
+    el.innerHTML =
+      '<div class="mob-wrap">' +
+        '<div><div class="page-title">Subscription Plans</div>' +
+          '<div class="page-desc">' + _scPlans.length + ' plan' + (_scPlans.length !== 1 ? 's' : '') + '</div></div>' +
+        '<div class="mob-actions">' +
+          '<button class="btn btn-lime" onclick="showCreatePlanModal()">+ New Plan</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card">' +
+        (_scPlans.length === 0
+          ? '<div style="text-align:center;padding:48px;color:var(--gray-400)">No plans yet. Create your first subscription plan.</div>'
+          : '<div class="table-wrap"><table>' +
+              '<thead><tr><th>Plan</th><th>Amount</th><th>Frequency</th><th>Members</th><th>VAT</th><th>Status</th><th></th></tr></thead>' +
+              '<tbody>' + _scPlans.map(function(p) {
+                var freq = { monthly:'Monthly', quarterly:'Quarterly', biannual:'Bi-Annual', annual:'Annual' }[p.frequency] || p.frequency;
+                return '<tr>' +
+                  '<td style="font-weight:500">' + _escH(p.name) + '</td>' +
+                  '<td class="mono">' + fmtKobo(p.amount) + '</td>' +
+                  '<td>' + freq + '</td>' +
+                  '<td>' + (p.member_count || 0) + '</td>' +
+                  '<td>' + (p.charge_vat ? '<span class="badge badge-blue">Yes</span>' : '<span class="badge badge-gray">No</span>') + '</td>' +
+                  '<td>' + (p.is_active ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Inactive</span>') + '</td>' +
+                  '<td style="white-space:nowrap">' +
+                    '<button class="btn btn-outline btn-sm" onclick="openPlanDetail(\'' + p.id + '\')">Members</button> ' +
+                    '<button class="btn btn-outline btn-sm" onclick="showEditPlanModal(\'' + p.id + '\')">Edit</button> ' +
+                    '<button class="btn btn-outline btn-sm" onclick="generateInvoices(\'' + p.id + '\',\'' + _escA(p.name) + '\')" style="color:var(--navy)">Gen Invoices</button>' +
+                  '</td>' +
+                '</tr>';
+              }).join('') +
+              '</tbody></table></div>') +
+      '</div>';
+  }).catch(function() {
+    el.innerHTML = '<div class="warn-box">Failed to load plans. Check your connection.</div>';
+  });
+}
+
+function showCreatePlanModal() {
+  showModal(
+    '<div class="modal-header"><div class="modal-title">New Subscription Plan</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    scPlanForm(null)
+  );
+}
+
+function showEditPlanModal(id) {
+  var p = _scPlans.filter(function(x){ return x.id === id; })[0];
+  if (!p) return;
+  showModal(
+    '<div class="modal-header"><div class="modal-title">Edit Plan — ' + _escH(p.name) + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    scPlanForm(p)
+  );
+}
+
+function scPlanForm(p) {
+  var v = p || {};
+  var items = (v.sub_items || []).join('\n');
+  return '<div class="form-group"><label class="form-label">Plan name</label>' +
+    '<input class="form-input" id="sc-name" value="' + _escA(v.name||'') + '"></div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">Amount (₦)</label>' +
+        '<input class="form-input" id="sc-amount" type="number" value="' + (v.amount ? (Number(v.amount)/100).toFixed(2) : '') + '" placeholder="e.g. 50000"></div>' +
+      '<div class="form-group"><label class="form-label">Frequency</label>' +
+        '<select class="form-input form-select" id="sc-freq">' +
+          ['monthly','quarterly','biannual','annual'].map(function(f){ return '<option value="' + f + '"' + (v.frequency===f?' selected':'') + '>' + {monthly:'Monthly',quarterly:'Quarterly',biannual:'Bi-Annual',annual:'Annual'}[f] + '</option>'; }).join('') +
+        '</select></div>' +
+    '</div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">Reminder days before due</label>' +
+        '<input class="form-input" id="sc-reminder" type="number" value="' + (v.reminder_days||7) + '"></div>' +
+      '<div class="form-group"><label class="form-label">Grace period (days after due)</label>' +
+        '<input class="form-input" id="sc-grace" type="number" value="' + (v.grace_period_days||3) + '"></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+      '<input type="checkbox" id="sc-vat"' + (v.charge_vat?' checked':'') + '> Charge VAT (7.5%)</label></div>' +
+    '<div class="form-group"><label class="form-label">Included items (one per line)</label>' +
+      '<textarea class="form-input" id="sc-items" rows="4" placeholder="e.g. Monthly dues&#10;Gym access&#10;Swimming pool">' + _escH(items) + '</textarea>' +
+      '<div class="form-hint">These appear on the invoice line items</div></div>' +
+    (v.id ? '<div class="form-group"><label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+      '<input type="checkbox" id="sc-active"' + (v.is_active?' checked':'') + '> Active</label></div>' : '') +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">' +
+      '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+      '<button class="btn btn-lime" id="sc-save-btn" onclick="savePlan(\'' + (v.id||'') + '\')">' + (v.id?'Save Changes':'Create Plan') + '</button>' +
+    '</div>';
+}
+
+async function savePlan(id) {
+  var name    = (document.getElementById('sc-name').value||'').trim();
+  var amtNGN  = parseFloat(document.getElementById('sc-amount').value||'0');
+  var freq    = document.getElementById('sc-freq').value;
+  var remind  = parseInt(document.getElementById('sc-reminder').value||'7',10);
+  var grace   = parseInt(document.getElementById('sc-grace').value||'3',10);
+  var vat     = document.getElementById('sc-vat').checked;
+  var items   = document.getElementById('sc-items').value.split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  var active  = id ? document.getElementById('sc-active').checked : true;
+  if (!name) return alert('Plan name is required.');
+  if (!amtNGN || amtNGN <= 0) return alert('Amount must be greater than 0.');
+  var btn = document.getElementById('sc-save-btn'); btn.disabled = true; btn.textContent = 'Saving…';
+  var body = { name: name, amount: Math.round(amtNGN * 100), frequency: freq,
+               charge_vat: vat, sub_items: items, reminder_days: remind, grace_period_days: grace };
+  if (id) body.is_active = active;
+  var r = await apiFetch(id ? '/wallet/plans/' + id : '/wallet/plans', { method: id ? 'PATCH' : 'POST', body: JSON.stringify(body) });
+  if (r && r.status !== false) {
+    document.getElementById('modal').style.display = 'none';
+    loadSCPlans();
+    toast(id ? 'Plan updated' : 'Plan created', 'success');
+  } else {
+    btn.disabled = false; btn.textContent = id ? 'Save Changes' : 'Create Plan';
+    alert((r && r.message) || 'Save failed.');
+  }
+}
+
+async function generateInvoices(planId, planName) {
+  if (!confirm('Generate invoices for all enrolled members of "' + planName + '"?\nAlready-invoiced members will be skipped.')) return;
+  var r = await apiFetch('/wallet/plans/' + planId + '/generate-invoices', { method: 'POST', body: JSON.stringify({}) });
+  if (r && r.status !== false) {
+    var d = r.data || {};
+    toast('Done — ' + (d.generated||0) + ' generated, ' + (d.skipped||0) + ' skipped', 'success');
+  } else {
+    alert((r && r.message) || 'Failed to generate invoices.');
+  }
+}
+
+var _scPlanId = null;
+var _scPlanName = '';
+var _scMembers = [];
+
+function openPlanDetail(planId) {
+  var p = _scPlans.filter(function(x){ return x.id === planId; })[0] || {};
+  _scPlanId = planId;
+  _scPlanName = p.name || '';
+  var el = document.getElementById('main-content');
+  el.innerHTML =
+    '<div class="mob-wrap">' +
+      '<div><button class="btn btn-outline btn-sm" onclick="loadSCPlans()" style="margin-bottom:8px">&#8592; All Plans</button>' +
+        '<div class="page-title">' + _escH(_scPlanName) + '</div>' +
+        '<div class="page-desc">' + ({monthly:'Monthly',quarterly:'Quarterly',biannual:'Bi-Annual',annual:'Annual'}[p.frequency]||p.frequency||'') + ' · ' + fmtKobo(p.amount||0) + (p.charge_vat?' + VAT':'') + '</div></div>' +
+      '<div class="mob-actions">' +
+        '<button class="btn btn-outline" onclick="generateInvoices(\'' + planId + '\',\'' + _escA(_scPlanName) + '\')">Generate Invoices</button> ' +
+        '<button class="btn btn-lime" onclick="showAddMemberModal(\'' + planId + '\')">+ Add Member</button>' +
+      '</div>' +
+    '</div>' +
+    '<div id="sc-members-wrap"><div style="padding:32px;text-align:center;color:var(--gray-400)">Loading members…</div></div>';
+  loadPlanMembers(planId);
+}
+
+function loadPlanMembers(planId) {
+  apiFetch('/wallet/plans/' + planId + '/members').then(function(r) {
+    _scMembers = (r && r.data) ? r.data : [];
+    renderMemberTable();
+  });
+}
+
+function renderMemberTable() {
+  var wrap = document.getElementById('sc-members-wrap');
+  if (!wrap) return;
+  wrap.innerHTML =
+    '<div class="card">' +
+      '<div class="card-header">' +
+        '<div><div class="card-title">Members</div><div class="card-subtitle">' + _scMembers.length + ' enrolled</div></div>' +
+      '</div>' +
+      (_scMembers.length === 0
+        ? '<div style="text-align:center;padding:32px;color:var(--gray-400)">No members enrolled yet.</div>'
+        : '<div class="table-wrap"><table>' +
+            '<thead><tr><th>Member</th><th>Email</th><th>Enrolled</th><th></th></tr></thead>' +
+            '<tbody>' + _scMembers.map(function(m) {
+              return '<tr>' +
+                '<td style="font-weight:500">' + _escH(m.name) + '</td>' +
+                '<td style="color:var(--gray-500)">' + _escH(m.email) + '</td>' +
+                '<td style="font-size:12px;color:var(--gray-400)">' + new Date(m.enrolled_at).toLocaleDateString() + '</td>' +
+                '<td><button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="removeMember(\'' + m.member_id + '\',\'' + _escA(m.name) + '\')">Remove</button></td>' +
+              '</tr>';
+            }).join('') +
+            '</tbody></table></div>') +
+    '</div>';
+}
+
+function showAddMemberModal(planId) {
+  apiFetch('/wallet/members').then(function(r) {
+    var allMembers = (r && r.data) ? r.data : [];
+    var enrolledIds = _scMembers.map(function(m){ return m.member_id; });
+    var eligible = allMembers.filter(function(m){ return enrolledIds.indexOf(m.id) === -1 && m.status !== 'deleted'; });
+    showModal(
+      '<div class="modal-header"><div class="modal-title">Add Member to Plan</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+      (eligible.length === 0
+        ? '<p style="color:var(--gray-500)">All active members are already enrolled in this plan.</p>' +
+          '<div style="text-align:right;margin-top:16px"><button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Close</button></div>'
+        : '<div class="form-group"><label class="form-label">Select member</label>' +
+          '<select class="form-input form-select" id="sc-member-sel">' +
+          eligible.map(function(m){ return '<option value="' + m.id + '">' + _escH(m.name) + ' (' + _escH(m.email) + ')</option>'; }).join('') +
+          '</select></div>' +
+          '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+          '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+          '<button class="btn btn-lime" id="sc-enroll-btn" onclick="enrollMember(\'' + planId + '\')">Enroll</button></div>')
+    );
+  });
+}
+
+async function enrollMember(planId) {
+  var sel = document.getElementById('sc-member-sel');
+  if (!sel || !sel.value) return;
+  var btn = document.getElementById('sc-enroll-btn'); btn.disabled = true; btn.textContent = 'Enrolling…';
+  var r = await apiFetch('/wallet/plans/' + planId + '/members', { method: 'POST', body: JSON.stringify({ member_id: sel.value }) });
+  if (r && r.status !== false) {
+    document.getElementById('modal').style.display = 'none'; loadPlanMembers(planId); toast('Member enrolled', 'success');
+  } else {
+    btn.disabled = false; btn.textContent = 'Enroll';
+    alert((r && r.message) || 'Enrollment failed.');
+  }
+}
+
+async function removeMember(memberId, name) {
+  if (!_scPlanId) return;
+  if (!confirm('Remove ' + name + ' from this plan?')) return;
+  var r = await apiFetch('/wallet/plans/' + _scPlanId + '/members/' + memberId, { method: 'DELETE' });
+  if (r && r.status !== false) { loadPlanMembers(_scPlanId); toast('Member removed', 'success'); }
+  else alert((r && r.message) || 'Remove failed.');
+}
+
+// ── SOCIAL CLUB — Payment Report ──────────────────────────────────────────────
+function loadSCReport() {
+  var el = document.getElementById('main-content');
+  el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--gray-400)">Loading plans…</div>';
+  apiFetch('/wallet/plans').then(function(r) {
+    var plans = (r && r.data) ? r.data : [];
+    if (!plans.length) {
+      el.innerHTML = '<div class="page-title" style="margin-bottom:16px">Payment Report</div>' +
+        '<div class="info-box">No subscription plans yet. Create a plan first.</div>'; return;
+    }
+    el.innerHTML =
+      '<div class="mob-wrap"><div class="page-title">Payment Report</div></div>' +
+      '<div class="card" style="margin-bottom:20px">' +
+        '<div class="form-group" style="margin:0"><label class="form-label">Select Plan</label>' +
+          '<select class="form-input form-select" id="sc-rpt-plan" onchange="loadSCReportData(this.value)">' +
+          '<option value="">— choose a plan —</option>' +
+          plans.map(function(p){ return '<option value="' + p.id + '">' + _escH(p.name) + ' · ' + fmtKobo(p.amount) + '</option>'; }).join('') +
+          '</select></div>' +
+      '</div>' +
+      '<div id="sc-rpt-data"></div>';
+  });
+}
+
+function loadSCReportData(planId) {
+  if (!planId) return;
+  var wrap = document.getElementById('sc-rpt-data');
+  wrap.innerHTML = '<div style="padding:32px;text-align:center;color:var(--gray-400)">Loading report…</div>';
+  apiFetch('/wallet/plans/' + planId + '/report').then(function(r) {
+    var rows = (r && r.data) ? r.data : [];
+    var paid = rows.filter(function(m){ return m.invoice_status === 'paid'; }).length;
+    var unpaid = rows.length - paid;
+    wrap.innerHTML =
+      '<div class="stats-grid" style="margin-bottom:20px">' +
+        '<div class="stat-card"><div class="stat-label">Total Members</div><div class="stat-value">' + rows.length + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Paid</div><div class="stat-value text-green">' + paid + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Outstanding</div><div class="stat-value text-red">' + unpaid + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Collection Rate</div><div class="stat-value">' + (rows.length ? Math.round(paid/rows.length*100) : 0) + '%</div></div>' +
+      '</div>' +
+      '<div class="card">' +
+        (rows.length === 0
+          ? '<div style="text-align:center;padding:32px;color:var(--gray-400)">No members enrolled in this plan.</div>'
+          : '<div class="table-wrap"><table>' +
+              '<thead><tr><th>Member</th><th>Invoice</th><th>Due</th><th>Amount</th><th>Status</th><th>Paid On</th><th></th></tr></thead>' +
+              '<tbody>' + rows.map(function(m) {
+                var statusBadge = { paid:'<span class="badge badge-green">Paid</span>', overdue:'<span class="badge badge-red">Overdue</span>', sent:'<span class="badge badge-amber">Sent</span>', draft:'<span class="badge badge-gray">Draft</span>' }[m.invoice_status] || '<span class="badge badge-gray">—</span>';
+                var paidOn = m.paid_at ? new Date(m.paid_at).toLocaleDateString() : '—';
+                var due = m.due_at ? new Date(m.due_at).toLocaleDateString() : '—';
+                var amt = m.total_amount ? fmtKobo(m.total_amount) : '—';
+                var markBtn = (m.invoice_id && m.invoice_status !== 'paid')
+                  ? '<button class="btn btn-outline btn-sm" style="color:var(--green)" onclick="showMarkPaidModal(\'' + m.invoice_id + '\',\'' + _escA(m.name) + '\')">Mark Paid</button>'
+                  : '';
+                return '<tr>' +
+                  '<td style="font-weight:500">' + _escH(m.name) + '</td>' +
+                  '<td class="mono" style="font-size:11px">' + _escH(m.invoice_number||'—') + '</td>' +
+                  '<td>' + due + '</td>' +
+                  '<td class="mono">' + amt + '</td>' +
+                  '<td>' + statusBadge + '</td>' +
+                  '<td style="color:var(--gray-500)">' + paidOn + '</td>' +
+                  '<td>' + markBtn + '</td>' +
+                '</tr>';
+              }).join('') +
+              '</tbody></table></div>') +
+      '</div>';
+  }).catch(function() {
+    wrap.innerHTML = '<div class="warn-box">Failed to load report.</div>';
+  });
+}
+
+function showMarkPaidModal(invoiceId, memberName) {
+  showModal(
+    '<div class="modal-header"><div class="modal-title">Mark as Paid — ' + _escH(memberName) + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="form-group"><label class="form-label">Payment method</label>' +
+      '<select class="form-input form-select" id="mp-method">' +
+        '<option value="CASH">Cash</option>' +
+        '<option value="BANK_TRANSFER">Bank Transfer</option>' +
+        '<option value="CARD">Card</option>' +
+      '</select></div>' +
+    '<div class="form-group"><label class="form-label">Note (optional)</label>' +
+      '<input class="form-input" id="mp-note" placeholder="e.g. Ref: 9823..."></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+      '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+      '<button class="btn btn-lime" id="mp-btn" onclick="submitMarkPaid(\'' + invoiceId + '\')">Confirm Paid</button>' +
+    '</div>'
+  );
+}
+
+async function submitMarkPaid(invoiceId) {
+  var method = document.getElementById('mp-method').value;
+  var note   = (document.getElementById('mp-note').value||'').trim();
+  var user = getUser();
+  var btn = document.getElementById('mp-btn'); btn.disabled = true; btn.textContent = 'Saving…';
+  var r = await apiFetch('/invoicing/invoices/' + invoiceId + '/mark-paid', {
+    method: 'POST', body: JSON.stringify({ method: method, note: note, marked_by: user.id })
+  });
+  if (r && r.status !== false) {
+    document.getElementById('modal').style.display = 'none';
+    toast('Marked as paid', 'success');
+    // Refresh the report for whatever plan is selected
+    var sel = document.getElementById('sc-rpt-plan');
+    if (sel && sel.value) loadSCReportData(sel.value);
+  } else {
+    btn.disabled = false; btn.textContent = 'Confirm Paid';
+    alert((r && r.message) || 'Failed.');
+  }
 }
 
 (function initRole() {
