@@ -203,12 +203,14 @@ function computeFeesForTxn(amount, merchant, rateConfig = null, channel = 'CARD'
   const railRate     = cfg.railRate     != null ? cfg.railRate     : DEFAULT_RAIL_RATE;
   const flatFee      = BigInt(cfg.flatFee || 0);
   const mCap         = BigInt(cfg.merchantCap || 0);
+  const minCharge    = BigInt(cfg.minCharge || 0);
   const rCap         = BigInt(cfg.railCap || 0);
   const aggSplitPct  = Number(cfg.aggSplitPct || 0);
 
   // Our charge to the customer (+ VAT)
   let feeRaw = principal * BigInt(Math.round(merchantRate * 1_000_000)) / BASE + flatFee;
   if (mCap > 0n && feeRaw > mCap) feeRaw = mCap;
+  if (minCharge > 0n && feeRaw < minCharge) feeRaw = minCharge;
   const vatOnFee   = feeRaw * vat / BASE;
   const feePlusVat = feeRaw + vatOnFee;
 
@@ -260,12 +262,14 @@ function computeFeesForPayin(amount, cfg = {}) {
   const railRate     = Number(cfg.railRate || 0);
   const flatFee      = BigInt(cfg.flatFee || 0);
   const mCap         = BigInt(cfg.merchantCap || 0);
+  const minCharge    = BigInt(cfg.minCharge || 0);
   const rCap         = BigInt(cfg.railCap || 0);
   const aggSplitPct  = Number(cfg.aggSplitPct || 0);
 
-  // Our fee on the FACE amount (+ VAT), capped.
+  // Our fee on the FACE amount (+ VAT), capped then floored.
   let feeRaw = principal * BigInt(Math.round(merchantRate * 1_000_000)) / BASE + flatFee;
   if (mCap > 0n && feeRaw > mCap) feeRaw = mCap;
+  if (minCharge > 0n && feeRaw < minCharge) feeRaw = minCharge;
   const vatOnFee   = feeRaw * vatM / BASE;
   const feePlusVat = feeRaw + vatOnFee;
 
@@ -337,10 +341,15 @@ async function resolvePayinRail(prisma, product = 'VIRTUAL_ACCOUNT', merchant = 
  * @param railId   uuid of the rail processing the collection (from resolvePayinRail)
  * @param product  pricing product key (default 'VIRTUAL_ACCOUNT')
  */
-async function resolvePayinRateConfig(prisma, merchant, railId = null, product = 'VIRTUAL_ACCOUNT') {
+// pricingProduct overrides the channel key used for merchant/platform rate lookups
+// without affecting the rail cost lookup (which always uses the service_type = product).
+// Use this when the pricing product differs from the rail service type — e.g.
+// wallet_fund transactions use 'WALLET_FUND_VA' pricing but 'VIRTUAL_ACCOUNT' rail costs.
+async function resolvePayinRateConfig(prisma, merchant, railId = null, product = 'VIRTUAL_ACCOUNT', pricingProduct = null) {
+  const priceKey = pricingProduct || product;
   const [mOv, plat, railRows] = await Promise.all([
-    prisma.merchantRateConfig.findFirst({ where: { merchantId: merchant.id, channel: { in: [product, 'ALL'] } }, orderBy: { channel: 'desc' } }),
-    prisma.platformRateConfig.findFirst({ where: { channel: { in: [product, 'ALL'] } }, orderBy: { channel: 'desc' } }),
+    prisma.merchantRateConfig.findFirst({ where: { merchantId: merchant.id, channel: { in: [priceKey, 'ALL'] } }, orderBy: { channel: 'desc' } }),
+    prisma.platformRateConfig.findFirst({ where: { channel: { in: [priceKey, 'ALL'] } }, orderBy: { channel: 'desc' } }),
     railId
       ? prisma.$queryRaw`
           SELECT rc.rate, rc.cap, rc.flat_fee, rc.min_charge, rc.vat_rate
@@ -352,12 +361,13 @@ async function resolvePayinRateConfig(prisma, merchant, railId = null, product =
   const rc = mOv || plat;
   const rr = railRows && railRows[0];
   return {
-    merchantRate: rc ? Number(rc.rate)    : Number(merchant.processingRate || 0.015),
-    flatFee:      rc ? Number(rc.flatFee) : 0,
-    merchantCap:  rc ? Number(rc.cap)     : 0,
+    merchantRate: rc ? Number(rc.rate)         : Number(merchant.processingRate || 0.015),
+    flatFee:      rc ? Number(rc.flatFee)      : 0,
+    merchantCap:  rc ? Number(rc.cap)          : 0,
+    minCharge:    rc ? Number(rc.minCharge || 0) : 0,
     vatRate:      rc && rc.vatRate != null ? Number(rc.vatRate) : VAT_RATE,
-    railRate:     rr ? Number(rr.rate)    : 0,
-    railCap:      rr ? Number(rr.cap)     : 0,
+    railRate:     rr ? Number(rr.rate)         : 0,
+    railCap:      rr ? Number(rr.cap)          : 0,
     railVatRate:  rr && rr.vat_rate != null ? Number(rr.vat_rate) : VAT_RATE,
     aggSplitPct:  merchant.aggregator ? Number(merchant.aggregator.revenueSplitPct) : 0,
   };

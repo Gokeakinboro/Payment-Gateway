@@ -959,11 +959,21 @@ async function initPaymentLink(slug) {
   // The merchant may bake the customer's email into the link (?email=...). Prefill
   // it, but keep it OPTIONAL and editable — the customer can fill it or skip it.
   const prefillEmail = (new URLSearchParams(window.location.search).get('email') || '').trim();
-  // Fixed-amount display: with VAT, show the total prominently + a base/VAT breakdown.
-  const fixedAmountBlock = !fixed ? '' : (vat
-    ? '<div style="font-size:30px;font-weight:800;color:#1A1A1A;margin:12px 0 2px;">' + formatNaira(info.total_amount) + '</div>'
-      + '<div style="font-size:12px;color:#666;margin-bottom:6px;">' + formatNaira(info.amount) + ' + 7.5% VAT ' + formatNaira(info.vat_amount) + '</div>'
-    : '<div style="font-size:30px;font-weight:800;color:#1A1A1A;margin:12px 0 6px;">' + formatNaira(info.amount) + '</div>');
+  // Show the ACTUAL amount the customer will transfer (face + merchant VAT + gateway fee).
+  // customer_amount comes from the backend fee computation; fall back to total_amount.
+  const custAmt = (info.customer_amount != null) ? info.customer_amount : (info.total_amount || info.amount);
+  const gwFee   = (info.gateway_fee != null && info.gateway_fee_vat != null)
+                    ? (info.gateway_fee + info.gateway_fee_vat) : null;
+  function buildBreakdown() {
+    const parts = [];
+    if (vat && info.vat_amount) parts.push(formatNaira(info.amount) + ' + 7.5% VAT ' + formatNaira(info.vat_amount));
+    else parts.push(formatNaira(info.amount));
+    if (gwFee) parts.push(formatNaira(gwFee) + ' processing fee');
+    return parts.join(' + ');
+  }
+  const fixedAmountBlock = !fixed ? '' :
+    '<div style="font-size:30px;font-weight:800;color:#1A1A1A;margin:12px 0 2px;">' + formatNaira(custAmt) + '</div>'
+    + '<div style="font-size:12px;color:#666;margin-bottom:6px;">' + buildBreakdown() + '</div>';
   ov.innerHTML =
     '<div style="background:#fff;max-width:420px;width:100%;border-radius:14px;padding:26px;box-shadow:0 20px 60px rgba(0,0,0,.3);">'
     + '<div style="font-size:12px;color:#6B1A2B;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">' + plEsc(info.merchant_name || 'Payment') + '</div>'

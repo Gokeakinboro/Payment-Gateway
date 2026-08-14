@@ -172,6 +172,8 @@ model Merchant {
   // LIVE rail). Set only for controlled routing (e.g. a single test merchant → a new
   // rail in sandbox) so live merchants are NEVER affected. See feeEngine.resolvePayinRail.
   payinRailId           String?   @map("payin_rail_id") @db.Uuid
+  // null/'with_paylode' → "<businessName>/Paylode"; 'name_only' → business name alone
+  parallexVaNameFormat  String?   @map("parallex_va_name_format")
   isActive          Boolean   @default(false) @map("is_active") // false until KYC done
   liveEnabled       Boolean   @default(false) @map("live_enabled") // false until SA clicks Go-Live — activation != live processing
   webhookUrl        String?   @map("webhook_url")
