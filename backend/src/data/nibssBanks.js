@@ -341,7 +341,7 @@ const BANKS = [
   { name: "GRIFFIN FINANCE LIMITED", code: "050041" },
   { name: "GROOMING MICROFINANCE BANK", code: "090195" },
   { name: "GTBank", code: "000013" },
-  { name: "GTBank Mobile Money", code: "100009" },
+  { name: "GTBank MoMo Wallet (100009)", code: "100009" },
   { name: "GTI Microfinance BANK", code: "090385" },
   { name: "Gwong Microfinance bank", code: "090500" },
   { name: "HACKMAN MICROFINANCE BANK", code: "090147" },
