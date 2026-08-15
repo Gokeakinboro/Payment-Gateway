@@ -82,7 +82,7 @@ router.post('/login',
       const user = await prisma.user.findUnique({
         where: { email: email.toLowerCase() },
         include: {
-          merchant:   { select: { id:true, merchantCode:true, kycStatus:true, isActive:true, businessName:true }},
+          merchant:   { select: { id:true, merchantCode:true, kycStatus:true, isActive:true, businessName:true, merchantType:true }},
           aggregator: { select: { id:true, companyName:true }},
         },
       });
@@ -123,7 +123,7 @@ router.post('/2fa/validate', async (req, res, next) => {
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
       include: {
-        merchant:   { select: { id:true, merchantCode:true, kycStatus:true, isActive:true, businessName:true }},
+        merchant:   { select: { id:true, merchantCode:true, kycStatus:true, isActive:true, businessName:true, merchantType:true }},
         aggregator: { select: { id:true, companyName:true }},
       },
     });
