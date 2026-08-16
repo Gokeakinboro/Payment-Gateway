@@ -35,6 +35,28 @@ const normalizePhone = (p) => {
 const genRef = (prefix = 'WLT') =>
   `${prefix}-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 
+// AES-256-GCM field-level encryption for NIN/BVN at rest.
+// Key: MEMBER_KYC_KEY env var, 64 hex chars (32 bytes). Falls back to plaintext in dev.
+const KYC_KEY = process.env.MEMBER_KYC_KEY
+  ? Buffer.from(process.env.MEMBER_KYC_KEY, 'hex')
+  : null;
+const ALGO = 'aes-256-gcm';
+function encryptField(val) {
+  if (!KYC_KEY) return String(val);
+  const iv  = crypto.randomBytes(12);
+  const c   = crypto.createCipheriv(ALGO, KYC_KEY, iv);
+  const enc = Buffer.concat([c.update(String(val), 'utf8'), c.final()]);
+  const tag = c.getAuthTag();
+  return `v1:${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
+}
+function decryptField(val) {
+  if (!KYC_KEY || !String(val).startsWith('v1:')) return String(val);
+  const [, ivHex, tagHex, encHex] = String(val).split(':');
+  const d = crypto.createDecipheriv(ALGO, KYC_KEY, Buffer.from(ivHex, 'hex'));
+  d.setAuthTag(Buffer.from(tagHex, 'hex'));
+  return d.update(Buffer.from(encHex, 'hex')) + d.final('utf8');
+}
+
 // ── Tenant resolution (management side) ──────────────────────────────────────
 // req.walletTenant = { merchantId, merchant, userId, departmentId|null, isDeptUser, isApiKey }
 function tenantAuth(req, res, next) {
@@ -128,6 +150,6 @@ function memberAuth(req, res, next) {
 
 module.exports = {
   prisma, DEFAULT_MAX_BALANCE, LOGIN_URL, isValidEmail, normalizePhone, genRef,
-  genTempPassword, hashPassword, genDefaultPin, hashLoginPin,
+  genTempPassword, hashPassword, genDefaultPin, hashLoginPin, encryptField, decryptField,
   tenantAuth, requireWalletEnabled, memberAuth, getConfig,
 };

@@ -37,6 +37,51 @@ router.get('/memberships', async (req, res, next) => {
 });
 function handle(res, e, next) { if (e && e.name === 'WalletError') return fail(res, e.message, e.code, e.status); next(e); }
 
+// Join another club with the same login. Copies NIN/BVN/address from the existing
+// membership so the member doesn't have to re-enter KYC they've already completed.
+router.post('/join-club', async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const merchantCode = String(req.body.merchant_code || '').trim().toUpperCase();
+    if (!merchantCode) return fail(res, 'merchant_code is required');
+
+    // Resolve the club they want to join.
+    const clubs = await prisma.$queryRawUnsafe(
+      `SELECT m.id::text AS merchant_id,
+              COALESCE(NULLIF(c.brand_name,''), m.business_name) AS name
+         FROM mw_config c JOIN merchants m ON m.id = c.merchant_id
+        WHERE m.merchant_code = $1 AND c.allow_public_members = true AND c.enabled = true`, merchantCode);
+    if (!clubs.length) return fail(res, 'That club is not open for public sign-up', 'CLUB_NOT_OPEN', 404);
+    const club = clubs[0];
+
+    // Already a member of this club?
+    const existing = await prisma.$queryRawUnsafe(
+      `SELECT id FROM mw_members WHERE user_id=$1::uuid AND merchant_id=$2::uuid AND status<>'deleted' LIMIT 1`,
+      userId, club.merchant_id);
+    if (existing.length) return fail(res, 'You are already a member of that club', 'ALREADY_MEMBER', 409);
+
+    // Pull identity from any existing active membership to avoid re-KYC.
+    const source = await prisma.$queryRawUnsafe(
+      `SELECT name, email, phone, nin, bvn, address, kyc_tier, kyc_verified
+         FROM mw_members WHERE user_id=$1::uuid AND status='active' LIMIT 1`, userId);
+    if (!source.length) return fail(res, 'No active membership found to copy identity from', 'NO_SOURCE', 400);
+    const s = source[0];
+
+    const cfg = await getConfig(club.merchant_id);
+    const rows = await prisma.$queryRawUnsafe(
+      `INSERT INTO mw_members (merchant_id, user_id, name, email, phone, kyc_tier, nin, bvn, address, kyc_verified, kyc_verified_at)
+       VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,now()) RETURNING id::text`,
+      club.merchant_id, userId, s.name, s.email, s.phone, s.kyc_tier || 'full',
+      s.nin, s.bvn, s.address, !!s.kyc_verified);
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO mw_wallets (merchant_id, member_id, low_balance_threshold) VALUES ($1::uuid,$2::uuid,$3)`,
+      club.merchant_id, rows[0].id, cfg.low_balance_default);
+
+    return created(res, { member_id: rows[0].id, club: club.name, merchant_code: merchantCode },
+      `Welcome to ${club.name}! Tap the club switcher to switch in.`);
+  } catch (e) { next(e); }
+});
+
 // ── Transaction PIN (app-unlock + per-payment authorization) ──────────────────
 const PIN_MAX_FAILS = 5, PIN_LOCK_MIN = 15;
 const pinErr = (message, code, status = 401) => Object.assign(new Error(message), { name: 'WalletError', code, status });

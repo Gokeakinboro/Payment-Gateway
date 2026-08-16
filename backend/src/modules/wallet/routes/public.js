@@ -5,7 +5,7 @@
 // Read paths carry no funds/PII. Register is rate-limited + KYC-gated.
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
-const { prisma, isValidEmail, normalizePhone, hashPassword, getConfig } = require('../_shared');
+const { prisma, isValidEmail, normalizePhone, hashPassword, getConfig, encryptField } = require('../_shared');
 const { ok, fail, created } = require('../../../utils/helpers');
 const { verifyNin, verifyBvn } = require('../../../services/youverifyService');
 
@@ -77,7 +77,7 @@ router.post('/register', registerLimiter, async (req, res, next) => {
     const mrows = await prisma.$queryRawUnsafe(
       `INSERT INTO mw_members (merchant_id, user_id, name, email, phone, kyc_tier, nin, bvn, address, kyc_verified, kyc_verified_at)
        VALUES ($1::uuid,$2::uuid,$3,$4,$5,'full',$6,$7,$8,true,now()) RETURNING id::text`,
-      merchantId, user.id, name, email, phone, nin, bvn, address);
+      merchantId, user.id, name, email, phone, encryptField(nin), encryptField(bvn), address);
     const cfg = await getConfig(merchantId);
     await prisma.$executeRawUnsafe(
       `INSERT INTO mw_wallets (merchant_id, member_id, low_balance_threshold) VALUES ($1::uuid,$2::uuid,$3)`,
