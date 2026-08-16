@@ -104,6 +104,11 @@ function renderApp(){
       '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="st-pub" style="width:auto;margin-top:3px"> <span>Let the public find this club in the Paymula app and join as members (they complete KYC). Leave off to keep membership invite-only.</span></label>'+
       '<button class="btn btn-lime" style="margin-top:14px" onclick="saveCfg()">Save settings</button><div class="msg" id="st-msg"></div></div></div>'+
     '<div class="pane" id="p-settlements">'+
+      '<div class="card" style="border-color:#dbeafe;background:#eff6ff">'+
+        '<h3 style="color:#1e40af">Connect bank account for auto-reconciliation</h3>'+
+        '<p style="color:#1e40af;font-size:13px;margin-bottom:12px">Link your settlement bank account via open-banking to enable automatic verification when funds land. Once connected, settlements will reconcile and notify ops instantly.</p>'+
+        '<button class="btn" style="background:#1e40af;color:#fff" onclick="alert(\'Open-banking connect (Mono/Okra) coming soon — ops team processes settlements manually for now.\')">Connect bank account</button>'+
+      '</div>'+
       '<div class="card">'+
         '<h3>Queue a settlement</h3>'+
         '<p style="color:var(--gray);font-size:13px;margin-bottom:12px">Select the period to settle. The system totals all department credits in that range and queues a payout request for ops to process.</p>'+
