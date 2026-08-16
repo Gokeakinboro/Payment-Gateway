@@ -104,6 +104,31 @@ function startCoreJobs({ logger }) {
   } catch (e) {
     logger.error({ err: e }, '  ✗ daily settlement generation failed to start (continuing)');
   }
+
+  // Social Club — invoice generation cron + reminder scheduler. Worker 0 only.
+  // Invoice cron: polls every 5 min for plans with next_run_at <= now, generates
+  //   invoices for all enrolled active members, advances next_run_at.
+  // Reminder scheduler: polls every 15 min, fires WhatsApp+email at reminder_days
+  //   intervals before/after due date (idempotent via club_invoice_reminders table).
+  try {
+    const { runInvoiceCron, runReminderScheduler } = require('../wallet/services/socialClubJobs');
+    const INVOICE_MS  = Number(process.env.SOCIAL_CLUB_INVOICE_CRON_MS  || 5  * 60 * 1000);
+    const REMINDER_MS = Number(process.env.SOCIAL_CLUB_REMINDER_MS      || 15 * 60 * 1000);
+    const runInv = () => runInvoiceCron()
+      .then(r => { if (r.plans) logger.info(r, 'social club invoice cron'); })
+      .catch(e => logger.error({ err: e }, 'social club invoice cron failed'));
+    const runRem = () => runReminderScheduler()
+      .then(r => { if (r.fired) logger.info(r, 'social club reminders fired'); })
+      .catch(e => logger.error({ err: e }, 'social club reminder scheduler failed'));
+    setTimeout(runInv, 60000);
+    setInterval(runInv, INVOICE_MS);
+    setTimeout(runRem, 90000);
+    setInterval(runRem, REMINDER_MS);
+    logger.info(`  Social Club invoice cron every ${INVOICE_MS / 60000}min, reminders every ${REMINDER_MS / 60000}min (worker 0)`);
+  } catch (e) {
+    logger.error({ err: e }, '  ✗ social club jobs failed to start (continuing)');
+  }
 }
 
 module.exports = { startCoreJobs };
+

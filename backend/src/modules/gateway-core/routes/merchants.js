@@ -974,6 +974,8 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res, next) => {
       if (aggregatorId !== undefined) data.aggregatorId = aggregatorId || null;
       if (req.body.cardAcceptanceScope !== undefined)
         data.cardAcceptanceScope = req.body.cardAcceptanceScope === 'international' ? 'international' : 'local';
+      if (req.body.merchantType !== undefined && ['retail', 'social_club'].includes(req.body.merchantType))
+        data.merchantType = req.body.merchantType;
     }
 
     if (!Object.keys(data).length) return fail(res, 'No updatable fields provided');

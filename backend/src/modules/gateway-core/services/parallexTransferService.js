@@ -47,8 +47,8 @@ const LOCATION      = process.env.PARALLEX_TRANSFER_LOCATION || 'Lagos';
 // through would double-pay on retry. All env-overridable pending TODO-CONFIRM
 // of Parallex's real code list.
 const codeSet = (v, d) => new Set(String(v == null ? d : v).split(',').map(s => s.trim()).filter(Boolean));
-const PENDING_CODES = codeSet(process.env.PARALLEX_TRANSFER_PENDING_CODES, '09,25,26,99');
-const FAIL_CODES    = codeSet(process.env.PARALLEX_TRANSFER_FAIL_CODES, '05,06,12,16,51,57,90,94,95,96,97,TIMEOUT');
+const PENDING_CODES = codeSet(process.env.PARALLEX_TRANSFER_PENDING_CODES, '09,25,26,99,TIMEOUT');
+const FAIL_CODES    = codeSet(process.env.PARALLEX_TRANSFER_FAIL_CODES, '05,06,12,16,51,57,90,94,95,96,97');
 
 // CBN 3-digit codes → 6-digit NIP institution codes used by Parallex (and PalmPay).
 // Commercial banks share the same code on both rails (e.g. Access 000014, GTBank 000013);

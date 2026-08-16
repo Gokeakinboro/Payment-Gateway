@@ -78,6 +78,7 @@ router.get('/', async (req, res, next) => {
     return ok(res, {
       member: { id: m.member_id, name: m.name, email: m.email, phone: m.phone },
       pin_set: !!m.pin_hash,
+      login_pin_set: !!m.login_pin_set,
       wallet: { id: m.wallet_id, balance: num(m.balance), currency: m.currency, low_balance_threshold: num(m.low_balance_threshold) },
       branding: { name: cfg.brand_name || 'Billspay', logo_url: cfg.brand_logo_url || null, color: cfg.brand_color || '#1a2744' },
     });
@@ -149,6 +150,30 @@ router.post('/pin', async (req, res, next) => {
 router.post('/pin/verify', async (req, res, next) => {
   try { await assertPin(req); return ok(res, { ok: true }, 'PIN verified'); }
   catch (e) { handle(res, e, next); }
+});
+
+// ── Billspay login PIN (Social Club — separate from transaction PIN) ──────────
+// Set or change the login PIN. First-time (login_pin_set=false): only new_pin required.
+// Subsequent changes: { current_pin, new_pin }.
+router.post('/login-pin', async (req, res, next) => {
+  try {
+    const m = req.walletMember;
+    const newPin = String(req.body.new_pin || '');
+    if (!/^\d{4,6}$/.test(newPin)) return fail(res, 'Login PIN must be 4 to 6 digits', 'PIN_INVALID');
+
+    if (m.login_pin_set && m.login_pin_hash) {
+      const cur = String(req.body.current_pin || '');
+      if (!cur) return fail(res, 'current_pin is required to change your login PIN');
+      const good = await bcrypt.compare(cur, m.login_pin_hash);
+      if (!good) return fail(res, 'Current login PIN is incorrect', 'PIN_WRONG', 401);
+    }
+
+    const hash = await bcrypt.hash(newPin, 12);
+    await prisma.$executeRawUnsafe(
+      `UPDATE mw_members SET login_pin_hash=$1, login_pin_set=true, login_pin_failed=0, login_pin_locked_until=NULL WHERE id=$2::uuid`,
+      hash, m.member_id);
+    return ok(res, { login_pin_set: true }, 'Login PIN updated');
+  } catch (e) { next(e); }
 });
 
 // Web-push (PWA notifications): public key + subscribe / unsubscribe.

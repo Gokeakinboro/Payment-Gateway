@@ -64,6 +64,7 @@ var SECTION_ICON = {
   'Developer':'code', 'Management':'briefcase', 'Finance':'banknote', 'Merchants':'store', 'Transactions':'arrow-right-left',
   'Payouts':'send', 'Integration':'plug', 'Account':'circle-user', 'System':'settings', 'SDK':'code', 'Reference':'book-open',
   'Payment Links & QR Code':'qr-code',
+  'Sell Online':'megaphone',
 };
 var NAV = {
   superadmin: [
@@ -132,6 +133,7 @@ var NAV = {
     { section:'Dashboard',    items:[{id:'merch_overview',icon:'layout-dashboard',label:'Dashboard'}]},
     { section:'Transactions', items:[{id:'merch_transactions',icon:'arrow-right-left',label:'Transactions'},{id:'merch_settlements',icon:'circle-check',label:'Settlements'},{id:'merch_reconciliation',icon:'git-compare',label:'Reconciliation'}]},
     { section:'Payment Links & QR Code', items:[{id:'merch_payments',icon:'qr-code',label:'Payment Links & QR Code'}]},
+    { section:'Sell Online', items:[{id:'merch_sell_online',icon:'megaphone',label:'Sell Online'}]},
     { section:'Invoice & Collect', items:[{id:'merch_invoicing',icon:'receipt',label:'Invoice & Collect'}]},
     { section:'Billspay', items:[{id:'merch_wallet',icon:'wallet',label:'Billspay'}]},
     { section:'Payouts',      items:[{id:'payouts',icon:'send',label:'Send Payouts'},{id:'payout_logs',icon:'scroll-text',label:'Payout Logs'}]},
@@ -256,6 +258,15 @@ function renderNav() {
               (_u.firstName ? (_u.firstName + ' ' + (_u.lastName||'')).trim() : null) || meta.name;
   document.getElementById('role-name').textContent = _name;
   var container = document.getElementById('nav-items');
+  // For social_club merchants, inject SC-specific nav sections.
+  if (currentRole === 'merchant' && _u.merchant && _u.merchant.merchantType === 'social_club') {
+    if (!NAV.merchant.some(function(s){ return s.section === 'Social Club'; })) {
+      NAV.merchant.splice(6, 0, { section:'Social Club', items:[
+        {id:'sc_plans',  icon:'calendar-days', label:'Subscription Plans'},
+        {id:'sc_report', icon:'bar-chart-2',   label:'Payment Report'},
+      ]});
+    }
+  }
   // Filter nav items by the user's view permissions (SUPER_ADMIN bypasses).
   var nav = (NAV[currentRole] || []).map(function(sec) {
     return { section: sec.section, items: sec.items.filter(function(item) {
