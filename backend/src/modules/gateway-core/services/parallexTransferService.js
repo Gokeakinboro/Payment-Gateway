@@ -254,7 +254,7 @@ async function sendPayout(item) {
     r = await call('POST', '/api/ThirdPartyTransfer/InterbankTransfer', {
       body: {
         accountToDebit: DEBIT_ACCOUNT,
-        channel: '0',
+        channel: '1',
         interTransferDetails: [{
           amount: amountNaira,
           beneficiaryAccountName: item.account_name || ne.accountName || '',
