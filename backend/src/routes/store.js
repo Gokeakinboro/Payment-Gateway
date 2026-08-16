@@ -15,9 +15,9 @@ router.get('/:merchantCode', async (req, res, next) => {
     if (!code) return notFound(res, 'Store not found');
 
     const merchants = await prisma.$queryRawUnsafe(`
-      SELECT id::text, business_name, merchant_code, business_description
+      SELECT id::text, business_name, merchant_code
         FROM merchants
-       WHERE merchant_code = $1 AND status = 'active'
+       WHERE merchant_code = $1 AND is_active = true
        LIMIT 1
     `, code);
     if (!merchants.length) return notFound(res, 'Store not found');
@@ -38,9 +38,8 @@ router.get('/:merchantCode', async (req, res, next) => {
 
     return ok(res, {
       merchant: {
-        name:        m.business_name,
-        code:        m.merchant_code,
-        description: m.business_description || null,
+        name: m.business_name,
+        code: m.merchant_code,
       },
       links: links.map(l => ({
         slug:         l.slug,
