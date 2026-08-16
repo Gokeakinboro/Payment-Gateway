@@ -5795,6 +5795,10 @@ document.addEventListener('DOMContentLoaded', function() {
   // authoritatively before doing anything (incl. the temp-password gate), so a member can
   // never be stranded on the merchant dashboard.
   if (user && (user.role || '').toUpperCase() === 'MERCHANT') {
+    // Boot the merchant dashboard immediately so there's no flash of SA content.
+    // The wallet-member check runs in parallel; if the user is a member they get
+    // redirected to wallet.html shortly after — without needing to wait for it first.
+    continueDashboardBoot(user);
     apiFetch('/wallet/me')
       .then(function(r) {
         if (r && r.status !== false && r.data) {
@@ -5805,9 +5809,9 @@ document.addEventListener('DOMContentLoaded', function() {
           window.location.replace('/wallet.html');
           return;
         }
-        continueDashboardBoot(user);
+        // Not a wallet member — already booted above, nothing more to do.
       })
-      .catch(function() { continueDashboardBoot(user); });
+      .catch(function() { /* already booted above */ });
     return;
   }
   continueDashboardBoot(user);
