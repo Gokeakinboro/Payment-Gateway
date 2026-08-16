@@ -23,15 +23,35 @@
   .muted{color:var(--gray);text-align:center;padding:24px}
   .msg{padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:12px;display:none}
   .msg.ok{background:#f0fdf4;color:#166534;display:block}.msg.err{background:#fee2e2;color:#991b1b;display:block}
+  .pill{font-size:11px;padding:2px 8px;border-radius:20px;font-weight:600}
+  .pill.queued{background:#fef3c7;color:#92400e}.pill.processing{background:#dbeafe;color:#1e40af}
+  .pill.settled{background:#d1fae5;color:#065f46}.pill.failed{background:#fee2e2;color:#991b1b}
+  .ref-inp{width:160px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px}
+  .stl-row td{vertical-align:middle}
 </style>
 </head>
 <body>
-<div class="top"><a href="dashboard.html">← Dashboard</a><div class="t">Paymula — Approvals</div></div>
+<div class="top"><a href="dashboard.html">← Dashboard</a><div class="t">Paymula — Ops</div></div>
 <div class="wrap">
   <div class="msg" id="msg"></div>
-  <div class="card"><h3>Pending Paymula enablement requests</h3>
+  <div class="card" style="margin-bottom:16px"><h3>Pending Paymula enablement requests</h3>
     <div class="sub">Paymula holds customer funds — review each merchant before enabling.</div>
     <div id="list"><div class="muted">Loading…</div></div>
+  </div>
+  <div class="card"><h3>Settlement queue — pending payout processing</h3>
+    <div class="sub">Settlements queued by merchants. Mark as processing when payout is sent, then settled once funds clear.</div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:12px;font-weight:600;color:var(--gray)">Filter by status</label>
+      <select id="stl-status-filter" style="width:200px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px" onchange="loadSettlements()">
+        <option value="">All</option>
+        <option value="queued" selected>Queued</option>
+        <option value="processing">Processing</option>
+        <option value="settled">Settled</option>
+        <option value="failed">Failed</option>
+      </select>
+    </div>
+    <div id="stl-list"><div class="muted">Loading…</div></div>
+    <div class="msg" id="stl-msg"></div>
   </div>
 </div>
 <script>
@@ -60,6 +80,48 @@ async function approve(id,name){if(!confirm('Enable Paymula for '+(name||'this m
 async function reject(id){if(!confirm('Reject this request?'))return;
   var r=await api('/wallet/admin/'+id+'/reject',{method:'POST'});msg(r.ok,r.ok?'Request rejected':(r.message||'Failed'));if(r.ok)load();}
 load();
+
+// ── Settlements processing ─────────────────────────────────────────────────
+function ngn(k){return '₦'+(Number(k||0)/100).toLocaleString('en-NG',{minimumFractionDigits:2});}
+async function loadSettlements(){
+  var status=document.getElementById('stl-status-filter').value;
+  var r=await api('/wallet/admin/settlements'+(status?'?status='+encodeURIComponent(status):''));
+  var e=document.getElementById('stl-list');
+  if(!r.ok){e.innerHTML='<div class="muted">Could not load settlements.</div>';return;}
+  if(!r.data||!r.data.length){e.innerHTML='<div class="muted">No settlements found.</div>';return;}
+  var statusColors={queued:'queued',processing:'processing',settled:'settled',failed:'failed'};
+  e.innerHTML='<table><tr><th>Merchant</th><th>Period</th><th class="right">Amount</th><th>Txns</th><th>Status</th><th>Actions</th></tr>'+
+    r.data.map(function(x){
+      var sc=statusColors[x.status]||'';
+      var bankInfo=x.settlement_account?('<br><small style="color:#64748b">'+esc(x.settlement_bank||'')+'  '+esc(x.settlement_account)+(x.settlement_account_name?' — '+esc(x.settlement_account_name):'')+'</small>'):'';
+      var actions='';
+      if(x.status==='queued'){
+        actions='<input class="ref-inp" id="ref-'+x.id+'" placeholder="Payout ref" style="margin-right:4px">'+
+          '<button class="btn" style="font-size:11px;padding:5px 9px;margin-right:4px" onclick="updateSettlement(\''+x.id+'\',\'processing\')">Mark processing</button>'+
+          '<button class="btn btn-lime" style="font-size:11px;padding:5px 9px" onclick="updateSettlement(\''+x.id+'\',\'settled\')">Mark settled</button>';
+      } else if(x.status==='processing'){
+        actions='<input class="ref-inp" id="ref-'+x.id+'" placeholder="Payout ref" style="margin-right:4px" value="'+esc(x.payout_ref||'')+'">'+
+          '<button class="btn btn-lime" style="font-size:11px;padding:5px 9px;margin-right:4px" onclick="updateSettlement(\''+x.id+'\',\'settled\')">Mark settled</button>'+
+          '<button class="btn btn-out" style="font-size:11px;padding:5px 9px" onclick="updateSettlement(\''+x.id+'\',\'failed\')">Fail</button>';
+      } else {
+        actions='<span style="color:#64748b;font-size:12px">'+(x.payout_ref||'—')+'</span>';
+      }
+      return '<tr class="stl-row"><td>'+esc(x.business_name)+bankInfo+'</td>'+
+        '<td>'+esc(x.period_from)+' – '+esc(x.period_to)+'</td>'+
+        '<td class="right">'+ngn(x.gross_kobo)+'</td>'+
+        '<td>'+x.txn_count+'</td>'+
+        '<td><span class="pill '+sc+'">'+esc(x.status)+'</span></td>'+
+        '<td>'+actions+'</td></tr>';
+    }).join('')+'</table>';
+}
+async function updateSettlement(id,status){
+  var refEl=document.getElementById('ref-'+id);var ref=refEl?refEl.value.trim():'';
+  var r=await api('/wallet/admin/settlements/'+id,{method:'PATCH',body:{status:status,payout_ref:ref||undefined}});
+  var m=document.getElementById('stl-msg');
+  m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?('Settlement marked '+status):(r.message||'Failed');
+  if(r.ok)setTimeout(loadSettlements,600);
+}
+loadSettlements();
 </script>
 <script src="/chat-widget.js"></script>
 </body>

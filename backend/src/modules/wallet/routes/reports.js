@@ -90,11 +90,21 @@ router.post('/settle', async (req, res, next) => {
        VALUES ($1::uuid,$2::date,$3::date,$4,$5,$6,$7::uuid) RETURNING id::text`,
       mid, from, to, gross, agg.member_count, agg.txn_count, createdBy);
 
+    // Auto-fire stub: check if merchant has a verified settlement account.
+    // When Mono/Okra open-banking integration is live, this will trigger automatic
+    // bank-rec verification and queue the payout without SA manual intervention.
+    const mInfo = (await prisma.$queryRawUnsafe(
+      `SELECT settlement_account, settlement_bank FROM merchants WHERE id=$1::uuid`, mid))[0] || {};
+    const hasSettlementAccount = !!(mInfo.settlement_account && mInfo.settlement_bank);
+
     return created(res, {
       settlement_id: rows[0].id, status: 'queued',
       gross_kobo: Number(gross), gross_major: Number(gross) / 100,
       member_count: agg.member_count, txn_count: agg.txn_count,
-    }, 'Settlement queued — ops team will process the payout.');
+      auto_process_ready: hasSettlementAccount,
+    }, hasSettlementAccount
+      ? 'Settlement queued — your settlement account is on file; ops will verify and process shortly.'
+      : 'Settlement queued — ops team will process the payout.');
   } catch (e) { next(e); }
 });
 

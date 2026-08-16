@@ -43,4 +43,50 @@ router.post('/:merchantId/reject', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── Settlement processing (SA/ops) ─────────────────────────────────────────
+// List all queued + processing settlements across all merchants.
+router.get('/settlements', async (req, res, next) => {
+  try {
+    const status = req.query.status || null;
+    let sql = `SELECT s.id::text, s.merchant_id::text, m.business_name,
+                      s.period_from, s.period_to, s.gross_kobo::text AS gross_kobo,
+                      s.member_count, s.txn_count, s.status, s.payout_ref,
+                      s.failure_reason, s.settled_at, s.created_at,
+                      m.settlement_account, m.settlement_bank, m.settlement_account_name
+                 FROM mw_dept_settlements s
+                 JOIN merchants m ON m.id = s.merchant_id`;
+    const vals = [];
+    if (status) { sql += ` WHERE s.status = $1`; vals.push(status); }
+    sql += ` ORDER BY s.created_at DESC LIMIT 200`;
+    const rows = await prisma.$queryRawUnsafe(sql, ...vals);
+    const n = (v) => Number(v || 0);
+    return ok(res, rows.map((r) => ({ ...r, gross_kobo: n(r.gross_kobo) })));
+  } catch (e) { next(e); }
+});
+
+// Mark a settlement as processing or settled.
+// Body: { status: 'processing'|'settled'|'failed', payout_ref?: string, failure_reason?: string }
+router.patch('/settlements/:id', async (req, res, next) => {
+  try {
+    const { status, payout_ref, failure_reason } = req.body || {};
+    if (!['processing', 'settled', 'failed'].includes(status))
+      return fail(res, 'status must be processing, settled, or failed');
+
+    const settled_at = status === 'settled' ? 'NOW()' : 'NULL';
+    const rows = await prisma.$queryRawUnsafe(
+      `UPDATE mw_dept_settlements
+          SET status = $1,
+              payout_ref = COALESCE($2, payout_ref),
+              failure_reason = COALESCE($3, failure_reason),
+              settled_at = CASE WHEN $1 = 'settled' THEN NOW() ELSE settled_at END
+        WHERE id = $4::uuid
+          AND status IN ('queued','processing')
+        RETURNING id::text, status, payout_ref, settled_at`,
+      status, payout_ref || null, failure_reason || null, req.params.id);
+
+    if (!rows.length) return fail(res, 'Settlement not found or already in a terminal state', 'NOT_FOUND', 404);
+    return ok(res, rows[0], `Settlement marked ${status}`);
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
