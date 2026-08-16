@@ -19,6 +19,10 @@ const LOGIN_URL = (process.env.APP_BASE_URL || process.env.CHECKOUT_BASE_URL || 
 const genTempPassword = () => crypto.randomBytes(6).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) + 'A1!';
 const hashPassword = (pw) => bcrypt.hash(pw, 12);
 
+// 4-digit default login PIN for Social Club members (NOT the transaction PIN).
+const genDefaultPin = () => String(crypto.randomInt(1000, 10000));
+const hashLoginPin  = (pin) => bcrypt.hash(String(pin), 12);
+
 const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || '').trim());
 const normalizePhone = (p) => {
   let s = String(p || '').replace(/[^\d+]/g, '');
@@ -105,6 +109,7 @@ function memberAuth(req, res, next) {
       const rows = await prisma.$queryRawUnsafe(
         `SELECT m.id::text AS member_id, m.merchant_id::text AS merchant_id, m.name, m.email, m.phone, m.status,
                 m.pin_hash, m.pin_failed, m.pin_locked_until,
+                m.login_pin_hash, m.login_pin_set, m.login_pin_failed, m.login_pin_locked_until,
                 w.id::text AS wallet_id, w.balance::text AS balance, w.currency, w.low_balance_threshold::text AS low_balance_threshold
            FROM mw_members m JOIN mw_wallets w ON w.member_id = m.id
           WHERE m.user_id = $1::uuid AND m.status <> 'deleted'
@@ -123,5 +128,6 @@ function memberAuth(req, res, next) {
 
 module.exports = {
   prisma, DEFAULT_MAX_BALANCE, LOGIN_URL, isValidEmail, normalizePhone, genRef,
-  genTempPassword, hashPassword, tenantAuth, requireWalletEnabled, memberAuth, getConfig,
+  genTempPassword, hashPassword, genDefaultPin, hashLoginPin,
+  tenantAuth, requireWalletEnabled, memberAuth, getConfig,
 };

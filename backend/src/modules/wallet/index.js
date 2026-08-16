@@ -10,6 +10,9 @@ router.use('/public',   require('./routes/public'));   // UNAUTH: opted-in club 
 router.use('/admin',    require('./routes/admin'));    // SA: approve/reject enablement
 router.use('/config',   require('./routes/config'));
 router.use('/members',  require('./routes/members'));
+router.use('/plans',    require('./routes/plans'));    // Social Club: subscription plans + invoicing
+router.use('/access',   require('./routes/access'));   // Social Club: physical gate paid-up check (API key)
+router.use('/auth',     require('./routes/auth'));     // Social Club: Billspay PIN login
 router.use('/me',       require('./routes/me'));       // member self-service (app)
 router.use('/fund',     require('./routes/fund'));
 router.use('/spend',    require('./routes/spend'));

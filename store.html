@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Paylode Store</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --navy:   #1a2744;
+  --navy-l: #253360;
+  --lime:   #7dc534;
+  --lime-d: #5fa01f;
+  --white:  #ffffff;
+  --off:    #f7f8fa;
+  --g100:   #f1f5f9;
+  --g200:   #e2e8f0;
+  --g300:   #cbd5e1;
+  --g400:   #94a3b8;
+  --g500:   #64748b;
+  --green:  #10b981;
+  --font:   'DM Sans', sans-serif;
+  --r:      12px;
+}
+
+html, body {
+  min-height: 100%;
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--navy);
+  background: var(--off);
+  -webkit-font-smoothing: antialiased;
+}
+
+.page { min-height: 100vh; display: flex; flex-direction: column; }
+
+/* ── TOPBAR ── */
+.topbar {
+  background: var(--navy);
+  padding: 0 20px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.brand { font-weight: 700; font-size: 18px; color: var(--white); letter-spacing: -0.5px; }
+.brand span { color: var(--lime); }
+.powered {
+  font-size: 11px;
+  color: var(--g400);
+}
+
+/* ── MAIN ── */
+.main {
+  flex: 1;
+  max-width: 540px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 28px 16px 48px;
+}
+
+/* ── MERCHANT HEADER ── */
+.merch-header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.merch-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--navy);
+  color: var(--white);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.merch-name {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 4px;
+}
+.merch-desc {
+  font-size: 14px;
+  color: var(--g500);
+  max-width: 380px;
+  margin: 0 auto;
+}
+
+/* ── LINK CARDS ── */
+.link-list { display: flex; flex-direction: column; gap: 12px; }
+
+.link-card {
+  background: var(--white);
+  border-radius: var(--r);
+  border: 1px solid var(--g200);
+  padding: 18px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-decoration: none;
+  color: inherit;
+  transition: box-shadow .15s, border-color .15s, transform .1s;
+  cursor: pointer;
+}
+.link-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,.08);
+  border-color: var(--g300);
+  transform: translateY(-1px);
+}
+.link-info { flex: 1; min-width: 0; }
+.link-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--navy);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+.link-desc {
+  font-size: 13px;
+  color: var(--g500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.link-amount {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--navy);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-right: 12px;
+}
+.link-amount.open {
+  font-size: 13px;
+  color: var(--g400);
+  font-weight: 400;
+}
+.pay-btn {
+  display: inline-block;
+  background: var(--navy);
+  color: var(--white);
+  padding: 9px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s;
+  flex-shrink: 0;
+}
+.pay-btn:hover { background: var(--navy-l); }
+
+/* ── EMPTY / ERROR states ── */
+.state-box {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--g400);
+}
+.state-box .icon { font-size: 40px; margin-bottom: 12px; }
+.state-box .title { font-size: 18px; font-weight: 600; color: var(--g500); margin-bottom: 6px; }
+.state-box .sub { font-size: 14px; }
+
+/* ── FOOTER ── */
+.footer {
+  text-align: center;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--g400);
+  border-top: 1px solid var(--g200);
+  flex-shrink: 0;
+}
+.footer a { color: var(--g400); text-decoration: none; }
+.footer a:hover { color: var(--g500); }
+
+/* ── SPINNER ── */
+.spinner-wrap { text-align: center; padding: 60px 0; }
+.spinner {
+  display: inline-block;
+  width: 32px; height: 32px;
+  border: 3px solid var(--g200);
+  border-top-color: var(--navy);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 480px) {
+  .link-card { flex-wrap: wrap; }
+  .link-amount { margin-right: 0; }
+  .pay-btn { width: 100%; text-align: center; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="topbar">
+    <div class="brand">Pay<span>lode</span></div>
+    <div class="powered">Secure payments</div>
+  </div>
+
+  <div class="main" id="main">
+    <div class="spinner-wrap"><div class="spinner"></div></div>
+  </div>
+
+  <div class="footer">
+    Powered by <a href="https://paylodeservices.com" target="_blank">Paylode</a> &mdash; CBN-licensed PSSP
+  </div>
+
+</div>
+
+<script>
+(function() {
+  var API_BASE = '';  // same origin
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function fmtAmount(major, currency) {
+    var sym = (currency || 'NGN') === 'USD' ? '$' : '₦';
+    return sym + Number(major).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function getParam(name) {
+    var u = new URLSearchParams(window.location.search);
+    return u.get(name) || '';
+  }
+
+  function renderError(title, sub) {
+    document.getElementById('main').innerHTML =
+      '<div class="state-box"><div class="icon">&#128683;</div>' +
+      '<div class="title">' + esc(title) + '</div>' +
+      '<div class="sub">' + esc(sub) + '</div></div>';
+  }
+
+  function renderEmpty(businessName) {
+    document.getElementById('main').innerHTML =
+      '<div class="merch-header">' +
+        '<div class="merch-avatar">' + esc((businessName||'?')[0].toUpperCase()) + '</div>' +
+        '<div class="merch-name">' + esc(businessName) + '</div>' +
+      '</div>' +
+      '<div class="state-box">' +
+        '<div class="icon">&#128722;</div>' +
+        '<div class="title">No items yet</div>' +
+        '<div class="sub">This store hasn\'t listed any payment options yet. Check back soon.</div>' +
+      '</div>';
+    document.title = esc(businessName) + ' — Paylode Store';
+  }
+
+  function renderStore(merchant, links) {
+    document.title = esc(merchant.name) + ' — Paylode Store';
+
+    var avatar = esc((merchant.name || '?')[0].toUpperCase());
+    var cards = links.map(function(l) {
+      var amtHtml = (l.amount_major === null || l.amount_major === undefined)
+        ? '<div class="link-amount open">Customer sets amount</div>'
+        : '<div class="link-amount">' + fmtAmount(l.amount_major, l.currency) + '</div>';
+      return '<a class="link-card" href="' + esc(l.url) + '">' +
+        '<div class="link-info">' +
+          '<div class="link-title">' + esc(l.title) + '</div>' +
+          (l.description ? '<div class="link-desc">' + esc(l.description) + '</div>' : '') +
+        '</div>' +
+        amtHtml +
+        '<button class="pay-btn">Pay</button>' +
+      '</a>';
+    }).join('');
+
+    document.getElementById('main').innerHTML =
+      '<div class="merch-header">' +
+        '<div class="merch-avatar">' + avatar + '</div>' +
+        '<div class="merch-name">' + esc(merchant.name) + '</div>' +
+        (merchant.description ? '<div class="merch-desc">' + esc(merchant.description) + '</div>' : '') +
+      '</div>' +
+      '<div class="link-list">' + cards + '</div>';
+  }
+
+  async function load() {
+    var code = getParam('m').trim().toUpperCase();
+    if (!code) { renderError('No store specified', 'Add ?m=<merchant_code> to the URL.'); return; }
+
+    try {
+      var res = await fetch(API_BASE + '/api/v1/store/' + encodeURIComponent(code));
+      var json = await res.json();
+
+      if (!json.status || !json.data) {
+        renderError('Store not found', 'This store link may have expired or been removed.');
+        return;
+      }
+
+      var d = json.data;
+      if (!d.links || !d.links.length) { renderEmpty(d.merchant.name); return; }
+      renderStore(d.merchant, d.links);
+    } catch(e) {
+      renderError('Could not load store', 'Please check your connection and try again.');
+    }
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

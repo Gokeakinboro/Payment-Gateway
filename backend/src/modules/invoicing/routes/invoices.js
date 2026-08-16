@@ -269,6 +269,51 @@ router.post('/:id/send', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── Mark as paid (manual / outside gateway) ──────────────────────────────────
+// POST /:id/mark-paid  { manual_payment_method: 'CARD'|'BANK_TRANSFER'|'CASH', notes? }
+// Admin records a payment received outside the gateway (cash, bank transfer, card swipe).
+// Stamps the invoice paid and logs the event in inv_invoice_payments.
+router.post('/:id/mark-paid', async (req, res, next) => {
+  try {
+    const t = req.invTenant, mid = t.merchantId;
+    const b = req.body || {};
+    const method = ['CARD', 'BANK_TRANSFER', 'CASH'].includes(b.manual_payment_method)
+      ? b.manual_payment_method : null;
+    if (!method) return fail(res, 'manual_payment_method must be CARD, BANK_TRANSFER, or CASH');
+
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT id::text, total_amount::text AS total_amount, amount_paid::text AS amount_paid, status
+         FROM inv_invoices WHERE id=$1::uuid AND merchant_id=$2::uuid AND deleted_at IS NULL`,
+      req.params.id, mid);
+    if (!rows.length) return notFound(res, 'Invoice');
+    const inv = rows[0];
+    if (['paid', 'cancelled'].includes(inv.status))
+      return fail(res, `Invoice is already ${inv.status}`, 'ALREADY_FINAL', 409);
+
+    const totalAmount = BigInt(inv.total_amount);
+    const alreadyPaid = BigInt(inv.amount_paid);
+    const remaining   = totalAmount - alreadyPaid;
+    const notes       = b.notes ? String(b.notes).slice(0, 500) : null;
+    const markedBy    = t.isApiKey ? null : (t.userId || null);
+    const ref         = 'MANUAL-' + require('crypto').randomBytes(6).toString('hex').toUpperCase();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        `INSERT INTO inv_invoice_payments
+           (invoice_id,amount_paid,payment_reference,channel,paid_at,
+            manual_payment_method,marked_by,notes)
+         VALUES ($1::uuid,$2,$3,$4,now(),$5,$6::uuid,$7)`,
+        req.params.id, remaining, ref, 'MANUAL', method, markedBy, notes);
+      await tx.$executeRawUnsafe(
+        `UPDATE inv_invoices SET status='paid', amount_paid=total_amount, paid_at=now(), updated_at=now()
+           WHERE id=$1::uuid`, req.params.id);
+    });
+
+    return ok(res, { id: req.params.id, status: 'paid', method, reference: ref, notes },
+      'Invoice marked as paid');
+  } catch (e) { next(e); }
+});
+
 // ── Cancel ────────────────────────────────────────────────────────────────────
 router.post('/:id/cancel', async (req, res, next) => {
   try {

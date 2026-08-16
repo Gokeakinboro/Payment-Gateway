@@ -941,12 +941,21 @@ async function editMerchant(id) {
         '<div class="form-group"><label class="form-label">Assign to Aggregator</label>' +
           '<select class="form-input form-select" id="em-agg">' + aggOpts + '</select></div>' +
       '</div>' +
-      '<div class="form-group" style="margin-top:4px"><label class="form-label">Card Acceptance Scope</label>' +
-        '<select class="form-input form-select" id="em-card-scope">' +
-          '<option value="local"' + (m.cardAcceptanceScope !== 'international' ? ' selected' : '') + '>Domestic only (NGN / Naira cards)</option>' +
-          '<option value="international"' + (m.cardAcceptanceScope === 'international' ? ' selected' : '') + '>International enabled (USD / Mastercard)</option>' +
-        '</select>' +
-        '<div class="form-hint" style="margin-top:4px">Enabling international requires CBN approval. Allows the merchant to accept USD card charges via the MPGS gateway.</div>' +
+      '<div class="form-grid">' +
+        '<div class="form-group" style="margin-top:4px"><label class="form-label">Card Acceptance Scope</label>' +
+          '<select class="form-input form-select" id="em-card-scope">' +
+            '<option value="local"' + (m.cardAcceptanceScope !== 'international' ? ' selected' : '') + '>Domestic only (NGN / Naira cards)</option>' +
+            '<option value="international"' + (m.cardAcceptanceScope === 'international' ? ' selected' : '') + '>International enabled (USD / Mastercard)</option>' +
+          '</select>' +
+          '<div class="form-hint" style="margin-top:4px">Enabling international requires CBN approval.</div>' +
+        '</div>' +
+        '<div class="form-group" style="margin-top:4px"><label class="form-label">Merchant Type</label>' +
+          '<select class="form-input form-select" id="em-merchant-type">' +
+            '<option value="retail"' + ((m.merchantType || 'retail') === 'retail' ? ' selected' : '') + '>Retail (standard)</option>' +
+            '<option value="social_club"' + (m.merchantType === 'social_club' ? ' selected' : '') + '>Social Club (subscription billing)</option>' +
+          '</select>' +
+          '<div class="form-hint" style="margin-top:4px">Social Club unlocks subscription plans, member access control, and Billspay.</div>' +
+        '</div>' +
       '</div>';
   }
 
@@ -1088,7 +1097,8 @@ async function saveMerchantEdit(id) {
   // Super-admin-only fields (elements won't exist in aggregator modal)
   if (document.getElementById('em-status'))     body.kycStatus           = _val('em-status');
   if (document.getElementById('em-agg'))        body.aggregatorId        = _val('em-agg') || null;
-  if (document.getElementById('em-card-scope')) body.cardAcceptanceScope = _val('em-card-scope');
+  if (document.getElementById('em-card-scope'))    body.cardAcceptanceScope = _val('em-card-scope');
+  if (document.getElementById('em-merchant-type')) body.merchantType        = _val('em-merchant-type');
 
   // Save per-product pricing (full model) — SA only; the inputs exist only then.
   if (document.getElementById('em-rc-CARD_LOCAL-rate')) {
@@ -3881,6 +3891,162 @@ async function plDelete(id) {
   if (!confirm('Delete this payment link? This cannot be undone.')) return;
   var res = await apiFetch('/payment-links/' + id, { method: 'DELETE' });
   if (res && res.status) loadMerchPaymentLinks(); else alert('Error: ' + ((res && res.message) || 'Delete failed'));
+}
+
+// ── SELL ONLINE — link-in-bio storefront, channel wizard, embed pay button ───
+async function loadMerchSellOnline() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  var _u = getUser(); var _m = (_u && _u.merchant) || {};
+  var code = _m.merchantCode || _m.merchant_code || '';
+  var storeUrl = 'https://paylodeservices.com/store.html?m=' + code;
+  var qrSrc = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(storeUrl);
+  var shareText = 'Shop & pay instantly on my Paylode store: ' + storeUrl;
+
+  el.innerHTML =
+    '<div class="page-header">' +
+      '<div class="page-title">Sell Online</div>' +
+      '<div class="page-desc">Share your store link across any channel — customers tap and pay instantly, no app needed.</div>' +
+    '</div>' +
+
+    // ── Storefront block
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><div class="card-title">My Storefront</div></div>' +
+      '<div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;padding-bottom:8px">' +
+        '<div style="flex-shrink:0">' +
+          '<img src="' + qrSrc + '" alt="Store QR" style="width:140px;height:140px;border-radius:8px;border:1px solid var(--gray-200,#e2e8f0)">' +
+          '<div style="font-size:10px;color:var(--gray-400,#94a3b8);text-align:center;margin-top:4px">Scan to open store</div>' +
+        '</div>' +
+        '<div style="flex:1;min-width:200px">' +
+          '<div class="form-label" style="margin-bottom:4px">Your store link</div>' +
+          '<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap">' +
+            '<input class="form-input" id="so-store-url" value="' + storeUrl + '" readonly style="font-size:12px;font-family:monospace;flex:1;min-width:160px">' +
+            '<button class="btn btn-outline btn-sm" onclick="solCopy(\'so-store-url\',this)">Copy</button>' +
+            '<a class="btn btn-lime btn-sm" href="' + storeUrl + '" target="_blank">Open</a>' +
+          '</div>' +
+          '<div class="form-label" style="margin-bottom:4px">Share text</div>' +
+          '<textarea class="form-input" id="so-share-text" rows="2" style="font-size:12px;resize:none">' + shareText + '</textarea>' +
+          '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+            '<button class="btn btn-outline btn-sm" onclick="solCopy(\'so-share-text\',this)">Copy text</button>' +
+            '<a class="btn btn-outline btn-sm" href="https://wa.me/?text=' + encodeURIComponent(shareText) + '" target="_blank">Share via WhatsApp</a>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    // ── Channel connect wizard
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header">' +
+        '<div><div class="card-title">Connect a Channel</div><div style="font-size:12px;color:var(--gray-400,#94a3b8)">Add your store link to any platform in 30 seconds</div></div>' +
+      '</div>' +
+      '<div id="so-ch-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">' +
+        '<button class="btn btn-sm btn-lime"   onclick="solShowChannel(\'instagram\',this)">Instagram</button>' +
+        '<button class="btn btn-sm btn-outline" onclick="solShowChannel(\'whatsapp\',this)">WhatsApp</button>' +
+        '<button class="btn btn-sm btn-outline" onclick="solShowChannel(\'website\',this)">Website</button>' +
+        '<button class="btn btn-sm btn-outline" onclick="solShowChannel(\'tiktok\',this)">TikTok</button>' +
+      '</div>' +
+      '<div id="so-channel-steps">' + _solChannelHtml('instagram') + '</div>' +
+    '</div>' +
+
+    // ── Embed pay button
+    '<div class="card">' +
+      '<div class="card-header">' +
+        '<div><div class="card-title">Embed a Pay Button</div><div style="font-size:12px;color:var(--gray-400,#94a3b8)">Paste into any website or blog — no account needed for your customers</div></div>' +
+      '</div>' +
+      '<div id="so-embed-body">' + loading() + '</div>' +
+    '</div>';
+
+  // Load active payment links for embed section
+  try {
+    var res = await apiFetch('/payment-links');
+    var links = (res && res.data)
+      ? res.data.filter(function(l){ return l.status === 'active' && !l.batch_id && !l.recipient_email; })
+      : [];
+    var embedEl = document.getElementById('so-embed-body');
+    if (!embedEl) return;
+    if (!links.length) {
+      embedEl.innerHTML = '<p style="color:var(--gray-400,#94a3b8);font-size:13px;padding:4px 0">Create an active payment link first — each one gets its own embeddable button here.</p>';
+      return;
+    }
+    embedEl.innerHTML = links.map(function(l) {
+      var snippet = '<a href="' + _escA(l.url) + '" target="_blank" style="display:inline-block;background:#1a2744;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-family:sans-serif;font-size:15px;font-weight:600">Pay Now</a>';
+      var snipId = 'so-snip-' + _escA(l.slug);
+      return '<div style="border:1px solid var(--gray-200,#e2e8f0);border-radius:8px;padding:12px;margin-bottom:10px">' +
+        '<div style="font-weight:600;margin-bottom:8px">' + _escA(l.title) +
+          (l.amount_major ? ' &mdash; &#8358;' + Number(l.amount_major).toLocaleString('en-NG') : ' <span style="color:var(--gray-400,#94a3b8);font-weight:400">(open amount)</span>') +
+        '</div>' +
+        '<div style="margin-bottom:6px"><span class="badge badge-gray" style="font-size:10px">Preview</span>&nbsp;' +
+          '<a href="' + _escA(l.url) + '" target="_blank" style="display:inline-block;background:#1a2744;color:#fff;padding:6px 16px;border-radius:6px;text-decoration:none;font-family:sans-serif;font-size:13px;font-weight:600">Pay Now</a>' +
+        '</div>' +
+        '<textarea class="form-input" id="' + snipId + '" rows="2" style="font-size:11px;font-family:monospace;resize:none">' + snippet.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>' +
+        '<div style="margin-top:6px;display:flex;gap:6px;align-items:center">' +
+          '<button class="btn btn-outline btn-sm" onclick="solCopy(\'' + snipId + '\',this)">Copy code</button>' +
+          '<span style="font-size:11px;color:var(--gray-400,#94a3b8)">Paste into any website HTML</span>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  } catch(e) {
+    var embedFail = document.getElementById('so-embed-body');
+    if (embedFail) embedFail.innerHTML = '<p style="color:var(--red,#ef4444)">Could not load payment links: ' + _escA(e.message) + '</p>';
+  }
+}
+
+function _solChannelHtml(ch) {
+  var steps = {
+    instagram: [
+      'Open Instagram and go to your <strong>Profile</strong>',
+      'Tap <strong>Edit Profile</strong> &rarr; <strong>Website</strong>',
+      'Paste your store link above and tap <strong>Done</strong>',
+      'Customers tap the link in your bio to browse &amp; pay you instantly',
+    ],
+    whatsapp: [
+      'Open WhatsApp Business &rarr; <strong>Settings &rarr; Business Profile</strong>',
+      'Add your store link to the <strong>Website</strong> or <strong>Description</strong> field',
+      'You can also paste the link directly into any customer chat',
+      'For WhatsApp Status: share as text with a payment callout ("Tap to pay: [link]")',
+    ],
+    website: [
+      'Copy your store link from the field above',
+      'Add it as a hyperlink or button on your site, Linktree, Carrd, or any link-in-bio page',
+      'Or use the <strong>Embed Pay Button</strong> section below for a styled HTML button you can drop straight into your website code',
+    ],
+    tiktok: [
+      'Open TikTok and tap <strong>Edit Profile</strong>',
+      'Tap <strong>Add Website</strong> (requires a TikTok Business account or 1 000+ followers)',
+      'Paste your store link and save',
+      'Mention the link in your videos: &ldquo;Link in bio to pay&rdquo;',
+    ],
+  };
+  var list = (steps[ch] || []).map(function(s, i) {
+    return '<li style="display:flex;gap:10px;margin-bottom:10px;font-size:13px">' +
+      '<span style="flex-shrink:0;width:22px;height:22px;background:var(--navy,#1a2744);color:#fff;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">' + (i+1) + '</span>' +
+      '<span>' + s + '</span></li>';
+  }).join('');
+  return '<ul style="list-style:none;padding:0;margin:0">' + list + '</ul>';
+}
+
+function solShowChannel(ch, btn) {
+  var steps = document.getElementById('so-channel-steps');
+  if (steps) steps.innerHTML = _solChannelHtml(ch);
+  var tabs = document.getElementById('so-ch-tabs');
+  if (tabs) tabs.querySelectorAll('button').forEach(function(b) {
+    b.className = 'btn btn-sm ' + (b === btn ? 'btn-lime' : 'btn-outline');
+  });
+}
+
+function solCopy(id, btn) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var text = (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') ? el.value : el.textContent;
+  var label = btn.textContent;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function() {
+      btn.textContent = 'Copied!'; setTimeout(function() { btn.textContent = label; }, 1500);
+    });
+  } else {
+    el.select(); document.execCommand('copy');
+    btn.textContent = 'Copied!'; setTimeout(function() { btn.textContent = label; }, 1500);
+  }
 }
 
 // ── QR CODES tab — scan-to-pay codes (shares the Invoice & Collect /invoicing/qr API) ──
@@ -7169,6 +7335,7 @@ loadPageData = function(page) {
     case 'wallets':              loadWallets(); break;
     case 'product_revenue':      loadProductRevenue(); break;
     case 'merch_payments':       loadMerchPaymentLinks(); break;
+    case 'merch_sell_online':    loadMerchSellOnline(); break;
     // Staff Accounts: app.js renderUserManagement() (full permission matrix +
     // per-user Permissions modal) already rendered & scheduled loadUsers(); do
     // not overwrite with the simpler role-only table. (#7)
