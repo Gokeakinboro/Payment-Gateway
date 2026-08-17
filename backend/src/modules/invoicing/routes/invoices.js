@@ -6,6 +6,7 @@ const { ok, fail, created, notFound } = require('../../../utils/helpers');
 const { nextInvoiceNumber } = require('../services/invoiceNumber');
 const { sendInvoice } = require('../services/invoiceSend');
 const { renderQrForUrl } = require('../services/qrService');
+const { notifyInvoice, isConfigured: waConfigured } = require('../../../services/whatsappService');
 
 router.use(tenantAuth);
 
@@ -195,6 +196,35 @@ router.get('/:id/share', async (req, res, next) => {
     }
     const img = await renderQrForUrl(url);
     return ok(res, { link_url: url, qr_png: img.pngDataUrl });
+  } catch (e) { next(e); }
+});
+
+// ── Share an invoice link directly via WhatsApp ──────────────────────────────
+router.post('/:id/share-whatsapp', async (req, res, next) => {
+  try {
+    if (!waConfigured()) return fail(res, 'WhatsApp is not configured', 'WA_NOT_CONFIGURED', 503);
+    const phone = String((req.body && req.body.phone) || '').trim();
+    if (!phone) return fail(res, 'A recipient phone number is required');
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT i.access_token, i.invoice_number, i.total_amount::text AS total_amount, i.currency,
+              i.recipient_name, m.business_name, m.id::text AS merchant_id
+         FROM inv_invoices i JOIN merchants m ON m.id = i.merchant_id
+        WHERE i.id=$1::uuid AND i.merchant_id=$2::uuid`, req.params.id, req.invTenant.merchantId);
+    if (!rows.length) return notFound(res, 'Invoice');
+    const r = rows[0];
+    const result = await notifyInvoice({
+      phone,
+      recipientName: r.recipient_name || null,
+      businessName: r.business_name,
+      invoiceNumber: r.invoice_number,
+      amount: Number(r.total_amount),
+      currency: r.currency || 'NGN',
+      payUrl: `${CHECKOUT_BASE}/invoice.html?t=${r.access_token}`,
+      merchantId: r.merchant_id,
+    });
+    if (result.skipped) return fail(res, 'WhatsApp send skipped — check template or token', 'WA_SKIPPED', 503);
+    if (!result.ok) return fail(res, 'WhatsApp send failed', 'WA_SEND_FAILED', 502);
+    return ok(res, { sent: true }, `Invoice shared via WhatsApp to ${phone}`);
   } catch (e) { next(e); }
 });
 

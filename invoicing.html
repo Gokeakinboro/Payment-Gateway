@@ -133,7 +133,8 @@ async function api(path, opts={}) {
 }
 
 const TABS = [
-  ['invoices','Invoices'], ['items','Items'], ['contacts','Contacts'], ['lists','Lists'],
+  ['invoices','Invoices'], ['items','Items'], ['qr','QR Codes'], ['paylinks','Pay Links'],
+  ['contacts','Contacts'], ['lists','Lists'],
   ['format','Invoice Format'], ['departments','Departments'], ['reports','Reports'],
 ];
 let active = 'invoices';
@@ -141,7 +142,7 @@ function renderTabs(){
   el('tabs').innerHTML = TABS.map(([k,l])=>`<button class="tab ${k===active?'active':''}" onclick="go('${k}')">${l}</button>`).join('');
 }
 function go(k){ active=k; renderTabs(); render(); }
-function render(){ ({invoices:tInvoices,items:tItems,qr:tQr,contacts:tContacts,lists:tLists,format:tFormat,departments:tDepartments,reports:tReports}[active])(); }
+function render(){ ({invoices:tInvoices,items:tItems,qr:tQr,paylinks:tPayLinks,contacts:tContacts,lists:tLists,format:tFormat,departments:tDepartments,reports:tReports}[active])(); }
 
 // Departments cache (incl. service-charge config) for the session.
 let DEPTS = [];
@@ -306,8 +307,18 @@ async function shareInv(id){
   el('i_msg').innerHTML = `Share link: <a href="${r.data.link_url}" target="_blank">${esc(r.data.link_url)}</a>
     <button class="mini" onclick="copyShare('${r.data.link_url}')">Copy</button>
     <a class="mini" href="/api/v1/invoicing/invoices/${id}/share?format=png" target="_blank">QR PNG</a>
-    <div style="margin-top:6px"><img src="${r.data.qr_png}" alt="Invoice QR" style="width:150px;height:150px"></div>`;
+    <div style="margin-top:6px"><img src="${r.data.qr_png}" alt="Invoice QR" style="width:150px;height:150px"></div>
+    <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="inv_wa_phone_${id}" placeholder="Phone for WhatsApp (e.g. 0801234567)" style="flex:1;min-width:180px;max-width:260px;padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px">
+      <button class="btn" style="padding:7px 14px;margin-top:0;font-size:13px" onclick="shareInvWa('${id}')">Send via WhatsApp</button>
+    </div>`;
   window.scrollTo(0,0);
+}
+async function shareInvWa(id){
+  const inp=el('inv_wa_phone_'+id); if(!inp) return;
+  const phone=inp.value.trim(); if(!phone){inp.focus();return;}
+  const r=await api(`/invoices/${id}/share-whatsapp`,{method:'POST',body:JSON.stringify({phone})});
+  showBanner(r.message||'Sent',r.status?'ok':'err');
 }
 // Edit an unpaid invoice — load it into the form and switch Create → Save changes.
 let _editInvId=null;
@@ -516,6 +527,7 @@ async function loadQr(){
       <td><a href="${q.pay_url}" target="_blank">open</a></td>
       <td class="right"><a class="mini" href="${q.image_png}">PNG</a><a class="mini" href="${q.image_svg}">SVG</a>
         <button class="mini" onclick="copyShare('${q.pay_url}')">Copy link</button>
+        <button class="mini" style="background:#25d366;color:#fff;border-color:#25d366" onclick="shareQrWa('${q.id}')">WA</button>
         <button class="mini" onclick="toggleQr('${q.id}',${!q.is_active})">${q.is_active?'Disable':'Enable'}</button></td></tr>`).join('')+`</table>`;
 }
 // QR catalogue item picker (fixed QR only; items set the amount, backend re-computes).
@@ -562,7 +574,41 @@ async function createQr(){
   if(r.status){ el('q_items').innerHTML=''; el('q_catalog').innerHTML=''; el('q_search').value=''; el('q_amt').value=''; el('q_amt').readOnly=false; loadQr(); }
 }
 async function toggleQr(id,act){ const r=await api(`/qr/${id}`,{method:'PATCH',body:JSON.stringify({is_active:act})}); if(r.status) loadQr(); }
+async function shareQrWa(id){
+  const phone=prompt('WhatsApp number to send this QR to (e.g. 0801234567):'); if(!phone) return;
+  const r=await api(`/qr/${id}/share-whatsapp`,{method:'POST',body:JSON.stringify({phone})});
+  showBanner(r.message||'Sent',r.status?'ok':'err');
+}
 function copyShare(u){ navigator.clipboard.writeText(u).then(()=>alert('Payment link copied:\n'+u)); }
+
+// ── PAY LINKS ─────────────────────────────────────────────
+async function tPayLinks(){
+  el('main').innerHTML=`
+   <div class="card"><h2>Payment links</h2>
+     <p class="muted" style="margin-bottom:12px">Create itemized payment links from the API or from the Payment Links section in your Dashboard. Links you've created appear below with options to copy and share via WhatsApp.</p>
+     <div id="pl_list" class="muted">Loading…</div>
+   </div>`;
+  loadPayLinks();
+}
+async function loadPayLinks(){
+  const r=await api('/links'); if(!r.status){el('pl_list').innerHTML=`<span class="msg err">${r.message}</span>`;return;}
+  if(!r.data||!r.data.length){el('pl_list').innerHTML='<span class="muted">No payment links yet. Create one from your Dashboard or the invoicing API.</span>';return;}
+  el('pl_list').innerHTML=`<table><tr><th>Title</th><th class="right">Amount</th><th>Expires</th><th>Active</th><th></th></tr>`+
+    r.data.map(lk=>`<tr>
+      <td>${esc(lk.title)}</td>
+      <td class="right">${lk.amount===null?'Open':ngn(lk.amount)}</td>
+      <td>${lk.expires_at?new Date(lk.expires_at).toLocaleDateString('en-NG'):'—'}</td>
+      <td>${lk.is_active?'Yes':'No'}</td>
+      <td class="right" style="white-space:nowrap">
+        <button class="mini" onclick="copyShare('${esc(lk.pay_url)}')">Copy</button>
+        <button class="mini" style="background:#25d366;color:#fff;border-color:#25d366" onclick="shareLinkWa('${lk.id}','${esc(lk.title.replace(/'/g,''))}')">WA</button>
+      </td></tr>`).join('')+`</table>`;
+}
+async function shareLinkWa(id, title){
+  const phone=prompt('WhatsApp number to send "'+(title||'this link')+'" to (e.g. 0801234567):'); if(!phone) return;
+  const r=await api(`/links/${id}/share-whatsapp`,{method:'POST',body:JSON.stringify({phone})});
+  showBanner(r.message||'Sent',r.status?'ok':'err');
+}
 
 // ── CONTACTS ─────────────────────────────────────────────
 async function tContacts(){
