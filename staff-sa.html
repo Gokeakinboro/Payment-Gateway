@@ -91,8 +91,10 @@ input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);b
     <div class="sb-logo">Pay<span>lode</span> <small style="font-size:10px;opacity:.5">CRM SA</small></div>
     <div class="sb-section">CRM</div>
     <a href="#" class="sb-link active" onclick="showTab('clients',this)"><i data-lucide="users"></i> All Clients</a>
+    <a href="#" class="sb-link" onclick="showTab('prospects',this)"><i data-lucide="user-search"></i> Prospects</a>
     <a href="#" class="sb-link" onclick="showTab('leaderboard',this)"><i data-lucide="trophy"></i> Leaderboard</a>
     <a href="#" class="sb-link" onclick="showTab('staff',this)"><i data-lucide="user-check"></i> Staff</a>
+    <a href="#" class="sb-link" onclick="showTab('fields',this)"><i data-lucide="sliders-horizontal"></i> Custom Fields</a>
     <div class="sb-section">Links</div>
     <a href="dashboard.html" class="sb-link"><i data-lucide="layout-dashboard"></i> Dashboard</a>
     <a href="staff.html" class="sb-link"><i data-lucide="briefcase"></i> My CRM view</a>
@@ -131,6 +133,25 @@ input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);b
         </div>
       </div>
 
+      <!-- ── PROSPECTS (SA view) ────────────────────────── -->
+      <div class="tab-pane" id="tab-prospects">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="card-title" style="margin:0">All Prospects</div>
+          </div>
+          <div class="search-bar">
+            <input type="text" id="saProspectSearch" placeholder="Search name, phone…" oninput="debSAProspectSearch()">
+            <select id="saOfficerProspFilter" onchange="loadSAProspects()"><option value="">All officers</option></select>
+            <select id="saProspStageFilter" onchange="loadSAProspects()">
+              <option value="">All stages</option>
+              <option value="prospect">Prospect</option><option value="engaged">Engaged</option>
+              <option value="onboarded">Onboarded</option><option value="active">Active</option><option value="churned">Churned</option>
+            </select>
+          </div>
+          <div id="saProspectList"><div class="muted">Loading…</div></div>
+        </div>
+      </div>
+
       <!-- ── LEADERBOARD ─────────────────────────────────── -->
       <div class="tab-pane" id="tab-leaderboard">
         <div class="card">
@@ -139,6 +160,18 @@ input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);b
             <input type="month" id="lbMonth" onchange="loadLeaderboard()" style="width:160px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px">
           </div>
           <div id="leaderboardTable"><div class="muted">Loading…</div></div>
+        </div>
+      </div>
+
+      <!-- ── CUSTOM FIELDS ──────────────────────────────── -->
+      <div class="tab-pane" id="tab-fields">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="card-title" style="margin:0">Custom CRM Fields</div>
+            <button class="btn btn-lime" onclick="openAddField()"><i data-lucide="plus" style="width:13px;height:13px"></i> Add field</button>
+          </div>
+          <div class="msg" id="fieldsMsg"></div>
+          <div id="fieldDefList"><div class="muted">Loading…</div></div>
         </div>
       </div>
 
@@ -171,6 +204,41 @@ input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);b
           <div class="msg" id="bulkMsg"></div>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD FIELD MODAL ────────────────────────────────────────────── -->
+<div class="modal-overlay" id="addFieldModal">
+  <div class="modal">
+    <h3>Add custom field</h3>
+    <div class="msg" id="addFieldMsg"></div>
+    <div style="margin-bottom:10px"><label>Field label (shown to staff)</label><input type="text" id="af-label" placeholder="e.g. Decision Maker"></div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Type</label>
+        <select id="af-type" onchange="toggleAfOptions()">
+          <option value="text">Text</option><option value="number">Number</option>
+          <option value="date">Date</option><option value="select">Dropdown (select)</option>
+          <option value="boolean">Yes/No</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Sort order</label>
+        <input type="number" id="af-sort" value="99" min="1" max="999">
+      </div>
+    </div>
+    <div id="af-options-group" style="display:none;margin-bottom:10px">
+      <label>Options (one per line)</label>
+      <textarea id="af-options" style="min-height:80px" placeholder="Option 1&#10;Option 2&#10;Option 3"></textarea>
+    </div>
+    <div style="margin-bottom:16px;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="af-required" style="width:auto">
+      <label for="af-required" style="text-transform:none;font-size:13px">Required field</label>
+    </div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-lime" onclick="createField()">Create</button>
+      <button class="btn btn-out" onclick="document.getElementById('addFieldModal').classList.remove('show')">Cancel</button>
     </div>
   </div>
 </div>
@@ -281,7 +349,7 @@ async function apiFetch(path,opts){
 }
 function gMsg(ok,t){var m=document.getElementById('globalMsg');m.className='msg '+(ok?'ok':'err');m.textContent=t;}
 
-var tabTitles={clients:'All Clients',leaderboard:'Monthly Leaderboard',staff:'Staff'};
+var tabTitles={clients:'All Clients',prospects:'Prospects',leaderboard:'Monthly Leaderboard',staff:'Staff',fields:'Custom CRM Fields'};
 function showTab(name,el){
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.sb-link').forEach(a=>a.classList.remove('active'));
@@ -290,6 +358,8 @@ function showTab(name,el){
   document.getElementById('topbarTitle').textContent=tabTitles[name]||name;
   if(name==='leaderboard')loadLeaderboard();
   if(name==='staff'){loadStaff();populateBulkDrops();}
+  if(name==='prospects')loadSAProspects();
+  if(name==='fields')loadFieldDefs();
 }
 
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('sbOverlay').classList.toggle('show');}
@@ -305,10 +375,10 @@ async function loadStaffForDropdowns(){
   var r=await apiFetch('/staff/admin/staff-list');
   if(!r.ok)return;
   staffList=r.data||[];
-  var officerSel=document.getElementById('officerFilter');
-  staffList.forEach(s=>{
-    var o=new Option(s.first_name+' '+s.last_name,s.id);
-    officerSel.appendChild(o);
+  ['officerFilter','saOfficerProspFilter'].forEach(selId=>{
+    var officerSel=document.getElementById(selId);
+    if(!officerSel)return;
+    staffList.forEach(s=>{officerSel.appendChild(new Option(s.first_name+' '+s.last_name,s.id));});
   });
 }
 
@@ -514,6 +584,74 @@ async function loadHistory(){
       <td>${esc(h.by_name||'—')}</td>
       <td>${esc(h.reason||'—')}</td>
     </tr>`).join('')+'</tbody></table>';
+}
+
+// ── SA Prospects ──────────────────────────────────────────────────────────
+var saProspTimer=null;
+function debSAProspectSearch(){clearTimeout(saProspTimer);saProspTimer=setTimeout(loadSAProspects,350);}
+
+async function loadSAProspects(){
+  var s=document.getElementById('saProspectSearch').value.trim();
+  var off=document.getElementById('saOfficerProspFilter').value;
+  var st=document.getElementById('saProspStageFilter').value;
+  var q='?';
+  if(s)q+='search='+encodeURIComponent(s)+'&';
+  if(st)q+='stage='+encodeURIComponent(st)+'&';
+  var r=await apiFetch('/staff/prospects'+q);
+  var el=document.getElementById('saProspectList');
+  if(!r.ok){el.innerHTML='<div class="muted">Could not load.</div>';return;}
+  if(!r.data||!r.data.length){el.innerHTML='<div class="muted">No prospects found.</div>';return;}
+  el.innerHTML='<table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Officer</th><th>Stage</th><th>Last Engaged</th></tr></thead><tbody>'+
+    r.data.filter(p=>!off||p.account_officer_id===off).map(p=>`<tr>
+      <td><strong>${esc(p.business_name)}</strong>${p.address?'<br><small style="color:var(--gray)">'+esc(p.address)+'</small>':''}</td>
+      <td>${esc(p.contact_name||'—')}</td>
+      <td>${esc(p.phone||'—')}</td>
+      <td>${p.officer_name?esc(p.officer_name):'<em style="color:var(--gray)">Unassigned</em>'}</td>
+      <td><span class="pill ${esc(p.pipeline_stage)}">${esc(p.pipeline_stage)}</span></td>
+      <td>${fmtDate(p.last_engaged_at)}</td>
+    </tr>`).join('')+'</tbody></table>';
+}
+
+// ── Custom field definitions (SA manage) ─────────────────────────────────
+async function loadFieldDefs(){
+  var r=await apiFetch('/staff/fields');
+  var el=document.getElementById('fieldDefList');
+  if(!r.ok){el.innerHTML='<div class="muted">Could not load.</div>';return;}
+  if(!r.data.length){el.innerHTML='<div class="muted">No fields defined yet.</div>';return;}
+  el.innerHTML='<table><thead><tr><th>#</th><th>Label</th><th>Type</th><th>Required</th><th>Status</th><th></th></tr></thead><tbody>'+
+    r.data.map(f=>`<tr>
+      <td>${f.sort_order}</td>
+      <td><strong>${esc(f.label)}</strong><br><small style="color:var(--gray)">${esc(f.field_key)}</small></td>
+      <td><span class="pill ${f.field_type==='select'?'engaged':f.field_type==='date'?'onboarded':'prospect'}">${esc(f.field_type)}</span></td>
+      <td>${f.required?'<span class="pill active">Yes</span>':'<span style="color:var(--gray)">No</span>'}</td>
+      <td>${f.is_active?'<span class="pill active">Active</span>':'<span class="pill churned">Hidden</span>'}</td>
+      <td>
+        <button class="btn btn-sm ${f.is_active?'btn-out btn-red':'btn-lime'}" onclick="toggleField('${esc(f.id)}',${f.is_active})">${f.is_active?'Hide':'Show'}</button>
+      </td>
+    </tr>`).join('')+'</tbody></table>';
+}
+
+function openAddField(){document.getElementById('addFieldModal').classList.add('show');}
+function toggleAfOptions(){document.getElementById('af-options-group').style.display=document.getElementById('af-type').value==='select'?'block':'none';}
+
+async function createField(){
+  var label=document.getElementById('af-label').value.trim();
+  var field_type=document.getElementById('af-type').value;
+  var sort_order=parseInt(document.getElementById('af-sort').value)||99;
+  var required=document.getElementById('af-required').checked;
+  var rawOpts=document.getElementById('af-options').value.trim();
+  var options=field_type==='select'&&rawOpts?rawOpts.split('\n').map(s=>s.trim()).filter(Boolean):null;
+  var r=await apiFetch('/staff/fields',{method:'POST',body:{label,field_type,sort_order,required,options}});
+  var m=document.getElementById('addFieldMsg');
+  m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?'Field created':(r.message||'Failed');
+  if(r.ok){document.getElementById('addFieldModal').classList.remove('show');loadFieldDefs();}
+}
+
+async function toggleField(id,isActive){
+  var r=await apiFetch('/staff/fields/'+id,{method:'PATCH',body:{is_active:!isActive}});
+  var m=document.getElementById('fieldsMsg');
+  m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?'Updated':(r.message||'Failed');
+  if(r.ok)loadFieldDefs();
 }
 
 lucide.createIcons();

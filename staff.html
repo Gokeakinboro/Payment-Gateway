@@ -99,6 +99,7 @@ textarea{resize:vertical;min-height:70px}
     <div class="sb-logo">Pay<span>lode</span></div>
     <div class="sb-section">CRM</div>
     <a href="#" class="sb-link active" onclick="showTab('clients',this)"><i data-lucide="users"></i> My Clients</a>
+    <a href="#" class="sb-link" onclick="showTab('prospects',this)"><i data-lucide="user-search"></i> Prospects</a>
     <a href="#" class="sb-link" onclick="showTab('search',this)"><i data-lucide="search"></i> Find / Onboard</a>
     <a href="#" class="sb-link" onclick="showTab('performance',this)"><i data-lucide="bar-chart-2"></i> Performance</a>
     <div class="sb-section">Account</div>
@@ -136,6 +137,28 @@ textarea{resize:vertical;min-height:70px}
             </select>
           </div>
           <div id="clientList"><div class="muted">Loading…</div></div>
+        </div>
+      </div>
+
+      <!-- ── PROSPECTS ──────────────────────────────────────────── -->
+      <div class="tab-pane" id="tab-prospects">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="card-title" style="margin:0">Prospects</div>
+            <button class="btn btn-lime" onclick="openProspectDrawer(null)"><i data-lucide="user-plus" style="width:13px;height:13px"></i> Add prospect</button>
+          </div>
+          <div class="search-bar">
+            <input type="text" id="prospectSearch" placeholder="Search name, phone…" oninput="debProspectSearch()">
+            <select id="prospectStageFilter" onchange="loadProspects()">
+              <option value="">All stages</option>
+              <option value="prospect">Prospect</option>
+              <option value="engaged">Engaged</option>
+              <option value="onboarded">Onboarded</option>
+              <option value="active">Active</option>
+              <option value="churned">Churned</option>
+            </select>
+          </div>
+          <div id="prospectList"><div class="muted">Loading…</div></div>
         </div>
       </div>
 
@@ -186,6 +209,7 @@ textarea{resize:vertical;min-height:70px}
     <div class="tabs" id="drawerTabs">
       <button class="tab-btn active" onclick="dTab('overview',this)">Overview</button>
       <button class="tab-btn" onclick="dTab('engagements',this)">Engagements</button>
+      <button class="tab-btn" onclick="dTab('fields',this)">Custom Fields</button>
       <button class="tab-btn" onclick="dTab('transactions',this)">Transactions</button>
       <button class="tab-btn" onclick="dTab('settlements',this)">Settlements</button>
     </div>
@@ -271,9 +295,77 @@ textarea{resize:vertical;min-height:70px}
       <div id="txnList"><div class="muted">Loading…</div></div>
     </div>
 
+    <!-- Custom Fields -->
+    <div id="dtab-fields" style="display:none">
+      <div id="fieldsList"><div class="muted">Loading…</div></div>
+      <button class="btn btn-lime" style="margin-top:12px" onclick="saveCustomFields()">Save fields</button>
+    </div>
+
     <!-- Settlements -->
     <div id="dtab-settlements" style="display:none">
       <div id="stlList"><div class="muted">Loading…</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── PROSPECT DRAWER ──────────────────────────────────────────────── -->
+<div class="drawer-overlay" id="prospectsDrawerOverlay" onclick="closeProspectDrawer()"></div>
+<div class="drawer" id="prospectDrawer">
+  <div class="drawer-head">
+    <div>
+      <div style="font-weight:700;font-size:15px" id="pdTitle">Prospect</div>
+      <div style="font-size:12px;color:var(--gray)" id="pdSub"></div>
+    </div>
+    <button class="btn btn-out btn-sm" onclick="closeProspectDrawer()">Close</button>
+  </div>
+  <div class="drawer-body">
+    <div class="tabs">
+      <button class="tab-btn active" onclick="pdTab('info',this)">Info</button>
+      <button class="tab-btn" onclick="pdTab('engagements',this)">Engagements</button>
+      <button class="tab-btn" onclick="pdTab('fields',this)">Custom Fields</button>
+    </div>
+    <div class="msg" id="pdMsg"></div>
+
+    <div id="pdtab-info">
+      <div class="form-row">
+        <div class="form-group"><label>Name</label><input type="text" id="pd-bname"></div>
+        <div class="form-group"><label>Stage</label>
+          <select id="pd-stage">
+            <option value="prospect">Prospect</option><option value="engaged">Engaged</option>
+            <option value="onboarded">Onboarded</option><option value="active">Active</option><option value="churned">Churned</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Contact person</label><input type="text" id="pd-contact"></div>
+        <div class="form-group"><label>Phone</label><input type="text" id="pd-phone"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Email</label><input type="email" id="pd-email"></div>
+        <div class="form-group"><label>Address</label><input type="text" id="pd-address"></div>
+      </div>
+      <div style="margin-bottom:12px"><label>Notes</label><textarea id="pd-notes" style="min-height:60px"></textarea></div>
+      <button class="btn btn-lime" onclick="saveProspect()">Save</button>
+    </div>
+
+    <div id="pdtab-engagements" style="display:none">
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title">Log engagement</div>
+        <div class="form-row">
+          <div class="form-group"><label>Type</label>
+            <select id="peng-type"><option value="call">Call</option><option value="visit">Visit</option><option value="email">Email</option><option value="whatsapp">WhatsApp</option><option value="demo">Demo</option><option value="other">Other</option></select>
+          </div>
+          <div class="form-group"><label>Date</label><input type="datetime-local" id="peng-date"></div>
+        </div>
+        <div style="margin-bottom:10px"><label>Notes</label><textarea id="peng-notes"></textarea></div>
+        <button class="btn btn-lime" onclick="logProspectEngagement()">Log</button>
+      </div>
+      <div id="pEngList"><div class="muted">Loading…</div></div>
+    </div>
+
+    <div id="pdtab-fields" style="display:none">
+      <div id="pFieldsList"><div class="muted">Loading…</div></div>
+      <button class="btn btn-lime" style="margin-top:12px" onclick="savePFields()">Save fields</button>
     </div>
   </div>
 </div>
@@ -317,7 +409,7 @@ function toggleSidebar(){document.getElementById('sidebar').classList.toggle('op
 function closeSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('sbOverlay').classList.remove('show');}
 
 // ── Tab switching ─────────────────────────────────────────────────────────
-var tabTitles={clients:'My Clients',search:'Find / Onboard',performance:'Performance'};
+var tabTitles={clients:'My Clients',prospects:'Prospects',search:'Find / Onboard',performance:'Performance'};
 function showTab(name,el){
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.sb-link').forEach(a=>a.classList.remove('active'));
@@ -325,6 +417,7 @@ function showTab(name,el){
   if(el)el.classList.add('active');
   document.getElementById('topbarTitle').textContent=tabTitles[name]||name;
   if(name==='performance')loadPerf();
+  if(name==='prospects')loadProspects();
 }
 
 // ── Clients list ─────────────────────────────────────────────────────────
@@ -403,16 +496,15 @@ async function openDrawer(id,name){
 function closeDrawer(){document.getElementById('clientDrawer').classList.remove('open');document.getElementById('drawerOverlay').classList.remove('show');currentMerchantId=null;}
 
 function dTab(name,el){
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('#drawerTabs .tab-btn').forEach(b=>b.classList.remove('active'));
   if(el)el.classList.add('active');
-  document.getElementById('dtab-overview').style.display='none';
-  document.getElementById('dtab-engagements').style.display='none';
-  document.getElementById('dtab-transactions').style.display='none';
-  document.getElementById('dtab-settlements').style.display='none';
-  document.getElementById('dtab-'+name).style.display='block';
+  ['overview','engagements','fields','transactions','settlements'].forEach(t=>{
+    document.getElementById('dtab-'+t).style.display=t===name?'block':'none';
+  });
   if(name==='engagements')loadEngagements();
   if(name==='transactions')loadTxns();
   if(name==='settlements')loadStls();
+  if(name==='fields')loadCustomFields();
 }
 
 function toggleOffRamp(){var s=document.getElementById('d-stage').value;document.getElementById('offRampGroup').style.display=s==='churned'?'':'none';}
@@ -527,6 +619,159 @@ async function loadPerf(){
 }
 
 function logout(){sessionStorage.clear();location.href='/login.html';}
+
+// ── Prospects ─────────────────────────────────────────────────────────────
+var pSearchTimer=null;
+var currentProspectId=null;
+function debProspectSearch(){clearTimeout(pSearchTimer);pSearchTimer=setTimeout(loadProspects,350);}
+
+async function loadProspects(){
+  var s=document.getElementById('prospectSearch').value.trim();
+  var st=document.getElementById('prospectStageFilter').value;
+  var q='?';
+  if(s)q+='search='+encodeURIComponent(s)+'&';
+  if(st)q+='stage='+encodeURIComponent(st)+'&';
+  var r=await apiFetch('/staff/prospects'+q);
+  var el=document.getElementById('prospectList');
+  if(!r.ok){el.innerHTML='<div class="muted">Could not load.</div>';return;}
+  if(!r.data.length){el.innerHTML='<div class="muted">No prospects. Add one above.</div>';return;}
+  el.innerHTML='<table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Stage</th><th>Last Engaged</th><th></th></tr></thead><tbody>'+
+    r.data.map(p=>`<tr>
+      <td><strong>${esc(p.business_name)}</strong>${p.address?'<br><small style="color:var(--gray)">'+esc(p.address)+'</small>':''}</td>
+      <td>${esc(p.contact_name||'—')}</td>
+      <td>${esc(p.phone||'—')}</td>
+      <td><span class="pill ${esc(p.pipeline_stage)}">${esc(p.pipeline_stage)}</span></td>
+      <td>${fmtDate(p.last_engaged_at)}</td>
+      <td><button class="btn btn-sm btn-out" onclick="openProspectDrawer('${esc(p.id)}','${esc(p.business_name).replace(/'/g,'')}')">Open</button></td>
+    </tr>`).join('')+'</tbody></table>';
+}
+
+async function openProspectDrawer(id,name){
+  currentProspectId=id;
+  var isNew=!id;
+  document.getElementById('pdTitle').textContent=isNew?'New prospect':name||'Prospect';
+  document.getElementById('pdSub').textContent=isNew?'Fill in details below':'';
+  document.getElementById('pdMsg').className='msg';
+  document.getElementById('prospectDrawer').classList.add('open');
+  document.getElementById('prospectsDrawerOverlay').classList.add('show');
+  pdTab('info',document.querySelector('#prospectDrawer .tab-btn'));
+  // Clear form
+  ['pd-bname','pd-contact','pd-phone','pd-email','pd-address','pd-notes'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('pd-stage').value='prospect';
+  if(id){
+    var r=await apiFetch('/staff/prospects/'+id);
+    if(r.ok&&r.data){
+      var p=r.data;
+      document.getElementById('pd-bname').value=p.business_name||'';
+      document.getElementById('pd-contact').value=p.contact_name||'';
+      document.getElementById('pd-phone').value=p.phone||'';
+      document.getElementById('pd-email').value=p.email||'';
+      document.getElementById('pd-address').value=p.address||'';
+      document.getElementById('pd-notes').value=p.notes||'';
+      document.getElementById('pd-stage').value=p.pipeline_stage||'prospect';
+    }
+  }
+}
+function closeProspectDrawer(){document.getElementById('prospectDrawer').classList.remove('open');document.getElementById('prospectsDrawerOverlay').classList.remove('show');currentProspectId=null;}
+
+function pdTab(name,el){
+  document.querySelectorAll('#prospectDrawer .tab-btn').forEach(b=>b.classList.remove('active'));
+  if(el)el.classList.add('active');
+  ['info','engagements','fields'].forEach(t=>{document.getElementById('pdtab-'+t).style.display=t===name?'block':'none';});
+  if(name==='engagements')loadPEngagements();
+  if(name==='fields')loadPFields();
+}
+
+async function saveProspect(){
+  var body={business_name:document.getElementById('pd-bname').value.trim(),contact_name:document.getElementById('pd-contact').value.trim()||null,phone:document.getElementById('pd-phone').value.trim()||null,email:document.getElementById('pd-email').value.trim()||null,address:document.getElementById('pd-address').value.trim()||null,notes:document.getElementById('pd-notes').value.trim()||null,pipeline_stage:document.getElementById('pd-stage').value};
+  var m=document.getElementById('pdMsg');
+  if(!body.business_name){m.className='msg err';m.textContent='Name is required';return;}
+  var r;
+  if(currentProspectId){
+    r=await apiFetch('/staff/prospects/'+currentProspectId,{method:'PATCH',body});
+  }else{
+    r=await apiFetch('/staff/prospects',{method:'POST',body});
+    if(r.ok&&r.data)currentProspectId=r.data.id;
+  }
+  m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?'Saved':(r.message||'Failed');
+  if(r.ok)loadProspects();
+}
+
+async function loadPEngagements(){
+  if(!currentProspectId)return;
+  var r=await apiFetch('/staff/prospects/'+currentProspectId+'/engagements');
+  var el=document.getElementById('pEngList');
+  if(!r.ok||!r.data.length){el.innerHTML='<div class="muted">No engagements yet.</div>';return;}
+  el.innerHTML=r.data.map(e=>`<div style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:8px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="eng-badge ${esc(e.type)}">${esc(e.type)}</span><span style="font-size:11px;color:var(--gray)">${fmtDT(e.engaged_at)}</span></div>${e.notes?`<div style="font-size:13px">${esc(e.notes)}</div>`:''}</div>`).join('');
+}
+function setPEngDateTime(){var now=new Date();now.setMinutes(now.getMinutes()-now.getTimezoneOffset());document.getElementById('peng-date').value=now.toISOString().slice(0,16);}
+setPEngDateTime();
+async function logProspectEngagement(){
+  if(!currentProspectId)return;
+  var r=await apiFetch('/staff/prospects/'+currentProspectId+'/engagements',{method:'POST',body:{type:document.getElementById('peng-type').value,notes:document.getElementById('peng-notes').value.trim()||null,engaged_at:document.getElementById('peng-date').value||null}});
+  document.getElementById('pdMsg').className='msg '+(r.ok?'ok':'err');document.getElementById('pdMsg').textContent=r.ok?'Logged':(r.message||'Failed');
+  if(r.ok){document.getElementById('peng-notes').value='';setPEngDateTime();loadPEngagements();}
+}
+
+// ── Custom fields ──────────────────────────────────────────────────────────
+var _allFieldDefs=[];
+async function ensureFieldDefs(){
+  if(_allFieldDefs.length)return;
+  var r=await apiFetch('/staff/fields');
+  if(r.ok)_allFieldDefs=r.data||[];
+}
+
+async function loadCustomFields(){
+  if(!currentMerchantId)return;
+  await ensureFieldDefs();
+  var r=await apiFetch('/staff/fields/merchant/'+currentMerchantId+'/values');
+  var el=document.getElementById('fieldsList');
+  if(!r.ok){el.innerHTML='<div class="muted">Could not load fields.</div>';return;}
+  renderFieldForm(el,r.data,'merchant');
+}
+
+async function loadPFields(){
+  if(!currentProspectId)return;
+  await ensureFieldDefs();
+  // Get prospect's custom fields via prospect detail
+  var r=await apiFetch('/staff/prospects/'+currentProspectId);
+  var el=document.getElementById('pFieldsList');
+  if(!r.ok){el.innerHTML='<div class="muted">Could not load.</div>';return;}
+  renderFieldForm(el,r.data.custom_fields||[],'prospect');
+}
+
+function renderFieldForm(el,fields,mode){
+  if(!fields.length){el.innerHTML='<div class="muted">No custom fields defined. SA can add fields.</div>';return;}
+  el.innerHTML=fields.filter(f=>f.is_active!==false).map(f=>{
+    var val=f.value||'';
+    var inp='';
+    if(f.field_type==='boolean'){
+      inp=`<select id="cf_${esc(f.field_id)}" data-fid="${esc(f.field_id)}" data-mode="${mode}"><option value="">—</option><option value="yes" ${val==='yes'?'selected':''}>Yes</option><option value="no" ${val==='no'?'selected':''}>No</option></select>`;
+    }else if(f.field_type==='select'&&f.options){
+      var opts=(typeof f.options==='string'?JSON.parse(f.options):f.options)||[];
+      inp=`<select id="cf_${esc(f.field_id)}" data-fid="${esc(f.field_id)}" data-mode="${mode}"><option value="">—</option>${opts.map(o=>`<option value="${esc(o)}" ${val===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+    }else{
+      inp=`<input type="${f.field_type==='number'?'number':f.field_type==='date'?'date':'text'}" id="cf_${esc(f.field_id)}" data-fid="${esc(f.field_id)}" data-mode="${mode}" value="${esc(val)}" placeholder="${esc(f.label)}">`;
+    }
+    return `<div class="form-group" style="margin-bottom:12px"><label>${esc(f.label)}${f.required?'<span style="color:var(--red)"> *</span>':''}</label>${inp}</div>`;
+  }).join('');
+}
+
+async function saveCustomFields(){
+  if(!currentMerchantId)return;
+  var inputs=document.querySelectorAll('#fieldsList [data-fid]');
+  var values=Array.from(inputs).map(i=>({field_id:i.dataset.fid,value:i.value||null}));
+  var r=await apiFetch('/staff/fields/merchant/'+currentMerchantId+'/values',{method:'PUT',body:{values}});
+  dMsg(r.ok,r.ok?'Fields saved':(r.message||'Failed'));
+}
+
+async function savePFields(){
+  if(!currentProspectId)return;
+  var inputs=document.querySelectorAll('#pFieldsList [data-fid]');
+  var values=Array.from(inputs).map(i=>({field_id:i.dataset.fid,value:i.value||null}));
+  var r=await apiFetch('/staff/prospects/'+currentProspectId+'/custom-fields',{method:'PUT',body:{values}});
+  document.getElementById('pdMsg').className='msg '+(r.ok?'ok':'err');document.getElementById('pdMsg').textContent=r.ok?'Fields saved':(r.message||'Failed');
+}
 
 lucide.createIcons();
 </script>
