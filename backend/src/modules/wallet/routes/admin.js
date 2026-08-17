@@ -89,4 +89,60 @@ router.patch('/settlements/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// SA reconciliation: same as merchant but accepts ?merchant_id=UUID (else all merchants)
+router.get('/reconciliation/settlement', async (req, res, next) => {
+  try {
+    const { merchant_id, from, to } = req.query;
+    const n = (v) => Number(v || 0);
+
+    const sParams = [];
+    let sWhere = 'WHERE 1=1';
+    if (merchant_id) { sParams.push(merchant_id); sWhere += ` AND s.merchant_id = $${sParams.length}::uuid`; }
+    if (from) { sParams.push(from); sWhere += ` AND s.period_to >= $${sParams.length}::date`; }
+    if (to)   { sParams.push(to);   sWhere += ` AND s.period_from <= $${sParams.length}::date`; }
+
+    const settlements = await prisma.$queryRawUnsafe(
+      `SELECT s.id::text, s.merchant_id::text, m.business_name,
+              s.period_from, s.period_to, s.gross_kobo::text AS gross_kobo,
+              s.member_count, s.txn_count, s.status, s.payout_ref,
+              s.failure_reason, s.settled_at, s.created_at
+         FROM mw_dept_settlements s
+         JOIN merchants m ON m.id = s.merchant_id
+         ${sWhere} ORDER BY s.period_from DESC LIMIT 500`,
+      ...sParams);
+
+    const enriched = [];
+    for (const s of settlements) {
+      const mid = s.merchant_id;
+      const txns = await prisma.$queryRawUnsafe(
+        `SELECT l.id::text, COALESCE(mb.name, l.counterparty) AS member_name,
+                l.direction, l.type, l.amount::text AS amount, l.reference,
+                l.note, l.counterparty, l.department_id::text AS department_id, l.created_at
+           FROM mw_ledger l
+           LEFT JOIN mw_members mb ON mb.id = l.member_id
+          WHERE l.merchant_id = $1::uuid
+            AND l.created_at::date BETWEEN $2::date AND $3::date
+          ORDER BY l.created_at`,
+        mid, s.period_from, s.period_to);
+      enriched.push({
+        ...s,
+        gross_kobo: n(s.gross_kobo),
+        transactions: txns.map((t) => ({ ...t, amount: n(t.amount) })),
+      });
+    }
+
+    const totalSettledKobo = enriched.reduce((a, s) => a + s.gross_kobo, 0);
+    const txnCount = enriched.reduce((a, s) => a + s.transactions.length, 0);
+
+    return ok(res, {
+      settlements: enriched,
+      summary: {
+        settlement_count: enriched.length,
+        total_settled_kobo: totalSettledKobo,
+        txn_count: txnCount,
+      },
+    });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
