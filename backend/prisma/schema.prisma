@@ -70,6 +70,7 @@ enum UserRole {
   AUDIT
   AGGREGATOR
   MERCHANT
+  STAFF
 }
 
 enum PayoutStatus {
@@ -175,6 +176,11 @@ model Merchant {
   // null/'with_paylode' → "<businessName>/Paylode"; 'name_only' → business name alone
   parallexVaNameFormat  String?   @map("parallex_va_name_format")
   merchantType      String    @default("retail") @map("merchant_type")
+  accountOfficerId  String?   @map("account_officer_id") @db.Uuid
+  pipelineStage     String    @default("prospect") @map("pipeline_stage")
+  firstEngagementAt DateTime? @map("first_engagement_at")
+  offRampAt         DateTime? @map("off_ramp_at")
+  offRampReason     String?   @map("off_ramp_reason")
   isActive          Boolean   @default(false) @map("is_active") // false until KYC done
   liveEnabled       Boolean   @default(false) @map("live_enabled") // false until SA clicks Go-Live — activation != live processing
   webhookUrl        String?   @map("webhook_url")

@@ -93,6 +93,7 @@ const requireCompliance        = requireRole('SUPER_ADMIN', 'COMPLIANCE_OFFICER'
 const requireAdminOrCompliance = requireRole('SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER');
 const requireAggregator        = requireRole('SUPER_ADMIN', 'AGGREGATOR');
 const requireMerchant          = requireRole('SUPER_ADMIN', 'MERCHANT');
+const requireStaff             = requireRole('SUPER_ADMIN', 'STAFF');
 
 // ── Granular permission guard (functionality view/edit perms) ────────────────
 // Additive on top of role guards. SUPER_ADMIN always passes. Use for staff
@@ -110,4 +111,4 @@ const requirePermission = (...perms) => (req, res, next) => {
 module.exports = { requireAuth, requireApiKey, requireRole,
                    requireSuperAdmin, requireAdmin, requireCompliance,
                    requireAdminOrCompliance, requireAggregator, requireMerchant,
-                   requirePermission };
+                   requireStaff, requirePermission };
