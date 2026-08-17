@@ -297,7 +297,7 @@ async function loadTransactions(page=1, filters={}) {
           <option value="USD"${filters.currency==='USD'?' selected':''}>$ International (USD)</option>
         </select>
         <button class="btn btn-outline btn-sm" onclick="exportTransactionsCsv()">&#8681; Export CSV</button>
-        <button class="btn btn-outline btn-sm" onclick="emailTransactionsCsv()">&#9993; Email to me</button>
+        <button class="btn btn-outline btn-sm" onclick="emailTransactionsCsv()"><i data-lucide="mail" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Email to me</button>
       </div>
     </div>
     <div class="card">
@@ -407,7 +407,7 @@ async function loadMerchants(page=1) {
                 ${m.isActive
                   ? `<button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="suspendMerchant('${m.id}','${m.businessName}')">Suspend</button>`
                   : `<button class="btn btn-outline btn-sm" style="color:var(--green);border-color:var(--green)" onclick="activateMerchant('${m.id}','${m.businessName}')">Activate</button>`}
-                ${userHasPerm('edit_merchants') ? `&nbsp;<button class="btn btn-lime btn-sm" onclick="editMerchant('${m.id}')">&#9998; Edit</button>` : ''}
+                ${userHasPerm('edit_merchants') ? `&nbsp;<button class="btn btn-lime btn-sm" onclick="editMerchant('${m.id}')"><i data-lucide="pencil" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Edit</button>` : ''}
               </td>
             </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:20px">No merchants yet</td></tr>'}
           </tbody>
@@ -465,22 +465,22 @@ async function viewMerchant(id) {
     '<div class="flex-between">' +
       '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Close</button>' +
       '<div class="flex" style="gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
-        (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')">&#128196; KYC Documents</button>' : '') +
-        (canReview ? '<button class="btn btn-outline" onclick="openKycReports(\'' + id + '\',\'' + nameEsc + '\')">&#128203; KYC Reports</button>' : '') +
-        (isSA ? '<button class="btn btn-outline" onclick="toggleLivenessExemption(\'' + id + '\',' + (m.notificationSettings && m.notificationSettings.liveness_exempted ? 'false' : 'true') + ')" title="Toggle liveness check exemption for this merchant">&#128247; ' + (m.notificationSettings && m.notificationSettings.liveness_exempted ? 'Reinstate Liveness' : 'Exempt from Liveness') + '</button>' : '') +
-        (isSA && !(m.notificationSettings && m.notificationSettings.settlement_name_override) ? '<button class="btn btn-outline" style="color:#dc2626;border-color:#fca5a5" onclick="grantSettlementNameOverride(\'' + id + '\')" title="Grant settlement name mismatch override — case by case only">&#9888; Settlement Name Override</button>' : '') +
+        (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')<i data-lucide="file-text" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> KYC Documents</button>' : '') +
+        (canReview ? '<button class="btn btn-outline" onclick="openKycReports(\'' + id + '\',\'' + nameEsc + '\')"><i data-lucide="clipboard-list" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> KYC Reports</button>' : '') +
+        (isSA ? '<button class="btn btn-outline" onclick="toggleLivenessExemption(\'' + id + '\',' + (m.notificationSettings && m.notificationSettings.liveness_exempted ? 'false' : 'true') + ')" title="Toggle liveness check exemption for this merchant<i data-lucide="camera" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> ' + (m.notificationSettings && m.notificationSettings.liveness_exempted ? 'Reinstate Liveness' : 'Exempt from Liveness') + '</button>' : '') +
+        (isSA && !(m.notificationSettings && m.notificationSettings.settlement_name_override) ? '<button class="btn btn-outline" style="color:#dc2626;border-color:#fca5a5" onclick="grantSettlementNameOverride(\'' + id + '\')" title="Grant settlement name mismatch override — case by case only<i data-lucide="alert-triangle" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Settlement Name Override</button>' : '') +
         (isSA && m.notificationSettings && m.notificationSettings.settlement_name_override ? '<span style="font-size:12px;color:#16a34a;padding:6px 10px;border:1px solid #86efac;border-radius:6px">&#9989; Settlement Name Override Active</span>' : '') +
-        (canViewApp ? '<button class="btn btn-outline" onclick="loadMerchantApplication(\'' + id + '\')">&#128203; Application Form</button>' : '') +
-        (canReview ? '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\';resendSandbox(\'' + id + '\',\'' + nameEsc + '\')">&#128231; Resend Sandbox</button>' : '') +
+        (canViewApp ? '<button class="btn btn-outline" onclick="loadMerchantApplication(\'' + id + '\')"><i data-lucide="clipboard-list" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Application Form</button>' : '') +
+        (canReview ? '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\';resendSandbox(\'' + id + '\',\'' + nameEsc + '\')"><i data-lucide="mail" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Resend Sandbox</button>' : '') +
         (canManage && m.isActive ? (m.liveEnabled
           ? '<button class="btn btn-outline" style="color:#b45309;border-color:#f59e0b" onclick="document.getElementById(\'modal\').style.display=\'none\';goLiveMerchant(\'' + id + '\',\'' + nameEsc + '\',false)">Switch to Sandbox</button>'
-          : '<button class="btn btn-lime" onclick="document.getElementById(\'modal\').style.display=\'none\';goLiveMerchant(\'' + id + '\',\'' + nameEsc + '\',true)">&#128640; Go Live</button>') : '') +
+          : '<button class="btn btn-lime" onclick="document.getElementById(\'modal\').style.display=\'none\';goLiveMerchant(\'' + id + '\',\'' + nameEsc + '\',true)"><i data-lucide="rocket" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Go Live</button>') : '') +
         (canReview ? (m.isActive
           ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';suspendMerchant(\'' + id + '\',\'' + nameEsc + '\')">Suspend</button>'
           : '<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="document.getElementById(\'modal\').style.display=\'none\';activateMerchant(\'' + id + '\',\'' + nameEsc + '\')">Activate</button>') : '') +
         (canManage ? '<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';closeMerchant(\'' + id + '\',\'' + nameEsc + '\')">Close Account</button>' : '') +
-        (isSA ? '<button class="btn btn-outline" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';deleteMerchant(\'' + id + '\',\'' + nameEsc + '\')">&#128465; Delete</button>' : '') +
-        (canManage ? '<button class="btn btn-lime" onclick="editMerchant(\'' + id + '\')">&#9998; Edit</button>' : '') +
+        (isSA ? '<button class="btn btn-outline" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="document.getElementById(\'modal\').style.display=\'none\';deleteMerchant(\'' + id + '\',\'' + nameEsc + '\')"><i data-lucide="trash-2" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Delete</button>' : '') +
+        (canManage ? '<button class="btn btn-lime" onclick="editMerchant(\'' + id + '\')"><i data-lucide="pencil" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Edit</button>' : '') +
       '</div>' +
     '</div>';
 
@@ -594,7 +594,7 @@ async function loadMerchantApplication(id) {
     '<div id="application-body">' + buildMerchantApplicationInner(res.data) + '</div>' +
     '<div class="divider"></div><div class="flex-between">' +
       '<button class="btn btn-outline" onclick="viewMerchant(\'' + id + '\')">&#8592; Back</button>' +
-      '<button class="btn btn-lime" onclick="downloadMerchantApplication(\'' + id + '\')">&#128229; Download / Print Form</button>' +
+      '<button class="btn btn-lime" onclick="downloadMerchantApplication(\'' + id + '\')"><i data-lucide="download" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Download / Print Form</button>' +
     '</div>';
 }
 
@@ -1065,7 +1065,7 @@ async function viewAggMerchants(aggId) {
             '<td class="mono">' + rate + '</td>' +
             '<td>' +
               '<button class="btn btn-outline btn-sm" onclick="viewMerchant(\'' + m.id + '\')">View</button>&nbsp;' +
-              '<button class="btn btn-outline btn-sm" onclick="editMerchant(\'' + m.id + '\')">&#9998; Edit</button>' +
+              '<button class="btn btn-outline btn-sm" onclick="editMerchant(\'' + m.id + '\')"><i data-lucide="pencil" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Edit</button>' +
             '</td>' +
           '</tr>';
         }).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:20px">No merchants under this aggregator</td></tr>') +
@@ -1186,7 +1186,7 @@ async function viewPartner(id) {
         ${p.status === 'active'
           ? `<button class="btn btn-outline" style="color:var(--red);border-color:var(--red)" onclick="suspendPartner('${p.id}','${p.name}')">Suspend</button>`
           : `<button class="btn btn-outline" style="color:var(--green);border-color:var(--green)" onclick="activatePartner('${p.id}','${p.name}')">Activate</button>`}
-        <button class="btn btn-outline" onclick="rotatePartnerKey('${p.id}','${p.name}')">&#128273; Rotate Key</button>
+        <button class="btn btn-outline" onclick="rotatePartnerKey('${p.id}','${p.name}')"><i data-lucide="key" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Rotate Key</button>
       </div>
     </div>`;
   document.getElementById('modal').style.display = 'flex';
@@ -1629,7 +1629,7 @@ async function loadAggregators() {
         <div class="page-desc">${aggs.length} active aggregator partners</div>
       </div>
       <div class="flex" style="gap:6px">
-        <button class="btn btn-outline" onclick="inviteAggregator()">&#9993; Invite to Self-Onboard</button>
+        <button class="btn btn-outline" onclick="inviteAggregator()"><i data-lucide="mail" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Invite to Self-Onboard</button>
         <button class="btn btn-lime" onclick="openCreateAggregator()">+ Create Aggregator</button>
       </div>
     </div>
@@ -1648,12 +1648,12 @@ async function loadAggregators() {
         <div class="rev-row"><span class="rev-label">Merchants</span><span class="rev-value">${a.merchant_count||0}</span></div>
         <div class="rev-row"><span class="rev-label">Settlement Bank</span><span class="rev-value">${a.settlementBank||'—'}</span></div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-lime btn-sm" onclick="editAggregator('${a.id}')">&#9998; Edit</button>
+          <button class="btn btn-lime btn-sm" onclick="editAggregator('${a.id}')"><i data-lucide="pencil" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Edit</button>
           <button class="btn btn-outline btn-sm" onclick="editSplit('${a.id}','${a.revenueSplitPct}')">Edit Split</button>
           <button class="btn btn-outline btn-sm" onclick="viewAggRates('${a.id}','${a.companyName}')">Rate Config</button>
           <button class="btn btn-outline btn-sm" onclick="viewAggMerchants('${a.id}')">View Merchants</button>
-          <button class="btn btn-outline btn-sm" onclick="openDocsModal('aggregator','${a.id}','${(a.companyName||'').replace(/'/g,'')}')">&#128196; Documents</button>
-          <button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="deleteAggregator('${a.id}','${(a.companyName||'').replace(/'/g,'')}')">&#128465; Delete</button>
+          <button class="btn btn-outline btn-sm" onclick="openDocsModal('aggregator','${a.id}','${(a.companyName||'').replace(/'/g,'')}')"><i data-lucide="file-text" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Documents</button>
+          <button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="deleteAggregator('${a.id}','${(a.companyName||'').replace(/'/g,'')}')"><i data-lucide="trash-2" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Delete</button>
         </div>
       </div>`).join('')}
     </div>`;
@@ -1987,7 +1987,7 @@ async function loadCompliance() {
                 <td>${addrBadge}</td>
                 <td style="font-size:12px">${new Date(s.submitted_at).toLocaleDateString('en-NG')}</td>
                 <td style="white-space:nowrap">
-                  <button class="btn btn-outline btn-sm" onclick="showAddrVerification('${s.id}','${addrStatus}','${s.addr_report_url||''}')">&#128205; Addr</button>
+                  <button class="btn btn-outline btn-sm" onclick="showAddrVerification('${s.id}','${addrStatus}','${s.addr_report_url||''}')"><i data-lucide="map-pin" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Addr</button>
                   ${canDecide ? `<button class="btn btn-lime btn-sm" onclick="approveKyc('${s.id}')">Approve</button>
                   <button class="btn btn-outline btn-sm" onclick="rejectKyc('${s.id}')">Reject</button>` : ''}
                 </td>
@@ -2431,7 +2431,7 @@ async function loadMerchSettlements() {
         '<div class="flex" style="gap:10px;align-items:center;flex-wrap:wrap">' +
           '<input class="form-input" type="month" id="stmt-month" value="' + mon + '" style="width:180px">' +
           '<button class="btn btn-lime btn-sm" onclick="downloadStatement()">&#8681; Download PDF</button>' +
-          '<button class="btn btn-outline btn-sm" onclick="emailStatement()">&#9993; Email to Me</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="emailStatement()"><i data-lucide="mail" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Email to Me</button>' +
         '</div>' +
         '<div class="form-hint" style="margin-top:8px">Statement is generated from live transaction data for the selected month.</div>' +
       '</div>' +
@@ -3169,7 +3169,7 @@ async function loadMerchProfile() {
       '</div>' +
       '<div class="grid-2">' +
         '<div class="card"><div class="card-header"><div class="card-title">Business Information</div>' +
-          '<button class="btn btn-outline btn-sm" onclick="showEditProfileModal()">&#9998; Edit</button></div>' +
+          '<button class="btn btn-outline btn-sm" onclick="showEditProfileModal()"><i data-lucide="pencil" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Edit</button></div>' +
           row('Business Name',   m.businessName || '—') +
           row('Category',        m.category || '—') +
           row('RC Number',       m.rcNumber || '—') +
@@ -3182,7 +3182,7 @@ async function loadMerchProfile() {
           row('KYC Status',      statusBadge(m.kycStatus)) +
         '</div>' +
         '<div class="card"><div class="card-header"><div class="card-title">Settlement Account</div>' +
-          '<button class="btn btn-outline btn-sm" onclick="showChangeSettlementModal()">&#9998; Change</button></div>' +
+          '<button class="btn btn-outline btn-sm" onclick="showChangeSettlementModal()"><i data-lucide="pencil" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Change</button></div>' +
           row('Settlement Bank',    m.settlementBank || '—') +
           row('Account Number',     m.settlementAccount ? '<span class="mono">' + m.settlementAccount + '</span>' : '—') +
           row('Account Name',       m.settlementAccountName || '—') +
@@ -3439,8 +3439,8 @@ async function loadMerchApiKeys() {
         '<div style="font-size:11px;color:var(--gray-400);margin-top:4px">Last used: ' + (k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleDateString('en-NG') : 'Never') + ' · Created: ' + new Date(k.createdAt).toLocaleDateString('en-NG') + '</div>' +
       '</div>' +
       '<div class="flex" style="gap:6px;margin-left:16px">' +
-        '<button class="btn btn-outline btn-sm" onclick="copyApiKeyPrefix(\'' + k.id + '\',\'' + prefix + '\')">&#128203; Copy</button>' +
-        '<button class="btn btn-outline btn-sm" style="color:var(--amber)" onclick="rotateApiKey(\'' + k.id + '\',\'' + prefix + '\',\'' + (k.label||'API Key').replace(/'/g,"\\'") + '\')">&#8635; Rotate</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="copyApiKeyPrefix(\'' + k.id + '\',\'' + prefix + '\')"><i data-lucide="copy" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Copy</button>' +
+        '<button class="btn btn-outline btn-sm" style="color:var(--amber)" onclick="rotateApiKey(\'' + k.id + '\',\'' + prefix + '\',\'' + (k.label||'API Key').replace(/'/g,"\\'") + '\')<i data-lucide="rotate-cw" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Rotate</button>' +
       '</div></div>';
     }).join('') : '<div class="info-box" style="font-size:12px">No API keys yet. Test keys are issued automatically when your account is created — refresh, or contact support@paylodeservices.com if they are missing.</div>';
 
@@ -4305,7 +4305,7 @@ async function loadMerchWebhooks() {
           '<div style="font-size:11px;color:var(--gray-400)">Events: ' + events.join(' · ') + '</div>' +
         '</div>' +
         '<div class="flex" style="gap:6px;margin-left:12px">' +
-          '<button class="btn btn-outline btn-sm" onclick="testWebhook()">&#9654; Test</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="testWebhook()"><i data-lucide="play" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Test</button>' +
           '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="removeWebhook()">Remove</button>' +
         '</div></div>'
       : '<div style="text-align:center;padding:32px;color:var(--gray-400)">' +
@@ -4673,7 +4673,7 @@ async function loadRailSettlement() {
         '<div class="page-desc">Earnings by rail and product — local and international reported separately — ' + from + ' to ' + to + '</div>' +
       '</div>' +
         '<button class="btn btn-outline btn-sm" onclick="exportRailSettlement()">&#8681; Export CSV</button>' +
-        '<button class="btn btn-outline btn-sm" onclick="emailRailSettlement()">&#9993; Email to me</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="emailRailSettlement()"><i data-lucide="mail" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Email to me</button>' +
       '</div>' +
 
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span></div>' +
@@ -4778,7 +4778,7 @@ async function loadFeeConfig() {
           exampleCalc(r) +
         '</div>' +
         '<div style="display:flex;gap:6px;align-items:flex-start;flex-shrink:0">' +
-          '<button class="btn btn-outline btn-sm" onclick="editPlatformRate(\'' + r.channel + '\')">&#9998; Edit</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="editPlatformRate(\'' + r.channel + '\')"><i data-lucide="pencil" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Edit</button>' +
           (r.is_custom ? '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deletePlatformRate(\'' + r.channel + '\',\'' + (r.label||r.channel).replace(/'/g,"\\'") + '\')">Delete</button>' : '') +
         '</div>' +
       '</div></div>';
@@ -5244,7 +5244,7 @@ async function loadPayoutReport() {
       '<div class="page-header flex-between">' +
         '<div><div class="page-title">Payout Report</div><div class="page-desc">' + from + ' to ' + to + '</div></div>' +
         '<button class="btn btn-outline btn-sm" onclick="exportPayoutReport()">&#8681; Export CSV</button>' +
-        '<button class="btn btn-outline btn-sm" onclick="emailPayoutReport()">&#9993; Email to me</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="emailPayoutReport()"><i data-lucide="mail" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Email to me</button>' +
       '</div>' +
       '<div class="stats-grid">' +
         '<div class="stat-card"><div class="stat-label">Payout Batches</div><div class="stat-value">' + fmtNum(s.batch_count||0) + '</div><div class="stat-sub">' + (s.active_merchants||0) + ' merchants</div></div>' +
@@ -5371,7 +5371,7 @@ async function emailStatement() {
   } catch(e) {
     alert('Error: ' + e.message);
   } finally {
-    if (btn) { btn.innerHTML = '&#9993; Email to Me'; btn.disabled = false; }
+    if (btn) { btn.innerHTML = '<i data-lucide="mail" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Email to Me'; btn.disabled = false; if (typeof lucide !== 'undefined') lucide.createIcons(); }
   }
 }
 
@@ -5496,7 +5496,7 @@ async function loadAggRevenue() {
         '<div><div class="page-title">Revenue Share Statement</div>' +
           '<div class="page-desc">Your aggregator earnings — local (NGN) and international (USD) shown separately</div></div>' +
         '<button class="btn btn-outline btn-sm" onclick="downloadAggRevenueLive()">&#8681; Download CSV</button>' +
-        '<button class="btn btn-outline btn-sm" onclick="emailAggRevenueLive()">&#9993; Email to me</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="emailAggRevenueLive()"><i data-lucide="mail" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Email to me</button>' +
       '</div>' +
 
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="badge badge-gray">₦ Local (NGN)</span></div>' +
@@ -5739,7 +5739,7 @@ function loadPageData(page) {
                 '<td class="mono">' + rate + '</td>' +
                 '<td>' +
                   '<button class="btn btn-outline btn-sm" onclick="viewMerchant(\'' + m.id + '\')">View</button>&nbsp;' +
-                  '<button class="btn btn-outline btn-sm" onclick="editMerchant(\'' + m.id + '\')">&#9998; Edit</button>' +
+                  '<button class="btn btn-outline btn-sm" onclick="editMerchant(\'' + m.id + '\')"><i data-lucide="pencil" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Edit</button>' +
                 '</td>' +
               '</tr>';
             }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:20px">No merchants yet — onboard your first merchant</td></tr>') +
@@ -6497,7 +6497,7 @@ async function loadRails() {
       <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-outline btn-sm" onclick="showAddServiceType('${rail.id}')">+ Add Service Type</button>
         <button class="btn btn-outline btn-sm" onclick="testRouting('${rail.id}')">Test Routing</button>
-        <button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red);margin-left:auto" onclick="deleteRail('${rail.id}','${(rail.name||'').replace(/'/g,'')}')">&#128465; Delete Rail</button>
+        <button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red);margin-left:auto" onclick="deleteRail('${rail.id}','${(rail.name||'').replace(/'/g,'')}')"><i data-lucide="trash-2" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Delete Rail</button>
       </div>
     </div>`).join('')}`;
   } catch(e){ el.innerHTML = errorBox('Failed to load rails: '+e.message); }
@@ -6964,7 +6964,7 @@ async function loadCbnReport() {
         '<div class="flex" style="gap:6px"><a href="#" onclick="navigate(\'reports_hub\');return false" class="btn btn-outline btn-sm">← Reports</a>' +
           '<input type="month" id="cbn-month" value="' + month + '" class="form-input" style="width:auto" onchange="window._cbnMonth=this.value;loadCbnReport()">' +
           '<button class="btn btn-lime btn-sm" onclick="downloadCbnExcel()">&#8681; Download Excel</button>' +
-          '<button class="btn btn-outline btn-sm" onclick="emailCbnExcel()">&#9993; Email to me</button></div></div>' +
+          '<button class="btn btn-outline btn-sm" onclick="emailCbnExcel()"><i data-lucide="mail" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Email to me</button></div></div>' +
       '<div class="card"><div class="table-wrap"><table>' +
         '<thead><tr><th>Channel Code</th><th>Channel</th><th>Volume</th><th>Value</th><th>Period</th></tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
@@ -7028,7 +7028,7 @@ async function loadVatReport() {
         '<div class="flex" style="gap:6px">' +
           '<input type="month" id="vat-month" value="' + month + '" class="form-input" style="width:auto" onchange="window._vatMonth=this.value;loadVatReport()">' +
           '<button class="btn btn-lime btn-sm" onclick="downloadVatExcel()">&#8681; Download Excel</button>' +
-          '<button class="btn btn-outline btn-sm" onclick="emailVatExcel()">&#9993; Email to me</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="emailVatExcel()"><i data-lucide="mail" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Email to me</button>' +
         '</div></div>' +
       '<div class="stats-grid" style="margin-bottom:16px">' +
         '<div class="stat-card"><div class="stat-label">Output VAT</div><div class="stat-value">' + fmtNaira((t.output_vat_naira||0)*100) + '</div></div>' +
@@ -8007,12 +8007,12 @@ async function openDocsModal(entityType, id, name) {
         '<button class="btn btn-outline btn-sm" style="color:var(--green);border-color:var(--green)" onclick="setDocResult(\'' + doc.id + '\',\'pass\')">Pass</button> ' +
         '<button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="setDocResult(\'' + doc.id + '\',\'fail\')">Fail</button> ' +
         '<button class="btn btn-outline btn-sm" onclick="setDocResult(\'' + doc.id + '\',\'unknown\')">Unknown</button> ' +
-        '<button class="btn btn-outline btn-sm" onclick="addDocComment(\'' + doc.id + '\')">&#128172; Comment</button>'
+        '<button class="btn btn-outline btn-sm" onclick="addDocComment(\'' + doc.id + '\')"><i data-lucide="message-square" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Comment</button>'
       ) : '<span style="color:var(--gray-400);font-size:12px">view only</span>';
     var reportInfo = doc.report_file ? '<div class="upload-hint">&#128206; Report: ' + _escA(doc.report_name || 'report') + ' <button class="btn btn-outline btn-sm" style="padding:0 6px" onclick="viewDocReport(\'' + doc.id + '\')">View</button></div>' : '';
     var lifecycle = canEdit ? (
         (isCheck ? '<button class="btn btn-outline btn-sm" onclick="runCheck(\'' + doc.id + '\')">Run check</button> ' : '') +
-        '<button class="btn btn-outline btn-sm" onclick="uploadDocReport(\'' + doc.id + '\')">&#128206; ' + (doc.report_file ? 'Replace report' : 'Upload report') + '</button> ' +
+        '<button class="btn btn-outline btn-sm" onclick="uploadDocReport(\'' + doc.id + '\')"><i data-lucide="paperclip" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> ' + (doc.report_file ? 'Replace report' : 'Upload report') + '</button> ' +
         (canDefer ? '<button class="btn btn-outline btn-sm" onclick="deferOneDoc(\'' + doc.id + '\')">Defer</button> ' : '') +
         '<button class="btn btn-outline btn-sm" onclick="requestReupload(\'' + doc.id + '\')">Re-upload</button> ' +
         '<button class="btn btn-outline btn-sm" onclick="setDocStatus(\'' + doc.id + '\',\'waived\')">Waive</button>'
