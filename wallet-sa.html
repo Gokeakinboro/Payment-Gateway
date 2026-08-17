@@ -60,7 +60,7 @@ if(!TOKEN)location.href='/login.html';
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function msg(ok,t){var m=document.getElementById('msg');m.className='msg '+(ok?'ok':'err');m.textContent=t;}
 async function api(path,opts){opts=opts||{};
-  var r=await fetch(API+path,{method:opts.method||'GET',headers:{'Content-Type':'application/json','Authorization':'Bearer '+TOKEN}});
+  var r=await fetch(API+path,{method:opts.method||'GET',headers:{'Content-Type':'application/json','Authorization':'Bearer '+TOKEN},body:opts.body?JSON.stringify(opts.body):undefined});
   if(r.status===401){location.href='/login.html';return{ok:false};}
   if(r.status===403){return{ok:false,forbidden:true};}
   var d=await r.json().catch(function(){return{};});return{ok:r.ok&&d.status!==false,data:d.data,message:d.message};}
@@ -70,8 +70,9 @@ async function load(){
   if(!r.ok){e.innerHTML='<div class="muted">Could not load requests.</div>';return;}
   if(!r.data.length){e.innerHTML='<div class="muted">No pending requests 🎉</div>';return;}
   e.innerHTML='<table><tr><th>Merchant</th><th>Requested</th><th class="right">Action</th></tr>'+r.data.map(function(x){
+    var scCtrl=(x.merchant_type||x.type)==='social_club'?'<span class="pill settled">Social Club ✓</span> ':'<button class="btn btn-out" onclick="setSocialClub(\''+x.merchant_id+'\',\''+esc(x.business_name||'').replace(/\x27/g,'')+'\',this)">Set Social Club</button> ';
     return '<tr><td>'+esc(x.business_name||x.merchant_id)+'</td><td>'+(x.requested_at?new Date(x.requested_at).toLocaleString():'—')+'</td>'+
-    '<td class="right"><button class="btn btn-lime" onclick="approve(\''+x.merchant_id+'\',\''+esc(x.business_name||'').replace(/\x27/g,'')+'\')">Enable</button> '+
+    '<td class="right">'+scCtrl+'<button class="btn btn-lime" onclick="approve(\''+x.merchant_id+'\',\''+esc(x.business_name||'').replace(/\x27/g,'')+'\')">Enable</button> '+
     '<button class="btn btn-out" onclick="reject(\''+x.merchant_id+'\')">Reject</button></td></tr>';
   }).join('')+'</table>';
 }
@@ -79,6 +80,7 @@ async function approve(id,name){if(!confirm('Enable Paymula for '+(name||'this m
   var r=await api('/wallet/admin/'+id+'/approve',{method:'POST'});msg(r.ok,r.ok?'Wallet enabled for '+(name||'merchant'):(r.message||'Failed'));if(r.ok)load();}
 async function reject(id){if(!confirm('Reject this request?'))return;
   var r=await api('/wallet/admin/'+id+'/reject',{method:'POST'});msg(r.ok,r.ok?'Request rejected':(r.message||'Failed'));if(r.ok)load();}
+async function setSocialClub(id,name,el){var r=await api('/merchants/'+id,{method:'PATCH',body:{merchantType:'social_club'}});if(r.ok){el.outerHTML='<span class="pill settled">Social Club ✓</span>';}else{msg(false,r.message||'Failed to set social club');}}
 load();
 
 // ── Settlements processing ─────────────────────────────────────────────────
