@@ -18,5 +18,6 @@ router.use('/fund',     require('./routes/fund'));
 router.use('/spend',    require('./routes/spend'));
 router.use('/loads',    require('./routes/loads'));
 router.use('/reports',  require('./routes/reports'));
+router.use('/reconciliation', require('./routes/reconciliation'));
 
 module.exports = router;
