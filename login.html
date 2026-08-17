@@ -135,7 +135,8 @@ async function doLogin() {
     } else if (data.status && data.data && data.data.token) {
       sessionStorage.setItem('paylode_token', data.data.token);
       sessionStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
-      window.location.replace('/dashboard.html');
+      var _dest = (data.data.user && data.data.user.role === 'STAFF') ? '/staff.html' : '/dashboard.html';
+      window.location.replace(_dest);
     } else {
       err.textContent=data.message||'Invalid email or password'; err.style.display='block';
       btn.textContent='Sign In'; btn.disabled=false;
@@ -165,7 +166,8 @@ async function do2FA() {
     if (data.status && data.data && data.data.token) {
       sessionStorage.setItem('paylode_token', data.data.token);
       sessionStorage.setItem('paylode_user',  JSON.stringify(data.data.user));
-      window.location.replace('/dashboard.html');
+      var _dest2 = (data.data.user && data.data.user.role === 'STAFF') ? '/staff.html' : '/dashboard.html';
+      window.location.replace(_dest2);
     } else {
       err.textContent=data.message||'Invalid code'; err.style.display='block';
       btn.textContent='Verify'; btn.disabled=false;

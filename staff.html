@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Staff CRM — Paylode</title>
+<link rel="stylesheet" href="paylode-ui.css?v=3">
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--navy:#1a2744;--lime:#7dc534;--bg:#f4f6fb;--gray:#64748b;--line:#cbd5e1;--green:#16a34a;--red:#dc2626}
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:#1e293b;font-size:14px}
+/* Shell */
+.shell{display:flex;height:100vh;overflow:hidden}
+.sidebar{width:220px;min-width:220px;background:var(--navy);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;transition:left .25s}
+.sb-logo{padding:20px 18px 14px;color:#fff;font-weight:800;font-size:17px;letter-spacing:-.3px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sb-logo span{color:var(--lime)}
+.sb-section{font-size:10px;font-weight:700;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.6px;padding:16px 18px 6px}
+.sb-link{display:flex;align-items:center;gap:9px;padding:9px 18px;color:rgba(255,255,255,.7);text-decoration:none;font-size:13px;font-weight:500;border-left:3px solid transparent;transition:all .15s}
+.sb-link:hover{background:rgba(255,255,255,.06);color:#fff}
+.sb-link.active{background:rgba(125,197,52,.12);color:var(--lime);font-weight:600;border-left-color:var(--lime)}
+.sb-link i{width:15px;height:15px;flex-shrink:0}
+.main-pane{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.topbar{background:#fff;border-bottom:1px solid var(--line);padding:0 22px;height:54px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.hamburger{display:none;background:none;border:none;cursor:pointer;padding:4px;color:var(--navy)}
+.topbar-title{font-weight:700;font-size:15px;color:var(--navy)}
+.topbar-right{display:flex;align-items:center;gap:14px}
+.user-pill{font-size:12px;color:var(--gray)}
+.page-body{flex:1;overflow-y:auto;padding:22px}
+@media(max-width:768px){.sidebar{position:fixed;top:0;left:-220px;height:100vh;z-index:100}.sidebar.open{left:0}.hamburger{display:flex}.sb-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99}.sb-overlay.show{display:block}}
+/* Cards & layout */
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+.card-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--gray);margin-bottom:12px}
+.row{display:flex;gap:16px;flex-wrap:wrap}
+.col{flex:1;min-width:180px}
+.stat-box{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;text-align:center}
+.stat-val{font-size:26px;font-weight:800;color:var(--navy)}
+.stat-lbl{font-size:11px;color:var(--gray);margin-top:2px}
+/* Table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11px;text-transform:uppercase;color:var(--gray);padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:hover td{background:#f8fafc}
+.right{text-align:right}
+/* Buttons */
+.btn{padding:7px 14px;background:var(--navy);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:5px}
+.btn-lime{background:var(--lime);color:var(--navy)}
+.btn-out{background:#fff;color:var(--gray);border:1px solid var(--line)}
+.btn-sm{padding:4px 9px;font-size:11px}
+.btn-red{background:#fee2e2;color:var(--red);border:none}
+.pill{font-size:11px;padding:2px 8px;border-radius:20px;font-weight:600;display:inline-block}
+.pill.prospect{background:#f1f5f9;color:#475569}
+.pill.engaged{background:#dbeafe;color:#1e40af}
+.pill.onboarded{background:#fef3c7;color:#92400e}
+.pill.active{background:#d1fae5;color:#065f46}
+.pill.churned{background:#fee2e2;color:#991b1b}
+.pill.approved{background:#d1fae5;color:#065f46}
+.pill.pending_kyc{background:#fef3c7;color:#92400e}
+/* Tabs */
+.tabs{display:flex;gap:0;border-bottom:2px solid var(--line);margin-bottom:20px}
+.tab-btn{background:none;border:none;padding:10px 18px;font-size:13px;font-weight:600;color:var(--gray);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px}
+.tab-btn.active{color:var(--navy);border-bottom-color:var(--lime)}
+.tab-pane{display:none}.tab-pane.active{display:block}
+/* Drawer */
+.drawer-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200}
+.drawer-overlay.show{display:block}
+.drawer{position:fixed;top:0;right:-620px;width:620px;max-width:100vw;height:100vh;background:#fff;z-index:201;transition:right .25s;display:flex;flex-direction:column;box-shadow:-4px 0 24px rgba(0,0,0,.12)}
+.drawer.open{right:0}
+.drawer-head{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.drawer-body{flex:1;overflow-y:auto;padding:20px}
+/* Form */
+.form-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.form-group{flex:1;min-width:180px}
+label{display:block;font-size:11px;font-weight:700;color:var(--gray);margin-bottom:4px;text-transform:uppercase}
+input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;color:#1e293b;background:#fff}
+textarea{resize:vertical;min-height:70px}
+.msg{padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:12px;display:none}
+.msg.ok{background:#f0fdf4;color:#166534;display:block}
+.msg.err{background:#fee2e2;color:#991b1b;display:block}
+.muted{color:var(--gray);padding:24px;text-align:center}
+/* Search box */
+.search-bar{display:flex;gap:8px;margin-bottom:16px}
+.search-bar input{flex:1}
+/* Engagement badges */
+.eng-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 8px;border-radius:6px;font-weight:600}
+.eng-badge.call{background:#f0fdf4;color:#166534}
+.eng-badge.visit{background:#eff6ff;color:#1d4ed8}
+.eng-badge.email{background:#fef3c7;color:#92400e}
+.eng-badge.whatsapp{background:#d1fae5;color:#065f46}
+.eng-badge.demo{background:#f3e8ff;color:#7c3aed}
+.eng-badge.other{background:#f1f5f9;color:#475569}
+</style>
+</head>
+<body>
+<div class="sb-overlay" id="sbOverlay" onclick="closeSidebar()"></div>
+<div class="shell">
+  <nav class="sidebar" id="sidebar">
+    <div class="sb-logo">Pay<span>lode</span></div>
+    <div class="sb-section">CRM</div>
+    <a href="#" class="sb-link active" onclick="showTab('clients',this)"><i data-lucide="users"></i> My Clients</a>
+    <a href="#" class="sb-link" onclick="showTab('search',this)"><i data-lucide="search"></i> Find / Onboard</a>
+    <a href="#" class="sb-link" onclick="showTab('performance',this)"><i data-lucide="bar-chart-2"></i> Performance</a>
+    <div class="sb-section">Account</div>
+    <a href="dashboard.html" class="sb-link"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+    <a href="#" class="sb-link" onclick="logout()"><i data-lucide="log-out"></i> Sign out</a>
+  </nav>
+
+  <div class="main-pane">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" onclick="toggleSidebar()"><i data-lucide="menu" style="width:20px;height:20px"></i></button>
+        <span class="topbar-title" id="topbarTitle">My Clients</span>
+      </div>
+      <div class="topbar-right">
+        <span class="user-pill" id="userName">Loading…</span>
+      </div>
+    </div>
+
+    <div class="page-body">
+      <div class="msg" id="globalMsg"></div>
+
+      <!-- ── MY CLIENTS ─────────────────────────────────────────── -->
+      <div class="tab-pane active" id="tab-clients">
+        <div class="card">
+          <div class="card-title">My Clients</div>
+          <div class="search-bar">
+            <input type="text" id="clientSearch" placeholder="Search by name, email, code…" oninput="debSearch()">
+            <select id="stageFilter" onchange="loadClients()">
+              <option value="">All stages</option>
+              <option value="prospect">Prospect</option>
+              <option value="engaged">Engaged</option>
+              <option value="onboarded">Onboarded</option>
+              <option value="active">Active</option>
+              <option value="churned">Churned</option>
+            </select>
+          </div>
+          <div id="clientList"><div class="muted">Loading…</div></div>
+        </div>
+      </div>
+
+      <!-- ── FIND / ONBOARD ─────────────────────────────────────── -->
+      <div class="tab-pane" id="tab-search">
+        <div class="card">
+          <div class="card-title">Find a merchant to onboard</div>
+          <div class="search-bar">
+            <input type="text" id="merchantSearch" placeholder="Search merchant name, email…" oninput="debMerchSearch()">
+          </div>
+          <div id="merchantResults"><div class="muted">Type to search all merchants</div></div>
+        </div>
+      </div>
+
+      <!-- ── PERFORMANCE ───────────────────────────────────────── -->
+      <div class="tab-pane" id="tab-performance">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+            <div class="card-title" style="margin:0">Monthly Performance</div>
+            <input type="month" id="perfMonth" onchange="loadPerf()" style="width:160px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px">
+          </div>
+          <div class="row" id="perfStats"></div>
+          <div style="margin-top:20px">
+            <div class="card-title">Pipeline breakdown</div>
+            <div id="perfPipeline"></div>
+          </div>
+          <div style="margin-top:16px">
+            <div class="card-title">Engagement breakdown (this month)</div>
+            <div id="perfEngagements"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── CLIENT DRAWER ──────────────────────────────────────────────── -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="clientDrawer">
+  <div class="drawer-head">
+    <div>
+      <div style="font-weight:700;font-size:15px" id="drawerTitle">Client</div>
+      <div style="font-size:12px;color:var(--gray)" id="drawerSub"></div>
+    </div>
+    <button class="btn btn-out btn-sm" onclick="closeDrawer()">Close</button>
+  </div>
+  <div class="drawer-body">
+    <div class="tabs" id="drawerTabs">
+      <button class="tab-btn active" onclick="dTab('overview',this)">Overview</button>
+      <button class="tab-btn" onclick="dTab('engagements',this)">Engagements</button>
+      <button class="tab-btn" onclick="dTab('transactions',this)">Transactions</button>
+      <button class="tab-btn" onclick="dTab('settlements',this)">Settlements</button>
+    </div>
+    <div class="msg" id="drawerMsg"></div>
+
+    <!-- Overview -->
+    <div id="dtab-overview">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Business Name</label>
+          <input type="text" id="d-bname">
+        </div>
+        <div class="form-group">
+          <label>Pipeline Stage</label>
+          <select id="d-stage">
+            <option value="prospect">Prospect</option>
+            <option value="engaged">Engaged</option>
+            <option value="onboarded">Onboarded</option>
+            <option value="active">Active</option>
+            <option value="churned">Churned</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Business Email</label>
+          <input type="email" id="d-email">
+        </div>
+        <div class="form-group">
+          <label>Business Phone</label>
+          <input type="text" id="d-phone">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>First Engagement Date</label>
+          <input type="date" id="d-fengdate">
+        </div>
+        <div class="form-group" id="offRampGroup" style="display:none">
+          <label>Off-ramp Reason</label>
+          <input type="text" id="d-offramp" placeholder="Reason for churn">
+        </div>
+      </div>
+      <button class="btn btn-lime" onclick="saveClient()">Save changes</button>
+      <div style="margin-top:20px;border-top:1px solid var(--line);padding-top:16px">
+        <div class="card-title">Quick stats</div>
+        <div id="drawerQuickStats" style="color:var(--gray);font-size:13px"></div>
+      </div>
+    </div>
+
+    <!-- Engagements -->
+    <div id="dtab-engagements" style="display:none">
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title">Log engagement</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Type</label>
+            <select id="eng-type">
+              <option value="call">Call</option>
+              <option value="visit">Visit</option>
+              <option value="email">Email</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="demo">Demo</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Date</label>
+            <input type="datetime-local" id="eng-date">
+          </div>
+        </div>
+        <div style="margin-bottom:10px">
+          <label>Notes</label>
+          <textarea id="eng-notes" placeholder="What was discussed, next steps…"></textarea>
+        </div>
+        <button class="btn btn-lime" onclick="logEngagement()">Log engagement</button>
+      </div>
+      <div id="engList"><div class="muted">Loading…</div></div>
+    </div>
+
+    <!-- Transactions -->
+    <div id="dtab-transactions" style="display:none">
+      <div id="txnList"><div class="muted">Loading…</div></div>
+    </div>
+
+    <!-- Settlements -->
+    <div id="dtab-settlements" style="display:none">
+      <div id="stlList"><div class="muted">Loading…</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+var API='/api/v1';
+var TOKEN=sessionStorage.getItem('paylode_token');
+if(!TOKEN)location.href='/login.html';
+
+var currentMerchantId=null;
+var searchTimer=null;
+var mSearchTimer=null;
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);}
+function ngn(k){return '₦'+(Number(k||0)/100).toLocaleString('en-NG',{minimumFractionDigits:2});}
+function fmtDate(d){return d?new Date(d).toLocaleDateString('en-NG',{day:'2-digit',month:'short',year:'numeric'}):'—';}
+function fmtDT(d){return d?new Date(d).toLocaleString('en-NG',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';}
+
+async function apiFetch(path,opts){
+  opts=opts||{};
+  var r=await fetch(API+path,{method:opts.method||'GET',headers:{'Content-Type':'application/json','Authorization':'Bearer '+TOKEN},body:opts.body?JSON.stringify(opts.body):undefined});
+  if(r.status===401){location.href='/login.html';return{ok:false};}
+  var d=await r.json().catch(()=>({}));
+  return{ok:r.ok&&d.status!==false,data:d.data,message:d.message};
+}
+
+function gMsg(ok,t){var m=document.getElementById('globalMsg');m.className='msg '+(ok?'ok':'err');m.textContent=t;}
+function dMsg(ok,t){var m=document.getElementById('drawerMsg');m.className='msg '+(ok?'ok':'err');m.textContent=t;}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+(async()=>{
+  var me=await apiFetch('/auth/me');
+  if(me.ok&&me.data){document.getElementById('userName').textContent=(me.data.firstName||'')+' '+(me.data.lastName||'');}
+  var month=new Date().toISOString().slice(0,7);
+  document.getElementById('perfMonth').value=month;
+  loadClients();
+})();
+
+// ── Sidebar ──────────────────────────────────────────────────────────────────
+function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('sbOverlay').classList.toggle('show');}
+function closeSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('sbOverlay').classList.remove('show');}
+
+// ── Tab switching ─────────────────────────────────────────────────────────
+var tabTitles={clients:'My Clients',search:'Find / Onboard',performance:'Performance'};
+function showTab(name,el){
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.sb-link').forEach(a=>a.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  if(el)el.classList.add('active');
+  document.getElementById('topbarTitle').textContent=tabTitles[name]||name;
+  if(name==='performance')loadPerf();
+}
+
+// ── Clients list ─────────────────────────────────────────────────────────
+function debSearch(){clearTimeout(searchTimer);searchTimer=setTimeout(loadClients,350);}
+async function loadClients(){
+  var s=document.getElementById('clientSearch').value.trim();
+  var st=document.getElementById('stageFilter').value;
+  var q='?';
+  if(s)q+='search='+encodeURIComponent(s)+'&';
+  if(st)q+='stage='+encodeURIComponent(st)+'&';
+  var r=await apiFetch('/staff/clients'+q);
+  var el=document.getElementById('clientList');
+  if(!r.ok){el.innerHTML='<div class="muted">Could not load clients.</div>';return;}
+  if(!r.data.length){el.innerHTML='<div class="muted">No clients found.</div>';return;}
+  el.innerHTML='<table><thead><tr><th>Merchant</th><th>Stage</th><th>Last Engaged</th><th>Vol (₦)</th><th>Last Txn</th><th></th></tr></thead><tbody>'+
+    r.data.map(m=>`
+      <tr>
+        <td><strong>${esc(m.business_name)}</strong><br><small style="color:var(--gray)">${esc(m.business_email)}</small></td>
+        <td><span class="pill ${esc(m.pipeline_stage||'prospect')}">${esc(m.pipeline_stage||'prospect')}</span></td>
+        <td>${fmtDate(m.last_engaged_at)}</td>
+        <td>${ngn(m.total_vol_kobo)}</td>
+        <td>${fmtDate(m.last_txn_at)}</td>
+        <td><button class="btn btn-sm btn-out" onclick="openDrawer('${esc(m.id)}',${JSON.stringify(esc(m.business_name))})">Open</button></td>
+      </tr>`).join('')+'</tbody></table>';
+  lucide.createIcons();
+}
+
+// ── Merchant search (onboard) ─────────────────────────────────────────────
+function debMerchSearch(){clearTimeout(mSearchTimer);mSearchTimer=setTimeout(doMerchSearch,350);}
+async function doMerchSearch(){
+  var q=document.getElementById('merchantSearch').value.trim();
+  var el=document.getElementById('merchantResults');
+  if(q.length<2){el.innerHTML='<div class="muted">Type at least 2 characters.</div>';return;}
+  var r=await apiFetch('/staff/clients/search-unassigned?q='+encodeURIComponent(q));
+  if(!r.ok||!r.data.length){el.innerHTML='<div class="muted">No merchants found.</div>';return;}
+  el.innerHTML='<table><thead><tr><th>Merchant</th><th>KYC</th><th>Account Officer</th><th></th></tr></thead><tbody>'+
+    r.data.map(m=>`
+      <tr>
+        <td><strong>${esc(m.business_name)}</strong><br><small style="color:var(--gray)">${esc(m.merchant_code)}</small></td>
+        <td><span class="pill ${esc(m.kyc_status||'').toLowerCase()}">${esc(m.kyc_status||'—')}</span></td>
+        <td>${m.officer_name?esc(m.officer_name):'<em style="color:var(--gray)">Unassigned</em>'}</td>
+        <td><button class="btn btn-sm btn-lime" onclick="assignSelf('${esc(m.id)}','${esc(m.business_name).replace(/'/g,'')}')">Assign to me</button></td>
+      </tr>`).join('')+'</tbody></table>';
+}
+
+async function assignSelf(id,name){
+  if(!confirm('Assign '+name+' to yourself?'))return;
+  var r=await apiFetch('/staff/clients/'+id+'/assign-self',{method:'POST',body:{reason:'assigned from search'}});
+  gMsg(r.ok,r.ok?name+' assigned to you':(r.message||'Failed'));
+  if(r.ok){doMerchSearch();loadClients();}
+}
+
+// ── Drawer ────────────────────────────────────────────────────────────────
+async function openDrawer(id,name){
+  currentMerchantId=id;
+  document.getElementById('clientDrawer').classList.add('open');
+  document.getElementById('drawerOverlay').classList.add('show');
+  document.getElementById('drawerTitle').textContent=name||'Client';
+  document.getElementById('drawerMsg').className='msg';
+  dTab('overview', document.querySelector('#drawerTabs .tab-btn'));
+  var r=await apiFetch('/staff/clients/'+id);
+  if(!r.ok){dMsg(false,'Could not load client');return;}
+  var m=r.data;
+  document.getElementById('drawerSub').textContent=(m.merchant_code||'')+(m.business_email?' · '+m.business_email:'');
+  document.getElementById('d-bname').value=m.business_name||'';
+  document.getElementById('d-email').value=m.business_email||'';
+  document.getElementById('d-phone').value=m.business_phone||'';
+  document.getElementById('d-stage').value=m.pipeline_stage||'prospect';
+  document.getElementById('d-fengdate').value=m.first_engagement_at?m.first_engagement_at.slice(0,10):'';
+  document.getElementById('d-offramp').value=m.off_ramp_reason||'';
+  toggleOffRamp();
+  document.getElementById('drawerQuickStats').innerHTML=
+    '<table style="width:auto"><tr><td style="padding:3px 14px 3px 0;color:var(--gray)">KYC Status</td><td><span class="pill '+esc(m.kyc_status||'').toLowerCase()+'">'+esc(m.kyc_status||'—')+'</span></td></tr>'+
+    '<tr><td style="padding:3px 14px 3px 0;color:var(--gray)">Joined</td><td>'+fmtDate(m.created_at)+'</td></tr></table>';
+}
+function closeDrawer(){document.getElementById('clientDrawer').classList.remove('open');document.getElementById('drawerOverlay').classList.remove('show');currentMerchantId=null;}
+
+function dTab(name,el){
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  if(el)el.classList.add('active');
+  document.getElementById('dtab-overview').style.display='none';
+  document.getElementById('dtab-engagements').style.display='none';
+  document.getElementById('dtab-transactions').style.display='none';
+  document.getElementById('dtab-settlements').style.display='none';
+  document.getElementById('dtab-'+name).style.display='block';
+  if(name==='engagements')loadEngagements();
+  if(name==='transactions')loadTxns();
+  if(name==='settlements')loadStls();
+}
+
+function toggleOffRamp(){var s=document.getElementById('d-stage').value;document.getElementById('offRampGroup').style.display=s==='churned'?'':'none';}
+document.getElementById('d-stage').addEventListener('change',toggleOffRamp);
+
+async function saveClient(){
+  if(!currentMerchantId)return;
+  var body={
+    business_name:document.getElementById('d-bname').value.trim(),
+    business_email:document.getElementById('d-email').value.trim(),
+    business_phone:document.getElementById('d-phone').value.trim(),
+    pipeline_stage:document.getElementById('d-stage').value,
+    first_engagement_at:document.getElementById('d-fengdate').value||null,
+    off_ramp_reason:document.getElementById('d-offramp').value.trim()||null,
+  };
+  var r=await apiFetch('/staff/clients/'+currentMerchantId,{method:'PATCH',body});
+  dMsg(r.ok,r.ok?'Saved':(r.message||'Failed'));
+  if(r.ok)loadClients();
+}
+
+// ── Engagements ───────────────────────────────────────────────────────────
+function setEngDateTime(){
+  var now=new Date();now.setMinutes(now.getMinutes()-now.getTimezoneOffset());
+  document.getElementById('eng-date').value=now.toISOString().slice(0,16);
+}
+setEngDateTime();
+
+async function loadEngagements(){
+  if(!currentMerchantId)return;
+  var r=await apiFetch('/staff/clients/'+currentMerchantId+'/engagements');
+  var el=document.getElementById('engList');
+  if(!r.ok||!r.data.length){el.innerHTML='<div class="muted">No engagements yet.</div>';return;}
+  el.innerHTML=r.data.map(e=>`
+    <div style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span class="eng-badge ${esc(e.type)}">${esc(e.type)}</span>
+        <span style="font-size:11px;color:var(--gray)">${fmtDT(e.engaged_at)}</span>
+        <span style="font-size:11px;color:var(--gray);margin-left:auto">by ${esc(e.logged_by)}</span>
+      </div>
+      ${e.notes?`<div style="font-size:13px;color:#334155">${esc(e.notes)}</div>`:'<div style="color:var(--gray);font-size:12px">No notes</div>'}
+    </div>`).join('');
+}
+
+async function logEngagement(){
+  if(!currentMerchantId)return;
+  var body={
+    type:document.getElementById('eng-type').value,
+    notes:document.getElementById('eng-notes').value.trim()||null,
+    engaged_at:document.getElementById('eng-date').value||null,
+  };
+  var r=await apiFetch('/staff/clients/'+currentMerchantId+'/engagements',{method:'POST',body});
+  dMsg(r.ok,r.ok?'Engagement logged':(r.message||'Failed'));
+  if(r.ok){document.getElementById('eng-notes').value='';setEngDateTime();loadEngagements();}
+}
+
+// ── Transactions ──────────────────────────────────────────────────────────
+async function loadTxns(){
+  if(!currentMerchantId)return;
+  var r=await apiFetch('/staff/clients/'+currentMerchantId+'/transactions');
+  var el=document.getElementById('txnList');
+  if(!r.ok||!r.data.length){el.innerHTML='<div class="muted">No transactions.</div>';return;}
+  el.innerHTML='<table><thead><tr><th>Ref</th><th>Channel</th><th class="right">Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>'+
+    r.data.map(t=>`<tr>
+      <td><small>${esc(t.txn_ref)}</small></td>
+      <td>${esc(t.channel||'—')}</td>
+      <td class="right">${ngn(t.amount_kobo)}</td>
+      <td><span class="pill ${t.status==='SUCCESS'?'active':t.status==='FAILED'?'churned':'onboarded'}">${esc(t.status)}</span></td>
+      <td>${fmtDate(t.created_at)}</td>
+    </tr>`).join('')+'</tbody></table>';
+}
+
+// ── Settlements ───────────────────────────────────────────────────────────
+async function loadStls(){
+  if(!currentMerchantId)return;
+  var r=await apiFetch('/staff/clients/'+currentMerchantId+'/settlements');
+  var el=document.getElementById('stlList');
+  if(!r.ok||!r.data.length){el.innerHTML='<div class="muted">No settlements.</div>';return;}
+  el.innerHTML='<table><thead><tr><th>Period</th><th class="right">Net (₦)</th><th>Txns</th><th>Status</th></tr></thead><tbody>'+
+    r.data.map(s=>`<tr>
+      <td>${esc(s.period_from)} – ${esc(s.period_to)}</td>
+      <td class="right">${ngn(s.net_kobo)}</td>
+      <td>${s.txn_count}</td>
+      <td><span class="pill ${s.status==='settled'?'active':s.status==='failed'?'churned':'onboarded'}">${esc(s.status)}</span></td>
+    </tr>`).join('')+'</tbody></table>';
+}
+
+// ── Performance ───────────────────────────────────────────────────────────
+async function loadPerf(){
+  var month=document.getElementById('perfMonth').value;
+  var r=await apiFetch('/staff/performance?month='+encodeURIComponent(month));
+  if(!r.ok)return;
+  var d=r.data;
+  document.getElementById('perfStats').innerHTML=`
+    <div class="col"><div class="stat-box"><div class="stat-val">${d.clients.total||0}</div><div class="stat-lbl">Total clients</div></div></div>
+    <div class="col"><div class="stat-box"><div class="stat-val">${d.clients.active_count||0}</div><div class="stat-lbl">Active this month</div></div></div>
+    <div class="col"><div class="stat-box"><div class="stat-val">${ngn(d.txnVol.vol_kobo||0)}</div><div class="stat-lbl">Volume processed</div></div></div>
+    <div class="col"><div class="stat-box"><div class="stat-val">${d.txnVol.txn_count||0}</div><div class="stat-lbl">Transactions</div></div></div>
+    <div class="col"><div class="stat-box"><div class="stat-val">${d.engagements.total||0}</div><div class="stat-lbl">Engagements</div></div></div>
+  `;
+  var pipeline=d.pipeline||[];
+  document.getElementById('perfPipeline').innerHTML=pipeline.length
+    ?'<div style="display:flex;gap:10px;flex-wrap:wrap">'+
+        pipeline.map(p=>`<div style="background:#f1f5f9;border-radius:8px;padding:10px 16px;text-align:center"><div style="font-size:20px;font-weight:700">${p.cnt}</div><div style="font-size:11px;color:var(--gray)">${p.pipeline_stage}</div></div>`).join('')+
+      '</div>'
+    :'<div class="muted">No pipeline data</div>';
+  var e=d.engagements;
+  document.getElementById('perfEngagements').innerHTML=`
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      ${[['Calls',e.calls],['Visits',e.visits],['Emails',e.emails],['WhatsApp',e.whatsapps],['Demos',e.demos]].map(([l,v])=>
+        `<div style="background:#f1f5f9;border-radius:8px;padding:10px 16px;text-align:center"><div style="font-size:20px;font-weight:700">${v||0}</div><div style="font-size:11px;color:var(--gray)">${l}</div></div>`).join('')}
+    </div>`;
+}
+
+function logout(){sessionStorage.clear();location.href='/login.html';}
+
+lucide.createIcons();
+</script>
+</body>
+</html>
