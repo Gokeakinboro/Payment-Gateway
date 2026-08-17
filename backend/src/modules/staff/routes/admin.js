@@ -13,7 +13,7 @@ const bcrypt = require('bcrypt');
 router.get('/staff-list', requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const rows = await prisma.$queryRawUnsafe(`
-      SELECT u.id, u.first_name, u.last_name, u.email, u.is_active, u.created_at,
+      SELECT u.id, u.first_name, u.last_name, u.email, u.phone, u.job_title, u.is_active, u.created_at,
              COUNT(m.id) AS client_count
       FROM users u
       LEFT JOIN merchants m ON m.account_officer_id = u.id
@@ -31,7 +31,7 @@ router.get('/staff-list', requireAuth, requireSuperAdmin, async (req, res) => {
 // Create a new staff user
 router.post('/staff', requireAuth, requireSuperAdmin, async (req, res) => {
   try {
-    const { first_name, last_name, email, password } = req.body;
+    const { first_name, last_name, email, password, phone, job_title } = req.body;
     if (!first_name || !last_name || !email || !password)
       return res.status(400).json({ status: false, message: 'first_name, last_name, email, password required' });
 
@@ -47,6 +47,8 @@ router.post('/staff', requireAuth, requireSuperAdmin, async (req, res) => {
         passwordHash: hash,
         role: 'STAFF',
         mustChangePassword: true,
+        phone:    phone    || undefined,
+        jobTitle: job_title || undefined,
       },
     });
 
@@ -61,11 +63,13 @@ router.post('/staff', requireAuth, requireSuperAdmin, async (req, res) => {
 // Activate / deactivate
 router.patch('/staff/:staffId', requireAuth, requireSuperAdmin, async (req, res) => {
   try {
-    const { is_active, first_name, last_name } = req.body;
+    const { is_active, first_name, last_name, phone, job_title } = req.body;
     const data = {};
-    if (is_active !== undefined) data.isActive = Boolean(is_active);
-    if (first_name) data.firstName = first_name;
-    if (last_name)  data.lastName  = last_name;
+    if (is_active !== undefined) data.isActive  = Boolean(is_active);
+    if (first_name)              data.firstName  = first_name;
+    if (last_name)               data.lastName   = last_name;
+    if (phone !== undefined)     data.phone      = phone || null;
+    if (job_title !== undefined) data.jobTitle   = job_title || null;
 
     await prisma.user.update({ where: { id: req.params.staffId }, data });
     res.json({ status: true, message: 'Staff updated' });
