@@ -5,11 +5,28 @@
 // boundary clean (see docs/DATA-OWNERSHIP.md). Simple (non-itemized) links stay on the
 // core /api/v1/payment-links route.
 const router = require('express').Router();
-const { prisma, tenantAuth, computeInvoiceMoney } = require('../_shared');
-const { ok, fail, created } = require('../../../utils/helpers');
+const { prisma, tenantAuth, computeInvoiceMoney, CHECKOUT_BASE } = require('../_shared');
+const { ok, fail, created, notFound } = require('../../../utils/helpers');
 const { createPaymentLink } = require('../../../routes/paymentLinks');
+const { notifyPaymentLink, isConfigured: waConfigured } = require('../../../services/whatsappService');
 
 router.use(tenantAuth);
+
+// List all payment links for this merchant (for the Pay Links tab in invoicing.html).
+router.get('/', async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT id::text, slug, title, description, amount::text AS amount, currency,
+              is_reusable, expires_at, is_active, created_at
+         FROM payment_links WHERE merchant_id=$1::uuid ORDER BY created_at DESC LIMIT 100`,
+      req.invTenant.merchantId);
+    const n = (v) => (v === null || v === undefined ? null : Number(v));
+    return ok(res, rows.map((r) => ({
+      ...r, amount: n(r.amount),
+      pay_url: `${CHECKOUT_BASE}/checkout.html?link=${r.slug}`,
+    })));
+  } catch (e) { next(e); }
+});
 
 router.post('/', async (req, res, next) => {
   try {
@@ -50,6 +67,35 @@ router.post('/', async (req, res, next) => {
       applyServiceCharge, vatAmount: money.vatAmount,
     });
     return created(res, link, 'Itemized payment link created');
+  } catch (e) { next(e); }
+});
+
+// Share a payment link via WhatsApp — sends paylode_payment_link template.
+router.post('/:id/share-whatsapp', async (req, res, next) => {
+  try {
+    if (!waConfigured()) return fail(res, 'WhatsApp is not configured', 'WA_NOT_CONFIGURED', 503);
+    const phone = String((req.body && req.body.phone) || '').trim();
+    if (!phone) return fail(res, 'A recipient phone number is required');
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT pl.id::text, pl.slug, pl.title, pl.amount::text AS amount, pl.currency,
+              m.business_name, m.id::text AS merchant_id
+         FROM payment_links pl JOIN merchants m ON m.id = pl.merchant_id
+        WHERE pl.id=$1::uuid AND pl.merchant_id=$2::uuid`,
+      req.params.id, req.invTenant.merchantId);
+    if (!rows.length) return notFound(res, 'Payment link');
+    const r = rows[0];
+    const result = await notifyPaymentLink({
+      phone,
+      businessName: r.business_name,
+      title: r.title,
+      amount: r.amount !== null ? Number(r.amount) : null,
+      currency: r.currency || 'NGN',
+      payUrl: `${CHECKOUT_BASE}/checkout.html?link=${r.slug}`,
+      merchantId: r.merchant_id,
+    });
+    if (result.skipped) return fail(res, 'WhatsApp send skipped — check template or token', 'WA_SKIPPED', 503);
+    if (!result.ok) return fail(res, 'WhatsApp send failed', 'WA_SEND_FAILED', 502);
+    return ok(res, { sent: true }, `Payment link shared via WhatsApp to ${phone}`);
   } catch (e) { next(e); }
 });
 
