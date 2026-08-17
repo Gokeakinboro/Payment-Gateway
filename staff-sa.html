@@ -252,6 +252,19 @@ input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);b
       <div class="form-group"><label>First name</label><input type="text" id="sf-fname"></div>
       <div class="form-group"><label>Last name</label><input type="text" id="sf-lname"></div>
     </div>
+    <div class="form-row">
+      <div class="form-group"><label>Role / Job title</label>
+        <select id="sf-jobtitle">
+          <option value="">Select…</option>
+          <option value="Account Officer">Account Officer</option>
+          <option value="Sales Executive">Sales Executive</option>
+          <option value="Onboarding Specialist">Onboarding Specialist</option>
+          <option value="Relationship Manager">Relationship Manager</option>
+          <option value="Business Development">Business Development</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Phone number</label><input type="tel" id="sf-phone" placeholder="08012345678"></div>
+    </div>
     <div style="margin-bottom:10px"><label>Email</label><input type="email" id="sf-email"></div>
     <div style="margin-bottom:16px"><label>Temp password</label><input type="password" id="sf-pw" placeholder="They'll be prompted to change it"></div>
     <div style="display:flex;gap:10px">
@@ -437,9 +450,11 @@ async function loadStaff(){
   var el=document.getElementById('staffList');
   if(!r.ok){el.innerHTML='<div class="muted">Failed to load.</div>';return;}
   if(!r.data.length){el.innerHTML='<div class="muted">No staff yet. Create one above.</div>';return;}
-  el.innerHTML='<table><thead><tr><th>Name</th><th>Email</th><th>Clients</th><th>Status</th><th></th></tr></thead><tbody>'+
+  el.innerHTML='<table><thead><tr><th>Name</th><th>Role</th><th>Phone</th><th>Email</th><th>Clients</th><th>Status</th><th></th></tr></thead><tbody>'+
     r.data.map(s=>`<tr>
       <td><strong>${esc(s.first_name)} ${esc(s.last_name)}</strong></td>
+      <td>${s.job_title?esc(s.job_title):'<span style="color:var(--gray)">—</span>'}</td>
+      <td>${s.phone?esc(s.phone):'<span style="color:var(--gray)">—</span>'}</td>
       <td>${esc(s.email)}</td>
       <td>${s.client_count}</td>
       <td><span class="pill ${s.is_active?'active':'churned'}">${s.is_active?'Active':'Inactive'}</span></td>
@@ -456,10 +471,10 @@ function populateBulkDrops(){
 }
 
 function openCreateStaff(){document.getElementById('createStaffModal').classList.add('show');}
-function closeCreateStaff(){document.getElementById('createStaffModal').classList.remove('show');}
+function closeCreateStaff(){document.getElementById('createStaffModal').classList.remove('show');['sf-fname','sf-lname','sf-email','sf-pw','sf-phone'].forEach(i=>document.getElementById(i).value='');document.getElementById('sf-jobtitle').value='';}
 
 async function createStaff(){
-  var body={first_name:document.getElementById('sf-fname').value.trim(),last_name:document.getElementById('sf-lname').value.trim(),email:document.getElementById('sf-email').value.trim(),password:document.getElementById('sf-pw').value};
+  var body={first_name:document.getElementById('sf-fname').value.trim(),last_name:document.getElementById('sf-lname').value.trim(),email:document.getElementById('sf-email').value.trim(),password:document.getElementById('sf-pw').value,phone:document.getElementById('sf-phone').value.trim()||undefined,job_title:document.getElementById('sf-jobtitle').value||undefined};
   var r=await apiFetch('/staff/admin/staff',{method:'POST',body});
   var m=document.getElementById('createStaffMsg');
   m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?'Staff created successfully':(r.message||'Failed');

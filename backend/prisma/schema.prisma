@@ -92,6 +92,8 @@ model User {
   isActive     Boolean  @default(true) @map("is_active")
   lastLoginAt  DateTime? @map("last_login_at")
   createdAt    DateTime @default(now()) @map("created_at")
+  phone        String?  @map("phone")
+  jobTitle     String?  @map("job_title")
   totpSecret   String?  @map("totp_secret")
   totpEnabled  Boolean  @default(false) @map("totp_enabled")
   mustChangePassword Boolean @default(false) @map("must_change_password")
