@@ -7,23 +7,16 @@ const { ok, fail, created } = require('../utils/helpers');
 const { requireAuth, requireSuperAdmin } = require('../middleware/auth');
 const { defaultsForRole } = require('../config/permissions');
 const { logAudit } = require('../services/auditService');
-const { sendEmail, getEmailContent } = require('../services/emailService');
+const { sendEmail, buildPlatformWelcomeEmail } = require('../services/emailService');
 const { logger } = require('../utils/logger');
 
 function genTempPassword() {
   return Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!';
 }
-async function sendTempPasswordEmail(email, name, tempPassword) {
-  const loginUrl = (process.env.APP_URL || '') + '/login.html';
-  const content = await getEmailContent('temp_password',
-    { name: name || '', email, temp_password: tempPassword, login_url: loginUrl },
-    'Your Paylode account — first-time sign-in',
-    `<h2>Welcome to Paylode</h2><p>Hi ${name || ''},</p>` +
-      `<p>An account has been created for you. Sign in at <a href="${loginUrl}">the portal</a> with:</p>` +
-      `<p><strong>Email:</strong> ${email}<br><strong>Temporary password:</strong> ${tempPassword}</p>` +
-      `<p>You must set a new password before you can do anything else.</p>`);
-  return sendEmail({ to: email, subject: content.subject, html: content.html })
-    .catch(e => logger.error({ err: e }, 'temp-password email failed'));
+function sendTempPasswordEmail(email, firstName, tempPassword, role) {
+  const { subject, html } = buildPlatformWelcomeEmail({ firstName: firstName || '', email, tempPassword, role });
+  return sendEmail({ to: email, subject, html })
+    .catch(e => logger.error({ err: e }, 'welcome email failed'));
 }
 
 const validate = rules => async (req, res, next) => {
@@ -84,7 +77,7 @@ router.post('/invite', requireAuth, requireSuperAdmin,
         select: { id: true, email: true, firstName: true, lastName: true, role: true, createdAt: true },
       });
 
-      sendTempPasswordEmail(user.email, firstName, tempPassword);
+      sendTempPasswordEmail(user.email, firstName, tempPassword, role);
       await logAudit(req.user.id, 'USER_INVITED', 'users', user.id, null, { email: user.email, role }, null, req.ip);
       ok(res, { ...user, temp_password: tempPassword,
         message: 'User created and emailed a temporary password (they must change it on first sign-in).' });
@@ -120,7 +113,7 @@ router.post('/', requireAuth, requireSuperAdmin,
         select: { id: true, email: true, firstName: true, lastName: true, role: true, isActive: true, createdAt: true },
       });
 
-      sendTempPasswordEmail(user.email, user.firstName, tempPassword);
+      sendTempPasswordEmail(user.email, user.firstName, tempPassword, role);
       await logAudit(req.user.id, 'USER_CREATED', 'users', user.id, null, { email: user.email, role }, null, req.ip);
       created(res, { ...user, temp_password: tempPassword }, 'User created successfully');
     } catch (e) { next(e); }
@@ -138,7 +131,7 @@ router.post('/:id/reset-temp-password', requireAuth, requireSuperAdmin, async (r
       where: { id: req.params.id },
       data: { passwordHash: await bcrypt.hash(tempPassword, 12), mustChangePassword: true },
     });
-    sendTempPasswordEmail(target.email, target.firstName, tempPassword);
+    sendTempPasswordEmail(target.email, target.firstName, tempPassword, target.role);
     await logAudit(req.user.id, 'USER_TEMP_PASSWORD_RESET', 'users', req.params.id, null, { email: target.email }, null, req.ip);
     ok(res, { temp_password: tempPassword }, 'Temporary password re-issued and emailed. The user must change it on next sign-in.');
   } catch (e) { next(e); }

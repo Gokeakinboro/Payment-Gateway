@@ -67,7 +67,7 @@ const MODULES = [
   { name: 'invoicing', basePath: '/api/v1/invoicing', load: () => require('./invoicing'), enabledEnv: 'MODULE_INVOICING_ENABLED', category: 'product' },
   { name: 'wallet',    basePath: '/api/v1/wallet',    load: () => require('./wallet'),    enabledEnv: 'MODULE_WALLET_ENABLED',    category: 'product' },
   { name: 'assistant', basePath: '/api/v1/assistant', load: () => require('./assistant'), enabledEnv: 'MODULE_ASSISTANT_ENABLED', category: 'product' },
-  { name: 'staff-crm', basePath: '/api/v1/staff',     load: () => require('./staff'),     enabledEnv: 'MODULE_STAFF_CRM_ENABLED', category: 'product' },
+  { name: 'staff-crm', basePath: '/api/v1/staff',     load: () => require('./staff'),     enabledEnv: 'MODULE_STAFF_CRM_ENABLED', category: 'core' },
   { name: 'chat',      basePath: '/api/v1/chat',      load: () => require('../routes/chat'),  enabledEnv: 'MODULE_CHAT_ENABLED',      category: 'core' },
 ];
 

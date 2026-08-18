@@ -99,7 +99,7 @@ textarea{resize:vertical;min-height:70px}
     <div class="sb-logo">Pay<span>lode</span></div>
     <div class="sb-section">CRM</div>
     <a href="#" class="sb-link active" onclick="showTab('clients',this)"><i data-lucide="users"></i> My Clients</a>
-    <a href="#" class="sb-link" onclick="showTab('prospects',this)"><i data-lucide="user-search"></i> Prospects</a>
+    <a href="#" class="sb-link" onclick="showTab('prospects',this)"><i data-lucide="user-search"></i> Leads</a>
     <a href="#" class="sb-link" onclick="showTab('search',this)"><i data-lucide="search"></i> Find / Onboard</a>
     <a href="#" class="sb-link" onclick="showTab('performance',this)"><i data-lucide="bar-chart-2"></i> Performance</a>
     <div class="sb-section">Account</div>
@@ -235,6 +235,12 @@ textarea{resize:vertical;min-height:70px}
       </div>
       <div class="form-row">
         <div class="form-group">
+          <label>Industry Type</label>
+          <select id="d-industry"><option value="">Select industry…</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
           <label>Business Email</label>
           <input type="email" id="d-email">
         </div>
@@ -331,13 +337,18 @@ textarea{resize:vertical;min-height:70px}
         <div class="form-group"><label>Name</label><input type="text" id="pd-bname"></div>
         <div class="form-group"><label>Stage</label>
           <select id="pd-stage">
-            <option value="prospect">Prospect</option><option value="engaged">Engaged</option>
+            <option value="lead">Lead</option><option value="prospect">Prospect</option><option value="engaged">Engaged</option>
             <option value="onboarded">Onboarded</option><option value="active">Active</option><option value="churned">Churned</option>
           </select>
         </div>
       </div>
       <div class="form-row">
+        <div class="form-group"><label>Industry Type</label>
+          <select id="pd-industry"><option value="">Select industry…</option></select>
+        </div>
         <div class="form-group"><label>Contact person</label><input type="text" id="pd-contact"></div>
+      </div>
+      <div class="form-row">
         <div class="form-group"><label>Phone</label><input type="text" id="pd-phone"></div>
       </div>
       <div class="form-row">
@@ -401,6 +412,7 @@ function dMsg(ok,t){var m=document.getElementById('drawerMsg');m.className='msg 
   if(me.ok&&me.data){document.getElementById('userName').textContent=(me.data.firstName||'')+' '+(me.data.lastName||'');}
   var month=new Date().toISOString().slice(0,7);
   document.getElementById('perfMonth').value=month;
+  loadIndustries();
   loadClients();
 })();
 
@@ -486,6 +498,7 @@ async function openDrawer(id,name){
   document.getElementById('d-email').value=m.business_email||'';
   document.getElementById('d-phone').value=m.business_phone||'';
   document.getElementById('d-stage').value=m.pipeline_stage||'prospect';
+  document.getElementById('d-industry').value=m.industry_type||'';
   document.getElementById('d-fengdate').value=m.first_engagement_at?m.first_engagement_at.slice(0,10):'';
   document.getElementById('d-offramp').value=m.off_ramp_reason||'';
   toggleOffRamp();
@@ -517,6 +530,7 @@ async function saveClient(){
     business_email:document.getElementById('d-email').value.trim(),
     business_phone:document.getElementById('d-phone').value.trim(),
     pipeline_stage:document.getElementById('d-stage').value,
+    industry_type:document.getElementById('d-industry').value||null,
     first_engagement_at:document.getElementById('d-fengdate').value||null,
     off_ramp_reason:document.getElementById('d-offramp').value.trim()||null,
   };
@@ -634,10 +648,11 @@ async function loadProspects(){
   var r=await apiFetch('/staff/prospects'+q);
   var el=document.getElementById('prospectList');
   if(!r.ok){el.innerHTML='<div class="muted">Could not load.</div>';return;}
-  if(!r.data.length){el.innerHTML='<div class="muted">No prospects. Add one above.</div>';return;}
-  el.innerHTML='<table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Stage</th><th>Last Engaged</th><th></th></tr></thead><tbody>'+
+  if(!r.data.length){el.innerHTML='<div class="muted">No leads yet. Add one above.</div>';return;}
+  el.innerHTML='<table><thead><tr><th>Name</th><th>Industry</th><th>Contact</th><th>Phone</th><th>Stage</th><th>Last Engaged</th><th></th></tr></thead><tbody>'+
     r.data.map(p=>`<tr>
       <td><strong>${esc(p.business_name)}</strong>${p.address?'<br><small style="color:var(--gray)">'+esc(p.address)+'</small>':''}</td>
+      <td>${p.industry_type?esc(p.industry_type):'<span style="color:var(--gray)">—</span>'}</td>
       <td>${esc(p.contact_name||'—')}</td>
       <td>${esc(p.phone||'—')}</td>
       <td><span class="pill ${esc(p.pipeline_stage)}">${esc(p.pipeline_stage)}</span></td>
@@ -668,7 +683,8 @@ async function openProspectDrawer(id,name){
       document.getElementById('pd-email').value=p.email||'';
       document.getElementById('pd-address').value=p.address||'';
       document.getElementById('pd-notes').value=p.notes||'';
-      document.getElementById('pd-stage').value=p.pipeline_stage||'prospect';
+      document.getElementById('pd-stage').value=p.pipeline_stage||'lead';
+      document.getElementById('pd-industry').value=p.industry_type||'';
     }
   }
 }
@@ -683,9 +699,10 @@ function pdTab(name,el){
 }
 
 async function saveProspect(){
-  var body={business_name:document.getElementById('pd-bname').value.trim(),contact_name:document.getElementById('pd-contact').value.trim()||null,phone:document.getElementById('pd-phone').value.trim()||null,email:document.getElementById('pd-email').value.trim()||null,address:document.getElementById('pd-address').value.trim()||null,notes:document.getElementById('pd-notes').value.trim()||null,pipeline_stage:document.getElementById('pd-stage').value};
+  var body={business_name:document.getElementById('pd-bname').value.trim(),contact_name:document.getElementById('pd-contact').value.trim()||null,phone:document.getElementById('pd-phone').value.trim()||null,email:document.getElementById('pd-email').value.trim()||null,address:document.getElementById('pd-address').value.trim()||null,notes:document.getElementById('pd-notes').value.trim()||null,pipeline_stage:document.getElementById('pd-stage').value,industry_type:document.getElementById('pd-industry').value||null};
   var m=document.getElementById('pdMsg');
   if(!body.business_name){m.className='msg err';m.textContent='Name is required';return;}
+  var wasNew=!currentProspectId;
   var r;
   if(currentProspectId){
     r=await apiFetch('/staff/prospects/'+currentProspectId,{method:'PATCH',body});
@@ -694,7 +711,7 @@ async function saveProspect(){
     if(r.ok&&r.data)currentProspectId=r.data.id;
   }
   m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?'Saved':(r.message||'Failed');
-  if(r.ok)loadProspects();
+  if(r.ok){loadProspects();if(wasNew)closeProspectDrawer();}
 }
 
 async function loadPEngagements(){
@@ -771,6 +788,20 @@ async function savePFields(){
   var values=Array.from(inputs).map(i=>({field_id:i.dataset.fid,value:i.value||null}));
   var r=await apiFetch('/staff/prospects/'+currentProspectId+'/custom-fields',{method:'PUT',body:{values}});
   document.getElementById('pdMsg').className='msg '+(r.ok?'ok':'err');document.getElementById('pdMsg').textContent=r.ok?'Fields saved':(r.message||'Failed');
+}
+
+// ── Industry types ────────────────────────────────────────────────────────
+async function loadIndustries(){
+  var r=await apiFetch('/staff/industries');
+  if(!r.ok)return;
+  ['d-industry','pd-industry'].forEach(function(selId){
+    var sel=document.getElementById(selId);
+    if(!sel)return;
+    var cur=sel.value;
+    sel.innerHTML='<option value="">Select industry…</option>';
+    (r.data||[]).forEach(function(i){sel.appendChild(new Option(i.label,i.label));});
+    if(cur)sel.value=cur;
+  });
 }
 
 lucide.createIcons();

@@ -46,12 +46,12 @@ router.get('/clients', requireAuth, requireStaff, async (req, res) => {
     const rows = await prisma.$queryRawUnsafe(`
       SELECT
         m.id, m.merchant_code, m.business_name, m.business_email, m.business_phone,
-        m.kyc_status, m.is_active, m.pipeline_stage, m.off_ramp_reason, m.off_ramp_at,
-        m.first_engagement_at, m.created_at,
+        m.kyc_status, m.is_active, m.pipeline_stage, m.industry_type,
+        m.off_ramp_reason, m.off_ramp_at, m.first_engagement_at, m.created_at,
         u.first_name || ' ' || u.last_name AS officer_name,
         u.id AS officer_id,
         (SELECT COUNT(*) FROM transactions t WHERE t.merchant_id = m.id) AS txn_count,
-        (SELECT COALESCE(SUM(t.amount_kobo),0) FROM transactions t WHERE t.merchant_id = m.id AND t.status = 'SUCCESS') AS total_vol_kobo,
+        (SELECT COALESCE(SUM(t.amount),0) FROM transactions t WHERE t.merchant_id = m.id AND t.status = 'SUCCESS') AS total_vol_kobo,
         (SELECT MAX(t.created_at) FROM transactions t WHERE t.merchant_id = m.id) AS last_txn_at,
         (SELECT COUNT(*) FROM staff_engagements se WHERE se.merchant_id = m.id) AS engagement_count,
         (SELECT MAX(se.engaged_at) FROM staff_engagements se WHERE se.merchant_id = m.id) AS last_engaged_at
@@ -120,7 +120,7 @@ router.get('/clients/:merchantId', requireAuth, requireStaff, async (req, res) =
 router.patch('/clients/:merchantId', requireAuth, requireStaff, async (req, res) => {
   try {
     const officerId = officerFilter(req);
-    const { business_name, business_email, business_phone, pipeline_stage, off_ramp_reason, first_engagement_at } = req.body;
+    const { business_name, business_email, business_phone, pipeline_stage, industry_type, off_ramp_reason, first_engagement_at } = req.body;
 
     // Verify ownership
     const check = await prisma.$queryRawUnsafe(
@@ -136,6 +136,7 @@ router.patch('/clients/:merchantId', requireAuth, requireStaff, async (req, res)
     if (business_email !== undefined)  { vals.push(business_email);  sets.push(`business_email=$${vals.length}`); }
     if (business_phone !== undefined)  { vals.push(business_phone);  sets.push(`business_phone=$${vals.length}`); }
     if (pipeline_stage !== undefined)  { vals.push(pipeline_stage);  sets.push(`pipeline_stage=$${vals.length}`); }
+    if (industry_type !== undefined)   { vals.push(industry_type || null); sets.push(`industry_type=$${vals.length}`); }
     if (off_ramp_reason !== undefined) { vals.push(off_ramp_reason); sets.push(`off_ramp_reason=$${vals.length}`); }
     if (first_engagement_at !== undefined) {
       vals.push(first_engagement_at || null);
@@ -273,8 +274,8 @@ router.get('/clients/:merchantId/transactions', requireAuth, requireStaff, async
     }
 
     const rows = await prisma.$queryRawUnsafe(`
-      SELECT t.id, t.txn_ref, t.status, t.amount_kobo, t.fee_kobo, t.channel,
-             t.customer_email, t.created_at
+      SELECT t.id, t.reference AS txn_ref, t.status, t.amount, t.merchant_fee AS fee,
+             t.channel, t.customer_email, t.created_at
       FROM transactions t
       WHERE t.merchant_id = $1::uuid
       ORDER BY t.created_at DESC
@@ -300,9 +301,10 @@ router.get('/clients/:merchantId/settlements', requireAuth, requireStaff, async 
     }
 
     const rows = await prisma.$queryRawUnsafe(`
-      SELECT s.id, s.period_from, s.period_to, s.gross_kobo, s.fee_kobo, s.net_kobo,
+      SELECT s.id, s.period_start AS period_from, s.period_end AS period_to,
+             s.gross_amount, s.fees_deducted, s.net_settled,
              s.txn_count, s.status, s.payout_ref, s.created_at
-      FROM mw_dept_settlements s
+      FROM settlements s
       WHERE s.merchant_id = $1::uuid
       ORDER BY s.created_at DESC
       LIMIT 50
@@ -350,7 +352,7 @@ router.get('/performance', requireAuth, requireStaff, async (req, res) => {
       ),
       // Transaction volume for clients this month
       prisma.$queryRawUnsafe(
-        `SELECT COUNT(*) AS txn_count, COALESCE(SUM(t.amount_kobo),0) AS vol_kobo,
+        `SELECT COUNT(*) AS txn_count, COALESCE(SUM(t.amount),0) AS vol_kobo,
                 COUNT(DISTINCT t.merchant_id) AS active_clients
          FROM transactions t
          JOIN merchants m ON m.id = t.merchant_id
