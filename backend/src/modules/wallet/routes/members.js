@@ -11,10 +11,11 @@ const { sendEmail } = require('../../../services/emailService');
 router.use(tenantAuth, requireWalletEnabled);
 
 const num = (v) => (v === null || v === undefined ? null : Number(v));
-const SELECT = `m.id::text, m.name, m.email, m.phone, m.kyc_tier, m.status, m.user_id::text AS user_id, m.created_at,
+const SELECT = `m.id::text, m.name, m.email, m.phone, m.kyc_tier, m.status, m.is_admin, m.user_id::text AS user_id, m.created_at,
   w.id::text AS wallet_id, w.balance::text AS balance, w.currency, w.low_balance_threshold::text AS low_balance_threshold`;
 const shapeMember = (r) => ({
   id: r.id, name: r.name, email: r.email, phone: r.phone, kyc_tier: r.kyc_tier, status: r.status,
+  is_admin: !!r.is_admin,
   has_login: !!r.user_id, wallet_id: r.wallet_id || null, balance: num(r.balance), currency: r.currency || 'NGN',
   low_balance_threshold: num(r.low_balance_threshold), created_at: r.created_at,
 });
@@ -146,6 +147,7 @@ router.patch('/:id', async (req, res, next) => {
       const st = ['active', 'suspended', 'deactivated'].includes(b.status) ? b.status : 'active';
       sets.push(`status = $${i++}`); vals.push(st);
     }
+    if (b.is_admin !== undefined) { sets.push(`is_admin = $${i++}`); vals.push(!!b.is_admin); }
     if (sets.length) {
       sets.push('updated_at = now()'); vals.push(req.params.id, mid);
       const r = await prisma.$queryRawUnsafe(
@@ -176,6 +178,25 @@ router.delete('/:id', async (req, res, next) => {
       req.params.id, mid);
     if (!r.length) return notFound(res, 'Member');
     return ok(res, { id: req.params.id }, 'Member deleted');
+  } catch (e) { next(e); }
+});
+
+// Admin view of a member's invoices — for the member profile panel
+router.get('/:id/invoices', async (req, res, next) => {
+  try {
+    const mid = req.walletTenant.merchantId;
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT i.id::text, i.invoice_number, i.description, i.total_amount::text AS total_amount,
+              i.amount_paid::text AS amount_paid, i.status, i.due_at, i.created_at
+         FROM mw_invoices i
+         JOIN mw_members m ON m.id = i.member_id
+         WHERE i.member_id = $1::uuid AND m.merchant_id = $2::uuid
+         ORDER BY i.created_at DESC LIMIT 200`,
+      req.params.id, mid);
+    return ok(res, rows.map((r) => ({
+      ...r, total_amount: num(r.total_amount), amount_paid: num(r.amount_paid),
+      due: num(r.total_amount) - num(r.amount_paid),
+    })));
   } catch (e) { next(e); }
 });
 

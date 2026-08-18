@@ -6,7 +6,7 @@ const { requireAuth, requireSuperAdmin, requireCompliance, requireAdmin, require
 const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../../../utils/helpers');
 const { logAudit } = require('../../../services/auditService');
 const { hasPermission } = require('../../../config/permissions');
-const { sendEmail, getEmailContent } = require('../../../services/emailService');
+const { sendEmail, getEmailContent, buildPlatformWelcomeEmail } = require('../../../services/emailService');
 const { logger } = require('../../../utils/logger');
 
 // Local temp-password generator (mirrors auth.js genTempPassword).
@@ -313,6 +313,9 @@ router.post('/:id/outlets', requireAuth, requireSuperAdmin, async (req, res, nex
 
     await logAudit(req.user.id, 'OUTLET_CREATED', 'merchants', outlet.id, null,
       { parentMerchantId: parent.id, outletName: outlet_name });
+
+    const { subject: emlSubj, html: emlHtml } = buildPlatformWelcomeEmail({ firstName: business_name, email: business_email, tempPassword, role: 'MERCHANT' });
+    sendEmail({ to: business_email, subject: emlSubj, html: emlHtml }).catch(e => logger.warn({ err: e }, 'outlet welcome email failed'));
 
     ok(res, { ...outlet, temp_password: tempPassword });
   } catch (e) { next(e); }
