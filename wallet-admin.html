@@ -239,13 +239,71 @@ async function bulkMembers(){
 }
 async function loadMembers(){
   var r=await api('/wallet/members');var e=el('mb-list');
-  e.innerHTML=(r.ok&&r.data.length)?('<table><tr><th>Name</th><th>Email</th><th class="right">Balance</th><th>Status</th><th>Actions</th></tr>'+r.data.map(function(x){
-    var a=(x.status==='active')
-      ? '<button class="btn btn-sm" onclick="mStatus(\''+x.id+'\',\'suspended\')">Suspend</button> <button class="btn btn-sm" onclick="mStatus(\''+x.id+'\',\'deactivated\')">Deactivate</button>'
+  if(!r.ok||!r.data.length){e.innerHTML='<div class="muted">No members yet</div>';return;}
+  e.innerHTML='<table><tr><th>Name</th><th>Email</th><th class="right">Balance</th><th>Role</th><th>Status</th><th>Actions</th></tr>'+r.data.map(function(x){
+    var safeName=String(x.name||'').replace(/\x27/g,'');
+    var roleBtn=x.is_admin
+      ? '<button class="btn btn-sm" style="background:#1a2744;color:#fff;min-width:72px" title="Click to set as Member" onclick="mToggleAdmin(\''+x.id+'\',false)">ADMIN</button>'
+      : '<button class="btn btn-sm btn-out" style="min-width:72px;color:#64748b" title="Click to set as Admin" onclick="mToggleAdmin(\''+x.id+'\',true)">MEMBER</button>';
+    var statusActions=(x.status==='active')
+      ? '<button class="btn btn-sm btn-out" onclick="mStatus(\''+x.id+'\',\'suspended\')">Suspend</button> <button class="btn btn-sm btn-out" onclick="mStatus(\''+x.id+'\',\'deactivated\')">Deactivate</button>'
       : '<button class="btn btn-sm btn-lime" onclick="mStatus(\''+x.id+'\',\'active\')">Reactivate</button>';
-    a+=' <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="mDelete(\''+x.id+'\',\''+String(x.name||"").replace(/\x27/g,"")+'\')">Delete</button>';
-    return '<tr><td>'+esc(x.name)+'</td><td>'+esc(x.email||'—')+'</td><td class="right">'+ngn(x.balance)+'</td><td>'+esc(x.status)+'</td><td>'+a+'</td></tr>';
-  }).join('')+'</table>'):'<div class="muted">No members yet</div>';
+    statusActions+=' <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="mDelete(\''+x.id+'\',\''+safeName+'\')">Delete</button>';
+    statusActions+=' <button class="btn btn-sm btn-out" onclick="openMemberProfile(\''+x.id+'\',\''+safeName+'\')">View ›</button>';
+    return '<tr><td style="font-weight:600">'+esc(x.name)+'</td><td>'+esc(x.email||'—')+'</td><td class="right">'+ngn(x.balance)+'</td><td>'+roleBtn+'</td><td><span class="pill" style="'+(x.status==='active'?'background:#d1fae5;color:#065f46':'background:#fef3c7;color:#92400e')+'">'+esc(x.status)+'</span></td><td>'+statusActions+'</td></tr>';
+  }).join('')+'</table>';
+}
+async function mToggleAdmin(id,makeAdmin){
+  var r=await api('/wallet/members/'+id,{method:'PATCH',body:{is_admin:makeAdmin}});
+  if(r.ok)loadMembers();else alert(r.message||'Update failed');
+}
+async function openMemberProfile(id,name){
+  var modal=document.getElementById('member-profile-modal');
+  if(!modal){
+    modal=document.createElement('div');
+    modal.id='member-profile-modal';
+    modal.style.cssText='display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:1000;overflow-y:auto';
+    modal.innerHTML='<div style="max-width:680px;margin:40px auto 80px;background:#fff;border-radius:12px;padding:24px"><div style="display:flex;align-items:center;margin-bottom:18px"><h3 id="mp-title" style="font-size:16px;font-weight:700;color:var(--navy);flex:1"></h3><button class="btn btn-sm btn-out" onclick="document.getElementById(\'member-profile-modal\').style.display=\'none\'">✕ Close</button></div><div id="mp-body"><div class="muted">Loading…</div></div></div>';
+    document.body.appendChild(modal);
+  }
+  el('mp-title').textContent=name+' — Profile';
+  modal.style.display='block';
+  el('mp-body').innerHTML='<div class="muted">Loading…</div>';
+  var r=await api('/wallet/members/'+id);
+  var ri=await api('/wallet/members/'+id+'/invoices');
+  if(!r.ok){el('mp-body').innerHTML='<div class="muted">Could not load member</div>';return;}
+  var m=r.data;
+  var roleTag=m.is_admin
+    ? '<span style="background:#1a2744;color:#fff;font-size:10px;font-weight:700;padding:2px 9px;border-radius:4px;letter-spacing:.5px">ADMIN</span>'
+    : '<span style="background:#e2e8f0;color:#64748b;font-size:10px;font-weight:700;padding:2px 9px;border-radius:4px;letter-spacing:.5px">MEMBER</span>';
+  var statusColor=m.status==='active'?'#d1fae5':'#fef3c7';
+  var statusText=m.status==='active'?'#065f46':'#92400e';
+  var invHtml='<div class="muted">No invoices</div>';
+  if(ri.ok&&ri.data&&ri.data.length){
+    var sc={paid:'background:#d1fae5;color:#065f46',pending:'background:#fef3c7;color:#92400e',overdue:'background:#fee2e2;color:#991b1b',cancelled:'background:#f1f5f9;color:#64748b'};
+    invHtml='<table><tr><th>Description</th><th>Status</th><th class="right">Amount</th><th class="right">Paid</th><th class="right">Due</th><th>Due Date</th></tr>'+
+      ri.data.map(function(inv){
+        return '<tr><td>'+esc(inv.description||('Invoice '+inv.invoice_number))+'</td>'+
+          '<td><span class="pill" style="'+(sc[inv.status]||'')+'">'+esc(inv.status)+'</span></td>'+
+          '<td class="right">'+ngn(inv.total_amount)+'</td>'+
+          '<td class="right">'+ngn(inv.amount_paid)+'</td>'+
+          '<td class="right" style="font-weight:600;color:'+(inv.due>0?'#dc2626':'#16a34a')+'">'+ngn(inv.due)+'</td>'+
+          '<td>'+(inv.due_at?new Date(inv.due_at).toLocaleDateString('en-NG'):'—')+'</td></tr>';
+      }).join('')+'</table>';
+  }
+  el('mp-body').innerHTML=
+    '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px">'+
+      roleTag+
+      '<span style="background:'+statusColor+';color:'+statusText+';font-size:10px;font-weight:700;padding:2px 9px;border-radius:4px;letter-spacing:.5px;text-transform:uppercase">'+esc(m.status)+'</span>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px">'+
+      '<div style="background:#f4f6fb;border-radius:8px;padding:12px"><div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.4px">Email</div><div style="font-weight:600;margin-top:3px">'+esc(m.email||'—')+'</div></div>'+
+      '<div style="background:#f4f6fb;border-radius:8px;padding:12px"><div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.4px">Phone</div><div style="font-weight:600;margin-top:3px">'+esc(m.phone||'—')+'</div></div>'+
+      '<div style="background:#f4f6fb;border-radius:8px;padding:12px"><div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.4px">Balance</div><div style="font-size:20px;font-weight:800;color:var(--navy);margin-top:3px">'+ngn(m.balance)+'</div></div>'+
+      '<div style="background:#f4f6fb;border-radius:8px;padding:12px"><div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.4px">KYC Tier</div><div style="font-weight:600;text-transform:capitalize;margin-top:3px">'+esc(m.kyc_tier||'—')+'</div></div>'+
+    '</div>'+
+    '<h4 style="font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px">Invoices &amp; Dues</h4>'+
+    invHtml;
 }
 async function mStatus(id,status){var r=await api('/wallet/members/'+id,{method:'PATCH',body:{status:status}});if(r.ok)loadMembers();else alert(r.message||'Update failed');}
 async function mDelete(id,name){if(!confirm('Delete '+(name||'this member')+'? They will be removed from your address book (their history is kept).'))return;var r=await api('/wallet/members/'+id,{method:'DELETE'});if(r.ok)loadMembers();else alert(r.message||'Could not delete');}

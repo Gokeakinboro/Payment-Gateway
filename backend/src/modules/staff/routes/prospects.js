@@ -76,15 +76,15 @@ router.get('/:id', requireAuth, requireStaff, async (req, res) => {
 // ── POST /prospects ────────────────────────────────────────────────────────
 router.post('/', requireAuth, requireStaff, async (req, res) => {
   try {
-    const { business_name, address, contact_name, email, phone, pipeline_stage, notes } = req.body;
+    const { business_name, address, contact_name, email, phone, pipeline_stage, industry_type, notes } = req.body;
     if (!business_name) return res.status(400).json({ status: false, message: 'business_name required' });
 
     const rows = await prisma.$queryRawUnsafe(`
-      INSERT INTO staff_prospects(business_name, address, contact_name, email, phone, pipeline_stage, notes, account_officer_id)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8::uuid)
+      INSERT INTO staff_prospects(business_name, address, contact_name, email, phone, pipeline_stage, industry_type, notes, account_officer_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::uuid)
       RETURNING id
     `, business_name, address||null, contact_name||null, email||null, phone||null,
-       pipeline_stage||'prospect', notes||null, req.user.id);
+       pipeline_stage||'prospect', industry_type||null, notes||null, req.user.id);
 
     res.json({ status: true, message: 'Prospect created', data: { id: rows[0].id } });
   } catch (err) {
@@ -96,7 +96,7 @@ router.post('/', requireAuth, requireStaff, async (req, res) => {
 // ── PATCH /prospects/:id ──────────────────────────────────────────────────
 router.patch('/:id', requireAuth, requireStaff, async (req, res) => {
   try {
-    const allowed = ['business_name','address','contact_name','email','phone','pipeline_stage','notes','off_ramp_reason','first_engagement_at'];
+    const allowed = ['business_name','address','contact_name','email','phone','pipeline_stage','industry_type','notes','off_ramp_reason','first_engagement_at'];
     const sets = []; const vals = [];
     for (const k of allowed) {
       if (req.body[k] !== undefined) { vals.push(req.body[k]||null); sets.push(`${k}=$${vals.length}`); }

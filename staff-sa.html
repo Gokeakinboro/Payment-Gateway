@@ -91,7 +91,7 @@ input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);b
     <div class="sb-logo">Pay<span>lode</span> <small style="font-size:10px;opacity:.5">CRM SA</small></div>
     <div class="sb-section">CRM</div>
     <a href="#" class="sb-link active" onclick="showTab('clients',this)"><i data-lucide="users"></i> All Clients</a>
-    <a href="#" class="sb-link" onclick="showTab('prospects',this)"><i data-lucide="user-search"></i> Prospects</a>
+    <a href="#" class="sb-link" onclick="showTab('prospects',this)"><i data-lucide="user-search"></i> Leads</a>
     <a href="#" class="sb-link" onclick="showTab('leaderboard',this)"><i data-lucide="trophy"></i> Leaderboard</a>
     <a href="#" class="sb-link" onclick="showTab('staff',this)"><i data-lucide="user-check"></i> Staff</a>
     <a href="#" class="sb-link" onclick="showTab('fields',this)"><i data-lucide="sliders-horizontal"></i> Custom Fields</a>
@@ -128,6 +128,9 @@ input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);b
               <option value="active">Active</option>
               <option value="churned">Churned</option>
             </select>
+            <select id="industryFilter" onchange="loadClients()">
+              <option value="">All industries</option>
+            </select>
           </div>
           <div id="clientList"><div class="muted">Loading…</div></div>
         </div>
@@ -137,7 +140,7 @@ input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);b
       <div class="tab-pane" id="tab-prospects">
         <div class="card">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-            <div class="card-title" style="margin:0">All Prospects</div>
+            <div class="card-title" style="margin:0">All Leads</div>
           </div>
           <div class="search-bar">
             <input type="text" id="saProspectSearch" placeholder="Search name, phone…" oninput="debSAProspectSearch()">
@@ -172,6 +175,14 @@ input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);b
           </div>
           <div class="msg" id="fieldsMsg"></div>
           <div id="fieldDefList"><div class="muted">Loading…</div></div>
+        </div>
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="card-title" style="margin:0">Industry Types</div>
+            <button class="btn btn-lime" onclick="openAddIndustry()"><i data-lucide="plus" style="width:13px;height:13px"></i> Add industry</button>
+          </div>
+          <p style="font-size:12px;color:var(--gray);margin:0 0 10px">Used to classify clients and leads by industry focus. Staff see this as a dropdown when editing a client.</p>
+          <div id="industryList"><div class="muted">Loading…</div></div>
         </div>
       </div>
 
@@ -263,13 +274,36 @@ input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);b
           <option value="Business Development">Business Development</option>
         </select>
       </div>
-      <div class="form-group"><label>Phone number</label><input type="tel" id="sf-phone" placeholder="08012345678"></div>
+      <div class="form-group"><label>Contract type</label>
+        <select id="sf-contract">
+          <option value="">Select…</option>
+          <option value="FULL TIME">Full Time</option>
+          <option value="PART TIME">Part Time</option>
+          <option value="FULL TIME (REMOTE)">Full Time (Remote)</option>
+          <option value="PART TIME (REMOTE)">Part Time (Remote)</option>
+          <option value="HYBRID">Hybrid (Part Remote / Part Office)</option>
+        </select>
+      </div>
     </div>
+    <div style="margin-bottom:10px"><label>Phone number</label><input type="tel" id="sf-phone" placeholder="08012345678"></div>
     <div style="margin-bottom:10px"><label>Email</label><input type="email" id="sf-email"></div>
     <div style="margin-bottom:16px"><label>Temp password</label><input type="password" id="sf-pw" placeholder="They'll be prompted to change it"></div>
     <div style="display:flex;gap:10px">
       <button class="btn btn-lime" onclick="createStaff()">Create</button>
       <button class="btn btn-out" onclick="closeCreateStaff()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD INDUSTRY MODAL ─────────────────────────────────────────── -->
+<div class="modal-overlay" id="addIndustryModal">
+  <div class="modal">
+    <h3>Add industry type</h3>
+    <div class="msg" id="addIndustryMsg"></div>
+    <div style="margin-bottom:10px"><label>Industry name</label><input type="text" id="ai-label" placeholder="e.g. Healthcare"></div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-lime" onclick="createIndustry()">Add</button>
+      <button class="btn btn-out" onclick="document.getElementById('addIndustryModal').classList.remove('show')">Cancel</button>
     </div>
   </div>
 </div>
@@ -362,7 +396,7 @@ async function apiFetch(path,opts){
 }
 function gMsg(ok,t){var m=document.getElementById('globalMsg');m.className='msg '+(ok?'ok':'err');m.textContent=t;}
 
-var tabTitles={clients:'All Clients',prospects:'Prospects',leaderboard:'Monthly Leaderboard',staff:'Staff',fields:'Custom CRM Fields'};
+var tabTitles={clients:'All Clients',prospects:'Leads',leaderboard:'Monthly Leaderboard',staff:'Staff',fields:'Custom CRM Fields'};
 function showTab(name,el){
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.sb-link').forEach(a=>a.classList.remove('active'));
@@ -372,7 +406,7 @@ function showTab(name,el){
   if(name==='leaderboard')loadLeaderboard();
   if(name==='staff'){loadStaff();populateBulkDrops();}
   if(name==='prospects')loadSAProspects();
-  if(name==='fields')loadFieldDefs();
+  if(name==='fields'){loadFieldDefs();loadIndustries();}
 }
 
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('sbOverlay').classList.toggle('show');}
@@ -381,7 +415,7 @@ function closeSidebar(){document.getElementById('sidebar').classList.remove('ope
 // ── Init ─────────────────────────────────────────────────────────────────
 (async()=>{
   document.getElementById('lbMonth').value=new Date().toISOString().slice(0,7);
-  await Promise.all([loadStaffForDropdowns(), loadClients()]);
+  await Promise.all([loadStaffForDropdowns(), loadIndustries(), loadClients()]);
 })();
 
 async function loadStaffForDropdowns(){
@@ -401,18 +435,21 @@ async function loadClients(){
   var s=document.getElementById('clientSearch').value.trim();
   var off=document.getElementById('officerFilter').value;
   var st=document.getElementById('stageFilter').value;
+  var ind=document.getElementById('industryFilter')?document.getElementById('industryFilter').value:'';
   var q='?';
   if(s)q+='search='+encodeURIComponent(s)+'&';
   if(off)q+='officer_id='+encodeURIComponent(off)+'&';
   if(st)q+='stage='+encodeURIComponent(st)+'&';
+  if(ind)q+='industry='+encodeURIComponent(ind)+'&';
   var r=await apiFetch('/staff/admin/clients'+q);
   var el=document.getElementById('clientList');
   if(!r.ok){el.innerHTML='<div class="muted">Could not load.</div>';return;}
   if(!r.data.length){el.innerHTML='<div class="muted">No clients found.</div>';return;}
-  el.innerHTML='<table><thead><tr><th>Merchant</th><th>Officer</th><th>Stage</th><th class="right">Volume</th><th>Last Engaged</th><th></th></tr></thead><tbody>'+
+  el.innerHTML='<table><thead><tr><th>Merchant</th><th>Officer</th><th>Industry</th><th>Stage</th><th class="right">Volume</th><th>Last Engaged</th><th></th></tr></thead><tbody>'+
     r.data.map(m=>`<tr>
       <td><strong>${esc(m.business_name)}</strong><br><small style="color:var(--gray)">${esc(m.business_email)}</small></td>
       <td>${m.officer_name?esc(m.officer_name):'<em style="color:var(--gray)">Unassigned</em>'}</td>
+      <td>${m.industry_type?esc(m.industry_type):'<span style="color:var(--gray)">—</span>'}</td>
       <td><span class="pill ${esc(m.pipeline_stage||'prospect')}">${esc(m.pipeline_stage||'prospect')}</span></td>
       <td class="right">${ngn(m.total_vol_kobo)}</td>
       <td>${fmtDate(m.last_engaged_at)}</td>
@@ -450,10 +487,11 @@ async function loadStaff(){
   var el=document.getElementById('staffList');
   if(!r.ok){el.innerHTML='<div class="muted">Failed to load.</div>';return;}
   if(!r.data.length){el.innerHTML='<div class="muted">No staff yet. Create one above.</div>';return;}
-  el.innerHTML='<table><thead><tr><th>Name</th><th>Role</th><th>Phone</th><th>Email</th><th>Clients</th><th>Status</th><th></th></tr></thead><tbody>'+
+  el.innerHTML='<table><thead><tr><th>Name</th><th>Role</th><th>Contract</th><th>Phone</th><th>Email</th><th>Clients</th><th>Status</th><th></th></tr></thead><tbody>'+
     r.data.map(s=>`<tr>
       <td><strong>${esc(s.first_name)} ${esc(s.last_name)}</strong></td>
       <td>${s.job_title?esc(s.job_title):'<span style="color:var(--gray)">—</span>'}</td>
+      <td>${s.contract_type?esc(s.contract_type):'<span style="color:var(--gray)">—</span>'}</td>
       <td>${s.phone?esc(s.phone):'<span style="color:var(--gray)">—</span>'}</td>
       <td>${esc(s.email)}</td>
       <td>${s.client_count}</td>
@@ -474,7 +512,7 @@ function openCreateStaff(){document.getElementById('createStaffModal').classList
 function closeCreateStaff(){document.getElementById('createStaffModal').classList.remove('show');['sf-fname','sf-lname','sf-email','sf-pw','sf-phone'].forEach(i=>document.getElementById(i).value='');document.getElementById('sf-jobtitle').value='';}
 
 async function createStaff(){
-  var body={first_name:document.getElementById('sf-fname').value.trim(),last_name:document.getElementById('sf-lname').value.trim(),email:document.getElementById('sf-email').value.trim(),password:document.getElementById('sf-pw').value,phone:document.getElementById('sf-phone').value.trim()||undefined,job_title:document.getElementById('sf-jobtitle').value||undefined};
+  var body={first_name:document.getElementById('sf-fname').value.trim(),last_name:document.getElementById('sf-lname').value.trim(),email:document.getElementById('sf-email').value.trim(),password:document.getElementById('sf-pw').value,phone:document.getElementById('sf-phone').value.trim()||undefined,job_title:document.getElementById('sf-jobtitle').value||undefined,contract_type:document.getElementById('sf-contract').value||undefined};
   var r=await apiFetch('/staff/admin/staff',{method:'POST',body});
   var m=document.getElementById('createStaffMsg');
   m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?'Staff created successfully':(r.message||'Failed');
@@ -615,10 +653,11 @@ async function loadSAProspects(){
   var r=await apiFetch('/staff/prospects'+q);
   var el=document.getElementById('saProspectList');
   if(!r.ok){el.innerHTML='<div class="muted">Could not load.</div>';return;}
-  if(!r.data||!r.data.length){el.innerHTML='<div class="muted">No prospects found.</div>';return;}
-  el.innerHTML='<table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Officer</th><th>Stage</th><th>Last Engaged</th></tr></thead><tbody>'+
+  if(!r.data||!r.data.length){el.innerHTML='<div class="muted">No leads found.</div>';return;}
+  el.innerHTML='<table><thead><tr><th>Name</th><th>Industry</th><th>Contact</th><th>Phone</th><th>Officer</th><th>Stage</th><th>Last Engaged</th></tr></thead><tbody>'+
     r.data.filter(p=>!off||p.account_officer_id===off).map(p=>`<tr>
       <td><strong>${esc(p.business_name)}</strong>${p.address?'<br><small style="color:var(--gray)">'+esc(p.address)+'</small>':''}</td>
+      <td>${p.industry_type?esc(p.industry_type):'<span style="color:var(--gray)">—</span>'}</td>
       <td>${esc(p.contact_name||'—')}</td>
       <td>${esc(p.phone||'—')}</td>
       <td>${p.officer_name?esc(p.officer_name):'<em style="color:var(--gray)">Unassigned</em>'}</td>
@@ -667,6 +706,45 @@ async function toggleField(id,isActive){
   var m=document.getElementById('fieldsMsg');
   m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?'Updated':(r.message||'Failed');
   if(r.ok)loadFieldDefs();
+}
+
+// ── Industry types ─────────────────────────────────────────────────────────
+var industryTypes=[];
+async function loadIndustries(){
+  var r=await apiFetch('/staff/industries');
+  industryTypes=r.ok?r.data:[];
+  var el=document.getElementById('industryList');
+  if(el){
+    if(!industryTypes.length){el.innerHTML='<div class="muted">No industry types yet.</div>';}
+    else{el.innerHTML='<table><thead><tr><th>Industry</th><th></th></tr></thead><tbody>'+
+      industryTypes.map(i=>`<tr>
+        <td><strong>${esc(i.label)}</strong></td>
+        <td><button class="btn btn-sm btn-out btn-red" onclick="removeIndustry('${esc(i.id)}')">Remove</button></td>
+      </tr>`).join('')+'</tbody></table>';}
+  }
+  // Populate all industry filter dropdowns
+  ['industryFilter','saIndustryProspFilter'].forEach(function(selId){
+    var sel=document.getElementById(selId);
+    if(!sel)return;
+    var cur=sel.value;
+    sel.innerHTML='<option value="">All industries</option>';
+    industryTypes.forEach(function(i){sel.appendChild(new Option(i.label,i.label));});
+    if(cur)sel.value=cur;
+  });
+}
+function openAddIndustry(){document.getElementById('addIndustryModal').classList.add('show');document.getElementById('ai-label').value='';}
+async function createIndustry(){
+  var label=document.getElementById('ai-label').value.trim();
+  if(!label)return;
+  var r=await apiFetch('/staff/industries',{method:'POST',body:{label}});
+  var m=document.getElementById('addIndustryMsg');
+  m.className='msg '+(r.ok?'ok':'err');m.textContent=r.ok?'Industry added':(r.message||'Failed');
+  if(r.ok){document.getElementById('addIndustryModal').classList.remove('show');loadIndustries();}
+}
+async function removeIndustry(id){
+  if(!confirm('Remove this industry type?'))return;
+  var r=await apiFetch('/staff/industries/'+id,{method:'DELETE'});
+  if(r.ok)loadIndustries();
 }
 
 lucide.createIcons();

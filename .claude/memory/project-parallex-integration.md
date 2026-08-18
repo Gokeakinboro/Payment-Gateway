@@ -23,15 +23,19 @@ metadata:
 - **Settlement account:** `1000362856`
 - **Webhook secret:** `0db9fd42d16141799440f52831a8a7f9071904` (registered INFLOW → `https://paylodeservices.com/api/v1/webhooks/parallex/inflow`)
 - **Proven 2026-08-11:** Login ✅ · VA created (`6014000001` "Test Paylode") ✅ · ₦100 payment received (requery: SUCCESSFUL) ✅
+- **Proven 2026-08-12:** VA `6014000007` "Paylode WebhookTest" ₦103 received (requery SUCCESSFUL, txn ref `100004260812093050168038367264`) ✅ · webhook NOT delivered ❌ (zero nginx + app log hits — Parallex-side failure)
 - **referenceId minimum 20 chars** (Parallex validation enforces this; UUIDs = 36 chars, fine)
-- **Pilot webhook delivery:** not fired in test (Parallex confirmed they'll handle)
+- **Webhook delivery:** confirmed broken on Parallex's end — two live payment tests, zero webhook deliveries to `https://paylodeservices.com/api/v1/webhooks/parallex/inflow`
 - **env on 176:** `PARALLEX_VA_{BASE_URL,USERNAME,PASSWORD,SUBKEY,MERCHANT_ID,SETTLEMENT_ACCOUNT,WEBHOOK_SECRET}` all set; `MODULE_PARALLEX_WEBHOOK_ENABLED=true`
 
 ### Transfer (Payouts) — LIVE (intrabank); interbank blocked on pilot NIBSS
 - **Base URL:** `https://tptintegration.parallexbank.com/ThirdPartyTransferAPI`
 - **Username:** `Paylode` | **Password:** `Paylode@Parallex2026!` (PLAINTEXT — not base64)
-- **Debit account:** `1000362849` (balance ~₦3,896 — needs top-up)
-- **Intrabank transfer:** ✅ ₦100 tested (1000362849 → 1000362856)
+- **VA collections / settlement account (debit source for VA→merchant payouts):** `1000362856`
+- **Payout debit float account:** `1000362849` (balance ~₦3,896 last checked — top up before batch payouts)
+- **Intrabank transfer 2026-08-11:** ✅ ₦100 tested (1000362849 → 1000362856)
+- **Intrabank transfer 2026-08-12:** ❌ TIMEOUT — `IntrabankTransfer` POST endpoint hanging (GetBalance still works); Parallex-side regression
+- **1000362856 as TPT debit:** ❌ "Invalid Account Number" — not enrolled in TPT product; must raise with Parallex (enroll it, or confirm sweep model: 1000362856 → 1000362849 happens Parallex-side)
 - **NIP name enquiry:** ✅ First Bank, GTBank, OPay (with 6-digit institution codes)
 - **Interbank transfer:** ❌ pilot NIBSS not live — hangs, times out after 45s
 - **Institution code map:** CBN `328`/`305` → OPay `100004`; `058` → GTBank `000013`; etc. (full map in parallexTransferService.js)

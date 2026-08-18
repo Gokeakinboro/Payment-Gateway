@@ -7,13 +7,16 @@
 const router = require('express').Router();
 const { prisma } = require('../../../utils/db');
 const { requireAuth, requireSuperAdmin } = require('../../../middleware/auth');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
+const { sendEmail, buildPlatformWelcomeEmail } = require('../../../services/emailService');
+
 
 // ── GET /api/v1/staff/admin/staff-list ───────────────────────────────────
 router.get('/staff-list', requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const rows = await prisma.$queryRawUnsafe(`
-      SELECT u.id, u.first_name, u.last_name, u.email, u.phone, u.job_title, u.is_active, u.created_at,
+      SELECT u.id, u.first_name, u.last_name, u.email, u.phone, u.job_title,
+             u.contract_type, u.is_active, u.created_at,
              COUNT(m.id) AS client_count
       FROM users u
       LEFT JOIN merchants m ON m.account_officer_id = u.id
@@ -31,7 +34,7 @@ router.get('/staff-list', requireAuth, requireSuperAdmin, async (req, res) => {
 // Create a new staff user
 router.post('/staff', requireAuth, requireSuperAdmin, async (req, res) => {
   try {
-    const { first_name, last_name, email, password, phone, job_title } = req.body;
+    const { first_name, last_name, email, password, phone, job_title, contract_type } = req.body;
     if (!first_name || !last_name || !email || !password)
       return res.status(400).json({ status: false, message: 'first_name, last_name, email, password required' });
 
@@ -47,10 +50,16 @@ router.post('/staff', requireAuth, requireSuperAdmin, async (req, res) => {
         passwordHash: hash,
         role: 'STAFF',
         mustChangePassword: true,
-        phone:    phone    || undefined,
-        jobTitle: job_title || undefined,
+        phone:        phone         || undefined,
+        jobTitle:     job_title     || undefined,
+        contractType: contract_type || undefined,
       },
     });
+
+    const { subject, html } = buildPlatformWelcomeEmail({ firstName: first_name, email, tempPassword: password, role: 'STAFF', jobTitle: job_title });
+    sendEmail({ to: email, subject, html }).catch(err =>
+      console.error('staff onboarding email failed:', err.message)
+    );
 
     res.json({ status: true, message: 'Staff created', data: { id: user.id, email: user.email } });
   } catch (err) {
@@ -63,13 +72,14 @@ router.post('/staff', requireAuth, requireSuperAdmin, async (req, res) => {
 // Activate / deactivate
 router.patch('/staff/:staffId', requireAuth, requireSuperAdmin, async (req, res) => {
   try {
-    const { is_active, first_name, last_name, phone, job_title } = req.body;
+    const { is_active, first_name, last_name, phone, job_title, contract_type } = req.body;
     const data = {};
-    if (is_active !== undefined) data.isActive  = Boolean(is_active);
-    if (first_name)              data.firstName  = first_name;
-    if (last_name)               data.lastName   = last_name;
-    if (phone !== undefined)     data.phone      = phone || null;
-    if (job_title !== undefined) data.jobTitle   = job_title || null;
+    if (is_active !== undefined)      data.isActive      = Boolean(is_active);
+    if (first_name)                   data.firstName     = first_name;
+    if (last_name)                    data.lastName      = last_name;
+    if (phone !== undefined)          data.phone         = phone || null;
+    if (job_title !== undefined)      data.jobTitle      = job_title || null;
+    if (contract_type !== undefined)  data.contractType  = contract_type || null;
 
     await prisma.user.update({ where: { id: req.params.staffId }, data });
     res.json({ status: true, message: 'Staff updated' });
@@ -82,7 +92,7 @@ router.patch('/staff/:staffId', requireAuth, requireSuperAdmin, async (req, res)
 // All merchants with their officer details
 router.get('/clients', requireAuth, requireSuperAdmin, async (req, res) => {
   try {
-    const { officer_id, stage, search } = req.query;
+    const { officer_id, stage, search, industry } = req.query;
     let where = 'WHERE 1=1';
     const params = [];
 
@@ -101,16 +111,20 @@ router.get('/clients', requireAuth, requireSuperAdmin, async (req, res) => {
       params.push(`%${search}%`);
       where += ` AND (m.business_name ILIKE $${params.length} OR m.business_email ILIKE $${params.length})`;
     }
+    if (industry) {
+      params.push(industry);
+      where += ` AND m.industry_type = $${params.length}`;
+    }
 
     const rows = await prisma.$queryRawUnsafe(`
       SELECT
         m.id, m.merchant_code, m.business_name, m.business_email, m.business_phone,
-        m.kyc_status, m.is_active, m.pipeline_stage, m.created_at,
+        m.kyc_status, m.is_active, m.pipeline_stage, m.industry_type, m.created_at,
         m.first_engagement_at, m.off_ramp_at, m.off_ramp_reason,
         u.id AS officer_id, u.first_name || ' ' || u.last_name AS officer_name,
         (SELECT COUNT(*) FROM staff_engagements se WHERE se.merchant_id=m.id) AS engagement_count,
         (SELECT MAX(se.engaged_at) FROM staff_engagements se WHERE se.merchant_id=m.id) AS last_engaged_at,
-        (SELECT COALESCE(SUM(t.amount_kobo),0) FROM transactions t WHERE t.merchant_id=m.id AND t.status='SUCCESS') AS total_vol_kobo
+        (SELECT COALESCE(SUM(t.amount),0) FROM transactions t WHERE t.merchant_id=m.id AND t.status='SUCCESS') AS total_vol_kobo
       FROM merchants m
       LEFT JOIN users u ON u.id = m.account_officer_id
       ${where}
@@ -223,7 +237,7 @@ router.get('/performance', requireAuth, requireSuperAdmin, async (req, res) => {
         GROUP BY staff_id
       ) eng ON eng.staff_id = u.id
       LEFT JOIN (
-        SELECT m2.account_officer_id, SUM(t.amount_kobo) AS vol_kobo, COUNT(*) AS txn_count
+        SELECT m2.account_officer_id, SUM(t.amount) AS vol_kobo, COUNT(*) AS txn_count
         FROM transactions t
         JOIN merchants m2 ON m2.id = t.merchant_id
         WHERE t.status = 'SUCCESS'
