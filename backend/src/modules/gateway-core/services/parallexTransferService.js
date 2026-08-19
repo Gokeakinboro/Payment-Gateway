@@ -244,11 +244,9 @@ async function sendPayout(item) {
     const nipCode = toNipCode(beneficiaryBankCode);
     let ne = await nameEnquiry(nipCode, item.account_number);
     if (!ne.ok || !ne.sessionId) {
-      const palmpay = require('./palmpayService');
-      const pmNe = await palmpay.nameEnquiry(nipCode, item.account_number);
-      if (!pmNe.ok)
-        return { ok: false, code: 'NIP_FAILED', reason: 'Name enquiry failed on all rails: ' + (pmNe.reason || ne.reason || 'unknown'), orderStatus: null };
-      ne = { ok: true, accountName: pmNe.accountName, sessionId: null, kycLevel: '1' };
+      // Parallex requires nameEnquirySessionID (min 30 chars) from its own NE response.
+      // Without it the InterbankTransfer call fails validation, so fail fast here.
+      return { ok: false, code: 'NIP_FAILED', reason: 'Parallex name enquiry failed (no session ID): ' + (ne.reason || 'unknown'), orderStatus: null };
     }
     const bankName = await resolveBankName(nipCode);
     r = await call('POST', '/api/ThirdPartyTransfer/InterbankTransfer', {
