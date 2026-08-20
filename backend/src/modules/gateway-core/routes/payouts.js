@@ -980,6 +980,77 @@ router.put('/admin/default-rail', requireAuth, requireSuperAdmin, async (req, re
   } catch (e) { next(e); }
 });
 
+// ── POST /api/v1/payouts/admin/provision-va/:merchantId — SA provisions a VA ─────
+// Idempotent — returns the existing VA row if one is already provisioned.
+// Uses merchant's payin_rail_id to pick the provider (Parallex or PalmPay).
+// Optional body { rail_id } overrides the merchant's payin rail for this call.
+const PARALLEX_RAIL_ID = '8fbc8c22-daba-4fcb-98ee-33ce7d8ffc74';
+router.post('/admin/provision-va/:merchantId', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { merchantId } = req.params;
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT m.id::text, m.business_name, m.business_email, m.parallex_va_name_format,
+             m.payin_rail_id::text AS payin_rail_id, pr.name AS payin_rail_name
+      FROM merchants m
+      LEFT JOIN payment_rails pr ON m.payin_rail_id = pr.id
+      WHERE m.id = $1::uuid LIMIT 1`, merchantId);
+    if (!rows.length) return notFound(res, 'Merchant');
+    const merch = rows[0];
+
+    const existing = await prisma.$queryRawUnsafe(
+      `SELECT id::text, va_number, va_name, bank_name, provider, status
+       FROM merchant_virtual_accounts WHERE merchant_id = $1::uuid LIMIT 1`, merchantId);
+    if (existing.length) return ok(res, existing[0], 'Virtual account already provisioned');
+
+    const railId = (req.body && req.body.rail_id) || merch.payin_rail_id || PARALLEX_RAIL_ID;
+
+    if (railId === PARALLEX_RAIL_ID) {
+      const plx  = require('../services/parallexService');
+      const name  = (merch.parallex_va_name_format || merch.business_name).trim();
+      const parts = name.split(/\s+/);
+      const r = await plx.createPermanentAccount({
+        firstName: parts[0],
+        lastName: parts.length > 1 ? parts.slice(1).join(' ') : parts[0],
+      });
+      if (!r.ok) return fail(res, `Parallex VA failed: ${r.reason}`, 'VA_PROVISION_FAILED');
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO merchant_virtual_accounts (merchant_id, va_number, va_name, bank_name, provider, status, raw)
+         VALUES ($1::uuid, $2, $3, 'Parallex Bank', 'parallex', 'active', $4::jsonb)`,
+        merchantId, r.accountNumber, r.accountName || name, JSON.stringify(r.raw));
+      await logAudit(req.user.id, 'VA_PROVISIONED', 'merchant_virtual_accounts', merchantId,
+        {}, { provider: 'parallex', va_number: r.accountNumber }, null, req.ip);
+      return ok(res,
+        { va_number: r.accountNumber, va_name: r.accountName || name, bank_name: 'Parallex Bank', provider: 'parallex' },
+        'Parallex virtual account provisioned');
+    }
+
+    // PalmPay VA — requires approved CAC data
+    const kyc = await prisma.$queryRawUnsafe(
+      `SELECT cac_data FROM kyc_submissions WHERE merchant_id = $1::uuid AND status = 'APPROVED' LIMIT 1`, merchantId);
+    if (!kyc.length || !kyc[0].cac_data)
+      return fail(res, 'PalmPay VA requires approved CAC data from KYC', 'KYC_REQUIRED');
+    const cac = kyc[0].cac_data;
+    const rcNumber = cac.rcNumber || cac.rc_number || cac.registrationNumber;
+    if (!rcNumber) return fail(res, 'RC/BN number not found in KYC CAC data', 'KYC_RC_MISSING');
+    const palmpay = require('../services/palmpayService');
+    const ref     = 'PLY-' + merchantId.replace(/-/g, '').slice(0, 16);
+    const vr = await palmpay.createVirtualAccount({
+      virtualAccountName: merch.business_name.slice(0, 64),
+      identityType: 'company', licenseNumber: rcNumber,
+      customerName: merch.business_name, email: merch.business_email, accountReference: ref,
+    });
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO merchant_virtual_accounts (merchant_id, va_number, va_name, account_reference, bank_name, provider, status, raw)
+       VALUES ($1::uuid, $2, $3, $4, 'PalmPay', 'palmpay', 'active', $5::jsonb)`,
+      merchantId, vr.virtualAccountNo, vr.virtualAccountName || merch.business_name, ref, JSON.stringify(vr));
+    await logAudit(req.user.id, 'VA_PROVISIONED', 'merchant_virtual_accounts', merchantId,
+      {}, { provider: 'palmpay', va_number: vr.virtualAccountNo }, null, req.ip);
+    return ok(res,
+      { va_number: vr.virtualAccountNo, va_name: vr.virtualAccountName || merch.business_name, bank_name: 'PalmPay', provider: 'palmpay' },
+      'PalmPay virtual account provisioned');
+  } catch (e) { next(e); }
+});
+
 // ── POST /api/v1/payouts/admin/rails/:id/sync-float — SA refreshes OUR balance ─
 // Pulls the live balance from the rail's API (if its adapter exposes getBalance)
 // and stores it as the rail float. Internal-only.

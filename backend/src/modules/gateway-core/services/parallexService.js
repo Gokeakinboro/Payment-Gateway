@@ -123,7 +123,10 @@ async function temporaryRequery({ referenceId, accountNumber }) {
   return { ok: okCode(r), code: r.responseCode, reason: r.responseDescription, data: r.data, raw: r };
 }
 
-// ── Permanent VA (v2 doc omits the exact path → CONFIRM before use) ────────────
+// ── Permanent VA ─────────────────────────────────────────────────────────────────
+// CONFIRMED 2026-08-20: /GeneratePermanentVirtualAccount returns 404 on the V2 base
+// URL. Parallex must confirm the correct path. Set PARALLEX_VA_PERMANENT_PATH env
+// var once known. Until then, createPermanentAccount() will fail.
 async function createPermanentAccount({ firstName, lastName, middleName, feeBearer }) {
   const path = process.env.PARALLEX_VA_PERMANENT_PATH || '/GeneratePermanentVirtualAccount';
   const r = await call('POST', path, { firstName: firstName || undefined, lastName, middleName: middleName || '', feeBearer: feeBearer || undefined });
