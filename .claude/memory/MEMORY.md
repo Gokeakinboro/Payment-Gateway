@@ -3,6 +3,7 @@
 _Siloed Claude project. Cross-project items live in the shared home namespace (C--Users-Goke)._
 
 - [Paylode money items need sign-off](feedback-paylode-money-signoff.md) — stage #1/#10/#11 for user review, don't auto-deploy
+- [🟡 KIV — Intelligent VA pay-in failover routing](kiv-intelligent-va-routing.md) — auto-switch VA rail when primary is down; default priority order; pay-in only; triggers when new bank VA secured.
 - [🟡 KIV — Accounting-software integration](kiv-accounting-software-integration.md) — hook gateway into QuickBooks/Xero/Zoho/Sage; data ready; blocked on user picking a provider + OAuth creds (discussed 2026-06-20).
 - [🟡 RESUME HERE — Open KIV backlog index (2026-07-01)](kiv-backlog-index.md) — consolidated list of all open KIV items with links; supersedes outstanding-tasks.md.
 - [🔴 KIV (IMPORTANT) — Bank Reconciliation module](kiv-bank-reconciliation-module.md) — match Paylode ledger vs merchant bank statement; inputs/outputs/challenges/phasing scoped 2026-07-01.
