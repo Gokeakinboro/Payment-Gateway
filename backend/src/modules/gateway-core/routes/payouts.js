@@ -981,9 +981,12 @@ router.put('/admin/default-rail', requireAuth, requireSuperAdmin, async (req, re
 });
 
 // ── POST /api/v1/payouts/admin/provision-va/:merchantId — SA provisions a VA ─────
-// Idempotent — returns the existing VA row if one is already provisioned.
-// Uses merchant's payin_rail_id to pick the provider (Parallex or PalmPay).
-// Optional body { rail_id } overrides the merchant's payin rail for this call.
+// Parallex: creates a TIMED VA (amount + reference required in body; not stored in
+//   merchant_virtual_accounts since it's per-session/ephemeral). Returns VA number.
+// PalmPay: creates a permanent label VA (stored in merchant_virtual_accounts).
+//   Idempotent for PalmPay — returns existing row if already provisioned.
+// Body: { amount_kobo, reference, expiry_minutes } (Parallex only).
+//   Optional { rail_id } overrides merchant's payin rail for this call.
 const PARALLEX_RAIL_ID = '8fbc8c22-daba-4fcb-98ee-33ce7d8ffc74';
 router.post('/admin/provision-va/:merchantId', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
@@ -997,34 +1000,42 @@ router.post('/admin/provision-va/:merchantId', requireAuth, requireSuperAdmin, a
     if (!rows.length) return notFound(res, 'Merchant');
     const merch = rows[0];
 
+    const railId = (req.body && req.body.rail_id) || merch.payin_rail_id || PARALLEX_RAIL_ID;
+
+    if (railId === PARALLEX_RAIL_ID) {
+      // Parallex uses timed (per-session) VAs — amount + reference required each time.
+      const { amount_kobo, reference, expiry_minutes } = req.body || {};
+      if (!amount_kobo || !reference)
+        return fail(res, 'Parallex VA requires amount_kobo and reference in body', 'MISSING_PARAMS');
+      if (String(reference).length < 20)
+        return fail(res, 'reference must be at least 20 characters (Parallex requirement)', 'REF_TOO_SHORT');
+      const plx  = require('../services/parallexService');
+      const name  = (merch.parallex_va_name_format || merch.business_name).trim();
+      const parts = name.split(/\s+/);
+      const r = await plx.createTimedAccount({
+        firstName: parts[0],
+        lastName: parts.length > 1 ? parts.slice(1).join(' ') : parts[0],
+        amountKobo: Number(amount_kobo),
+        referenceId: String(reference),
+        expiryMinutes: expiry_minutes ? Number(expiry_minutes) : undefined,
+      });
+      if (!r.ok) return fail(res, `Parallex VA failed: ${r.reason}`, 'VA_PROVISION_FAILED');
+      await logAudit(req.user.id, 'VA_PROVISIONED', 'merchant_virtual_accounts', merchantId,
+        {}, { provider: 'parallex', va_number: r.accountNumber, reference }, null, req.ip);
+      return ok(res, {
+        va_number: r.accountNumber, va_name: r.accountName || name,
+        bank_name: 'Parallex Bank', provider: 'parallex',
+        expiry: r.expiryDateTime, total_amount: r.totalAmount,
+      }, 'Parallex timed virtual account created');
+    }
+
+    // PalmPay VA — idempotent (label VA is permanent, stored per merchant)
     const existing = await prisma.$queryRawUnsafe(
       `SELECT id::text, va_number, va_name, bank_name, provider, status
        FROM merchant_virtual_accounts WHERE merchant_id = $1::uuid LIMIT 1`, merchantId);
     if (existing.length) return ok(res, existing[0], 'Virtual account already provisioned');
 
-    const railId = (req.body && req.body.rail_id) || merch.payin_rail_id || PARALLEX_RAIL_ID;
-
-    if (railId === PARALLEX_RAIL_ID) {
-      const plx  = require('../services/parallexService');
-      const name  = (merch.parallex_va_name_format || merch.business_name).trim();
-      const parts = name.split(/\s+/);
-      const r = await plx.createPermanentAccount({
-        firstName: parts[0],
-        lastName: parts.length > 1 ? parts.slice(1).join(' ') : parts[0],
-      });
-      if (!r.ok) return fail(res, `Parallex VA failed: ${r.reason}`, 'VA_PROVISION_FAILED');
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO merchant_virtual_accounts (merchant_id, va_number, va_name, bank_name, provider, status, raw)
-         VALUES ($1::uuid, $2, $3, 'Parallex Bank', 'parallex', 'active', $4::jsonb)`,
-        merchantId, r.accountNumber, r.accountName || name, JSON.stringify(r.raw));
-      await logAudit(req.user.id, 'VA_PROVISIONED', 'merchant_virtual_accounts', merchantId,
-        {}, { provider: 'parallex', va_number: r.accountNumber }, null, req.ip);
-      return ok(res,
-        { va_number: r.accountNumber, va_name: r.accountName || name, bank_name: 'Parallex Bank', provider: 'parallex' },
-        'Parallex virtual account provisioned');
-    }
-
-    // PalmPay VA — requires approved CAC data
+    // Requires approved CAC data
     const kyc = await prisma.$queryRawUnsafe(
       `SELECT cac_data FROM kyc_submissions WHERE merchant_id = $1::uuid AND status = 'APPROVED' LIMIT 1`, merchantId);
     if (!kyc.length || !kyc[0].cac_data)
