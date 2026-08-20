@@ -21,6 +21,9 @@
 // [ name, basePath, loader, enabledEnv, category ]
 // `loader` is lazy so a broken require can't crash module load of the registry itself.
 const MODULES = [
+  // ── Internal service-to-service (Golf Platform → Paylode) ────────────────
+  { name: 'internal-golf', basePath: '/api/internal', load: () => require('../routes/internal'), enabledEnv: 'MODULE_INTERNAL_GOLF_ENABLED', category: 'core' },
+
   // ── Core / platform ──────────────────────────────────────────────────────
   { name: 'auth',            basePath: '/api/v1/auth',                 load: () => require('../routes/auth'),              enabledEnv: 'MODULE_AUTH_ENABLED',            category: 'core' },
   { name: 'merchants',       basePath: '/api/v1/merchants',            load: () => require('./gateway-core/routes/merchants'),         enabledEnv: 'MODULE_MERCHANTS_ENABLED',       category: 'core' },
