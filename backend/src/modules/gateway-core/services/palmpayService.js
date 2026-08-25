@@ -152,7 +152,7 @@ async function initiatePayout({ orderId, amountKobo, bankCode, accountNumber, ac
     currency: 'NGN',
     amount: Number(amountKobo),
     notifyUrl: notifyUrl || ((process.env.PALMPAY_NOTIFY_URL||'').replace(/\/$/, '') + '/payout'),
-    remark: narration || 'Payout',
+    remark: narration || undefined,
     title: 'Payout',
     description: narration || 'Merchant payout',
   });
