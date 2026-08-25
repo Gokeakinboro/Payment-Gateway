@@ -27,6 +27,44 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const crypto = require('crypto');
 
+// PalmPay requires 6-digit NIP institution codes, not CBN 3-digit codes.
+const CBN_TO_NIP = {
+  '044': '000014', // Access Bank
+  '063': '000005', // Access Bank (Diamond legacy)
+  '035A': '000037',// FCMB
+  '214': '000010', // First City Monument Bank
+  '011': '000016', // First Bank
+  '070': '000003', // Fidelity Bank
+  '058': '000013', // GTBank
+  '030': '000027', // Heritage Bank
+  '301': '000031', // Jaiz Bank
+  '082': '000020', // Keystone Bank
+  '076': '000008', // Polaris Bank (Skye legacy)
+  '101': '100003', // Providus Bank
+  '221': '000010', // Stanbic IBTC
+  '068': '000021', // Standard Chartered
+  '033': '000004', // Sterling Bank
+  '032': '000022', // Union Bank
+  '033A': '000004',// UBA
+  '033B': '000004',
+  '215': '000035', // Unity Bank
+  '035': '000017', // Wema Bank
+  '057': '000015', // Zenith Bank
+  '100': '090267', // Kuda MFB
+  '304': '100004', // OPay (alt)
+  '305': '100004', // OPay
+  '328': '100004', // OPay (alt)
+  '950': '000026', // Ecobank
+  '050': '000026', // Ecobank
+};
+function toNipCode(code) {
+  if (!code) return code;
+  const s = String(code);
+  // Already 6-digit NIP code — pass through.
+  if (s.length === 6) return s;
+  return CBN_TO_NIP[s] || s;
+}
+
 const BASE_URL    = (process.env.PALMPAY_BASE_URL || 'https://open-gw-sandbox.palmpay-inc.com').replace(/\/$/, '');
 const APP_ID      = process.env.PALMPAY_APP_ID || '';
 const MERCHANT_ID = process.env.PALMPAY_MERCHANT_ID || '';
@@ -132,7 +170,7 @@ async function initiatePayout({ orderId, amountKobo, bankCode, accountNumber, ac
 // rail-adapter contract (railHealth.recordRailResult expects { ok, reason, isLowBalance }).
 async function sendPayout(item) {
   return initiatePayout({
-    orderId: item.orderId, amountKobo: item.amount, bankCode: item.bank_code,
+    orderId: item.orderId, amountKobo: item.amount, bankCode: toNipCode(item.bank_code),
     accountNumber: item.account_number, accountName: item.account_name, narration: item.narration,
   });
 }
@@ -161,7 +199,7 @@ async function queryBankList() {
 }
 // POST /api/v2/payment/merchant/payout/queryBankAccount → { status, accountName, errorMessage }
 async function nameEnquiry(bankCode, accountNumber) {
-  const r = await call('/api/v2/payment/merchant/payout/queryBankAccount', { bankCode, bankAccNo: accountNumber });
+  const r = await call('/api/v2/payment/merchant/payout/queryBankAccount', { bankCode: toNipCode(bankCode), bankAccNo: accountNumber });
   const d = r.data || {};
   // PalmPay returns the field as `Status` (capital S); accept either case.
   const status = String(d.Status || d.status || '').toLowerCase();
