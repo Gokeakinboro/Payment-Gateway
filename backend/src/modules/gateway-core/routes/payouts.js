@@ -453,11 +453,7 @@ router.post('/batches', requireAuthOrApiKey,
 
       const { description, scheduled_at, items } = req.body;
 
-      // Narration is mandatory on every payout. When the merchant leaves it blank
-      // (dashboard form, XLS/CSV file, or API payload), default it to
-      // "Payment from <business name>" so the beneficiary always sees a meaningful
-      // reference on their bank statement.
-      const defaultNarration = `Payment from ${merchant.businessName}`;
+      const defaultNarration = null; // Narration comes from the merchant; never auto-generated.
 
       // ── Lookup payout fee rate (platform default or per-merchant override) ─────
       // Payout pricing is tiered by destination: PAYOUT_ONUS for on-us (PalmPay)
@@ -655,12 +651,7 @@ router.post('/batches/upload', requireAuth, upload.single('file'), async (req, r
     const merchantId = req.user.merchant?.id;
     if (!merchantId) return fail(res, 'No merchant account');
 
-    // For the preview we resolve the same default narration the batch-create path
-    // applies, so the merchant sees exactly what each beneficiary will receive.
-    const merchant = await prisma.merchant.findUnique({
-      where: { id: merchantId }, select: { businessName: true },
-    });
-    const defaultNarration = `Payment from ${merchant?.businessName || 'merchant'}`;
+    const defaultNarration = null; // Narration comes from the merchant; never auto-generated.
 
     const ext = req.file.originalname.split('.').pop().toLowerCase();
     let rows = [];
