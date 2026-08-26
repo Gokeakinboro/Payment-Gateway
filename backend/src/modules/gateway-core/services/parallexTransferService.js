@@ -135,7 +135,7 @@ async function call(method, path, { body, query } = {}) {
   const qs = query ? '?' + new URLSearchParams(query).toString() : '';
   const doFetch = async (tok) => {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 45000); // 45s hard timeout per call
+    const timer = setTimeout(() => ctrl.abort(), 180000); // 180s — Parallex InterbankTransfer can take >90s to respond
     try {
       const res = await fetch(BASE_URL + path + qs, {
         method, headers: Object.assign(baseHeaders(), { Authorization: 'Bearer ' + tok }),
