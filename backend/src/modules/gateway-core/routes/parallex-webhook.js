@@ -1,14 +1,15 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-//  Parallex Bank VA INFLOW webhook.
-//    POST /api/v1/webhooks/parallex/inflow  (and the base path, as a catch-all)
-//  Parallex sends the NIP session ID as `referenceID` (not our mint reference),
-//  so we fall back to matching by VA account number stored in transaction metadata.
+//  Parallex Bank webhooks.
+//    POST /api/v1/webhooks/parallex/inflow  — VA pay-in notification
+//    POST /api/v1/webhooks/parallex/payout  — outbound NIP transfer result
+//    POST /api/v1/webhooks/parallex/        — catch-all (treated as inflow)
 // ─────────────────────────────────────────────────────────────────────────────
 const router = require('express').Router();
 const { prisma } = require('../../../utils/db');
 const { logger } = require('../../../utils/logger');
 const { finalizePayinSuccess } = require('../services/payinFinalize');
+const { applyPayoutResult } = require('../services/payoutSettle');
 const parallex = require('../services/parallexService');
 
 const SUCCESS_STATES = new Set(['SUCCESS', 'SUCCESSFUL', 'COMPLETED']);
@@ -101,7 +102,67 @@ async function handleInflow(req, res) {
   }
 }
 
+// ── Parallex payout result webhook ───────────────────────────────────────────
+// Parallex notifies us when an outbound NIP transfer settles, fails, or reverses.
+// Expected payload fields (Parallex TPT callback):
+//   transactionReference — our orderId (what we sent as transactionReference)
+//   responseCode         — '00' = success; FAIL_CODES = failed; else pending
+//   responseMessage      — human-readable description
+//   orderNo              — Parallex's internal session / order reference
+//   amount               — naira string
+//   secret               — shared webhook secret (same body-field pattern as inflow)
+async function handlePayout(req, res) {
+  const b = req.body || {};
+  const orderId  = b.transactionReference || b.TransactionReference || null;
+  const orderNo  = b.orderNo || b.OrderNo || b.sessionId || null;
+  const code     = String(b.responseCode || b.ResponseCode || '').trim();
+  const msg      = b.responseMessage || b.ResponseMessage || b.description || '';
+  const expected = process.env.PARALLEX_PAYOUT_WEBHOOK_SECRET || process.env.PARALLEX_VA_WEBHOOK_SECRET || '';
+
+  logger.info({ orderId, orderNo, code, msg, body: b }, 'Parallex payout webhook');
+
+  if (expected) {
+    if (!parallex.verifyInflow(b, expected)) {
+      logger.warn({ orderId }, 'Parallex payout webhook: bad secret — rejected');
+      return res.status(401).json({ responseCode: '34', responseDescription: 'Authentication Failed.' });
+    }
+  } else {
+    logger.warn({ orderId }, 'Parallex payout webhook: no secret set — SCAFFOLD mode');
+  }
+
+  if (!orderId) {
+    logger.warn({ body: b }, 'Parallex payout webhook: missing transactionReference');
+    return res.status(200).json({ responseCode: '00', responseDescription: 'Request Successful' });
+  }
+
+  // Map Parallex response code → orderStatus used by applyPayoutResult
+  const FAIL_CODES    = new Set(['05', '06', '12', '16', '51', '57', '94', '95', '96', '97']);
+  const PENDING_CODES = new Set(['09', '25', '26', '99']);
+  let orderStatus;
+  if (code === '00')               orderStatus = '2';   // success
+  else if (FAIL_CODES.has(code))   orderStatus = 'X';   // failed (anything not '2'/'0'/'1')
+  else if (PENDING_CODES.has(code)) orderStatus = '1';  // still in-flight
+  else if (!code)                  orderStatus = '1';   // no code yet
+  else                             orderStatus = 'X';   // treat unknown as failed
+
+  try {
+    const result = await applyPayoutResult({
+      orderId,
+      orderNo,
+      orderStatus,
+      errorMsg: msg,
+      source: 'parallex_payout_webhook',
+    });
+    if (!result) logger.warn({ orderId }, 'Parallex payout webhook: leg not found or already settled');
+    return res.status(200).json({ responseCode: '00', responseDescription: 'Request Successful' });
+  } catch (e) {
+    logger.error({ err: e, orderId }, 'Parallex payout webhook: applyPayoutResult threw');
+    return res.status(500).json({ responseCode: '99', responseDescription: 'Error' });
+  }
+}
+
 router.post('/inflow', handleInflow);
+router.post('/payout', handlePayout);
 router.post('/', handleInflow);
 
 module.exports = router;

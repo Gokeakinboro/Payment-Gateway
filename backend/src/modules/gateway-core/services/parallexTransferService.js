@@ -1,6 +1,7 @@
 'use strict';
-const https = require('https');
-const { execFileSync } = require('child_process');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 // ─────────────────────────────────────────────────────────────────────────────
 //  Parallex Bank — Third Party Transfer (TPT) payout client.
 //
@@ -112,24 +113,22 @@ async function getToken() {
 // Retries once on HTTP 401 (stale token). Timeout 180s — InterbankTransfer can
 // be slow. If the server RSTs before our timer fires, fetch throws 'fetch failed'.
 // Uses curl directly — proven to work through IPSec VPN, HTTP/1.1, no pooling.
-function httpsRequest(method, urlStr, headers, bodyStr) {
-  return new Promise((resolve) => {
-    const args = ['-s', '-w', '\n__STATUS__%{http_code}', '-X', method];
-    for (const [k, v] of Object.entries(headers)) args.push('-H', `${k}: ${v}`);
-    args.push('-H', 'Connection: close');
-    if (bodyStr) { args.push('-H', 'Content-Type: application/json', '-d', bodyStr); }
-    args.push('--max-time', '180', urlStr);
-    try {
-      const out = execFileSync('curl', args, { timeout: 185_000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
-      const sep  = out.lastIndexOf('\n__STATUS__');
-      const body = sep >= 0 ? out.slice(0, sep) : out;
-      const status = sep >= 0 ? parseInt(out.slice(sep + 11), 10) : 200;
-      try { resolve({ status, json: JSON.parse(body) }); }
-      catch (_) { resolve({ status, json: { responseCode: 'PARSE', responseMessage: `Non-JSON HTTP ${status}` } }); }
-    } catch (e) {
-      resolve({ status: 0, json: { responseCode: 'FETCH_FAILED', responseMessage: e.message } });
-    }
-  });
+async function httpsRequest(method, urlStr, headers, bodyStr) {
+  const args = ['-s', '-w', '\n__STATUS__%{http_code}', '-X', method];
+  for (const [k, v] of Object.entries(headers)) args.push('-H', `${k}: ${v}`);
+  args.push('-H', 'Connection: close');
+  if (bodyStr) { args.push('-H', 'Content-Type: application/json', '-d', bodyStr); }
+  args.push('--max-time', '180', urlStr);
+  try {
+    const { stdout } = await execFileAsync('curl', args, { timeout: 185_000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+    const sep  = stdout.lastIndexOf('\n__STATUS__');
+    const body = sep >= 0 ? stdout.slice(0, sep) : stdout;
+    const status = sep >= 0 ? parseInt(stdout.slice(sep + 11), 10) : 200;
+    try { return { status, json: JSON.parse(body) }; }
+    catch (_) { return { status, json: { responseCode: 'PARSE', responseMessage: `Non-JSON HTTP ${status}` } }; }
+  } catch (e) {
+    return { status: 0, json: { responseCode: 'FETCH_FAILED', responseMessage: e.message } };
+  }
 }
 
 async function call(method, path, { body, query } = {}) {
