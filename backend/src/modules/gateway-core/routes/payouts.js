@@ -1139,17 +1139,35 @@ router.get('/admin/routing-queue', requireAuth, requireSuperAdmin, async (req, r
   } catch (e) { next(e); }
 });
 
+// ── Per-rail concurrency for the payout queue worker ──────────────────────────
+function railConcurrency(railName) {
+  const n = (railName || '').toLowerCase();
+  if (/parallex/.test(n)) return Number(process.env.PARALLEX_PAYOUT_CONCURRENCY || 7);
+  if (/palmpay/.test(n))  return Number(process.env.PALMPAY_PAYOUT_CONCURRENCY  || 5);
+  return 3;
+}
+async function runPool(tasks, concurrency) {
+  const results = new Array(tasks.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < tasks.length) { const i = idx++; results[i] = await tasks[i](); }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
+  return results;
+}
+
 // ── Core payout dispatch — shared by the SA /route endpoint, the immediate auto-
 // fire on batch creation, and the scheduled-payout worker. Disburses a
-// 'needs_routing' batch through its route rail. Returns { batch_id, status, settled,
-// pending, failed }, or throws Error with ._client for client-facing stops (no float
-// / rail down / cap / unassigned). Never holds a DB tx across the external rail call;
-// on a leg failure it refunds float + merchant wallet.
+// 'needs_routing' or 'dispatching' batch through its route rail. Returns
+// { batch_id, status, settled, pending, failed }, or throws Error with ._client
+// for client-facing stops (no float / rail down / cap / unassigned). Never holds
+// a DB tx across the external rail call; on a leg failure it refunds float +
+// merchant wallet.
 async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, ip = null }) {
     const batchRows = await prisma.$queryRaw`SELECT * FROM payout_batches WHERE id = ${batchId}::uuid`;
     const batch = batchRows[0];
     if (!batch) throw Object.assign(new Error('Batch not found'), { _client: true, _code: 'NOT_FOUND' });
-    if (batch.status !== 'needs_routing') throw Object.assign(new Error(`Batch is not awaiting routing (status: ${batch.status})`), { _client: true });
+    if (batch.status !== 'needs_routing' && batch.status !== 'dispatching') throw Object.assign(new Error(`Batch is not awaiting routing (status: ${batch.status})`), { _client: true });
 
     // Items carry the merchant's route rail (set at creation). SA may OVERRIDE the
     // rail for this one batch here (per-batch routing): body { rail_id } forces the
@@ -1248,16 +1266,29 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
       bank_code: leg.bank_code, bank_name: leg.bank_name, narration: leg.narration,
     });
     let nOk = 0, nFail = 0, nPending = 0;
-    for (const leg of legs) {
+    const firstRailName = legs.length ? (railById[legs[0].rail_id] && railById[legs[0].rail_id].name) : null;
+    const concurrency = railConcurrency(firstRailName);
+    const legTasks = legs.map(leg => async () => {
       const rail = railById[leg.rail_id];
       const adapter = railAdapter(rail && rail.name);
       let r;
       try {
-        if (!adapter || !adapter.isConfigured()) r = { ok: false, reason: 'Rail adapter not configured' };
-        else r = await adapter.sendPayout({
-          orderId: leg.rail_order_id, amount: Number(leg.amount), bank_code: leg.bank_code,
-          account_number: leg.account_number, account_name: leg.account_name, narration: leg.narration,
-        });
+        if (!adapter || !adapter.isConfigured()) {
+          r = { ok: false, reason: 'Rail adapter not configured' };
+        } else {
+          r = await adapter.sendPayout({
+            orderId: leg.rail_order_id, amount: Number(leg.amount), bank_code: leg.bank_code,
+            account_number: leg.account_number, account_name: leg.account_name, narration: leg.narration,
+          });
+          // Retry once on NIP throttle (code:90)
+          if (!r.ok && /90|throttl|queue/i.test(String(r.reason || r.code || ''))) {
+            await new Promise(res => setTimeout(res, 2000));
+            r = await adapter.sendPayout({
+              orderId: leg.rail_order_id, amount: Number(leg.amount), bank_code: leg.bank_code,
+              account_number: leg.account_number, account_name: leg.account_name, narration: leg.narration,
+            });
+          }
+        }
       } catch (e) { r = { ok: false, reason: e.message }; }
 
       // The rail's create response only means ACCEPTED (respCode ok), not SETTLED.
@@ -1300,7 +1331,8 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
           { railId: leg.rail_id, railName: rail && rail.name, merchant: batch.merchant_id });
         firePayoutWebhook(hookLeg(leg), 'payout.failed', { orderNo: r.providerRef, sessionId: sess, errorMsg: reason });
       }
-    }
+    });
+    await runPool(legTasks, concurrency);
     // Batch is terminal only once nothing is still in flight; pending → 'processing'.
     const finalStatus = nPending > 0 ? 'processing'
       : nFail === 0 ? 'completed'
@@ -1322,10 +1354,18 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
 // due (immediate batches carry scheduled_at = creation time). A client-stop (no float
 // / rail down / cap) leaves the batch in needs_routing → the merchant/SA exception queue.
 async function autoDispatchDuePayouts({ limit = 25 } = {}) {
+  // Atomically claim batches as 'dispatching' so concurrent workers can't double-fire.
   const due = await prisma.$queryRaw`
-    SELECT id FROM payout_batches
-    WHERE status = 'needs_routing' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
-    ORDER BY scheduled_at ASC NULLS FIRST LIMIT ${Number(limit)}`;
+    WITH claimed AS (
+      SELECT id FROM payout_batches
+      WHERE status = 'needs_routing' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+      ORDER BY scheduled_at ASC NULLS FIRST
+      LIMIT ${Number(limit)}
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE payout_batches SET status = 'dispatching', updated_at = NOW()
+    FROM claimed WHERE payout_batches.id = claimed.id
+    RETURNING payout_batches.id`;
   let fired = 0, held = 0;
   for (const b of due) {
     try { await dispatchBatch({ batchId: b.id }); fired++; }
