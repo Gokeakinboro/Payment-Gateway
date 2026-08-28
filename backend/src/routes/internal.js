@@ -12,6 +12,7 @@ const bcrypt  = require('bcryptjs');
 const { prisma }  = require('../utils/db');
 const { logger }  = require('../utils/logger');
 const { ok, fail, created, generateApiKey, hashApiKey } = require('../utils/helpers');
+const { notifyReceipt } = require('../services/whatsappService');
 
 const CHECKOUT_BASE = (process.env.CHECKOUT_BASE_URL || 'https://paylodeservices.com').replace(/\/$/, '');
 
@@ -202,6 +203,63 @@ router.post('/golf/club/:merchantId/topup-link', async (req, res, next) => {
     logger.info({ merchantId, slug, amountKobo: amountKobo?.toString() }, 'Golf Platform top-up link created');
     return ok(res, { slug, url, merchantCode: merchant.merchantCode }, 'Payment link created');
 
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/internal/golf/whatsapp/payment-receipt ─────────────────────────
+// Sends a WhatsApp payment receipt to a golf club member.
+// Only called when the club has opted into WhatsApp notifications (SA toggle).
+// Amount must be in kobo (multiply naira × 100 on the caller's side).
+// Non-fatal: if the template env var is unset or Meta rejects, logs and returns ok=false.
+router.post('/golf/whatsapp/payment-receipt', async (req, res, next) => {
+  try {
+    const { phone, memberName, clubName, amountKobo, reference, merchantId } = req.body;
+    if (!phone || !amountKobo || !reference)
+      return fail(res, 'phone, amountKobo and reference are required', 'VALIDATION_ERROR', 400);
+
+    const result = await notifyReceipt({
+      phone,
+      recipientName: memberName || 'Member',
+      businessName:  clubName   || 'Golf Club',
+      invoiceNumber: reference,
+      amount:        amountKobo,
+      currency:      'NGN',
+      merchantId:    merchantId || null,
+    });
+
+    logger.info({ phone, reference, ok: result?.ok, skipped: result?.skipped }, 'Golf WA payment receipt');
+    return ok(res, { ok: !(result?.skipped), skipped: result?.skipped || false }, 'WhatsApp send attempted');
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/internal/system/cert-alert ─────────────────────────────────────
+// Called by the cert-monitor cron on servers 45 and 176. Sends an email alert.
+// Body: { server, domain, status, daysLeft, message }
+router.post('/system/cert-alert', async (req, res, next) => {
+  try {
+    const { sendEmail } = require('../services/emailService');
+    const { server = 'unknown', domain = '', status = '', daysLeft, message = '' } = req.body;
+    const isRenewed = status === 'renewed';
+    const subject = isRenewed
+      ? `[Paylode] SSL cert renewed — ${domain}`
+      : `[Paylode] ALERT: SSL cert expiring in ${daysLeft} days — ${domain}`;
+    const colour = isRenewed ? '#6dc42a' : '#d94f4f';
+    const html = `<!DOCTYPE html><html><body style="font-family:sans-serif;background:#f5f8fd;margin:0;padding:20px">
+<div style="max-width:520px;margin:auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+<div style="background:#0a1a35;padding:20px 28px"><h1 style="margin:0;font-size:20px;color:#fff">Pay<span style="color:#6dc42a">lode</span> — SSL Monitor</h1></div>
+<div style="padding:24px 28px">
+<p style="font-size:15px;font-weight:700;color:${colour};margin:0 0 16px">${subject}</p>
+<table style="font-size:13px;border-collapse:collapse;width:100%">
+<tr><td style="padding:4px 0;color:#7a8fa8;width:100px">Server</td><td style="padding:4px 0;font-weight:600">${server}</td></tr>
+<tr><td style="padding:4px 0;color:#7a8fa8">Domain</td><td style="padding:4px 0;font-weight:600">${domain}</td></tr>
+<tr><td style="padding:4px 0;color:#7a8fa8">Status</td><td style="padding:4px 0;font-weight:600">${status}</td></tr>
+${daysLeft != null ? `<tr><td style="padding:4px 0;color:#7a8fa8">Days left</td><td style="padding:4px 0;font-weight:600">${daysLeft}</td></tr>` : ''}
+</table>
+${message ? `<p style="font-size:13px;color:#4a5b70;margin-top:16px">${message}</p>` : ''}
+</div></div></body></html>`;
+    await sendEmail({ to: 'gokeakinboro@gmail.com', subject, html });
+    logger.info({ domain, status, daysLeft }, 'cert-alert email sent');
+    return ok(res, { sent: true });
   } catch (e) { next(e); }
 });
 
