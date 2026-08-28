@@ -1,45 +1,30 @@
 'use strict';
-// Create DrinksArena's pipeline test batch — 22 accounts × 10 items = 220 items.
-// Amounts: ₦20.01–₦20.10 per account (kobo: 2001–2010).
+// Create DrinksArena pipeline test batch — same accounts as previous run,
+// amounts ₦20.01–₦20.10 per account (kobo 2001–2010), 10 items per account.
 // Scheduled for 10:00 WAT = 09:00 UTC on 2026-08-29.
+// Pulls account list from DA's payout history to avoid hardcoding PII.
 // Run in /opt/paylode-api/backend: node scripts/create-da-batch2.js
 require('dotenv').config();
 const { PrismaClient } = require('@prisma/client');
 
-const DA_ID  = '2f6ff892-eefe-4542-b4df-1381e8156e5e';
-const SCHEDULED_AT = new Date('2026-08-29T09:00:00.000Z'); // 10:00 WAT
-const AMOUNTS = [2001n, 2002n, 2003n, 2004n, 2005n, 2006n, 2007n, 2008n, 2009n, 2010n]; // kobo
-
-// All 22 accounts — pipeline handles NE at dispatch; failed NE legs refund automatically.
-// Dayo Onasanya (OPay 8055057055) permanently excluded.
-const ACCOUNTS = [
-  { name: 'Sulaimon Olagoke Akinboro', bank_code: '328', bank_name: 'OPay',          account: '7030000266' },
-  { name: 'Akinboro May Onikepo',      bank_code: '328', bank_name: 'OPay',          account: '8096383806' },
-  { name: 'Akinboro May Onikepo',      bank_code: '044', bank_name: 'Access Bank',   account: '0727733492' },
-  { name: 'Akinboro May Onikepo',      bank_code: '058', bank_name: 'GTBank',        account: '0014052036' },
-  { name: 'Akinboro May Onikepo',      bank_code: '033', bank_name: 'UBA',           account: '2121296841' },
-  { name: 'Akinboro May Onikepo',      bank_code: '214', bank_name: 'FCMB',          account: '2822947012' },
-  { name: 'Akinboro May Onikepo',      bank_code: '011', bank_name: 'First Bank',    account: '3139714121' },
-  { name: 'Akinboro May Onikepo',      bank_code: '335', bank_name: 'Fairmoney',     account: '8564990879' },
-  { name: 'Drinks Arena',              bank_code: '232', bank_name: 'Sterling Bank', account: '0146306252' },
-  { name: 'Drinks Arena',              bank_code: '330', bank_name: 'Moniepoint',    account: '5391648698' },
-  { name: 'Drinks Arena',              bank_code: '044', bank_name: 'Access Bank',   account: '0789730181' },
-  { name: 'Drinks Arena',              bank_code: '011', bank_name: 'First Bank',    account: '2042302061' },
-  { name: 'Drinks Arena',              bank_code: '035', bank_name: 'Wema Bank',     account: '0127583064' },
-  { name: 'Drinks Arena',              bank_code: '057', bank_name: 'Zenith Bank',   account: '1016102375' },
-  { name: 'Mobolaji Olamide Akinboro', bank_code: '057', bank_name: 'Zenith Bank',   account: '4297650010' },
-  { name: 'Mobolaji Olamide Akinboro', bank_code: '035', bank_name: 'Wema Bank',     account: '0445847158' },
-  { name: 'Mobolaji Olamide Akinboro', bank_code: '328', bank_name: 'OPay',          account: '8166527299' },
-  { name: 'Akinboro Samuel Olatomide', bank_code: '328', bank_name: 'OPay',          account: '9024129891' },
-  { name: 'Akinboro Samuel Olatomide', bank_code: '044', bank_name: 'Access Bank',   account: '0027912725' },
-  { name: 'Paylode Services Ltd',      bank_code: '011', bank_name: 'First Bank',    account: '2042812850' },
-  { name: 'Paylode Services Ltd',      bank_code: '070', bank_name: 'Fidelity Bank', account: '4011192900' },
-  { name: 'Paylode Services Ltd',      bank_code: '221', bank_name: 'Stanbic IBTC',  account: '0022054754' },
-];
+const DA_ID            = '2f6ff892-eefe-4542-b4df-1381e8156e5e';
+const SCHEDULED_AT     = new Date('2026-08-29T09:00:00.000Z'); // 10:00 WAT
+const EXCLUDED_ACCOUNT = '8055057055'; // permanently excluded per merchant instruction
+const AMOUNTS          = [2001n, 2002n, 2003n, 2004n, 2005n, 2006n, 2007n, 2008n, 2009n, 2010n]; // kobo
 
 async function main() {
   const p = new PrismaClient();
   try {
+    // Pull unique accounts from DA payout history.
+    const accounts = await p.$queryRaw`
+      SELECT DISTINCT account_number, bank_code, bank_name, account_name
+      FROM payout_items
+      WHERE merchant_id = ${DA_ID}::uuid
+        AND account_number != ${EXCLUDED_ACCOUNT}
+      ORDER BY bank_code, account_number`;
+
+    if (!accounts.length) { console.log('No payout history found — seed beneficiaries first.'); return; }
+
     const rail = await p.paymentRail.findFirst({ where: { name: { contains: 'Parallex', mode: 'insensitive' } } });
     if (!rail) throw new Error('Parallex rail not found');
 
@@ -48,9 +33,9 @@ async function main() {
     const VAT = 0.075;
 
     const items = [];
-    for (const acc of ACCOUNTS) {
+    for (const acc of accounts) {
       for (let i = 0; i < 10; i++) {
-        items.push({ account_number: acc.account, account_name: acc.name, bank_code: acc.bank_code, bank_name: acc.bank_name, amount: AMOUNTS[i] });
+        items.push({ account_number: acc.account_number, account_name: acc.account_name, bank_code: acc.bank_code, bank_name: acc.bank_name, amount: AMOUNTS[i] });
       }
     }
 
@@ -65,7 +50,7 @@ async function main() {
     const totalDeduction = totalAmount + totalFee + totalVat;
 
     console.log(`\n=== Pipeline Test Batch 2 ===`);
-    console.log(`  Accounts: ${ACCOUNTS.length}, Items: ${items.length}`);
+    console.log(`  Accounts: ${accounts.length}, Items: ${items.length}`);
     console.log(`  Total: ₦${Number(totalAmount)/100} + fee ₦${Number(totalFee)/100} + VAT ₦${Number(totalVat)/100} = ₦${Number(totalDeduction)/100}`);
     console.log(`  Scheduled: ${SCHEDULED_AT.toISOString()} (10:00 WAT)\n`);
 
@@ -78,7 +63,7 @@ async function main() {
       const batchRef = `DA-PIPE-TEST2-${Date.now()}`;
       const batchRows = await tx.$queryRaw`
         INSERT INTO payout_batches (merchant_id, batch_ref, description, total_amount, total_fee, total_vat, fee_rate, total_items, status, rail_id, scheduled_at, created_by, created_at, updated_at)
-        VALUES (${DA_ID}::uuid, ${batchRef}, ${'Pipeline test 2 — 22 accounts × 10 items (₦20.01–₦20.10), NE pipelined'}, ${totalAmount}, ${totalFee}, ${totalVat}, ${feeRate}::decimal, ${items.length}, 'needs_routing', ${rail.id}::uuid, ${SCHEDULED_AT}, ${DA_ID}::uuid, NOW(), NOW())
+        VALUES (${DA_ID}::uuid, ${batchRef}, ${'Pipeline test 2 — ' + accounts.length + ' accounts × 10 items (₦20.01–₦20.10), NE pipelined'}, ${totalAmount}, ${totalFee}, ${totalVat}, ${feeRate}::decimal, ${items.length}, 'needs_routing', ${rail.id}::uuid, ${SCHEDULED_AT}, ${DA_ID}::uuid, NOW(), NOW())
         RETURNING id`;
       const batchId = batchRows[0].id;
 
@@ -95,9 +80,9 @@ async function main() {
       const afterAll   = afterFee - totalVat;
       await tx.$executeRaw`
         INSERT INTO wallet_ledger (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
-        VALUES (${DA_ID}::uuid, ${rail.id}::uuid, 'DEBIT', ${totalAmount}, ${pooled},      ${afterBenef}, ${batchRef}, ${'Payout via Parallex Bank: pipeline test 2'}, ${DA_ID}::uuid, NOW()),
-               (${DA_ID}::uuid, ${rail.id}::uuid, 'FEE',   ${totalFee},   ${afterBenef},  ${afterFee},   ${batchRef}, ${'Paylode payout service fee'},                ${DA_ID}::uuid, NOW()),
-               (${DA_ID}::uuid, ${rail.id}::uuid, 'VAT',   ${totalVat},   ${afterFee},    ${afterAll},   ${batchRef}, ${'VAT on payout fee (7.5%)'},                   ${DA_ID}::uuid, NOW())`;
+        VALUES (${DA_ID}::uuid, ${rail.id}::uuid, 'DEBIT', ${totalAmount}, ${pooled},     ${afterBenef}, ${batchRef}, ${'Payout via Parallex Bank: pipeline test 2'}, ${DA_ID}::uuid, NOW()),
+               (${DA_ID}::uuid, ${rail.id}::uuid, 'FEE',   ${totalFee},   ${afterBenef}, ${afterFee},   ${batchRef}, ${'Paylode payout service fee'},                ${DA_ID}::uuid, NOW()),
+               (${DA_ID}::uuid, ${rail.id}::uuid, 'VAT',   ${totalVat},   ${afterFee},   ${afterAll},   ${batchRef}, ${'VAT on payout fee (7.5%)'},                   ${DA_ID}::uuid, NOW())`;
 
       const bankRows = await tx.$queryRaw`SELECT bank_code, bank_name FROM nigerian_banks`;
       const bankMap  = Object.fromEntries(bankRows.map(b => [b.bank_code, b.bank_name]));
@@ -109,7 +94,7 @@ async function main() {
 
       console.log(`  Batch ID: ${batchId}`);
       console.log(`  Ref:      ${batchRef}`);
-      console.log(`  Status:   needs_routing — auto-dispatch at 10:00 WAT (${SCHEDULED_AT.toISOString()})\n`);
+      console.log(`  ${items.length} items inserted — auto-dispatches at 10:00 WAT tomorrow\n`);
     }, { timeout: 60000 });
   } finally { await p.$disconnect(); }
 }
