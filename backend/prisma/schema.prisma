@@ -214,6 +214,7 @@ model Merchant {
   payoutRail     PaymentRail?   @relation("MerchantPayoutRoute", fields: [payoutRailId], references: [id])
   payinRail      PaymentRail?   @relation("MerchantPayinRoute", fields: [payinRailId], references: [id])
   payoutSplits   MerchantPayoutSplit[]
+  beneficiaries  MerchantBeneficiary[]
   mpgsConfig     MerchantMpgsConfig?
 
   @@index([kycStatus])
@@ -301,6 +302,31 @@ model MerchantPayoutSplit {
   @@unique([merchantId, railId])
   @@index([merchantId])
   @@map("merchant_payout_splits")
+}
+
+// Merchant beneficiary address book. Accounts are NE-verified at upload so
+// dispatch pre-runs NE in parallel and passes session IDs to sendPayout,
+// skipping the inline NE that was doubling per-leg dispatch time.
+model MerchantBeneficiary {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId       String    @map("merchant_id") @db.Uuid
+  accountNumber    String    @map("account_number")
+  bankCode         String    @map("bank_code")
+  bankName         String?   @map("bank_name")
+  accountName      String?   @map("account_name")    // NE-resolved canonical name
+  alias            String?                            // merchant-supplied label
+  neStatus         String    @default("pending") @map("ne_status") // pending/verified/failed
+  neCheckedAt      DateTime? @map("ne_checked_at")
+  neFailureReason  String?   @map("ne_failure_reason")
+  isActive         Boolean   @default(true) @map("is_active")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  merchant         Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, bankCode, accountNumber])
+  @@index([merchantId])
+  @@map("merchant_beneficiaries")
 }
 
 model RailCost {

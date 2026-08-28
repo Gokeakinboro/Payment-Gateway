@@ -1316,10 +1316,21 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
       account_number: leg.account_number, account_name: leg.account_name,
       bank_code: leg.bank_code, bank_name: leg.bank_name, narration: leg.narration,
     });
+
+    // ── Pipelined NE + Transfer dispatch ─────────────────────────────────────────
+    // NE producer (concurrency=10) and transfer consumer run simultaneously.
+    // Each completed NE immediately makes the leg available to a transfer worker —
+    // no "all NEs first" barrier. Sessions are used within seconds of generation,
+    // well within the NIP TTL. Intrabank and non-Parallex legs skip the NE pool.
+    const { parallexTransfer: plxAdapter } = (() => {
+      try { return { parallexTransfer: require('../services/parallexTransferService') }; } catch (_) { return {}; }
+    })();
+
     let nOk = 0, nFail = 0, nPending = 0;
-    const firstRailName = legs.length ? (railById[legs[0].rail_id] && railById[legs[0].rail_id].name) : null;
-    const concurrency = railConcurrency(firstRailName);
-    const legTasks = legs.map(leg => async () => {
+    const transferQueue = [];   // { leg, nePrefetch }
+    let neProducerDone = false;
+
+    const doLeg = async (leg, nePrefetch) => {
       const rail = railById[leg.rail_id];
       const adapter = railAdapter(rail && rail.name);
       let r;
@@ -1330,8 +1341,9 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
           r = await adapter.sendPayout({
             orderId: leg.rail_order_id, amount: Number(leg.amount), bank_code: leg.bank_code,
             account_number: leg.account_number, account_name: leg.account_name, narration: leg.narration,
+            ...nePrefetch,
           });
-          // Retry once on NIP throttle (code:90)
+          // Retry once on NIP throttle (code:90) — fresh call without cached session.
           if (!r.ok && /90|throttl|queue/i.test(String(r.reason || r.code || ''))) {
             await new Promise(res => setTimeout(res, 2000));
             r = await adapter.sendPayout({
@@ -1342,33 +1354,26 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         }
       } catch (e) { r = { ok: false, reason: e.message }; }
 
-      // The rail's create response only means ACCEPTED (respCode ok), not SETTLED.
-      // The authoritative settle result arrives via the payout webhook (orderStatus).
-      // So: orderStatus 2 = settled now; 1/0/absent = accepted & in flight → leave
-      // the money debited and mark the leg 'sent' to await the webhook; a hard reject
-      // (r.ok false) or a terminal failure code → refund float + wallet immediately.
       const os = r.ok ? String(r.orderStatus == null ? '' : r.orderStatus) : null;
       const railFee = (r.raw && r.raw.data && r.raw.data.fee && r.raw.data.fee.fee) || Number(leg.rail_cost);
       const sess = (r.raw && r.raw.data && r.raw.data.sessionId) || null;
 
-      if (r.ok && os === '2') {                       // terminal SUCCESS now
+      if (r.ok && os === '2') {
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='success', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), settled_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
         await prisma.$executeRaw`UPDATE payout_items SET status='success', provider_ref=${r.providerRef || null}, processed_at=NOW() WHERE id=${leg.item_id}::uuid`;
         nOk++;
-        await recordRailResult(rail, { ok: true });   // accepted+settled → reset the rail's fail streak
+        await recordRailResult(rail, { ok: true });
         firePayoutWebhook(hookLeg(leg), 'payout.success', { orderNo: r.providerRef, sessionId: sess });
-      } else if (r.ok && (os === '' || os === '1' || os === '0')) {   // ACCEPTED, in flight
+      } else if (r.ok && (os === '' || os === '1' || os === '0')) {
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='sent', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
         await prisma.$executeRaw`UPDATE payout_items SET status='processing', provider_ref=${r.providerRef || null} WHERE id=${leg.item_id}::uuid`;
         nPending++;
-        await recordRailResult(rail, { ok: true });   // accepted by the rail → not a failure
-      } else {                                        // hard reject / terminal failure → refund
+        await recordRailResult(rail, { ok: true });
+      } else {
         const reason = r.ok ? `Rail returned orderStatus ${os}` : (r.reason || 'failed');
         const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
         const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
         await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
-        // Pooled refund — return the money to the merchant's balance: the route-rail
-        // row if it exists, else their largest row (rail-agnostic pool).
         await prisma.$executeRaw`
           UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW()
           WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid
@@ -1376,14 +1381,59 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
         await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)} WHERE id=${leg.item_id}::uuid`;
         nFail++;
-        // Track the rail's failure streak → SA is emailed (debounced) at the
-        // threshold, or immediately if the rail signals a low/insufficient balance.
         await recordRailResult(rail, { ok: false, reason, isLowBalance: /insufficient|balance|fund|limit/i.test(String(reason)) },
           { railId: leg.rail_id, railName: rail && rail.name, merchant: batch.merchant_id });
         firePayoutWebhook(hookLeg(leg), 'payout.failed', { orderNo: r.providerRef, sessionId: sess, errorMsg: reason });
       }
-    });
-    await runPool(legTasks, concurrency);
+    };
+
+    // Refund a leg immediately (NE failed — no transfer slot wasted).
+    const refundLeg = async (leg, reason) => {
+      const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
+      const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
+      await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
+      await prisma.$executeRaw`
+        UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW()
+        WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid
+                    ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)`;
+      await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
+      await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)} WHERE id=${leg.item_id}::uuid`;
+      nFail++;
+      firePayoutWebhook(hookLeg(leg), 'payout.failed', { errorMsg: reason });
+    };
+
+    // NE Producer (concurrency=10): runs NE for every Parallex interbank leg,
+    // pushes to transferQueue as each NE completes. Non-Parallex/intrabank bypass.
+    const neProducer = runPool(legs.map(leg => async () => {
+      const rail = railById[leg.rail_id];
+      const isParallexRail = rail && /parallex/i.test(rail.name || '');
+      const isIntra = !leg.bank_code || leg.bank_code === (process.env.PARALLEX_TRANSFER_BANK_CODE || '999015');
+      if (!isParallexRail || isIntra || !plxAdapter || !plxAdapter.isConfigured()) {
+        transferQueue.push({ leg, nePrefetch: {} });
+        return;
+      }
+      const ne = await plxAdapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
+      if (ne.ok && ne.sessionId) {
+        transferQueue.push({ leg, nePrefetch: { neSessionId: ne.sessionId, neAccountName: ne.accountName, neKycLevel: ne.kycLevel || '' } });
+      } else {
+        await refundLeg(leg, `Name enquiry failed: ${ne.reason || 'no session ID'}`);
+      }
+    }), 10).then(() => { neProducerDone = true; });
+
+    // Transfer consumer (concurrency per rail): drains queue as NE results arrive.
+    const firstRailName = legs.length ? (railById[legs[0].rail_id] && railById[legs[0].rail_id].name) : null;
+    const concurrency = railConcurrency(firstRailName);
+    const transferConsumers = Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        while (!neProducerDone || transferQueue.length > 0) {
+          if (transferQueue.length === 0) { await new Promise(r => setTimeout(r, 20)); continue; }
+          const item = transferQueue.shift();
+          if (item) await doLeg(item.leg, item.nePrefetch);
+        }
+      })
+    );
+
+    await Promise.all([neProducer, transferConsumers]);
     // Batch is terminal only once nothing is still in flight; pending → 'processing'.
     const finalStatus = nPending > 0 ? 'processing'
       : nFail === 0 ? 'completed'
@@ -1817,6 +1867,141 @@ router.get('/wallet/ledger', requireAuth, async (req, res, next) => {
       })),
       meta: { page: parseInt(page), perPage: parseInt(perPage), total, pages: Math.ceil(total/parseInt(perPage)) },
     });
+  } catch (e) { next(e); }
+});
+
+// ── Beneficiary address book — background NE runner ─────────────────────────
+// Run NE for a list of beneficiary IDs and write ne_status + accountName back.
+// Called async via setImmediate — never awaited in a request path.
+async function runBeneficiaryNE(merchantId, beneficiaryIds) {
+  const plx = (() => {
+    try { return require('../services/parallexTransferService'); } catch (_) { return null; }
+  })();
+  if (!plx || !plx.isConfigured()) return;
+  const benefs = await prisma.merchantBeneficiary.findMany({
+    where: { id: { in: beneficiaryIds }, merchantId, isActive: true },
+    select: { id: true, bankCode: true, accountNumber: true },
+  });
+  await runPool(benefs.map(b => async () => {
+    const ne = await plx.nameEnquiry(b.bankCode, b.accountNumber).catch(() => ({ ok: false, reason: 'NE threw' }));
+    await prisma.merchantBeneficiary.update({
+      where: { id: b.id },
+      data: {
+        neStatus:       ne.ok && ne.sessionId ? 'verified' : 'failed',
+        accountName:    ne.ok && ne.accountName ? ne.accountName : undefined,
+        neCheckedAt:    new Date(),
+        neFailureReason: ne.ok ? null : (ne.reason || 'Unknown'),
+      },
+    });
+  }), 10);
+}
+
+// ── GET /api/v1/payouts/beneficiaries — list merchant's address book ──────────
+router.get('/beneficiaries', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const { page = 1, perPage = 100, ne_status } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(perPage);
+    const where = { merchantId, isActive: true, ...(ne_status ? { neStatus: ne_status } : {}) };
+    const [rows, total] = await Promise.all([
+      prisma.merchantBeneficiary.findMany({
+        where, orderBy: [{ neStatus: 'asc' }, { createdAt: 'desc' }],
+        take: parseInt(perPage), skip: offset,
+        select: { id: true, accountNumber: true, bankCode: true, bankName: true, accountName: true, alias: true, neStatus: true, neCheckedAt: true, neFailureReason: true, createdAt: true },
+      }),
+      prisma.merchantBeneficiary.count({ where }),
+    ]);
+    ok(res, { data: rows, meta: { page: parseInt(page), perPage: parseInt(perPage), total, pages: Math.ceil(total / parseInt(perPage)) } });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/payouts/beneficiaries/sample — download CSV template ──────────
+router.get('/beneficiaries/sample', requireAuth, (req, res) => {
+  const csv = 'account_number,bank_code,bank_name,alias\r\n0123456789,058,GTBank,John Doe\r\n9876543210,044,Access Bank,Mary Smith\r\n';
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="paylode-beneficiaries-sample.csv"');
+  res.send(csv);
+});
+
+// ── POST /api/v1/payouts/beneficiaries — add one, trigger NE async ────────────
+router.post('/beneficiaries',
+  requireAuth,
+  body('account_number').isString().isLength({ min: 10, max: 10 }).withMessage('account_number must be 10 digits'),
+  body('bank_code').isString().notEmpty().withMessage('bank_code is required'),
+  async (req, res, next) => {
+    try {
+      const errs = validationResult(req);
+      if (!errs.isEmpty()) return fail(res, errs.array()[0].msg);
+      const merchantId = req.user.merchant?.id;
+      if (!merchantId) return fail(res, 'No merchant account');
+      const { account_number, bank_code, bank_name, alias } = req.body;
+      const benef = await prisma.merchantBeneficiary.upsert({
+        where: { merchantId_bankCode_accountNumber: { merchantId, bankCode: bank_code, accountNumber: account_number } },
+        create: { merchantId, accountNumber: account_number, bankCode: bank_code, bankName: bank_name || null, alias: alias || null, neStatus: 'pending' },
+        update: { isActive: true, bankName: bank_name || undefined, alias: alias || undefined, neStatus: 'pending', neCheckedAt: null, neFailureReason: null },
+      });
+      setImmediate(() => runBeneficiaryNE(merchantId, [benef.id]).catch(e => logger.error({ err: e }, 'beneficiary NE failed')));
+      created(res, { id: benef.id, account_number: benef.accountNumber, bank_code: benef.bankCode, bank_name: benef.bankName, alias: benef.alias, ne_status: 'pending' }, 'Beneficiary added — name verification running in background');
+    } catch (e) {
+      if (e.code === 'P2002') return fail(res, 'This account is already in your address book');
+      next(e);
+    }
+  }
+);
+
+// ── DELETE /api/v1/payouts/beneficiaries/:id — soft-delete ───────────────────
+router.delete('/beneficiaries/:id', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const benef = await prisma.merchantBeneficiary.findFirst({ where: { id: req.params.id, merchantId, isActive: true } });
+    if (!benef) return notFound(res, 'Beneficiary');
+    await prisma.merchantBeneficiary.update({ where: { id: benef.id }, data: { isActive: false } });
+    ok(res, { id: benef.id }, 'Removed from address book');
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/payouts/beneficiaries/upload — bulk CSV upload, async NE ─────
+router.post('/beneficiaries/upload', requireAuth, upload.single('file'), async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    if (!req.file) return fail(res, 'No file uploaded');
+    const ext = req.file.originalname.toLowerCase().split('.').pop();
+    if (ext !== 'csv') return fail(res, 'Upload a CSV file. Columns: account_number, bank_code, bank_name (optional), alias (optional)');
+    const text = req.file.buffer.toString('utf8');
+    const lines = text.split('\n').filter(l => l.trim());
+    if (lines.length < 2) return fail(res, 'File is empty — add at least one row after the header');
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z_]/g, ''));
+    const validRows = [];
+    const errors = [];
+    for (let i = 1; i < lines.length; i++) {
+      const vals = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
+      const row = {};
+      headers.forEach((h, j) => { row[h] = vals[j] || ''; });
+      const acct = (row.account_number || row.accountnumber || row.account || '').replace(/\D/g, '');
+      const bank = (row.bank_code || row.bankcode || row.bank || '').trim();
+      if (!acct || acct.length !== 10) { errors.push(`Row ${i + 1}: account_number must be 10 digits`); continue; }
+      if (!bank) { errors.push(`Row ${i + 1}: bank_code required`); continue; }
+      validRows.push({ acct, bank, bankName: row.bank_name || row.bankname || '', alias: row.alias || row.name || '' });
+    }
+    if (validRows.length === 0) return fail(res, `No valid rows found. Errors: ${errors.slice(0, 3).join('; ')}`);
+    if (validRows.length > 2000) return fail(res, 'Maximum 2,000 accounts per upload');
+    const newIds = [];
+    for (const row of validRows) {
+      const b = await prisma.merchantBeneficiary.upsert({
+        where: { merchantId_bankCode_accountNumber: { merchantId, bankCode: row.bank, accountNumber: row.acct } },
+        create: { merchantId, accountNumber: row.acct, bankCode: row.bank, bankName: row.bankName || null, alias: row.alias || null, neStatus: 'pending' },
+        update: { isActive: true, bankName: row.bankName || undefined, alias: row.alias || undefined, neStatus: 'pending', neCheckedAt: null, neFailureReason: null },
+      });
+      newIds.push(b.id);
+    }
+    setImmediate(() => runBeneficiaryNE(merchantId, newIds).catch(e => logger.error({ err: e }, 'bulk beneficiary NE failed')));
+    ok(res, {
+      uploaded: validRows.length, skipped_errors: errors.length, error_samples: errors.slice(0, 5),
+      ne_status: 'Name verification running in background — check your address book in a few minutes',
+    }, `${validRows.length} accounts added — verifying with bank now`);
   } catch (e) { next(e); }
 });
 
