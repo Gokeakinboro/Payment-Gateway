@@ -862,6 +862,222 @@ router.get('/batches/:id', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── GET /api/v1/payouts/batches/:id/report — per-batch report with breakdown ──
+// Categorises each item: success / failed / ne_failed / sent / reversed / queued.
+// Includes failure reasons + rail-level timestamps. SA sees rail detail; merchant sees item-level only.
+router.get('/batches/:id/report', requireAuth, async (req, res, next) => {
+  try {
+    const isMerchant = req.user.role === 'MERCHANT';
+    const merchantId = isMerchant ? req.user.merchant?.id : null;
+
+    const [batchRows, items] = await Promise.all([
+      prisma.$queryRaw`
+        SELECT pb.id, pb.merchant_id, pb.batch_ref, pb.description, pb.status,
+               pb.total_amount, pb.total_fee, pb.total_vat, pb.total_items,
+               pb.fee_rate, pb.scheduled_at, pb.created_at,
+               m.business_name, pr.name AS rail_name
+        FROM payout_batches pb
+        JOIN merchants m ON pb.merchant_id = m.id
+        LEFT JOIN payment_rails pr ON pb.rail_id = pr.id
+        WHERE pb.id = ${req.params.id}::uuid`,
+      prisma.$queryRaw`
+        SELECT pi.id, pi.account_number, pi.account_name, pi.bank_code, pi.bank_name,
+               pi.amount, pi.item_fee, pi.item_vat, pi.status, pi.failure_reason,
+               pi.provider_ref, pi.narration, pi.created_at,
+               rd.rail_order_id, rd.rail_order_no, rd.status AS leg_status,
+               rd.error_msg, rd.sent_at, rd.settled_at, rd.rail_cost, rd.rail_vat
+        FROM payout_items pi
+        LEFT JOIN rail_disbursements rd ON rd.payout_item_id = pi.id
+        WHERE pi.batch_id = ${req.params.id}::uuid
+        ORDER BY pi.status, pi.created_at`,
+    ]);
+
+    if (!batchRows[0]) return notFound(res, 'Payout batch');
+    const batch = batchRows[0];
+    if (isMerchant && batch.merchant_id !== merchantId)
+      return fail(res, 'You can only view your own payout batches', 'FORBIDDEN', 403);
+
+    // Categorise items
+    const byCategory = { success: [], failed: [], ne_failed: [], sent: [], reversed: [], queued: [] };
+    const failureReasons = {};
+    for (const row of items) {
+      let cat = row.status || 'queued';
+      if (cat === 'failed' && /name enquiry/i.test(row.failure_reason || '')) cat = 'ne_failed';
+      if (!byCategory[cat]) byCategory[cat] = [];
+
+      const itm = {
+        id: row.id,
+        account_number: row.account_number,
+        account_name:   row.account_name,
+        bank_code:      row.bank_code,
+        bank_name:      row.bank_name,
+        amount_naira:   koboToNaira(row.amount),
+        fee_naira:      koboToNaira(row.item_fee || 0),
+        status:         row.status,
+        failure_reason: row.failure_reason || null,
+        provider_ref:   row.provider_ref   || null,
+        sent_at:        row.sent_at        || null,
+        settled_at:     row.settled_at     || null,
+      };
+      if (!isMerchant) {
+        itm.rail_order_id  = row.rail_order_id  || null;
+        itm.rail_order_no  = row.rail_order_no   || null;
+        itm.leg_status     = row.leg_status       || null;
+        itm.error_msg      = row.error_msg        || null;
+        itm.rail_cost_naira = row.rail_cost ? koboToNaira(row.rail_cost) : null;
+      }
+
+      byCategory[cat].push(itm);
+      if (row.failure_reason) {
+        const k = row.failure_reason.substring(0, 80);
+        failureReasons[k] = (failureReasons[k] || 0) + 1;
+      }
+    }
+
+    const summary = {};
+    let totalSuccess = 0n, totalFailed = 0n;
+    for (const [cat, list] of Object.entries(byCategory)) {
+      const koboSum = list.reduce((s, i) => s + BigInt(Math.round(Number(i.amount_naira) * 100)), 0n);
+      summary[cat] = { count: list.length, total_naira: koboToNaira(koboSum) };
+      if (cat === 'success') totalSuccess = koboSum;
+      else totalFailed += koboSum;
+    }
+
+    ok(res, {
+      batch: {
+        id:             batch.id,
+        batch_ref:      batch.batch_ref,
+        description:    batch.description,
+        status:         isMerchant && batch.status === 'needs_routing' ? 'processing' : batch.status,
+        scheduled_at:   batch.scheduled_at,
+        created_at:     batch.created_at,
+        business_name:  batch.business_name,
+        rail_name:      isMerchant ? undefined : batch.rail_name,
+        total_items:    batch.total_items,
+        total_amount_naira: koboToNaira(batch.total_amount),
+        total_fee_naira:    koboToNaira(batch.total_fee || 0),
+        total_vat_naira:    koboToNaira(batch.total_vat || 0),
+      },
+      summary,
+      failure_reasons: Object.entries(failureReasons)
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, count]) => ({ reason, count })),
+      items: byCategory,
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/payouts/batches/:id/report.csv — CSV download ─────────────────
+router.get('/batches/:id/report.csv', requireAuth, async (req, res, next) => {
+  try {
+    const isMerchant = req.user.role === 'MERCHANT';
+    const merchantId = isMerchant ? req.user.merchant?.id : null;
+
+    const [batchRows, items] = await Promise.all([
+      prisma.$queryRaw`SELECT id, merchant_id, batch_ref FROM payout_batches WHERE id = ${req.params.id}::uuid`,
+      prisma.$queryRaw`
+        SELECT pi.account_number, pi.account_name, pi.bank_code, pi.bank_name,
+               pi.amount, pi.item_fee, pi.item_vat, pi.status, pi.failure_reason,
+               pi.provider_ref, pi.narration, pi.created_at,
+               rd.rail_order_id, rd.sent_at, rd.settled_at, rd.error_msg
+        FROM payout_items pi
+        LEFT JOIN rail_disbursements rd ON rd.payout_item_id = pi.id
+        WHERE pi.batch_id = ${req.params.id}::uuid
+        ORDER BY pi.status, pi.created_at`,
+    ]);
+
+    if (!batchRows[0]) return notFound(res, 'Payout batch');
+    if (isMerchant && batchRows[0].merchant_id !== merchantId)
+      return fail(res, 'Forbidden', 'FORBIDDEN', 403);
+
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const headers = isMerchant
+      ? ['account_number', 'account_name', 'bank_code', 'bank_name', 'amount_naira', 'fee_naira', 'status', 'failure_reason', 'provider_ref', 'sent_at', 'settled_at', 'narration']
+      : ['account_number', 'account_name', 'bank_code', 'bank_name', 'amount_naira', 'fee_naira', 'status', 'failure_reason', 'provider_ref', 'rail_order_id', 'sent_at', 'settled_at', 'error_msg', 'narration'];
+
+    const rows = [headers.join(',')];
+    for (const i of items) {
+      const cols = isMerchant
+        ? [i.account_number, i.account_name, i.bank_code, i.bank_name, koboToNaira(i.amount), koboToNaira(i.item_fee || 0), i.status, i.failure_reason, i.provider_ref, i.sent_at, i.settled_at, i.narration]
+        : [i.account_number, i.account_name, i.bank_code, i.bank_name, koboToNaira(i.amount), koboToNaira(i.item_fee || 0), i.status, i.failure_reason, i.provider_ref, i.rail_order_id, i.sent_at, i.settled_at, i.error_msg, i.narration];
+      rows.push(cols.map(esc).join(','));
+    }
+
+    const ref = batchRows[0].batch_ref || req.params.id;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="payout-${ref}.csv"`);
+    res.send(rows.join('\n'));
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/payouts/items/:id/status — live status query for one payout item ──
+// Returns stored DB status + live rail query if the item is still 'sent'.
+router.get('/items/:id/status', requireAuth, async (req, res, next) => {
+  try {
+    const isMerchant = req.user.role === 'MERCHANT';
+    const merchantId = isMerchant ? req.user.merchant?.id : null;
+
+    const rows = await prisma.$queryRaw`
+      SELECT pi.id, pi.merchant_id, pi.batch_id, pi.account_number, pi.account_name,
+             pi.bank_code, pi.bank_name, pi.amount, pi.status, pi.failure_reason, pi.provider_ref,
+             rd.id AS leg_id, rd.rail_order_id, rd.rail_order_no, rd.status AS leg_status,
+             rd.error_msg, rd.sent_at, rd.settled_at,
+             pr.name AS rail_name
+      FROM payout_items pi
+      LEFT JOIN rail_disbursements rd ON rd.payout_item_id = pi.id
+      LEFT JOIN payment_rails pr ON rd.rail_id = pr.id
+      WHERE pi.id = ${req.params.id}::uuid`;
+
+    if (!rows[0]) return notFound(res, 'Payout item');
+    const row = rows[0];
+    if (isMerchant && row.merchant_id !== merchantId)
+      return fail(res, 'Forbidden', 'FORBIDDEN', 403);
+
+    let liveStatus = null;
+    // If still 'sent', query the rail live
+    if (row.leg_status === 'sent' && row.rail_order_id && row.rail_name) {
+      try {
+        const { payoutAdapterForName } = require('../services/payoutRailAdapter');
+        const adapter = payoutAdapterForName(row.rail_name);
+        if (adapter && adapter.queryPayoutResult) {
+          const r = await adapter.queryPayoutResult({
+            orderId:       row.rail_order_id,
+            amount:        row.amount,
+            accountNumber: row.account_number,
+            bankCode:      row.bank_code,
+          });
+          liveStatus = { code: r.code, reason: r.reason, orderStatus: r.orderStatus };
+          // If the live result is conclusive, apply it now
+          if (r.orderStatus === '2' || (r.orderStatus !== '1' && r.orderStatus !== '0')) {
+            const { applyPayoutResult } = require('../services/payoutSettle');
+            await applyPayoutResult({
+              orderId: row.rail_order_id, orderNo: null,
+              orderStatus: r.orderStatus, errorMsg: r.reason,
+              source: 'merchant_query',
+            }).catch(() => {});
+          }
+        }
+      } catch (_) {}
+    }
+
+    ok(res, {
+      id:             row.id,
+      status:         row.status,
+      leg_status:     isMerchant ? undefined : row.leg_status,
+      amount_naira:   koboToNaira(row.amount),
+      account_number: row.account_number,
+      account_name:   row.account_name,
+      bank_name:      row.bank_name,
+      failure_reason: row.failure_reason || null,
+      provider_ref:   row.provider_ref   || null,
+      rail_order_id:  isMerchant ? undefined : row.rail_order_id,
+      sent_at:        row.sent_at        || null,
+      settled_at:     row.settled_at     || null,
+      live_rail_query: liveStatus,
+    });
+  } catch (e) { next(e); }
+});
+
 // ── POST /api/v1/payouts/batches/:id/retry-failed — retry failed items ────────
 router.post('/batches/:id/retry-failed', requireAuth, async (req, res, next) => {
   try {
