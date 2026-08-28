@@ -5,7 +5,7 @@
 // Run in /opt/paylode-api/backend: node scripts/seed-da-beneficiaries.js
 require('dotenv').config();
 const { PrismaClient } = require('@prisma/client');
-const svc = require('./src/modules/gateway-core/services/parallexTransferService');
+const svc = require('../src/modules/gateway-core/services/parallexTransferService');
 
 const DA_ID           = '2f6ff892-eefe-4542-b4df-1381e8156e5e';
 const EXCLUDED_ACCOUNT = '8055057055'; // permanently excluded per merchant instruction
