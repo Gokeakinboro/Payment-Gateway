@@ -213,6 +213,7 @@ model Merchant {
   payoutItems    PayoutItem[]
   payoutRail     PaymentRail?   @relation("MerchantPayoutRoute", fields: [payoutRailId], references: [id])
   payinRail      PaymentRail?   @relation("MerchantPayinRoute", fields: [payinRailId], references: [id])
+  payoutSplits   MerchantPayoutSplit[]
   mpgsConfig     MerchantMpgsConfig?
 
   @@index([kycStatus])
@@ -276,8 +277,30 @@ model PaymentRail {
   wallets      MerchantWallet[]
   routedMerchants Merchant[]  @relation("MerchantPayoutRoute")
   payinMerchants  Merchant[]  @relation("MerchantPayinRoute")
+  payoutSplits MerchantPayoutSplit[]
 
   @@map("payment_rails")
+}
+
+// Per-merchant payout split routing. When rows exist (is_active=true), items
+// in a new batch are assigned to rails proportionally (pct columns must sum to 100).
+// Takes priority over merchants.payout_rail_id. Falls back to global default when
+// no active splits.
+model MerchantPayoutSplit {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId String      @map("merchant_id") @db.Uuid
+  railId     String      @map("rail_id") @db.Uuid
+  pct        Int
+  isActive   Boolean     @default(true) @map("is_active")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  merchant   Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  rail       PaymentRail @relation(fields: [railId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, railId])
+  @@index([merchantId])
+  @@map("merchant_payout_splits")
 }
 
 model RailCost {
