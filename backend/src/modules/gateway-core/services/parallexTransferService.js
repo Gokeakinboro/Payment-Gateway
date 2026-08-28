@@ -46,7 +46,8 @@ const INSTITUTION_CODE_MAP = {
   '305': '100004',  // OPay (alt CBN code)
   '999991': '100003', // PalmPay
   '090267': '100002', // Kuda Bank
-  '50515': '110005',  // Moniepoint
+  '50515': '110005',  // Moniepoint (alt CBN code)
+  '330':   '110005',  // Moniepoint MFB (CBN code in our bank table)
   '044': '000014',  // Access Bank
   '058': '000013',  // GTBank
   '057': '000015',  // Zenith Bank
@@ -54,6 +55,10 @@ const INSTITUTION_CODE_MAP = {
   '033': '000004',  // UBA
   '035': '000017',  // Wema Bank
   '232': '000001',  // Sterling Bank
+  '214': '000003',  // FCMB (First City Monument Bank)
+  '070': '000007',  // Fidelity Bank
+  '221': '000012',  // Stanbic IBTC Bank
+  '335': '100007',  // Fairmoney MFB
 };
 const toNipCode = (code) => INSTITUTION_CODE_MAP[String(code)] || String(code);
 
@@ -193,7 +198,7 @@ async function resolveBankName(nipCode) {
 // Returns requestId as sessionId — required by InterbankTransfer (min 30 chars).
 async function nameEnquiry(bankCode, accountNumber) {
   const r = await call('GET', '/api/ThirdPartyTransfer/NameEnquiry', {
-    query: { accountNumber, bankCode: bankCode || BANK_CODE },
+    query: { accountNumber, bankCode: toNipCode(bankCode) || BANK_CODE },
   });
   return {
     ok: codeOf(r) === '00' && !!r.accountName,
@@ -254,34 +259,45 @@ async function sendPayout(item) {
     // ── Interbank (NIP) ─────────────────────────────────────────────────────
     const nipCode = toNipCode(beneficiaryBankCode);
 
-    // Step 1: name enquiry — get sessionId required by InterbankTransfer
-    const ne = await nameEnquiry(nipCode, item.account_number);
-    if (!ne.ok || !ne.sessionId) {
-      return {
-        ok: false,
-        code: 'NE_FAILED',
-        reason: `Name enquiry failed: ${ne.reason || 'no session ID'}`,
-        orderStatus: null,
-      };
+    // NE sessionId is required by InterbankTransfer. If the caller pre-ran NE
+    // (item.neSessionId set), use it directly — avoids an extra VPN round trip
+    // per leg and halves dispatch time for pre-verified beneficiary batches.
+    let neSessionId  = item.neSessionId  || null;
+    let neAccountName = item.neAccountName || null;
+    let neKycLevel   = item.neKycLevel   || '';
+
+    if (!neSessionId) {
+      const ne = await nameEnquiry(nipCode, item.account_number);
+      if (!ne.ok || !ne.sessionId) {
+        return {
+          ok: false,
+          code: 'NE_FAILED',
+          reason: `Name enquiry failed: ${ne.reason || 'no session ID'}`,
+          orderStatus: null,
+        };
+      }
+      neSessionId   = ne.sessionId;
+      neAccountName = ne.accountName;
+      neKycLevel    = ne.kycLevel || '';
     }
 
     const bankName = await resolveBankName(nipCode);
 
-    // Step 2: transfer
+    // Transfer
     r = await call('POST', '/api/ThirdPartyTransfer/InterbankTransfer', {
       body: {
         accountToDebit: DEBIT_ACCOUNT,
         channel: '1',
         interTransferDetails: [{
           amount: amountNaira,
-          beneficiaryAccountName: item.account_name || ne.accountName || '',
+          beneficiaryAccountName: item.account_name || neAccountName || '',
           beneficiaryAccountNumber: item.account_number,
           beneficiaryBankCode: nipCode,
           beneficiaryBankName: bankName,
-          nameEnquirySessionID: ne.sessionId,
+          nameEnquirySessionID: neSessionId,
           transactionReference: item.orderId,
           beneficiaryBVN: null,
-          beneficiaryKYC: ne.kycLevel || '',
+          beneficiaryKYC: neKycLevel,
           customerRemark: item.narration || undefined,
         }],
         transactionLocation: LOCATION,
