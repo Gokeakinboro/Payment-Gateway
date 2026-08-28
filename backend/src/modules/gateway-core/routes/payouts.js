@@ -1409,7 +1409,7 @@ router.get('/admin/routing-queue', requireAuth, requireSuperAdmin, async (req, r
 // ── Per-rail concurrency for the payout queue worker ──────────────────────────
 function railConcurrency(railName) {
   const n = (railName || '').toLowerCase();
-  if (/parallex/.test(n)) return Number(process.env.PARALLEX_PAYOUT_CONCURRENCY || 7);
+  if (/parallex/.test(n)) return Number(process.env.PARALLEX_PAYOUT_CONCURRENCY || 15);
   if (/palmpay/.test(n))  return Number(process.env.PALMPAY_PAYOUT_CONCURRENCY  || 5);
   return 3;
 }
@@ -1634,7 +1634,7 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
       } else {
         await refundLeg(leg, `Name enquiry failed: ${ne.reason || 'no session ID'}`);
       }
-    }), 10).then(() => { neProducerDone = true; });
+    }), Number(process.env.PARALLEX_NE_CONCURRENCY || 20)).then(() => { neProducerDone = true; });
 
     // Transfer consumer (concurrency per rail): drains queue as NE results arrive.
     const firstRailName = legs.length ? (railById[legs[0].rail_id] && railById[legs[0].rail_id].name) : null;
