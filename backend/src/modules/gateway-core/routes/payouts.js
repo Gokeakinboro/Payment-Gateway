@@ -1440,7 +1440,9 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     // rail for this one batch here (per-batch routing): body { rail_id } forces the
     // whole batch through that live rail instead.
     const items = await prisma.$queryRaw`
-      SELECT id, amount, bank_code, rail_id FROM payout_items WHERE batch_id = ${batchId}::uuid ORDER BY amount DESC`;
+      SELECT id, amount, bank_code, rail_id FROM payout_items
+      WHERE batch_id = ${batchId}::uuid AND status = 'queued'
+      ORDER BY amount DESC`;
     if (items.some(it => !it.rail_id))
       throw Object.assign(new Error('This batch has unassigned items — it predates rail routing. Recreate the payout.'), { _client: true });
     if (overrideRailId) {
