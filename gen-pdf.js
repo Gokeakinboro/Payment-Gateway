@@ -68,7 +68,7 @@ doc.fontSize(10).text('Technology & Architecture Document', 50, 118);
 doc.rect(0, 200, 595, 4).fill(BLUE);
 
 doc.fillColor(GRAY).fontSize(9).font('Helvetica')
-  .text('EagleCrest Premium Services Ltd  |  CBN-Licensed PSSP  |  August 2026', 50, 215);
+  .text('Paylode Services  |  CBN-Licensed PSSP  |  August 2026', 50, 215);
 doc.moveDown(0.5);
 doc.fillColor('#cc0000').fontSize(9).font('Helvetica-Bold')
   .text('CONFIDENTIAL — For Investor Review Only', 50, doc.y);
@@ -79,7 +79,7 @@ doc.moveDown(2);
 // 1. EXECUTIVE SUMMARY
 // ══════════════════════════════════════════════════════
 sectionHead('1. EXECUTIVE SUMMARY');
-body('Paylode is a Central Bank of Nigeria (CBN)-licensed Payment Service Solution Provider (PSSP) built on a proprietary technology stack designed for reliability, security, and extensibility. The platform processes payments across multiple rails, issues virtual accounts, supports invoicing, handles payouts, and provides a closed-loop wallet product (Billspay). All infrastructure is owned and operated by EagleCrest Premium Services Ltd.');
+body('Paylode is a Central Bank of Nigeria (CBN)-licensed Payment Service Solution Provider (PSSP) built on a proprietary technology stack designed for reliability, security, and extensibility. The platform processes payments across multiple rails, issues virtual accounts, supports invoicing, handles payouts, and provides a closed-loop wallet product (Billspay). All infrastructure is owned and operated by Paylode Services.');
 
 // ══════════════════════════════════════════════════════
 // 2. BUSINESS PRODUCTS
@@ -309,7 +309,7 @@ table(['Stage', 'Approach'], [
 // ══════════════════════════════════════════════════════
 sectionHead('10. COMPLIANCE & LICENSING');
 table(['Item', 'Status'], [
-  ['CBN Licence', 'PSSP Licence — EagleCrest Premium Services Ltd'],
+  ['CBN Licence', 'PSSP Licence — Paylode Services'],
   ['KYC Framework', '3-tier KYC: BVN + NIN + CAC + liveness biometric capture'],
   ['AML Screening', 'Real-time PEP and global sanctions screening on all merchants'],
   ['Adverse Media', 'Automated adverse media intelligence screening'],
@@ -340,7 +340,7 @@ doc.moveDown(2);
 doc.rect(50, doc.y, 495, 1).fill('#dddddd');
 doc.moveDown(0.3);
 doc.fillColor(GRAY).fontSize(8).font('Helvetica')
-  .text('Paylode — EagleCrest Premium Services Ltd  |  CONFIDENTIAL — For Investor Review  |  August 2026', 50, doc.y, { align: 'center' });
+  .text('Paylode — Paylode Services  |  CONFIDENTIAL — For Investor Review  |  August 2026', 50, doc.y, { align: 'center' });
 
 doc.end();
 console.log('PDF generated: /tmp/Paylode-Technology-Architecture.pdf');
