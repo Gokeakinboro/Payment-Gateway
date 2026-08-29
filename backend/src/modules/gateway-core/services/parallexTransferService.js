@@ -112,24 +112,32 @@ async function getToken() {
 // ── Authenticated HTTP call ──────────────────────────────────────────────────
 // Retries once on HTTP 401 (stale token). Timeout 180s — InterbankTransfer can
 // be slow. If the server RSTs before our timer fires, fetch throws 'fetch failed'.
-// Uses curl directly — proven to work through IPSec VPN, HTTP/1.1, no pooling.
+// Uses curl directly — proven to work through WireGuard VPN, HTTP/1.1, no pooling.
 // maxTime controls --max-time (curl wall-clock cap). --connect-timeout 10 catches
 // dead VPN routes in 10 s instead of waiting for the full maxTime.
+// On connection failure (HTTP 0) retries up to 2× with backoff — the WG relay
+// can transiently drop a connection under concurrent load.
 async function httpsRequest(method, urlStr, headers, bodyStr, maxTime = 120) {
   const args = ['-s', '-w', '\n__STATUS__%{http_code}', '-X', method];
   for (const [k, v] of Object.entries(headers)) args.push('-H', `${k}: ${v}`);
   args.push('-H', 'Connection: close');
   if (bodyStr) { args.push('-H', 'Content-Type: application/json', '-d', bodyStr); }
   args.push('--connect-timeout', '10', '--max-time', String(maxTime), urlStr);
-  try {
-    const { stdout } = await execFileAsync('curl', args, { timeout: (maxTime + 5) * 1000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
-    const sep  = stdout.lastIndexOf('\n__STATUS__');
-    const body = sep >= 0 ? stdout.slice(0, sep) : stdout;
-    const status = sep >= 0 ? parseInt(stdout.slice(sep + 11), 10) : 200;
-    try { return { status, json: JSON.parse(body) }; }
-    catch (_) { return { status, json: { responseCode: 'PARSE', responseMessage: `Non-JSON HTTP ${status}` } }; }
-  } catch (e) {
-    return { status: 0, json: { responseCode: 'FETCH_FAILED', responseMessage: e.message } };
+  for (let attempt = 0; attempt <= 2; attempt++) {
+    try {
+      const { stdout } = await execFileAsync('curl', args, { timeout: (maxTime + 5) * 1000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+      const sep  = stdout.lastIndexOf('\n__STATUS__');
+      const body = sep >= 0 ? stdout.slice(0, sep) : stdout;
+      const status = sep >= 0 ? parseInt(stdout.slice(sep + 11), 10) : 200;
+      try { return { status, json: JSON.parse(body) }; }
+      catch (_) { return { status, json: { responseCode: 'PARSE', responseMessage: `Non-JSON HTTP ${status}` } }; }
+    } catch (e) {
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+        continue;
+      }
+      return { status: 0, json: { responseCode: 'FETCH_FAILED', responseMessage: e.message } };
+    }
   }
 }
 
