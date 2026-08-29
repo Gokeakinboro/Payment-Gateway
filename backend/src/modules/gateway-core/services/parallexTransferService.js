@@ -93,7 +93,7 @@ let _token = null, _tokenExp = 0, _loginInflight = null;
 
 async function doLogin() {
   const loginBody = JSON.stringify({ userName: USERNAME, password: PASSWORD });
-  const { status, json: r } = await httpsRequest('POST', `${BASE_URL}/api/ThirdPartyTransfer/Login`, baseHeaders(), loginBody);
+  const { status, json: r } = await httpsRequest('POST', `${BASE_URL}/api/ThirdPartyTransfer/Login`, baseHeaders(), loginBody, 30);
   if (codeOf(r) !== '00' || !r.token) {
     throw new Error(`Parallex TPT login failed: ${msgOf(r) || codeOf(r)} (HTTP ${status})`);
   }
@@ -113,14 +113,16 @@ async function getToken() {
 // Retries once on HTTP 401 (stale token). Timeout 180s — InterbankTransfer can
 // be slow. If the server RSTs before our timer fires, fetch throws 'fetch failed'.
 // Uses curl directly — proven to work through IPSec VPN, HTTP/1.1, no pooling.
-async function httpsRequest(method, urlStr, headers, bodyStr) {
+// maxTime controls --max-time (curl wall-clock cap). --connect-timeout 10 catches
+// dead VPN routes in 10 s instead of waiting for the full maxTime.
+async function httpsRequest(method, urlStr, headers, bodyStr, maxTime = 120) {
   const args = ['-s', '-w', '\n__STATUS__%{http_code}', '-X', method];
   for (const [k, v] of Object.entries(headers)) args.push('-H', `${k}: ${v}`);
   args.push('-H', 'Connection: close');
   if (bodyStr) { args.push('-H', 'Content-Type: application/json', '-d', bodyStr); }
-  args.push('--max-time', '180', urlStr);
+  args.push('--connect-timeout', '10', '--max-time', String(maxTime), urlStr);
   try {
-    const { stdout } = await execFileAsync('curl', args, { timeout: 185_000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+    const { stdout } = await execFileAsync('curl', args, { timeout: (maxTime + 5) * 1000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
     const sep  = stdout.lastIndexOf('\n__STATUS__');
     const body = sep >= 0 ? stdout.slice(0, sep) : stdout;
     const status = sep >= 0 ? parseInt(stdout.slice(sep + 11), 10) : 200;
@@ -131,7 +133,7 @@ async function httpsRequest(method, urlStr, headers, bodyStr) {
   }
 }
 
-async function call(method, path, { body, query } = {}) {
+async function call(method, path, { body, query, maxTime = 120 } = {}) {
   if (!isConfigured()) throw new Error('Parallex TPT not configured — set PARALLEX_TRANSFER_* env vars');
 
   const qs = query ? '?' + new URLSearchParams(query).toString() : '';
@@ -141,10 +143,10 @@ async function call(method, path, { body, query } = {}) {
   const doRequest = async (tok) => {
     const headers = { ...baseHeaders(), Authorization: `Bearer ${tok}` };
     try {
-      return await httpsRequest(method, url, headers, bodyStr);
+      return await httpsRequest(method, url, headers, bodyStr, maxTime);
     } catch (err) {
       if (err.name === 'TimeoutError') {
-        return { status: 408, json: { responseCode: 'TIMEOUT', responseMessage: 'Request timed out after 180s' } };
+        return { status: 408, json: { responseCode: 'TIMEOUT', responseMessage: `Request timed out after ${maxTime}s` } };
       }
       throw err;
     }
@@ -164,6 +166,7 @@ async function call(method, path, { body, query } = {}) {
 async function getBalance() {
   const r = await call('GET', '/api/ThirdPartyTransfer/GetBalance', {
     query: DEBIT_ACCOUNT ? { accountNumber: DEBIT_ACCOUNT } : undefined,
+    maxTime: 30,
   });
   if (codeOf(r) !== '00') throw new Error(`Parallex balance failed: ${msgOf(r) || codeOf(r)}`);
   const amt = r.responseDetails?.balAmt?.amountValue;
@@ -172,7 +175,7 @@ async function getBalance() {
 
 // ── Bank list ────────────────────────────────────────────────────────────────
 async function getBanks() {
-  const r = await call('GET', '/api/ThirdPartyTransfer/GetBanks');
+  const r = await call('GET', '/api/ThirdPartyTransfer/GetBanks', { maxTime: 20 });
   const banks = Array.isArray(r) ? r
     : (r?.banks || r?.data?.banks || r?.data || []);
   return { ok: banks.length > 0 || codeOf(r) === '00', banks, raw: r };
@@ -198,6 +201,7 @@ async function resolveBankName(nipCode) {
 async function nameEnquiry(bankCode, accountNumber) {
   const r = await call('GET', '/api/ThirdPartyTransfer/NameEnquiry', {
     query: { accountNumber, bankCode: toNipCode(bankCode) || BANK_CODE },
+    maxTime: 15,
   });
   return {
     ok: codeOf(r) === '00' && !!r.accountName,
@@ -236,6 +240,7 @@ async function sendPayout(item) {
   if (isIntra) {
     // ── Intrabank (Parallex → Parallex) ────────────────────────────────────
     r = await call('POST', '/api/ThirdPartyTransfer/IntrabankTransfer', {
+      maxTime: 60,
       body: {
         accountToDebit: DEBIT_ACCOUNT,
         channel: '1',
@@ -284,6 +289,7 @@ async function sendPayout(item) {
 
     // Transfer
     r = await call('POST', '/api/ThirdPartyTransfer/InterbankTransfer', {
+      maxTime: 120,
       body: {
         accountToDebit: DEBIT_ACCOUNT,
         channel: '1',
@@ -319,6 +325,7 @@ async function sendPayout(item) {
 // ── Payout requery (reconciliation backstop) ─────────────────────────────────
 async function queryPayoutResult({ orderId, amount, accountNumber, bankCode } = {}) {
   const r = await call('POST', '/api/ThirdPartyTransfer/TransactionQuery', {
+    maxTime: 45,
     body: {
       accountToDebit: DEBIT_ACCOUNT,
       userName: USERNAME,
