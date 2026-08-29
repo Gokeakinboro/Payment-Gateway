@@ -24,7 +24,7 @@ _Siloed Claude project. Cross-project items live in the shared home namespace (C
 - [Paylode Payment Gateway](project-paylode.md) — server 176.57.188.45, YouVerify key + webhook updated 2026-06-09, fan-out to biz9ja wired, Dojah migration pending
 - [Paylode Developer Chat](project-paylode-chat.md) — ✅ WORKING 2026-06-25 (credit blocker resolved, replies live-verified). /opt/paylode-chat, port 4003, at paylodeservices.com/developer-chat. Reusable test acct cc-test-1782360324@example.com / Test12345!
 - [Paylode dev/deploy + STALE local-checkout warning](project-paylode-dev-deploy.md) — Desktop\Paylode\paylode-full is ~90 commits STALE; repo of record = origin/main (work via worktree). Backend ships via tools/deploy.py (SFTP→176, PAYLODE_SSH_PASS user-held) + pm2 reload; push-to-main = frontend only. Shipped 2026-06-23: POST /merchants/:id/resend-sandbox + button (64d240e).
-- [KYC admin docs — SA/Admin enter info value AND/OR docs per requirement](project-paylode-kyc-admin-docs.md) — DEPLOYED 2026-06-22 (e2656b5/7979708): requirement kind=info|document|both; enter BVN/NIN/TIN values or upload docs; entering data=submitted (never auto-verify), reviewer must Verify/Defer; +Add requirement. Repo reconciled to mirror prod (94ee2c4, NOT pushed). Topology: backend=176, live frontend=45 (deploy BOTH + bump ?v=). SA-login-fail was browser autofill. Author=EagleCrest Premium Services Ltd.
+- [KYC admin docs — SA/Admin enter info value AND/OR docs per requirement](project-paylode-kyc-admin-docs.md) — DEPLOYED 2026-06-22 (e2656b5/7979708): requirement kind=info|document|both; enter BVN/NIN/TIN values or upload docs; entering data=submitted (never auto-verify), reviewer must Verify/Defer; +Add requirement. Repo reconciled to mirror prod (94ee2c4, NOT pushed). Topology: backend=176, live frontend=45 (deploy BOTH + bump ?v=). SA-login-fail was browser autofill. Author=Paylode Services.
 - [project-paylode-kyc-verification](project-paylode-kyc-verification.md)
 - [Paylode Mastercard Compliance](project-paylode-mastercard-compliance.md) — onboarding screening + per-txn gate + SA deferral DEPLOYED to prod + merged to main 2026-06-15; smoke-tested (lesson: `deferrable` is a reserved SQL word → is_deferrable)
 - [Portal Assistant — LIVE 2026-07-01 (role-aware in-portal help bot)](project-paylode-portal-assistant.md) — /api/v1/assistant chat+public-chat on main backend; KB at backend/src/modules/assistant/portal-help-kb.md. Gaps KIV'd.
@@ -57,3 +57,4 @@ _Siloed Claude project. Cross-project items live in the shared home namespace (C
 
 ## Shared
 - [feedback-user-workstyle](feedback-user-workstyle.md)
+- [Never use "EagleCrest" in any output](feedback-no-eaglecrest.md) — brand is Paylode / Paylode Services; firm rule across all silos

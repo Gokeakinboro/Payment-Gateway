@@ -1,6 +1,6 @@
 # Paylode — CBN-licensed payment gateway (PSSP)
 
-Nigerian payment gateway (EagleCrest Premium Services Ltd). Products: payment
+Nigerian payment gateway (Paylode Services). Products: payment
 gateway/checkout, virtual accounts, invoicing, payouts, and **Billspay** — the
 closed-loop member wallet (domain **billspay.net**; bills-payment to layer on
 later). Repo: `Payment-Gateway`.

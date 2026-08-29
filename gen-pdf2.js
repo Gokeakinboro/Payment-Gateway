@@ -98,7 +98,7 @@ doc.fontSize(11).text('Technology & Architecture Document', 50, 140);
 doc.rect(0, 250, 595, 5).fill(BLUE);
 
 doc.fillColor(GRAY).fontSize(9).font('Helvetica')
-  .text('EagleCrest Premium Services Ltd  |  CBN-Licensed PSSP  |  August 2026', 50, 268);
+  .text('Paylode Services  |  CBN-Licensed PSSP  |  August 2026', 50, 268);
 doc.moveDown(0.3);
 doc.rect(50, doc.y, 495, 1).fill('#cccccc');
 doc.moveDown(0.5);
@@ -127,7 +127,7 @@ doc.addPage();
 // SECTION 1: EXECUTIVE SUMMARY
 // ═══════════════════════════════════
 sectionHead('1. EXECUTIVE SUMMARY');
-body('Paylode is a Central Bank of Nigeria (CBN)-licensed Payment Service Solution Provider (PSSP) built on a proprietary technology stack designed for reliability, security, and extensibility. The platform processes payments across multiple rails, issues virtual accounts, supports invoicing, handles payouts, and provides a closed-loop wallet product (Billspay). All infrastructure is owned and operated by EagleCrest Premium Services Ltd, with zero dependence on third-party payment platforms for core processing.');
+body('Paylode is a Central Bank of Nigeria (CBN)-licensed Payment Service Solution Provider (PSSP) built on a proprietary technology stack designed for reliability, security, and extensibility. The platform processes payments across multiple rails, issues virtual accounts, supports invoicing, handles payouts, and provides a closed-loop wallet product (Billspay). All infrastructure is owned and operated by Paylode Services, with zero dependence on third-party payment platforms for core processing.');
 
 // ═══════════════════════════════════
 // SECTION 2: BUSINESS PRODUCTS
@@ -382,7 +382,7 @@ table(['Stage', 'Approach'], [
 // ═══════════════════════════════════
 sectionHead('10. COMPLIANCE & LICENSING');
 table(['Item', 'Status / Detail'], [
-  ['CBN Licence', 'PSSP Licence — EagleCrest Premium Services Ltd'],
+  ['CBN Licence', 'PSSP Licence — Paylode Services'],
   ['KYC Framework', '3-tier KYC: BVN + NIN + CAC + liveness biometric capture'],
   ['AML Screening', 'Real-time PEP + global sanctions screening on every merchant application'],
   ['Adverse Media', 'Automated adverse media intelligence on all onboarding applicants'],
@@ -399,7 +399,7 @@ table(['Item', 'Status / Detail'], [
 // ═══════════════════════════════════
 sectionHead('11. PLATFORM SUMMARY');
 table(['Metric', 'Value'], [
-  ['Company', 'EagleCrest Premium Services Ltd'],
+  ['Company', 'Paylode Services'],
   ['Product', 'Paylode (paylodeservices.com)'],
   ['Licence', 'CBN PSSP'],
   ['Backend Language', 'JavaScript — Node.js v20.20.2 LTS'],
@@ -421,7 +421,7 @@ checkPage(30);
 doc.rect(50, doc.y, 495, 1).fill('#cccccc');
 doc.moveDown(0.3);
 doc.fillColor(GRAY).fontSize(7.5).font('Helvetica')
-  .text('Paylode | EagleCrest Premium Services Ltd | CONFIDENTIAL — For Investor Review | August 2026', { align: 'center' });
+  .text('Paylode | Paylode Services | CONFIDENTIAL — For Investor Review | August 2026', { align: 'center' });
 
 doc.end();
 console.log('PDF done');

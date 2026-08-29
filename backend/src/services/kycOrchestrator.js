@@ -96,7 +96,7 @@ async function emailMerchantFailures(contactEmail, businessName, submissionRef, 
       ${completenessIssues.length ? `<h3 style="color:#d97706">Incomplete information</h3><ul>${completeLines}</ul>` : ''}
       <p><a href="${ONBOARDING_URL}" style="display:inline-block;padding:12px 24px;background:#16a34a;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">Correct and resubmit</a></p>
       <p style="font-size:13px;color:#666;margin-top:24px">If you have questions, reply to this email or contact us at support@paylodeservices.com.</p>
-      <p style="font-size:12px;color:#999">Paylode · EagleCrest Premium Services Ltd</p>
+      <p style="font-size:12px;color:#999">Paylode Services</p>
     </div>`;
   try {
     await sendEmail({
