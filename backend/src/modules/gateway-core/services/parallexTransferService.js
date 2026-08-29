@@ -279,7 +279,12 @@ async function sendPayout(item) {
     let neKycLevel   = item.neKycLevel   || '';
 
     if (!neSessionId) {
-      const ne = await nameEnquiry(nipCode, item.account_number);
+      let ne = await nameEnquiry(nipCode, item.account_number);
+      if (!ne.ok || !ne.sessionId) {
+        // one automatic retry after 3s, then abort
+        await new Promise(r => setTimeout(r, 3000));
+        ne = await nameEnquiry(nipCode, item.account_number);
+      }
       if (!ne.ok || !ne.sessionId) {
         return {
           ok: false,
