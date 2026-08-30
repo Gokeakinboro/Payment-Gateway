@@ -281,21 +281,14 @@ async function sendPayout(item) {
     if (!neSessionId) {
       let ne = await nameEnquiry(nipCode, item.account_number);
       if (!ne.ok || !ne.sessionId) {
-        // one automatic retry after 3s, then abort
+        // one automatic retry after 3s, then proceed regardless — NE session ID
+        // is best-effort; Transfer outcome is the authoritative failure signal.
         await new Promise(r => setTimeout(r, 3000));
         ne = await nameEnquiry(nipCode, item.account_number);
       }
-      if (!ne.ok || !ne.sessionId) {
-        return {
-          ok: false,
-          code: 'NE_FAILED',
-          reason: `Name enquiry failed: ${ne.reason || 'no session ID'}`,
-          orderStatus: null,
-        };
-      }
-      neSessionId   = ne.sessionId;
-      neAccountName = ne.accountName;
-      neKycLevel    = ne.kycLevel || '';
+      neSessionId   = ne.sessionId   || null;
+      neAccountName = ne.accountName || null;
+      neKycLevel    = ne.kycLevel    || '';
     }
 
     const bankName = await resolveBankName(nipCode);
