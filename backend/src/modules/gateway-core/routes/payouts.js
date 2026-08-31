@@ -1417,12 +1417,15 @@ router.get('/admin/routing-queue', requireAuth, requireSuperAdmin, async (req, r
   } catch (e) { next(e); }
 });
 
-// ── Per-rail concurrency for the payout queue worker ──────────────────────────
-function railConcurrency(railName) {
-  const n = (railName || '').toLowerCase();
-  if (/parallex/.test(n)) return Number(process.env.PARALLEX_PAYOUT_CONCURRENCY || 15);
-  if (/palmpay/.test(n))  return Number(process.env.PALMPAY_PAYOUT_CONCURRENCY  || 5);
-  return 3;
+// ── Payout dispatch concurrency ───────────────────────────────────────────────
+// Two tiers — rail-agnostic, applies to every bank we connect going forward:
+//   PREFETCHED (recall window ran NE during review period): 30 concurrent
+//   LIVE NE    (dispatch with no pre-fetch):                8 concurrent
+// Override via env: PAYOUT_CONCURRENCY_PREFETCHED / PAYOUT_CONCURRENCY
+function dispatchConcurrency(hasPrefetchedNE) {
+  return hasPrefetchedNE
+    ? Number(process.env.PAYOUT_CONCURRENCY_PREFETCHED || 30)
+    : Number(process.env.PAYOUT_CONCURRENCY            ||  8);
 }
 async function runPool(tasks, concurrency) {
   const results = new Array(tasks.length);
@@ -1600,15 +1603,14 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         await recordRailResult(rail, { ok: true });
       } else {
         const reason = r.ok ? `Rail returned orderStatus ${os}` : (r.reason || 'failed');
-        const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
+        // Refund amount SA will approve: merchant debit (amount + our fee + our VAT).
         const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
+        // Rail float is restored immediately — we didn't use the rail.
+        const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
         await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
-        await prisma.$executeRaw`
-          UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW()
-          WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid
-                      ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)`;
+        // Merchant wallet refund is SA-gated — held pending human review.
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
-        await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)} WHERE id=${leg.item_id}::uuid`;
+        await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='pending_review', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
         nFail++;
         await recordRailResult(rail, { ok: false, reason, isLowBalance: /insufficient|balance|fund|limit/i.test(String(reason)) },
           { railId: leg.rail_id, railName: rail && rail.name, merchant: batch.merchant_id });
@@ -1616,17 +1618,13 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
       }
     };
 
-    // Refund a leg immediately (NE failed — no transfer slot wasted).
-    const refundLeg = async (leg, reason) => {
+    // Mark a leg failed and queue its merchant refund for SA review (same pattern as doLeg failure).
+    const pendingRefundLeg = async (leg, reason) => {
       const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
       const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
       await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
-      await prisma.$executeRaw`
-        UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW()
-        WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid
-                    ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)`;
       await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
-      await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)} WHERE id=${leg.item_id}::uuid`;
+      await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='pending_review', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
       nFail++;
       firePayoutWebhook(hookLeg(leg), 'payout.failed', { errorMsg: reason });
     };
@@ -1657,9 +1655,9 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         : {} });
     }), Number(process.env.PARALLEX_NE_CONCURRENCY || 10)).then(() => { neProducerDone = true; });
 
-    // Transfer consumer (concurrency per rail): drains queue as NE results arrive.
-    const firstRailName = legs.length ? (railById[legs[0].rail_id] && railById[legs[0].rail_id].name) : null;
-    const concurrency = railConcurrency(firstRailName);
+    // Transfer consumer: 30 concurrent when NE pre-fetched, 8 when live NE.
+    const hasPrefetchedNE = legs.some(leg => leg.ne_session_id && leg.ne_fetched_at);
+    const concurrency = dispatchConcurrency(hasPrefetchedNE);
     const transferConsumers = Promise.all(
       Array.from({ length: concurrency }, async () => {
         while (!neProducerDone || transferQueue.length > 0) {
@@ -1996,6 +1994,132 @@ router.patch('/admin/merchants/:id/payout-settings', requireAuth, requireSuperAd
     const rows = await prisma.$queryRawUnsafe(
       'SELECT payout_recall_window_minutes FROM merchants WHERE id = $1::uuid', req.params.id);
     ok(res, { recall_window_minutes: Number(rows[0]?.payout_recall_window_minutes || 0) }, 'Payout settings updated.');
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/payouts/admin/refunds/pending — SA: list items pending refund review ──
+router.get('/admin/refunds/pending', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const items = await prisma.$queryRawUnsafe(`
+      SELECT pi.id, pi.account_number, pi.account_name, pi.bank_code, pi.amount::text,
+             pi.failure_reason, pi.refund_amount::text, pi.refund_status, pi.created_at,
+             pb.batch_ref, pb.merchant_id,
+             m.business_name
+      FROM payout_items pi
+      JOIN payout_batches pb ON pb.id = pi.batch_id
+      JOIN merchants m ON m.id = pb.merchant_id
+      WHERE pi.refund_status = 'pending_review'
+      ORDER BY pi.created_at DESC
+      LIMIT 200
+    `);
+    ok(res, items);
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/payouts/admin/refunds/:itemId/approve — SA: approve and execute refund ──
+router.post('/admin/refunds/:itemId/approve', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { itemId } = req.params;
+    const [item] = await prisma.$queryRawUnsafe(`
+      SELECT pi.id, pi.refund_amount, pi.refund_status, pi.batch_id,
+             pb.merchant_id, rd.rail_id
+      FROM payout_items pi
+      JOIN payout_batches pb ON pb.id = pi.batch_id
+      JOIN rail_disbursements rd ON rd.payout_item_id = pi.id
+      WHERE pi.id = $1::uuid AND pi.refund_status = 'pending_review'
+    `, itemId);
+    if (!item) return fail(res, 'Item not found or not pending review');
+
+    const merchBack = BigInt(item.refund_amount);
+    await prisma.$executeRaw`
+      UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at = NOW()
+      WHERE merchant_id = ${item.merchant_id}::uuid AND rail_id = ${item.rail_id}::uuid`;
+    await prisma.$executeRaw`
+      UPDATE payout_items SET refund_status = 'approved', refund_reviewed_at = NOW(),
+        refund_reviewed_by = ${req.user.email || req.user.id} WHERE id = ${itemId}::uuid`;
+
+    const naira = (Number(item.refund_amount) / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 });
+    ok(res, { item_id: itemId, refunded_naira: Number(item.refund_amount) / 100 },
+      `Refund of ₦${naira} approved and credited to merchant wallet.`);
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/payouts/admin/refunds/:itemId/reject — SA: reject refund (transfer went through) ──
+router.post('/admin/refunds/:itemId/reject', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { itemId } = req.params;
+    const [item] = await prisma.$queryRawUnsafe(
+      `SELECT id FROM payout_items WHERE id = $1::uuid AND refund_status = 'pending_review'`, itemId);
+    if (!item) return fail(res, 'Item not found or not pending review');
+    const { reason } = req.body || {};
+    await prisma.$executeRaw`
+      UPDATE payout_items SET refund_status = 'rejected', refund_reviewed_at = NOW(),
+        refund_reviewed_by = ${req.user.email || req.user.id},
+        failure_reason = COALESCE(${reason || null}, failure_reason)
+      WHERE id = ${itemId}::uuid`;
+    ok(res, { item_id: itemId }, 'Refund rejected — merchant wallet not credited.');
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/payouts/batches/:id/recon — batch reconciliation summary ──────
+router.get('/batches/:id/recon', requireAuth, async (req, res, next) => {
+  try {
+    const isSA = req.user.role === 'SUPER_ADMIN' || req.user.role === 'ADMIN';
+    const merchantId = req.user.merchant?.id;
+    const [batch] = await prisma.$queryRawUnsafe(
+      `SELECT pb.*, m.business_name FROM payout_batches pb
+       JOIN merchants m ON m.id = pb.merchant_id
+       WHERE pb.id = $1::uuid ${isSA ? '' : 'AND pb.merchant_id = $2::uuid'}`,
+      ...(isSA ? [req.params.id] : [req.params.id, merchantId])
+    );
+    if (!batch) return notFound(res, 'Batch');
+
+    const items = await prisma.$queryRawUnsafe(`
+      SELECT status, refund_status, amount::text, item_fee::text, item_vat::text, refund_amount::text
+      FROM payout_items WHERE batch_id = $1::uuid
+    `, req.params.id);
+
+    let totalDeducted = 0n, totalSent = 0n, totalPending = 0n,
+        totalFailedHeld = 0n, totalRefunded = 0n, totalRejected = 0n;
+    let countSuccess = 0, countProcessing = 0, countFailed = 0;
+
+    for (const i of items) {
+      const gross = BigInt(i.amount) + BigInt(i.item_fee || 0) + BigInt(i.item_vat || 0);
+      totalDeducted += gross;
+      if (i.status === 'success')     { totalSent += gross; countSuccess++; }
+      else if (i.status === 'processing') { totalPending += gross; countProcessing++; }
+      else if (i.status === 'failed') {
+        countFailed++;
+        if (i.refund_status === 'approved') totalRefunded += BigInt(i.refund_amount || 0);
+        else if (i.refund_status === 'rejected') totalRejected += BigInt(i.refund_amount || 0);
+        else if (i.refund_status === 'pending_review') totalFailedHeld += BigInt(i.refund_amount || 0);
+      }
+    }
+
+    const [wallet] = await prisma.$queryRawUnsafe(
+      `SELECT balance::text FROM merchant_wallets WHERE merchant_id = $1::uuid
+       ORDER BY balance DESC LIMIT 1`, batch.merchant_id);
+
+    ok(res, {
+      batch_ref:        batch.batch_ref,
+      status:           batch.status,
+      business_name:    batch.business_name,
+      total_items:      items.length,
+      count_success:    countSuccess,
+      count_processing: countProcessing,
+      count_failed:     countFailed,
+      total_deducted_kobo:       String(totalDeducted),
+      total_sent_kobo:           String(totalSent),
+      total_in_flight_kobo:      String(totalPending),
+      total_failed_held_kobo:    String(totalFailedHeld),
+      total_refunded_kobo:       String(totalRefunded),
+      total_rejected_kobo:       String(totalRejected),
+      current_wallet_balance_kobo: wallet ? wallet.balance : '0',
+      accounting_check: {
+        // deducted = sent + in_flight + held_for_review + refunded_back + rejected_kept
+        balanced: totalDeducted === totalSent + totalPending + totalFailedHeld + totalRefunded + totalRejected,
+      },
+    });
   } catch (e) { next(e); }
 });
 
