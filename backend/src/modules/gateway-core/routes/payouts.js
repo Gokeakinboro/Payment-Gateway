@@ -1683,7 +1683,42 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
 
     await logAudit(actorId, 'PAYOUT_BATCH_DISBURSED', 'payout_batches', batchId, {},
       { rails_used: used.length, settled: nOk, pending: nPending, failed: nFail, status: finalStatus, auto: !actorId }, null, ip).catch(() => {});
+
+    // Automatic post-batch reconciliation — runs after every dispatch.
+    runBatchRecon(batchId).catch(() => {});
+
     return { batch_id: batchId, status: finalStatus, settled: nOk, pending: nPending, failed: nFail };
+}
+
+// Post-batch reconciliation — runs automatically after every dispatchBatch.
+// Logs a WARNING if the accounting doesn't balance so ops can investigate.
+async function runBatchRecon(batchId) {
+  const items = await prisma.$queryRawUnsafe(`
+    SELECT status, refund_status, amount, item_fee, item_vat, refund_amount
+    FROM payout_items WHERE batch_id = $1::uuid`, batchId);
+
+  let deducted = 0n, sent = 0n, inFlight = 0n, held = 0n, refunded = 0n, rejected = 0n;
+  for (const i of items) {
+    const gross = BigInt(i.amount) + BigInt(i.item_fee || 0) + BigInt(i.item_vat || 0);
+    deducted += gross;
+    if (i.status === 'success') sent += gross;
+    else if (i.status === 'processing') inFlight += gross;
+    else if (i.status === 'failed') {
+      if      (i.refund_status === 'approved')        refunded += BigInt(i.refund_amount || 0);
+      else if (i.refund_status === 'rejected')        rejected += BigInt(i.refund_amount || 0);
+      else if (i.refund_status === 'pending_review')  held     += BigInt(i.refund_amount || 0);
+    }
+  }
+  const balanced = deducted === sent + inFlight + held + refunded + rejected;
+  const summary = { batchId, balanced, deducted: String(deducted), sent: String(sent),
+    inFlight: String(inFlight), held: String(held), refunded: String(refunded), rejected: String(rejected) };
+
+  if (!balanced) {
+    logger.warn(summary, 'RECON IMBALANCE — payout batch accounting does not balance');
+  } else {
+    logger.info(summary, 'Batch recon OK');
+  }
+  return summary;
 }
 
 // Auto-fire DUE payouts: dispatch every 'needs_routing' batch whose scheduled_at is

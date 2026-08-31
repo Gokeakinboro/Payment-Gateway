@@ -6345,10 +6345,15 @@ async function submitValidatedPayout() {
 }
 
 async function viewBatch(id) {
-  const res = await apiFetch(`/payouts/batches/${id}`);
+  const [res, reconRes] = await Promise.all([
+    apiFetch(`/payouts/batches/${id}`),
+    apiFetch(`/payouts/batches/${id}/recon`),
+  ]);
   if (!res?.data) return;
   const { batch, items } = res.data;
-  window._viewBatchItems = items;   // for "download failed for resend"
+  const recon = reconRes?.data || null;
+  window._viewBatchItems = items;
+
   const el = document.getElementById('main-content');
 
   const feeInfo = (batch.total_fee_naira > 0 || batch.total_vat_naira > 0)
@@ -6360,6 +6365,25 @@ async function viewBatch(id) {
         Total deducted: <strong>${fmtNaira((batch.total_deducted_naira||0)*100)}</strong>
       </div>`
     : '';
+
+  const k = v => fmtMajor(Number(v || 0) / 100, 'NGN');
+  const balanced = recon?.accounting_check?.balanced;
+  const reconCard = recon ? `
+  <div class="card" style="margin-bottom:16px;border-left:3px solid ${balanced ? 'var(--green)' : 'var(--red)'}">
+    <div class="card-header">
+      <div class="card-title" style="color:${balanced ? 'var(--green)' : 'var(--red)'}">
+        ${balanced ? '✓ Books balanced' : '⚠ IMBALANCE — investigate'}
+      </div>
+      <div style="font-size:12px;color:var(--gray-500)">Wallet balance after batch: <strong>${k(recon.current_wallet_balance_kobo)}</strong></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;padding:12px 16px">
+      <div><div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em">Deducted</div><div style="font-weight:700;font-size:15px">${k(recon.total_deducted_kobo)}</div></div>
+      <div><div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em">Sent ✓ (${recon.count_success})</div><div style="font-weight:700;font-size:15px;color:var(--green)">${k(recon.total_sent_kobo)}</div></div>
+      ${Number(recon.total_in_flight_kobo) > 0 ? `<div><div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em">In-flight ⏳ (${recon.count_processing})</div><div style="font-weight:700;font-size:15px;color:var(--amber)">${k(recon.total_in_flight_kobo)}</div></div>` : ''}
+      ${Number(recon.total_failed_held_kobo) > 0 ? `<div><div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em">Held — pending SA ⏸</div><div style="font-weight:700;font-size:15px;color:var(--red)">${k(recon.total_failed_held_kobo)}</div><div style="font-size:11px;color:var(--gray-400)">Refund review required</div></div>` : ''}
+      ${Number(recon.total_refunded_kobo) > 0 ? `<div><div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em">Refunded ↩</div><div style="font-weight:700;font-size:15px">${k(recon.total_refunded_kobo)}</div></div>` : ''}
+    </div>
+  </div>` : '';
 
   el.innerHTML = `
   <div class="page-header flex-between">
@@ -6373,19 +6397,17 @@ async function viewBatch(id) {
     <div class="stat-card"><div class="stat-label">Total Payout</div><div class="stat-value">${fmtNaira(batch.total_amount)}</div><div class="stat-sub">To beneficiaries</div></div>
     <div class="stat-card"><div class="stat-label">Fee + VAT</div><div class="stat-value" style="font-size:18px">${fmtNaira(((batch.total_fee_naira||0)+(batch.total_vat_naira||0))*100)}</div><div class="stat-sub">${batch.fee_rate_pct||'0%'} + 7.5% VAT</div></div>
     <div class="stat-card"><div class="stat-label">Processed</div><div class="stat-value" style="color:var(--green)">${batch.processed_items}</div><div class="stat-sub">of ${batch.total_items}</div></div>
-    <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value" style="color:var(--red)">${batch.failed_items}</div><div class="stat-sub">${batch.failed_items > 0 ? 'See reasons below' : 'None'}</div></div>
+    <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value" style="color:var(--red)">${batch.failed_items}</div><div class="stat-sub">${batch.failed_items > 0 ? 'Held for SA review' : 'None'}</div></div>
   </div>
   ${feeInfo}
-  ${batch.failed_items > 0 ? `<div class="warn-box" style="margin-bottom:12px;font-size:12px">&#9888; <strong>${batch.failed_items} payout(s) failed.</strong> To resend, click "Download failed for resend" and upload that file as a NEW batch — do NOT re-upload the original file (that would pay the successful beneficiaries again).</div>` : ''}
+  ${reconCard}
+  ${batch.failed_items > 0 ? `<div class="warn-box" style="margin-bottom:12px;font-size:12px">&#9888; <strong>${batch.failed_items} payout(s) failed.</strong> Refunds are held — SA must approve in Pending Refunds before funds return to your wallet. To resend, download and upload as a NEW batch.</div>` : ''}
   <div class="card">
     <div class="card-header"><div class="card-title">Payout Items</div>
-      <div class="flex" style="gap:8px">
-        <button class="btn btn-outline btn-sm" onclick="viewBatchRecon('${id}')">&#9689; Recon</button>
-        ${batch.failed_items > 0 ? `<button class="btn btn-lime btn-sm" onclick="downloadFailedForResend()">&#8681; Download failed for resend</button>` : ''}
-      </div>
+      ${batch.failed_items > 0 ? `<button class="btn btn-lime btn-sm" onclick="downloadFailedForResend()">&#8681; Download failed for resend</button>` : ''}
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Account</th><th>Bank</th><th>Amount</th><th>Fee</th><th>VAT</th><th>Narration</th><th>Status</th><th>Failure Reason</th></tr></thead>
+      <thead><tr><th>Account</th><th>Bank</th><th>Amount</th><th>Fee</th><th>VAT</th><th>Narration</th><th>Status</th><th>Failure / Refund</th></tr></thead>
       <tbody>
         ${items.map(i=>`<tr>
           <td class="mono" style="font-size:12px">${i.account_number}${i.account_name?'<br><span style="color:var(--gray-400);font-size:11px">'+i.account_name+'</span>':''}</td>
@@ -6394,7 +6416,7 @@ async function viewBatch(id) {
           <td class="mono" style="font-size:12px;color:var(--amber)">${i.fee_naira > 0 ? fmtNaira(i.fee_naira*100) : '—'}</td>
           <td class="mono" style="font-size:12px;color:var(--gray-500)">${i.vat_naira > 0 ? fmtNaira(i.vat_naira*100) : '—'}</td>
           <td style="font-size:12px">${i.narration||'—'}</td>
-          <td>${statusBadge(i.status)}</td>
+          <td>${statusBadge(i.status)}${i.refund_status==='pending_review'?'<br><span style="font-size:10px;color:var(--amber)">refund pending SA</span>':i.refund_status==='approved'?'<br><span style="font-size:10px;color:var(--green)">refunded</span>':i.refund_status==='rejected'?'<br><span style="font-size:10px;color:var(--gray-400)">refund rejected</span>':''}</td>
           <td style="font-size:12px;color:var(--red);max-width:200px">${i.failure_reason||'—'}</td>
         </tr>`).join('')}
       </tbody>
@@ -6408,31 +6430,7 @@ async function retryBatch(id) {
   if (res?.status) { alert(`${res.data.retried} items requeued`); loadPayouts(); }
 }
 
-async function viewBatchRecon(batchId) {
-  const res = await apiFetch(`/payouts/batches/${batchId}/recon`);
-  if (!res?.data) return;
-  const d = res.data;
-  const k = v => fmtMajor(Number(v || 0) / 100, 'NGN');
-  const row = (label, val, style) =>
-    `<tr><td style="padding:8px 12px;color:var(--gray-500);font-size:13px">${label}</td><td style="padding:8px 12px;font-weight:600;${style||''}">${val}</td></tr>`;
-  const balanced = d.accounting_check?.balanced;
-  alert([
-    `Batch Recon — ${d.batch_ref}`,
-    `Status: ${d.status}`,
-    `Items: ${d.count_success} success / ${d.count_processing} in-flight / ${d.count_failed} failed`,
-    ``,
-    `Total deducted from wallet: ${k(d.total_deducted_kobo)}`,
-    `  ✓ Sent to beneficiaries:  ${k(d.total_sent_kobo)}`,
-    `  ⏳ In-flight (NIP):        ${k(d.total_in_flight_kobo)}`,
-    `  🔒 Failed — held (SA):     ${k(d.total_failed_held_kobo)}`,
-    `  ↩ Refunded back:           ${k(d.total_refunded_kobo)}`,
-    `  ✗ Rejected (kept):         ${k(d.total_rejected_kobo)}`,
-    ``,
-    `Current wallet balance:      ${k(d.current_wallet_balance_kobo)}`,
-    ``,
-    balanced ? '✓ Books balanced.' : '⚠ IMBALANCE — investigate.',
-  ].join('\n'));
-}
+// viewBatchRecon is now inline in viewBatch — no standalone function needed.
 
 async function loadPendingRefunds() {
   const el = document.getElementById('main-content');
