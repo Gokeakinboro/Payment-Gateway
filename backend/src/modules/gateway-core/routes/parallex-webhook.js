@@ -57,6 +57,7 @@ async function autoReverseParallexInflow(b, paidKobo) {
   }
 
   logger.info({ bankCode, accountNo, accountName, paidKobo, orderId }, 'Parallex inflow mismatch — auto-reversing');
+  const reversalCtx = { orderId, bankCode, accountNo, accountName, paidKobo, bankName };
   try {
     const result = await tpt.sendPayout({
       orderId,
@@ -69,10 +70,10 @@ async function autoReverseParallexInflow(b, paidKobo) {
     if (result.ok || result.status === 'SENT') {
       logger.info({ orderId, result }, 'Parallex inflow reversal sent');
     } else {
-      logger.warn({ orderId, result }, 'Parallex inflow reversal non-success — SA review needed');
+      logger.warn({ ...reversalCtx, result }, 'Parallex inflow reversal non-success — SA must reverse manually');
     }
   } catch (err) {
-    logger.error({ err, orderId }, 'Parallex inflow reversal threw — SA review needed');
+    logger.error({ err: err.message, ...reversalCtx }, 'Parallex inflow reversal failed — SA must reverse manually');
   }
 }
 

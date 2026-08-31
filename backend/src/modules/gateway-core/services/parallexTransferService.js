@@ -281,14 +281,18 @@ async function sendPayout(item) {
     if (!neSessionId) {
       let ne = await nameEnquiry(nipCode, item.account_number);
       if (!ne.ok || !ne.sessionId) {
-        // one automatic retry after 3s, then proceed regardless — NE session ID
-        // is best-effort; Transfer outcome is the authoritative failure signal.
+        // one automatic retry after 3s
         await new Promise(r => setTimeout(r, 3000));
         ne = await nameEnquiry(nipCode, item.account_number);
       }
       neSessionId   = ne.sessionId   || null;
       neAccountName = ne.accountName || null;
       neKycLevel    = ne.kycLevel    || '';
+      if (!neSessionId) {
+        // Parallex InterbankTransfer hard-requires a NE session ID.
+        // Throw so callers can handle gracefully instead of hitting a 400.
+        throw new Error(`NE failed for ${nipCode}/${item.account_number} — cannot send without sessionId`);
+      }
     }
 
     const bankName = await resolveBankName(nipCode);
