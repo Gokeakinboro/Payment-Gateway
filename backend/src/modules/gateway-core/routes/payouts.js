@@ -1710,8 +1710,16 @@ async function runBatchRecon(batchId) {
     }
   }
   const balanced = deducted === sent + inFlight + held + refunded + rejected;
-  const summary = { batchId, balanced, deducted: String(deducted), sent: String(sent),
-    inFlight: String(inFlight), held: String(held), refunded: String(refunded), rejected: String(rejected) };
+  const ngn = k => `₦${(Number(k) / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
+  const summary = {
+    batchId, balanced,
+    deducted:  ngn(deducted),
+    sent:      ngn(sent),
+    inFlight:  ngn(inFlight),
+    held:      ngn(held),
+    refunded:  ngn(refunded),
+    rejected:  ngn(rejected),
+  };
 
   if (!balanced) {
     logger.warn(summary, 'RECON IMBALANCE — payout batch accounting does not balance');
