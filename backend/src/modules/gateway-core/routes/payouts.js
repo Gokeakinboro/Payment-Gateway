@@ -472,6 +472,11 @@ router.post('/batches', requireAuthOrApiKey,
 
       const merchant = await prisma.merchant.findUnique({ where: { id: merchantId } });
       if (!merchant) return fail(res, 'No merchant account');
+      // Recall window setting (raw — not in Prisma schema).
+      const recallRow = await prisma.$queryRawUnsafe(
+        'SELECT payout_recall_window_minutes FROM merchants WHERE id = $1::uuid', merchantId);
+      const recallMinutes = Number(recallRow[0]?.payout_recall_window_minutes || 0);
+      const hasRecallWindow = recallMinutes > 0;
       // Payouts are prepaid — a merchant still undergoing KYC MAY run live payouts
       // as long as their wallet is funded (the balance check below is the safeguard).
       // Only a SUSPENDED or REJECTED account is hard-blocked from payouts.
@@ -542,8 +547,12 @@ router.post('/batches', requireAuthOrApiKey,
       // rail's wallet atomically. SA still triggers disbursement via
       // POST /admin/batches/:id/route, which executes this same per-rail split.
       const batchRef    = generateRef('PAY');
-      const scheduledAt = scheduled_at ? new Date(scheduled_at) : new Date();
-      const batchStatus = 'needs_routing';   // SA triggers disbursement
+      // Recall window: pending_review delays dispatch so merchant can edit/recall.
+      // NE is pre-fetched during the window to make dispatch Transfer-only.
+      const scheduledAt = hasRecallWindow
+        ? new Date(Date.now() + recallMinutes * 60_000)
+        : (scheduled_at ? new Date(scheduled_at) : new Date());
+      const batchStatus = hasRecallWindow ? 'pending_review' : 'needs_routing';
       const itemStatus  = 'queued';
 
       let batchId, walletAfterTotal;
@@ -664,10 +673,8 @@ router.post('/batches', requireAuthOrApiKey,
       }
 
       // Response is MERCHANT-facing — never reveal rails or the SA routing queue.
-      // Single-balance model: the wallet is always debited and every batch awaits
-      // SA routing (merchant sees 'processing'). (Was referencing undefined leftover
-      // vars chosen/needsRouting/isInstant/totalAcrossRails → threw AFTER commit = 500.)
       const isScheduled = scheduledAt && scheduledAt.getTime() > Date.now() + 1000;
+      const dispatchesAt = hasRecallWindow ? scheduledAt : (isScheduled ? scheduledAt : null);
       created(res, {
         batch_id:             batchId,
         batch_ref:            batchRef,
@@ -676,17 +683,21 @@ router.post('/batches', requireAuthOrApiKey,
         total_vat:            koboToNaira(totalVat),
         total_deducted:       koboToNaira(totalDeduction),
         total_items:          items.length,
-        status:               isScheduled ? 'scheduled' : 'processing',
+        status:               hasRecallWindow ? 'pending_review' : (isScheduled ? 'scheduled' : 'processing'),
+        dispatches_at:        dispatchesAt,
+        recall_until:         hasRecallWindow ? scheduledAt : null,
         scheduled_at:         scheduledAt,
         wallet_balance_after: koboToNaira(walletAfterTotal),
         fee_rate_pct:         (feeRate * 100).toFixed(2) + '%',
-      }, `Payout received — ${items.length} beneficiaries, ₦${koboToNaira(totalAmount).toLocaleString('en-NG')} (fee: ₦${koboToNaira(totalFee).toLocaleString('en-NG')})`);
+      }, hasRecallWindow
+        ? `Batch queued — ${items.length} recipients, ₦${koboToNaira(totalAmount).toLocaleString('en-NG')}. Review window: ${recallMinutes} min. Dispatches at ${scheduledAt.toLocaleTimeString('en-NG')}.`
+        : `Payout received — ${items.length} beneficiaries, ₦${koboToNaira(totalAmount).toLocaleString('en-NG')} (fee: ₦${koboToNaira(totalFee).toLocaleString('en-NG')})`);
 
-      // Funded + a rail is chosen → fire IMMEDIATELY (async, after the response).
-      // Future-dated batches are left for the scheduled-payout worker to fire when due.
-      // A dispatch that can't complete (rail down / no float) stays 'needs_routing' →
-      // the merchant/SA exception queue.
-      if (!isScheduled) {
+      if (hasRecallWindow) {
+        // Pre-fetch NE in background during the review window — dispatch becomes Transfer-only.
+        prefetchNEForBatch(batchId).catch(e => logger.warn({ err: e, batchId }, 'NE pre-fetch failed'));
+      } else if (!isScheduled) {
+        // Funded + rail chosen → fire IMMEDIATELY (async, after the response).
         dispatchBatch({ batchId, actorId: req.user.id, ip: req.ip })
           .catch(e => { if (!e || !e._client) logger.error({ err: e, batchId }, 'immediate payout dispatch failed'); });
       }
@@ -1434,13 +1445,13 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     const batchRows = await prisma.$queryRaw`SELECT * FROM payout_batches WHERE id = ${batchId}::uuid`;
     const batch = batchRows[0];
     if (!batch) throw Object.assign(new Error('Batch not found'), { _client: true, _code: 'NOT_FOUND' });
-    if (batch.status !== 'needs_routing' && batch.status !== 'dispatching') throw Object.assign(new Error(`Batch is not awaiting routing (status: ${batch.status})`), { _client: true });
+    if (!['needs_routing', 'dispatching', 'pending_review'].includes(batch.status)) throw Object.assign(new Error(`Batch is not awaiting routing (status: ${batch.status})`), { _client: true });
 
     // Items carry the merchant's route rail (set at creation). SA may OVERRIDE the
     // rail for this one batch here (per-batch routing): body { rail_id } forces the
     // whole batch through that live rail instead.
     const items = await prisma.$queryRaw`
-      SELECT id, amount, bank_code, rail_id FROM payout_items
+      SELECT id, amount, bank_code, rail_id, ne_session_id, ne_account_name, ne_fetched_at FROM payout_items
       WHERE batch_id = ${batchId}::uuid AND status = 'queued'
       ORDER BY amount DESC`;
     if (items.some(it => !it.rail_id))
@@ -1525,7 +1536,7 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     const legs = await prisma.$queryRaw`
       SELECT rd.id AS leg_id, rd.rail_id, rd.amount, rd.rail_cost, rd.rail_vat, rd.rail_order_id,
              pi.id AS item_id, pi.account_number, pi.account_name, pi.bank_code, pi.bank_name, pi.narration,
-             pi.item_fee, pi.item_vat
+             pi.item_fee, pi.item_vat, pi.ne_session_id, pi.ne_account_name, pi.ne_fetched_at
       FROM rail_disbursements rd JOIN payout_items pi ON rd.payout_item_id = pi.id
       WHERE rd.batch_id = ${batchId}::uuid AND rd.status = 'pending'`;
     // Beneficiary/reference fields for the merchant payout webhook (batch is loaded above).
@@ -1620,8 +1631,11 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
       firePayoutWebhook(hookLeg(leg), 'payout.failed', { errorMsg: reason });
     };
 
-    // NE Producer (concurrency=10): runs NE for every Parallex interbank leg,
-    // pushes to transferQueue as each NE completes. Non-Parallex/intrabank bypass.
+    // NE Producer: runs NE for every Parallex interbank leg, pushes to transferQueue.
+    // 1. Pre-fetched session (< 60 min old): skip live NE — use cached session directly.
+    // 2. Live NE needed: try once; on failure proceed with null session (Option B —
+    //    Transfer is the authoritative failure signal, not NE).
+    const NE_TTL_MS = 60 * 60 * 1000; // 60 min — proven safe (TTL test 2026-08-30)
     const neProducer = runPool(legs.map(leg => async () => {
       const rail = railById[leg.rail_id];
       const isParallexRail = rail && /parallex/i.test(rail.name || '');
@@ -1630,13 +1644,18 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         transferQueue.push({ leg, nePrefetch: {} });
         return;
       }
-      const ne = await plxAdapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
-      if (ne.ok && ne.sessionId) {
-        transferQueue.push({ leg, nePrefetch: { neSessionId: ne.sessionId, neAccountName: ne.accountName, neKycLevel: ne.kycLevel || '' } });
-      } else {
-        await refundLeg(leg, `Name enquiry failed: ${ne.reason || 'no session ID'}`);
+      // Use pre-fetched NE session if still fresh.
+      const neFetchedAt = leg.ne_fetched_at ? new Date(leg.ne_fetched_at).getTime() : 0;
+      if (neFetchedAt && (Date.now() - neFetchedAt) < NE_TTL_MS && leg.ne_session_id) {
+        transferQueue.push({ leg, nePrefetch: { neSessionId: leg.ne_session_id, neAccountName: leg.ne_account_name || '', neKycLevel: '' } });
+        return;
       }
-    }), Number(process.env.PARALLEX_NE_CONCURRENCY || 20)).then(() => { neProducerDone = true; });
+      // Live NE — Option B: proceed to Transfer even if NE fails.
+      const ne = await plxAdapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
+      transferQueue.push({ leg, nePrefetch: ne.ok && ne.sessionId
+        ? { neSessionId: ne.sessionId, neAccountName: ne.accountName, neKycLevel: ne.kycLevel || '' }
+        : {} });
+    }), Number(process.env.PARALLEX_NE_CONCURRENCY || 10)).then(() => { neProducerDone = true; });
 
     // Transfer consumer (concurrency per rail): drains queue as NE results arrive.
     const firstRailName = legs.length ? (railById[legs[0].rail_id] && railById[legs[0].rail_id].name) : null;
@@ -1677,7 +1696,7 @@ async function autoDispatchDuePayouts({ limit = 25 } = {}) {
   const due = await prisma.$queryRaw`
     WITH claimed AS (
       SELECT id FROM payout_batches
-      WHERE status = 'needs_routing' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+      WHERE status IN ('needs_routing', 'pending_review') AND (scheduled_at IS NULL OR scheduled_at <= NOW())
       ORDER BY scheduled_at ASC NULLS FIRST
       LIMIT ${Number(limit)}
       FOR UPDATE SKIP LOCKED
@@ -1775,7 +1794,7 @@ async function reverseBatch({ batchId, scopeMerchantId = null, actorId = null, i
   if (!batch) throw Object.assign(new Error('Batch not found'), { _client: true, _code: 'NOT_FOUND' });
   if (scopeMerchantId && batch.merchant_id !== scopeMerchantId)
     throw Object.assign(new Error('This payout does not belong to your account.'), { _client: true, _code: 'FORBIDDEN' });
-  if (batch.status !== 'needs_routing')
+  if (!['needs_routing', 'pending_review'].includes(batch.status))
     throw Object.assign(new Error(`Only an un-sent payout (scheduled or awaiting dispatch) can be cancelled — this one is '${batch.status}'.`), { _client: true, _code: 'NOT_CANCELLABLE' });
 
   const refund = BigInt(batch.total_amount) + BigInt(batch.total_fee) + BigInt(batch.total_vat);
@@ -1821,22 +1840,31 @@ router.get('/queue', requireAuth, async (req, res, next) => {
     const merchantId = req.user.merchant?.id;
     if (!merchantId) return fail(res, 'No merchant account');
     const rows = await prisma.$queryRaw`
-      SELECT id, batch_ref, total_amount, total_fee, total_vat, total_items, scheduled_at, created_at
-      FROM payout_batches WHERE merchant_id = ${merchantId}::uuid AND status = 'needs_routing'
+      SELECT id, batch_ref, total_amount, total_fee, total_vat, total_items, status, scheduled_at, created_at
+      FROM payout_batches WHERE merchant_id = ${merchantId}::uuid AND status IN ('needs_routing', 'pending_review')
       ORDER BY scheduled_at ASC NULLS FIRST, created_at ASC`;
     const now = Date.now();
     const out = rows.map(b => {
-      const isScheduled = b.scheduled_at && new Date(b.scheduled_at).getTime() > now + 1000;
+      const isPendingReview = b.status === 'pending_review';
+      const dispatchesAt    = b.scheduled_at ? new Date(b.scheduled_at).getTime() : null;
+      const isScheduled     = !isPendingReview && dispatchesAt && dispatchesAt > now + 1000;
+      const msLeft          = isPendingReview && dispatchesAt ? Math.max(0, dispatchesAt - now) : null;
       return {
         batch_id: b.id, batch_ref: b.batch_ref,
         total_amount:   koboToNaira(b.total_amount),
         total_deducted: koboToNaira(BigInt(b.total_amount) + BigInt(b.total_fee) + BigInt(b.total_vat)),
         total_items: b.total_items, scheduled_at: b.scheduled_at, created_at: b.created_at,
-        queue_status: isScheduled ? 'scheduled' : 'processing',
-        reason: isScheduled
-          ? `Scheduled — sends ${new Date(b.scheduled_at).toLocaleString('en-NG')}`
-          : 'Processing — will send shortly',
+        queue_status: isPendingReview ? 'pending_review' : (isScheduled ? 'scheduled' : 'processing'),
+        recall_seconds_left: msLeft != null ? Math.round(msLeft / 1000) : null,
+        dispatches_at: b.scheduled_at,
+        reason: isPendingReview
+          ? `Review window — dispatches at ${new Date(b.scheduled_at).toLocaleTimeString('en-NG')} (${Math.ceil(msLeft/60000)} min left)`
+          : (isScheduled
+            ? `Scheduled — sends ${new Date(b.scheduled_at).toLocaleString('en-NG')}`
+            : 'Processing — will send shortly'),
         cancellable: true,
+        recallable:  isPendingReview && msLeft > 0,
+        dispatchable: isPendingReview,
       };
     });
     ok(res, out);
@@ -1855,6 +1883,151 @@ router.post('/batches/:id/cancel', requireAuth, async (req, res, next) => {
     next(e);
   }
 });
+
+// ── POST /api/v1/payouts/batches/:id/recall — MERCHANT: recall during review window ──
+router.post('/batches/:id/recall', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const rows = await prisma.$queryRaw`SELECT status, scheduled_at FROM payout_batches WHERE id = ${req.params.id}::uuid AND merchant_id = ${merchantId}::uuid`;
+    if (!rows.length) return fail(res, 'Batch not found', 'NOT_FOUND');
+    if (rows[0].status !== 'pending_review') return fail(res, `Batch is not in review window (status: ${rows[0].status})`, 'NOT_RECALLABLE');
+    if (rows[0].scheduled_at && new Date(rows[0].scheduled_at) <= new Date()) return fail(res, 'Review window has expired — batch already queued for dispatch', 'WINDOW_EXPIRED');
+    const r = await reverseBatch({ batchId: req.params.id, scopeMerchantId: merchantId, actorId: req.user.id, ip: req.ip, by: 'merchant' });
+    ok(res, r, `Batch recalled — ₦${r.refunded_naira.toLocaleString('en-NG')} returned to your wallet.`);
+  } catch (e) {
+    if (e && e._client) return fail(res, e.message, e._code);
+    next(e);
+  }
+});
+
+// ── POST /api/v1/payouts/batches/:id/dispatch-now — MERCHANT: skip review window ──
+router.post('/batches/:id/dispatch-now', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const rows = await prisma.$queryRaw`SELECT status, merchant_id FROM payout_batches WHERE id = ${req.params.id}::uuid`;
+    if (!rows.length) return fail(res, 'Batch not found', 'NOT_FOUND');
+    if (rows[0].merchant_id !== merchantId) return fail(res, 'Forbidden', 'FORBIDDEN');
+    if (rows[0].status !== 'pending_review') return fail(res, `Batch is not in review window (status: ${rows[0].status})`, 'NOT_DISPATCHABLE');
+    // Move to needs_routing so dispatchBatch accepts it, then fire.
+    await prisma.$executeRaw`UPDATE payout_batches SET status = 'needs_routing', updated_at = NOW() WHERE id = ${req.params.id}::uuid`;
+    const r = await dispatchBatch({ batchId: req.params.id, actorId: req.user.id, ip: req.ip });
+    ok(res, r, `Batch dispatched — ${r.settled} settled${r.pending ? `, ${r.pending} processing` : ''}${r.failed ? `, ${r.failed} failed` : ''}`);
+  } catch (e) {
+    if (e && e._client) return fail(res, e.message, e._code);
+    next(e);
+  }
+});
+
+// ── DELETE /api/v1/payouts/batches/:id/items/:itemId — MERCHANT: remove item in window ──
+router.delete('/batches/:batchId/items/:itemId', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const { batchId, itemId } = req.params;
+    const bRows = await prisma.$queryRaw`SELECT * FROM payout_batches WHERE id = ${batchId}::uuid AND merchant_id = ${merchantId}::uuid`;
+    if (!bRows.length) return fail(res, 'Batch not found', 'NOT_FOUND');
+    const batch = bRows[0];
+    if (batch.status !== 'pending_review') return fail(res, 'Items can only be removed during the review window', 'NOT_RECALLABLE');
+    const iRows = await prisma.$queryRaw`SELECT * FROM payout_items WHERE id = ${itemId}::uuid AND batch_id = ${batchId}::uuid AND status = 'queued'`;
+    if (!iRows.length) return fail(res, 'Item not found or already dispatched', 'NOT_FOUND');
+    const item = iRows[0];
+    // Partial refund for this item (amount + fee + vat).
+    const refund = BigInt(item.amount) + BigInt(item.item_fee) + BigInt(item.item_vat);
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${refund}, updated_at = NOW()
+        WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id = ${merchantId}::uuid ORDER BY balance DESC LIMIT 1)`;
+      await tx.$executeRaw`DELETE FROM payout_items WHERE id = ${itemId}::uuid`;
+      await tx.$executeRaw`
+        UPDATE payout_batches SET
+          total_amount = total_amount - ${BigInt(item.amount)},
+          total_fee    = total_fee    - ${BigInt(item.item_fee)},
+          total_vat    = total_vat    - ${BigInt(item.item_vat)},
+          total_items  = total_items  - 1,
+          updated_at   = NOW()
+        WHERE id = ${batchId}::uuid`;
+    });
+    ok(res, { removed_item_id: itemId, refunded: koboToNaira(refund) }, `Item removed — ₦${koboToNaira(refund).toLocaleString('en-NG')} returned to wallet.`);
+  } catch (e) {
+    if (e && e._client) return fail(res, e.message, e._code);
+    next(e);
+  }
+});
+
+// ── GET /api/v1/payouts/settings — MERCHANT: get payout preferences ──────────
+router.get('/settings', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const rows = await prisma.$queryRawUnsafe(
+      'SELECT payout_recall_window_minutes FROM merchants WHERE id = $1::uuid', merchantId);
+    ok(res, { recall_window_minutes: Number(rows[0]?.payout_recall_window_minutes || 0) });
+  } catch (e) { next(e); }
+});
+
+// ── PATCH /api/v1/payouts/settings — MERCHANT: set recall window preference ───
+router.patch('/settings', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account');
+    const { recall_window_minutes } = req.body || {};
+    const allowed = [0, 15, 30, 60];
+    if (!allowed.includes(Number(recall_window_minutes))) return fail(res, `recall_window_minutes must be one of: ${allowed.join(', ')}`, 'INVALID');
+    await prisma.$executeRawUnsafe(
+      'UPDATE merchants SET payout_recall_window_minutes = $1 WHERE id = $2::uuid', Number(recall_window_minutes), merchantId);
+    ok(res, { recall_window_minutes: Number(recall_window_minutes) },
+      recall_window_minutes > 0
+        ? `Recall window enabled — new batches will have a ${recall_window_minutes}-minute review period before dispatch.`
+        : 'Recall window disabled — batches will dispatch immediately.');
+  } catch (e) { next(e); }
+});
+
+// ── PATCH /api/v1/payouts/admin/merchants/:id/payout-settings — SA per-merchant ──
+router.patch('/admin/merchants/:id/payout-settings', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { recall_window_minutes } = req.body || {};
+    const allowed = [0, 15, 30, 60];
+    if (recall_window_minutes !== undefined && !allowed.includes(Number(recall_window_minutes))) return fail(res, `recall_window_minutes must be one of: ${allowed.join(', ')}`, 'INVALID');
+    if (recall_window_minutes !== undefined) {
+      await prisma.$executeRawUnsafe(
+        'UPDATE merchants SET payout_recall_window_minutes = $1 WHERE id = $2::uuid', Number(recall_window_minutes), req.params.id);
+    }
+    const rows = await prisma.$queryRawUnsafe(
+      'SELECT payout_recall_window_minutes FROM merchants WHERE id = $1::uuid', req.params.id);
+    ok(res, { recall_window_minutes: Number(rows[0]?.payout_recall_window_minutes || 0) }, 'Payout settings updated.');
+  } catch (e) { next(e); }
+});
+
+// ── NE pre-fetch: run during the recall window so dispatch is Transfer-only ───
+// Throttled to 5 concurrent to stay under the relay's connection ceiling while
+// other merchant batches may also be dispatching or pre-fetching simultaneously.
+async function prefetchNEForBatch(batchId) {
+  const { parallexTransfer: plxAdapter } = (() => {
+    try { return { parallexTransfer: require('../services/parallexTransferService') }; } catch (_) { return {}; }
+  })();
+  if (!plxAdapter || !plxAdapter.isConfigured()) return;
+
+  const BANK_CODE_PARALLEX = process.env.PARALLEX_TRANSFER_BANK_CODE || '999015';
+  const items = await prisma.$queryRawUnsafe(
+    "SELECT id, bank_code, account_number FROM payout_items WHERE batch_id = $1::uuid AND status = 'queued'", batchId);
+  const interbank = items.filter(i => i.bank_code && i.bank_code !== BANK_CODE_PARALLEX);
+
+  // 5 concurrent NE calls during the window — well under DO relay ceiling.
+  const CONCURRENCY = 5;
+  for (let i = 0; i < interbank.length; i += CONCURRENCY) {
+    await Promise.all(interbank.slice(i, i + CONCURRENCY).map(async item => {
+      try {
+        const ne = await plxAdapter.nameEnquiry(item.bank_code, item.account_number);
+        if (ne.ok && ne.sessionId) {
+          await prisma.$executeRawUnsafe(
+            'UPDATE payout_items SET ne_session_id = $1, ne_account_name = $2, ne_fetched_at = NOW() WHERE id = $3::uuid',
+            ne.sessionId, ne.accountName || null, item.id);
+        }
+      } catch (_) { /* best-effort — NE failure does not block dispatch */ }
+    }));
+  }
+}
 
 // ── GET /api/v1/payouts/logs — payout item logs (merchant sees own, admin sees all) ──
 router.get('/logs', requireAuth, async (req, res, next) => {
