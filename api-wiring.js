@@ -6379,7 +6379,10 @@ async function viewBatch(id) {
   ${batch.failed_items > 0 ? `<div class="warn-box" style="margin-bottom:12px;font-size:12px">&#9888; <strong>${batch.failed_items} payout(s) failed.</strong> To resend, click "Download failed for resend" and upload that file as a NEW batch — do NOT re-upload the original file (that would pay the successful beneficiaries again).</div>` : ''}
   <div class="card">
     <div class="card-header"><div class="card-title">Payout Items</div>
-      ${batch.failed_items > 0 ? `<button class="btn btn-lime btn-sm" onclick="downloadFailedForResend()">&#8681; Download failed for resend</button>` : ''}
+      <div class="flex" style="gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="viewBatchRecon('${id}')">&#9689; Recon</button>
+        ${batch.failed_items > 0 ? `<button class="btn btn-lime btn-sm" onclick="downloadFailedForResend()">&#8681; Download failed for resend</button>` : ''}
+      </div>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Account</th><th>Bank</th><th>Amount</th><th>Fee</th><th>VAT</th><th>Narration</th><th>Status</th><th>Failure Reason</th></tr></thead>
@@ -6403,6 +6406,81 @@ async function retryBatch(id) {
   if (!confirm('Retry all failed items in this batch?')) return;
   const res = await apiFetch(`/payouts/batches/${id}/retry-failed`, { method:'POST' });
   if (res?.status) { alert(`${res.data.retried} items requeued`); loadPayouts(); }
+}
+
+async function viewBatchRecon(batchId) {
+  const res = await apiFetch(`/payouts/batches/${batchId}/recon`);
+  if (!res?.data) return;
+  const d = res.data;
+  const k = v => fmtMajor(Number(v || 0) / 100, 'NGN');
+  const row = (label, val, style) =>
+    `<tr><td style="padding:8px 12px;color:var(--gray-500);font-size:13px">${label}</td><td style="padding:8px 12px;font-weight:600;${style||''}">${val}</td></tr>`;
+  const balanced = d.accounting_check?.balanced;
+  alert([
+    `Batch Recon — ${d.batch_ref}`,
+    `Status: ${d.status}`,
+    `Items: ${d.count_success} success / ${d.count_processing} in-flight / ${d.count_failed} failed`,
+    ``,
+    `Total deducted from wallet: ${k(d.total_deducted_kobo)}`,
+    `  ✓ Sent to beneficiaries:  ${k(d.total_sent_kobo)}`,
+    `  ⏳ In-flight (NIP):        ${k(d.total_in_flight_kobo)}`,
+    `  🔒 Failed — held (SA):     ${k(d.total_failed_held_kobo)}`,
+    `  ↩ Refunded back:           ${k(d.total_refunded_kobo)}`,
+    `  ✗ Rejected (kept):         ${k(d.total_rejected_kobo)}`,
+    ``,
+    `Current wallet balance:      ${k(d.current_wallet_balance_kobo)}`,
+    ``,
+    balanced ? '✓ Books balanced.' : '⚠ IMBALANCE — investigate.',
+  ].join('\n'));
+}
+
+async function loadPendingRefunds() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  try {
+    const res = await apiFetch('/payouts/admin/refunds/pending');
+    const items = res?.data || [];
+    el.innerHTML = `
+      <div class="page-header">
+        <div class="page-title">Pending Refunds</div>
+        <div class="page-desc">Transfer failures awaiting SA review. Approve to credit the merchant wallet; reject if the transfer actually went through.</div>
+      </div>
+      ${items.length === 0
+        ? `<div class="card" style="text-align:center;padding:40px;color:var(--gray-400)">No pending refunds — all clear.</div>`
+        : `<div class="card"><div class="table-wrap"><table>
+            <thead><tr><th>Merchant</th><th>Batch</th><th>Account</th><th>Amount</th><th>Refund</th><th>Failure Reason</th><th>Date</th><th>Actions</th></tr></thead>
+            <tbody>${items.map(i => `<tr>
+              <td style="font-size:12px">${i.business_name}</td>
+              <td class="mono" style="font-size:11px">${i.batch_ref}</td>
+              <td class="mono" style="font-size:12px">${i.account_number}<br><span style="color:var(--gray-400);font-size:11px">${i.account_name||''}</span></td>
+              <td style="font-weight:600">${fmtMajor(Number(i.amount)/100,'NGN')}</td>
+              <td style="font-weight:600;color:var(--amber)">${fmtMajor(Number(i.refund_amount)/100,'NGN')}</td>
+              <td style="font-size:12px;color:var(--red);max-width:180px">${i.failure_reason||'—'}</td>
+              <td style="font-size:11px;color:var(--gray-500)">${new Date(i.created_at).toLocaleDateString('en-NG')}</td>
+              <td style="display:flex;gap:6px">
+                <button class="btn btn-primary btn-sm" onclick="approveRefund('${i.id}','${i.business_name.replace(/'/g,'')}',${i.refund_amount})">Approve</button>
+                <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="rejectRefund('${i.id}')">Reject</button>
+              </td>
+            </tr>`).join('')}</tbody>
+          </table></div></div>`
+      }`;
+  } catch(e) { el.innerHTML = errorBox('Failed: ' + e.message); }
+}
+
+async function approveRefund(itemId, merchantName, refundAmountKobo) {
+  const naira = fmtMajor(Number(refundAmountKobo)/100, 'NGN');
+  if (!confirm(`Approve refund of ${naira} to ${merchantName}? This will credit their payout wallet immediately.`)) return;
+  const res = await apiFetch(`/payouts/admin/refunds/${itemId}/approve`, { method: 'POST' });
+  if (res?.status) { toast(res.message || 'Refund approved.', 'success'); loadPendingRefunds(); }
+  else alert(res?.message || 'Approval failed');
+}
+
+async function rejectRefund(itemId) {
+  const reason = prompt('Reason for rejection (optional — e.g. transfer confirmed successful):');
+  if (reason === null) return; // cancelled
+  const res = await apiFetch(`/payouts/admin/refunds/${itemId}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+  if (res?.status) { toast('Refund rejected — merchant wallet not credited.', 'success'); loadPendingRefunds(); }
+  else alert(res?.message || 'Rejection failed');
 }
 
 async function recallBatch(batchId) {
@@ -7423,6 +7501,7 @@ loadPageData = function(page) {
     case 'admin_onboard':        loadAdminOnboard(); break;
     case 'payouts':              loadPayouts(); break;
     case 'payout_settings':      loadPayoutSettings(); break;
+    case 'pending_refunds':      loadPendingRefunds(); break;
     case 'payout_report':        loadPayoutReport(); break;
     case 'payout_logs':          loadPayoutLogs(); break;
     case 'vat_report':           loadVatReport(); break;

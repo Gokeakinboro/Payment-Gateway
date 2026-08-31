@@ -80,6 +80,7 @@ var NAV = {
       {id:'transactions',    icon:'arrow-right-left', label:'Transactions'    },
       {id:'settlement',      icon:'circle-check', label:'Settlements'     },
       {id:'wallets',         icon:'wallet', label:'Merchant Wallet'  },
+      {id:'pending_refunds', icon:'clock',   label:'Pending Refunds'  },
       {id:'sa_merchant_funding', icon:'landmark', label:'Merchant Funding & Routing'},
       {id:'compliance',      icon:'scale', label:'KYC Review'      },
       {id:'deferrals',       icon:'file-clock', label:'KYC Docs & Deferrals'},
