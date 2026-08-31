@@ -5880,12 +5880,36 @@ async function loadPayouts() {
     const queueList = (queue && queue.data) || [];
     const bankMap   = {};
     bankList.forEach(b => bankMap[b.bank_code] = b.bank_name);
-    const queueCard = queueList.length ? `
+    const pendingReview = queueList.filter(q => q.queue_status === 'pending_review');
+    const reviewCard = pendingReview.length ? `
+    <div class="card" style="margin-bottom:16px;border-left:3px solid #6366f1">
+      <div class="card-header">
+        <div class="card-title">&#9203; Review window — recall or edit before dispatch <span class="badge" style="background:#6366f1;color:#fff">${pendingReview.length}</span></div>
+        <div style="font-size:12px;color:var(--gray-500)">These batches are being prepared. NE is pre-fetching in the background. Dispatch when ready or let the timer run out.</div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Reference</th><th>Amount</th><th>Items</th><th>Dispatches in</th><th>Actions</th></tr></thead>
+        <tbody>${pendingReview.map(q=>`<tr>
+          <td class="mono" style="font-size:11px">${q.batch_ref}</td>
+          <td style="font-weight:600">${fmtMajor(q.total_deducted,'NGN')}</td>
+          <td>${q.total_items}</td>
+          <td><span id="countdown-${q.batch_id}" style="font-weight:600;color:#6366f1" data-secs="${q.recall_seconds_left||0}">--:--</span></td>
+          <td style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" onclick="dispatchBatchNow('${q.batch_id}')">Send Now</button>
+            <button class="btn btn-outline btn-sm" onclick="viewBatch('${q.batch_id}')">View / Edit</button>
+            <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="recallBatch('${q.batch_id}')">Recall</button>
+          </td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>` : '';
+
+    const otherQueue = queueList.filter(q => q.queue_status !== 'pending_review');
+    const queueCard = otherQueue.length ? `
     <div class="card" style="margin-bottom:16px;border-left:3px solid #f59e0b">
-      <div class="card-header"><div class="card-title">Pending &amp; scheduled payouts <span class="badge badge-amber">${queueList.length}</span></div></div>
+      <div class="card-header"><div class="card-title">Pending &amp; scheduled payouts <span class="badge badge-amber">${otherQueue.length}</span></div></div>
       <div class="table-wrap"><table>
         <thead><tr><th>Reference</th><th>Amount (deducted)</th><th>Items</th><th>Status</th><th></th></tr></thead>
-        <tbody>${queueList.map(q=>`<tr>
+        <tbody>${otherQueue.map(q=>`<tr>
           <td class="mono" style="font-size:11px">${q.batch_ref}</td>
           <td style="font-weight:600">${fmtMajor(q.total_deducted,'NGN')}</td>
           <td>${q.total_items}</td>
@@ -5898,7 +5922,8 @@ async function loadPayouts() {
     el.innerHTML = `
     <div class="page-header flex-between">
       <div><div class="page-title">Payouts</div><div class="page-desc">Send money to your customers and beneficiaries</div></div>
-      <div class="flex" style="gap:10px">
+      <div class="flex" style="gap:10px;align-items:flex-start">
+        <button class="btn btn-outline btn-sm" onclick="navigate('payout_settings')" style="margin-top:8px">⚙ Settings</button>
         <div class="stat-card" style="padding:12px 20px;min-width:200px">
           <div class="stat-label">Wallet Balance</div>
           <div class="stat-value" style="font-size:20px">${fmtNaira(w.balance||0)}</div>
@@ -5908,6 +5933,7 @@ async function loadPayouts() {
       </div>
     </div>
 
+    ${reviewCard}
     ${queueCard}
 
     <div class="card" style="margin-bottom:16px">
@@ -5932,6 +5958,25 @@ async function loadPayouts() {
     </div>
 
     <div id="payout-form-area"></div>`;
+
+    // Countdown timers for pending_review batches.
+    if (pendingReview.length) {
+      const tick = () => {
+        pendingReview.forEach(q => {
+          const el2 = document.getElementById('countdown-' + q.batch_id);
+          if (!el2) return;
+          const secsLeft = Number(el2.dataset.secs) - 1;
+          el2.dataset.secs = secsLeft;
+          if (secsLeft <= 0) { el2.textContent = 'Dispatching…'; return; }
+          const m = Math.floor(secsLeft / 60), s = secsLeft % 60;
+          el2.textContent = m + ':' + String(s).padStart(2, '0');
+          if (secsLeft <= 300) el2.style.color = 'var(--red)';
+        });
+      };
+      if (window._payoutCountdownTimer) clearInterval(window._payoutCountdownTimer);
+      window._payoutCountdownTimer = setInterval(tick, 1000);
+      tick();
+    }
   } catch(e){ el.innerHTML = errorBox('Failed to load payouts: '+e.message); }
 }
 
@@ -6358,6 +6403,56 @@ async function retryBatch(id) {
   if (!confirm('Retry all failed items in this batch?')) return;
   const res = await apiFetch(`/payouts/batches/${id}/retry-failed`, { method:'POST' });
   if (res?.status) { alert(`${res.data.retried} items requeued`); loadPayouts(); }
+}
+
+async function recallBatch(batchId) {
+  if (!confirm('Recall this batch? All items will be cancelled and your wallet refunded.')) return;
+  const res = await apiFetch(`/payouts/batches/${batchId}/recall`, { method: 'POST' });
+  if (res?.status) { toast('Batch recalled — funds returned to your wallet.', 'success'); loadPayouts(); }
+  else alert(res?.message || 'Recall failed');
+}
+
+async function dispatchBatchNow(batchId) {
+  if (!confirm('Send this batch immediately without waiting for the recall window?')) return;
+  const res = await apiFetch(`/payouts/batches/${batchId}/dispatch-now`, { method: 'POST' });
+  if (res?.status) { toast('Batch dispatched — items are now processing.', 'success'); loadPayouts(); }
+  else alert(res?.message || 'Dispatch failed');
+}
+
+async function loadPayoutSettings() {
+  const el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  try {
+    const res = await apiFetch('/payouts/settings');
+    const mins = res?.data?.recall_window_minutes ?? 0;
+    el.innerHTML = `
+      <div style="max-width:540px;margin:32px auto">
+        <h2 style="margin-bottom:4px">Payout Settings</h2>
+        <p style="color:var(--gray-500);margin-bottom:24px">Configure how batches are handled when they are created.</p>
+        <div class="card" style="padding:24px">
+          <label style="display:block;font-weight:600;margin-bottom:8px">Recall Window</label>
+          <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px">
+            When enabled, new batches enter a review period before dispatch. During this window you can remove recipients or cancel the batch.
+            Name Enquiry is pre-fetched in the background so transfer fires instantly when the window expires.
+          </p>
+          <select id="recall-window-select" class="form-control" style="max-width:220px;margin-bottom:16px">
+            <option value="0"  ${mins===0  ?'selected':''}>Disabled (send immediately)</option>
+            <option value="15" ${mins===15 ?'selected':''}>15 minutes</option>
+            <option value="30" ${mins===30 ?'selected':''}>30 minutes</option>
+            <option value="60" ${mins===60 ?'selected':''}>60 minutes</option>
+          </select>
+          <br>
+          <button class="btn btn-primary" onclick="savePayoutSettings()">Save Changes</button>
+        </div>
+      </div>`;
+  } catch(e) { el.innerHTML = errorBox('Failed to load settings: ' + e.message); }
+}
+
+async function savePayoutSettings() {
+  const mins = Number(document.getElementById('recall-window-select').value);
+  const res = await apiFetch('/payouts/settings', { method: 'PATCH', body: JSON.stringify({ recall_window_minutes: mins }) });
+  if (res?.status) toast(mins === 0 ? 'Recall window disabled — batches now send immediately.' : `Recall window set to ${mins} minutes.`, 'success');
+  else alert(res?.message || 'Save failed');
 }
 
 // Export ONLY the failed items in template format so the merchant can re-upload
@@ -7327,6 +7422,7 @@ loadPageData = function(page) {
     case 'agg_revenue':          loadAggRevenue(); break;
     case 'admin_onboard':        loadAdminOnboard(); break;
     case 'payouts':              loadPayouts(); break;
+    case 'payout_settings':      loadPayoutSettings(); break;
     case 'payout_report':        loadPayoutReport(); break;
     case 'payout_logs':          loadPayoutLogs(); break;
     case 'vat_report':           loadVatReport(); break;
