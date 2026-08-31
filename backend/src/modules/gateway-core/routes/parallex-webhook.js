@@ -11,8 +11,70 @@ const { logger } = require('../../../utils/logger');
 const { finalizePayinSuccess } = require('../services/payinFinalize');
 const { applyPayoutResult } = require('../services/payoutSettle');
 const parallex = require('../services/parallexService');
+const tpt = require('../services/parallexTransferService');
 
 const SUCCESS_STATES = new Set(['SUCCESS', 'SUCCESSFUL', 'COMPLETED']);
+
+// Map Parallex bank name strings → NIP bank codes for auto-reversal
+const BANK_NAME_TO_CODE = {
+  'OPAY DIGITAL SERVICES LIMITED': '999992', 'OPAY DIGITAL SERVICES': '999992', 'OPAY': '999992',
+  'PALMPAY': '999991', 'PALMPAY FINANCE': '999991',
+  'KUDA MICROFINANCE BANK': '50211', 'KUDA BANK': '50211', 'KUDA': '50211',
+  'MONIEPOINT MICROFINANCE BANK': '50515', 'MONIEPOINT MFB': '50515', 'MONIEPOINT': '50515',
+  'ACCESS BANK PLC': '044', 'ACCESS BANK': '044',
+  'ZENITH BANK PLC': '057', 'ZENITH BANK': '057',
+  'GUARANTY TRUST BANK PLC': '058', 'GUARANTY TRUST BANK': '058', 'GTBANK': '058',
+  'UNITED BANK FOR AFRICA PLC': '033', 'UNITED BANK FOR AFRICA': '033', 'UBA': '033',
+  'FIRST BANK OF NIGERIA PLC': '011', 'FIRST BANK OF NIGERIA': '011', 'FIRST BANK': '011',
+  'FIDELITY BANK PLC': '070', 'FIDELITY BANK': '070',
+  'UNION BANK OF NIGERIA PLC': '032', 'UNION BANK': '032',
+  'STERLING BANK PLC': '232', 'STERLING BANK': '232',
+  'WEMA BANK PLC': '035', 'WEMA BANK': '035',
+  'FIRST CITY MONUMENT BANK': '214', 'FCMB': '214',
+  'STANBIC IBTC BANK PLC': '221', 'STANBIC IBTC BANK': '221',
+  'ECOBANK NIGERIA PLC': '050', 'ECOBANK': '050',
+  'PROVIDUS BANK': '101', 'PARALLEX BANK': '101',
+  'FAIRMONEY MICROFINANCE BANK': '51318', 'FAIRMONEY': '51318',
+  'CARBON': '565', 'VFD MICROFINANCE BANK': '566', 'VFD': '566',
+  'TITAN TRUST BANK': '102', 'LOTUS BANK': '303', 'JAIZ BANK': '301',
+  'POLARIS BANK': '076', 'HERITAGE BANK': '030', 'KEYSTONE BANK': '082',
+};
+
+async function autoReverseParallexInflow(b, paidKobo) {
+  const bankName    = String(b.originatingBankName || '').toUpperCase().trim();
+  const bankCode    = BANK_NAME_TO_CODE[bankName] || null;
+  const accountNo   = b.originatingAccountNumber || null;
+  const accountName = b.originatingAccountName   || '';
+  const orderId     = 'REV-' + (b.sessionId || b.referenceID || Date.now());
+
+  if (!accountNo) {
+    logger.warn({ bankName }, 'Parallex inflow reversal skipped — no originating account number');
+    return;
+  }
+  if (!bankCode) {
+    logger.warn({ bankName, accountNo, orderId }, 'Parallex inflow reversal skipped — unknown bank, SA intervention needed');
+    return;
+  }
+
+  logger.info({ bankCode, accountNo, accountName, paidKobo, orderId }, 'Parallex inflow mismatch — auto-reversing');
+  try {
+    const result = await tpt.sendPayout({
+      orderId,
+      account_number: accountNo,
+      account_name:   accountName,
+      bank_code:      bankCode,
+      amount:         paidKobo,
+      narration:      'Payment reversal — amount mismatch',
+    });
+    if (result.ok || result.status === 'SENT') {
+      logger.info({ orderId, result }, 'Parallex inflow reversal sent');
+    } else {
+      logger.warn({ orderId, result }, 'Parallex inflow reversal non-success — SA review needed');
+    }
+  } catch (err) {
+    logger.error({ err, orderId }, 'Parallex inflow reversal threw — SA review needed');
+  }
+}
 
 // Possible field names Parallex uses for the credited VA number
 function extractVaAccount(b) {
@@ -92,8 +154,12 @@ async function handleInflow(req, res) {
       },
       paidAmount: Number.isFinite(paidKobo) ? paidKobo : null,
     });
-    if (r && r.amountMismatch)
-      logger.warn({ reference: txnReference, expected: r.expected, paid: r.paid }, 'Parallex inflow AMOUNT MISMATCH — not credited');
+    if (r && r.amountMismatch) {
+      logger.warn({ reference: txnReference, expected: r.expected, paid: r.paid }, 'Parallex inflow AMOUNT MISMATCH — reversing');
+      autoReverseParallexInflow(b, r.paid).catch(err =>
+        logger.error({ err, vaAccount, nipReference }, 'Parallex inflow: auto-reversal error')
+      );
+    }
 
     return res.status(200).json({ responseCode: '00', responseDescription: 'Request Successful' });
   } catch (e) {
