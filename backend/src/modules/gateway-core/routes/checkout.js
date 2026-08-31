@@ -106,12 +106,6 @@ router.get('/:reference', async (req, res, next) => {
         const rail = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', txn.merchant);
         const cfg  = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id, 'VIRTUAL_ACCOUNT', isWalletFund ? 'WALLET_FUND_VA' : null);
         amountToPay = Number(computeFeesForPayin(BigInt(txn.amount), cfg).chargeAmount);
-        // Parallex charges a flat ₦8 (800 kobo) NIP collection fee on top of settlement.
-        // Add it here so amount_to_pay reflects the true customer transfer amount even
-        // before a VA is minted (parallex_va_total_kobo takes over once VA is minted).
-        if (rail && /parallex/i.test(rail.name || '') && parallex.isConfigured()) {
-          amountToPay += 800;
-        }
       }
     } catch (e) { /* fall back to face amount */ }
 
@@ -229,9 +223,9 @@ router.get('/:reference/virtual-account', async (req, res, next) => {
       }
       if (!va.ok || !va.accountNumber)
         return fail(res, va.reason || 'Bank transfer is temporarily unavailable', 'PARALLEX_DECLINED');
-      // totalAmountKobo = what the customer must actually transfer (settlement + Parallex NIP fee).
-      // settlementAmount is what Paylode receives after Parallex deducts their ₦8 fee.
-      const totalAmountKobo = va.totalAmount != null ? Math.round(va.totalAmount * 100) : chargeKobo;
+      // The customer transfers exactly chargeKobo. Parallex's ₦8 NIP fee is billed
+      // to Paylode's float separately — it is NOT added to the customer-facing amount.
+      const totalAmountKobo = chargeKobo;
       await prisma.transaction.update({
         where: { id: txn.id },
         data: {
