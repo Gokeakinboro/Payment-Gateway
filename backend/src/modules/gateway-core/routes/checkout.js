@@ -101,7 +101,7 @@ router.get('/:reference', async (req, res, next) => {
           }, cardProduct);
           amountToPay = Number(fees.chargeAmount);
         }
-      } else if (!txn.isSandbox && palmpay.isConfigured()) {
+      } else if (!txn.isSandbox && (palmpay.isConfigured() || parallex.isConfigured())) {
         // Payment-link / invoice / QR or already-bank-transfer channel: compute VA fee.
         const rail = await resolvePayinRail(prisma, 'VIRTUAL_ACCOUNT', txn.merchant);
         const cfg  = await resolvePayinRateConfig(prisma, txn.merchant, rail && rail.id, 'VIRTUAL_ACCOUNT', isWalletFund ? 'WALLET_FUND_VA' : null);
