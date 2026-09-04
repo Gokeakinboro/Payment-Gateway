@@ -25,7 +25,9 @@ router.get('/vat', requireAuth, requireCompliance, async (req, res, next) => {
       ? req.query.month
       : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     const start = new Date(month + '-01T00:00:00.000Z');
-    const end = new Date(start); end.setUTCMonth(end.getUTCMonth() + 1);
+    const curMon = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const endFull = new Date(start); endFull.setUTCMonth(endFull.getUTCMonth() + 1);
+    const end = month === curMon ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : endFull;
 
     // Transactions (cards / VA / USSD …): output + input VAT per product.
     const txnRows = await prisma.$queryRaw`
@@ -92,10 +94,13 @@ router.get('/cbn', requireAuth, requireCompliance, async (req, res, next) => {
       ? req.query.month
       : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     const start = new Date(month + '-01T00:00:00.000Z');
-    const end = new Date(start); end.setUTCMonth(end.getUTCMonth() + 1);
+    const curMon = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const isCurrent = month === curMon;
+    const endFull = new Date(start); endFull.setUTCMonth(endFull.getUTCMonth() + 1);
+    const end = isCurrent ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : endFull;
     const [yyyy, mm] = month.split('-');
-    const lastDay = new Date(end.getTime() - 1).getUTCDate();
-    const period = `01-${String(lastDay).padStart(2, '0')}/${mm}/${yyyy}`;
+    const periodEndDay = isCurrent ? now.getUTCDate() : new Date(endFull.getTime() - 1).getUTCDate();
+    const period = `01-${String(periodEndDay).padStart(2, '0')}/${mm}/${yyyy}`;
 
     const agg = await prisma.$queryRaw`
       SELECT COUNT(*)::int AS volume, COALESCE(SUM(amount),0) AS value_kobo
@@ -264,8 +269,11 @@ router.get('/revenue', requireAuth, requireCompliance, async (req, res, next) =>
 router.get('/aggregator-revenue', requireAuth, requireCompliance, async (req, res, next) => {
   try {
     const { month } = req.query;
-    const periodStart = month ? new Date(month + '-01') : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const periodEnd   = new Date(periodStart); periodEnd.setMonth(periodEnd.getMonth()+1);
+    const now = new Date();
+    const curMon = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const periodStart = month ? new Date(month + '-01') : new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodEndFull = new Date(periodStart); periodEndFull.setMonth(periodEndFull.getMonth() + 1);
+    const periodEnd = (!month || month === curMon) ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : periodEndFull;
 
     const rows = await prisma.$queryRaw`
       SELECT
