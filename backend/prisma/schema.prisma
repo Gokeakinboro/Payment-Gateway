@@ -216,6 +216,7 @@ model Merchant {
   payoutSplits   MerchantPayoutSplit[]
   beneficiaries  MerchantBeneficiary[]
   mpgsConfig     MerchantMpgsConfig?
+  payoutFundingVas PayoutFundingVa[]
 
   @@index([kycStatus])
   @@index([isActive])
@@ -279,6 +280,7 @@ model PaymentRail {
   routedMerchants Merchant[]  @relation("MerchantPayoutRoute")
   payinMerchants  Merchant[]  @relation("MerchantPayinRoute")
   payoutSplits MerchantPayoutSplit[]
+  payoutFundingVas PayoutFundingVa[]
 
   @@map("payment_rails")
 }
@@ -860,6 +862,33 @@ model RailRebalance {
   @@index([merchantId])
   @@index([status])
   @@map("rail_rebalances")
+}
+
+// ─── PAYOUT FUNDING VAs ───────────────────────────────────────────────────────
+// Tracks timed Parallex VAs generated so a merchant can pre-fund their payout
+// balance. When the inflow webhook fires, we match on referenceId / vaAccountNumber,
+// credit merchant_wallets for the appropriate rail, and mark this COMPLETED.
+
+model PayoutFundingVa {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId      String    @map("merchant_id") @db.Uuid
+  railId          String    @map("rail_id") @db.Uuid
+  referenceId     String    @unique @map("reference_id")
+  vaAccountNumber String?   @map("va_account_number")
+  amountKobo      BigInt    @map("amount_kobo")
+  status          String    @default("PENDING")  // PENDING | COMPLETED | EXPIRED
+  expiresAt       DateTime? @map("expires_at")
+  completedAt     DateTime? @map("completed_at")
+  paidKobo        BigInt?   @map("paid_kobo")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  merchant  Merchant     @relation(fields: [merchantId], references: [id])
+  rail      PaymentRail  @relation(fields: [railId], references: [id])
+
+  @@index([merchantId])
+  @@index([vaAccountNumber])
+  @@map("payout_funding_vas")
 }
 
 // ─── PAYOUT BATCHES ───────────────────────────────────────────────────────────

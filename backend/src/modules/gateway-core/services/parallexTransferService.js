@@ -342,7 +342,7 @@ async function queryPayoutResult({ orderId, amount, accountNumber, bankCode } = 
       transactionReference: orderId,
       amount: amount != null ? Number(nairaFromKobo(amount)) : undefined,
       beneficiaryAccountNumber: accountNumber || undefined,
-      beneficiaryBankCode: bankCode || undefined,
+      beneficiaryBankCode: bankCode ? toNipCode(bankCode) : undefined,
     },
   });
   const out = toRailResult(r);
