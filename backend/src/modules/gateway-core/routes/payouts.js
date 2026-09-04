@@ -139,6 +139,91 @@ const validate = rules => async (req, res, next) => {
   next();
 };
 
+// ── POST /api/v1/payouts/fund/va — Merchant requests a Parallex VA to pre-fund ──
+// Generates a timed Parallex VA for the exact amount requested. The merchant
+// transfers to that VA; Parallex fires the inflow webhook; the webhook handler
+// auto-credits their payout wallet for the appropriate rail.
+router.post('/fund/va', requireAuthOrApiKey,
+  validate([
+    body('amount_kobo').isInt({ min: 100 }).withMessage('amount_kobo must be a positive integer (kobo)'),
+  ]),
+  async (req, res, next) => {
+    try {
+      const merchantId = req.user.merchant?.id;
+      if (!merchantId) return fail(res, 'No merchant account');
+
+      const amountKobo = BigInt(req.body.amount_kobo);
+
+      const merchant = await prisma.merchant.findUnique({
+        where: { id: merchantId },
+        select: { id: true, merchantCode: true, name: true },
+      });
+      if (!merchant) return fail(res, 'Merchant not found');
+
+      // VA collections always settle through Parallex — always credit the Parallex Bank rail,
+      // regardless of the merchant's configured payout route.
+      const parallexRail = await prisma.paymentRail.findFirst({
+        where: { name: 'Parallex Bank', payoutEnabled: true },
+        select: { id: true },
+      });
+      const railId = parallexRail?.id || null;
+      if (!railId) return fail(res, 'Parallex Bank rail not available — contact support.', 'NO_RAIL');
+
+      // Generate a unique referenceId (≥20 chars required by Parallex).
+      // Format: PLPF-{merchantCode}-{timestamp}
+      const referenceId = `PLPF-${merchant.merchantCode}-${Date.now()}`;
+
+      const parallex = require('../services/parallexService');
+      if (!parallex.isConfigured()) return fail(res, 'VA service not available — contact support.', 'VA_NOT_CONFIGURED');
+
+      const nameParts = (merchant.name || 'MERCHANT').toUpperCase().split(/\s+/);
+      const va = await parallex.createTimedAccount({
+        firstName:    nameParts[0],
+        lastName:     nameParts.slice(1).join(' ') || undefined,
+        amountKobo,
+        referenceId,
+        expiryMinutes: 60,
+      });
+
+      if (!va.ok || !va.accountNumber) {
+        logger.error({ va, merchantId, referenceId }, 'Parallex VA creation failed for payout funding');
+        return fail(res, `Could not generate funding account: ${va.reason || 'unknown error'}`, 'VA_ERROR');
+      }
+
+      // Persist the pending funding request.
+      await prisma.payoutFundingVa.create({
+        data: {
+          merchantId,
+          railId,
+          referenceId,
+          vaAccountNumber: va.accountNumber,
+          amountKobo,
+          status: 'PENDING',
+          expiresAt: va.expiryDateTime ? new Date(va.expiryDateTime) : new Date(Date.now() + 60 * 60 * 1000),
+        },
+      });
+
+      logger.info({ merchantId, referenceId, vaAccount: va.accountNumber, amountKobo: amountKobo.toString() }, 'Payout funding VA generated');
+
+      return res.json({
+        status: true,
+        message: 'Transfer the exact amount to the account below. Your payout balance will be credited automatically once payment is confirmed.',
+        data: {
+          account_number: va.accountNumber,
+          account_name:   va.accountName,
+          bank:           'Parallex Bank',
+          amount:         Number(amountKobo) / 100,
+          currency:       'NGN',
+          expires_at:     va.expiryDateTime || null,
+          reference:      referenceId,
+        },
+      });
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
 // ── GET /api/v1/payouts/wallet — MERCHANT view: TOTAL balance only ───────────
 // Rails are Paylode-internal and MUST NEVER be exposed to the merchant. The
 // merchant sees a single total across all their per-rail balances.
@@ -1536,6 +1621,15 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     const { payoutAdapterForName } = require('../services/payoutRailAdapter');
     const { firePayoutWebhook } = require('../services/payoutSettle');
     const railAdapter = (name) => payoutAdapterForName(name);
+    // Load PalmPay rail into railById so Kuda reroutes can find it even on Parallex-only batches.
+    const palmpay = require('../services/palmpayService');
+    if (palmpay.isConfigured()) {
+      const pmRailRows = await prisma.paymentRail.findMany({
+        where: { name: { contains: 'PalmPay', mode: 'insensitive' }, payoutEnabled: true, status: 'LIVE' },
+        select: { id: true, name: true, payoutEnabled: true, payoutFlatCost: true, payoutFlatCostOnUs: true, dailyValueCap: true },
+      });
+      for (const r of pmRailRows) if (!railById[r.id]) railById[r.id] = r;
+    }
     const legs = await prisma.$queryRaw`
       SELECT rd.id AS leg_id, rd.rail_id, rd.amount, rd.rail_cost, rd.rail_vat, rd.rail_order_id,
              pi.id AS item_id, pi.account_number, pi.account_name, pi.bank_code, pi.bank_name, pi.narration,
@@ -1562,9 +1656,70 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     const transferQueue = [];   // { leg, nePrefetch }
     let neProducerDone = false;
 
+    const PALMPAY_SETTLE_BANK = '100033';
+    const PALMPAY_SETTLE_ACCT = '8882777449';
+
     const doLeg = async (leg, nePrefetch) => {
+      // Kuda → PalmPay just-in-time funding:
+      // 1. Fund PalmPay via Parallex interbank to settlement account.
+      // 2. Wait for NIP credit (typically < 5s), then fire via PalmPay.
+      // The Parallex float was already debited at batch-dispatch and stays debited
+      // (money moved from Parallex → PalmPay → Kuda); on PalmPay payout failure
+      // the float refund goes to PalmPay (money is now sitting there).
+      if (nePrefetch && nePrefetch.usePalmPayRailId) {
+        const plmRailId = nePrefetch.usePalmPayRailId;
+        // Unique orderId for the Parallex → PalmPay funding leg (≤32 chars).
+        const fundingOrderId = 'KF-' + String(leg.leg_id).replace(/-/g, '').slice(0, 29);
+
+        // NE on PalmPay settlement account (needed by Parallex InterbankTransfer).
+        let pmNe = await (plxAdapter && plxAdapter.nameEnquiry
+          ? plxAdapter.nameEnquiry(PALMPAY_SETTLE_BANK, PALMPAY_SETTLE_ACCT)
+          : Promise.resolve({ ok: false })).catch(() => ({ ok: false }));
+        if (!pmNe.ok || !pmNe.sessionId) {
+          await new Promise(r => setTimeout(r, 2000));
+          pmNe = await (plxAdapter && plxAdapter.nameEnquiry
+            ? plxAdapter.nameEnquiry(PALMPAY_SETTLE_BANK, PALMPAY_SETTLE_ACCT)
+            : Promise.resolve({ ok: false })).catch(() => ({ ok: false }));
+        }
+        if (!pmNe.ok || !pmNe.sessionId) {
+          await pendingRefundLeg(leg, 'Kuda payout: PalmPay settlement NE failed — refunded');
+          return;
+        }
+
+        // Fund PalmPay via Parallex (using the already-debited Parallex float).
+        let fundR;
+        try {
+          fundR = await plxAdapter.sendPayout({
+            orderId: fundingOrderId, amount: leg.amount,
+            bank_code: PALMPAY_SETTLE_BANK, account_number: PALMPAY_SETTLE_ACCT,
+            account_name: pmNe.accountName || 'PalmPay', narration: `KF:${leg.rail_order_id}`.slice(0, 50),
+            neSessionId: pmNe.sessionId, neAccountName: pmNe.accountName, neKycLevel: pmNe.kycLevel || '',
+          });
+        } catch (e) { await pendingRefundLeg(leg, `Kuda funding threw: ${e.message}`); return; }
+
+        if (!fundR.ok) {
+          await pendingRefundLeg(leg, `Kuda funding failed: ${fundR.reason || fundR.code}`);
+          return;
+        }
+
+        // Poll PalmPay balance until our merchant account shows ≥ payout amount.
+        // NIP typically settles in seconds; allow up to 90s before proceeding anyway.
+        const pollDeadline = Date.now() + 90_000;
+        const amtKobo = BigInt(leg.amount);
+        let pmBal = await palmpay.getBalance().catch(() => null);
+        while (pmBal === null || pmBal < amtKobo) {
+          if (Date.now() >= pollDeadline) break;
+          await new Promise(r => setTimeout(r, 6000));
+          pmBal = await palmpay.getBalance().catch(() => null);
+        }
+
+        // Switch the disbursement record and leg to PalmPay rail for the Kuda payout.
+        await prisma.$executeRaw`UPDATE rail_disbursements SET rail_id=${plmRailId}::uuid WHERE id=${leg.leg_id}::uuid`;
+        leg = { ...leg, rail_id: plmRailId };
+        nePrefetch = {};
+      }
       const rail = railById[leg.rail_id];
-      const adapter = railAdapter(rail && rail.name);
+      const adapter = /palmpay/i.test((rail && rail.name) || '') ? palmpay : railAdapter(rail && rail.name);
       let r;
       try {
         if (!adapter || !adapter.isConfigured()) {
@@ -1603,14 +1758,12 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         await recordRailResult(rail, { ok: true });
       } else {
         const reason = r.ok ? `Rail returned orderStatus ${os}` : (r.reason || 'failed');
-        // Refund amount SA will approve: merchant debit (amount + our fee + our VAT).
         const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
-        // Rail float is restored immediately — we didn't use the rail.
         const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
         await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
-        // Merchant wallet refund is SA-gated — held pending human review.
+        await prisma.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW() WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)`;
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
-        await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='pending_review', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
+        await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='approved', refund_reviewed_at=NOW(), refund_reviewed_by='auto', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
         nFail++;
         await recordRailResult(rail, { ok: false, reason, isLowBalance: /insufficient|balance|fund|limit/i.test(String(reason)) },
           { railId: leg.rail_id, railName: rail && rail.name, merchant: batch.merchant_id });
@@ -1618,13 +1771,14 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
       }
     };
 
-    // Mark a leg failed and queue its merchant refund for SA review (same pattern as doLeg failure).
+    // Mark a leg failed and auto-refund the merchant wallet immediately.
     const pendingRefundLeg = async (leg, reason) => {
       const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
       const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
       await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
+      await prisma.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW() WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)`;
       await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
-      await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='pending_review', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
+      await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='approved', refund_reviewed_at=NOW(), refund_reviewed_by='auto', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
       nFail++;
       firePayoutWebhook(hookLeg(leg), 'payout.failed', { errorMsg: reason });
     };
@@ -1642,14 +1796,31 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         transferQueue.push({ leg, nePrefetch: {} });
         return;
       }
+      // Kuda payouts: Parallex NIP can't resolve Kuda accounts (code 25). Try PalmPay NE instead.
+      const KUDA_CODES = new Set(['090267', '100002', '100']);
+      if (KUDA_CODES.has(String(leg.bank_code || '')) && palmpay.isConfigured()) {
+        const pmRail = Object.values(railById).find(r => /palmpay/i.test(r.name || ''));
+        if (pmRail) {
+          const palmNE = await palmpay.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
+          if (palmNE.ok && palmNE.accountName) {
+            transferQueue.push({ leg, nePrefetch: { usePalmPayRailId: pmRail.id, palmPayAccountName: palmNE.accountName } });
+            return;
+          }
+          // PalmPay NE also failed — fall through; Parallex NE will fail too and auto-refund fires.
+        }
+      }
       // Use pre-fetched NE session if still fresh.
       const neFetchedAt = leg.ne_fetched_at ? new Date(leg.ne_fetched_at).getTime() : 0;
       if (neFetchedAt && (Date.now() - neFetchedAt) < NE_TTL_MS && leg.ne_session_id) {
         transferQueue.push({ leg, nePrefetch: { neSessionId: leg.ne_session_id, neAccountName: leg.ne_account_name || '', neKycLevel: '' } });
         return;
       }
-      // Live NE — Option B: proceed to Transfer even if NE fails.
-      const ne = await plxAdapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
+      // Live NE with one immediate retry on failure before handing to Transfer.
+      let ne = await plxAdapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
+      if (!ne.ok || !ne.sessionId) {
+        await new Promise(r => setTimeout(r, 2000));
+        ne = await plxAdapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
+      }
       transferQueue.push({ leg, nePrefetch: ne.ok && ne.sessionId
         ? { neSessionId: ne.sessionId, neAccountName: ne.accountName, neKycLevel: ne.kycLevel || '' }
         : {} });
