@@ -412,7 +412,7 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const toDate   = to ? new Date(to + 'T23:59:59Z') : new Date();
 
-    const [txns, byCcy] = await Promise.all([
+    const [txns, byCcy, ledgerEntries] = await Promise.all([
       prisma.transaction.findMany({
         where: {
           merchantId: targetMerchantId,
@@ -428,6 +428,14 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
         where: { merchantId: targetMerchantId, isSandbox: false, status: 'SUCCESS', createdAt: { gte: fromDate, lte: toDate } },
         _count: true,
         _sum: { amount: true, merchantFee: true },
+      }),
+      prisma.walletLedger.findMany({
+        where: {
+          merchantId: targetMerchantId,
+          createdAt: { gte: fromDate, lte: toDate },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: parseInt(perPage),
       }),
     ]);
 
@@ -465,6 +473,15 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
         net:             Number(t.amount - t.merchantFee) / 100,
         failure_reason:  t.failureReason,
         metadata:        t.metadata,
+      })),
+      wallet_activity: ledgerEntries.map(l => ({
+        reference:       l.reference,
+        date:            l.createdAt,
+        type:            l.entryType,
+        amount:          Number(l.amount) / 100,
+        balance_before:  Number(l.balanceBefore) / 100,
+        balance_after:   Number(l.balanceAfter) / 100,
+        description:     l.description,
       })),
     });
   } catch (e) { next(e); }

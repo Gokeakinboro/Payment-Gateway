@@ -148,6 +148,62 @@ async function handleInflow(req, res) {
     }
 
     if (!txnReference) {
+      // Check if this inflow is for a payout pre-funding VA (table may not exist yet).
+      let fundingVa = null;
+      try {
+        fundingVa = nipReference
+          ? await prisma.payoutFundingVa.findUnique({ where: { referenceId: nipReference } })
+          : null;
+        if (!fundingVa && vaAccount) {
+          fundingVa = await prisma.payoutFundingVa.findFirst({
+            where: { vaAccountNumber: vaAccount, status: 'PENDING' },
+            orderBy: { createdAt: 'desc' },
+          });
+        }
+      } catch (_) { /* table not yet migrated — skip */ }
+
+      if (fundingVa && fundingVa.status === 'PENDING') {
+        const paidKobo = BigInt(parallex.koboFromNaira(b.amount));
+        await prisma.$transaction(async (tx) => {
+          // Upsert the merchant_wallets row for this rail.
+          let wallet = await tx.merchantWallet.findFirst({
+            where: { merchantId: fundingVa.merchantId, railId: fundingVa.railId },
+          });
+          const before = wallet ? wallet.balance : 0n;
+          const after  = before + paidKobo;
+          if (!wallet) {
+            await tx.merchantWallet.create({
+              data: { merchantId: fundingVa.merchantId, railId: fundingVa.railId, balance: after, lastFundedAt: new Date() },
+            });
+          } else {
+            await tx.merchantWallet.update({
+              where: { id: wallet.id },
+              data:  { balance: after, lastFundedAt: new Date() },
+            });
+          }
+          // Ledger entry.
+          await tx.walletLedger.create({
+            data: {
+              merchantId:    fundingVa.merchantId,
+              railId:        fundingVa.railId,
+              entryType:     'CREDIT',
+              amount:        paidKobo,
+              balanceBefore: before,
+              balanceAfter:  after,
+              reference:     fundingVa.referenceId,
+              description:   `Payout wallet funding via VA (Parallex) — ${b.originatingAccountName || 'transfer'}`,
+            },
+          });
+          // Mark the funding VA completed.
+          await tx.payoutFundingVa.update({
+            where: { id: fundingVa.id },
+            data:  { status: 'COMPLETED', completedAt: new Date(), paidKobo },
+          });
+        });
+        logger.info({ merchantId: fundingVa.merchantId, paidKobo: paidKobo.toString(), referenceId: fundingVa.referenceId }, 'Payout funding VA credited');
+        return res.status(200).json({ responseCode: '00', responseDescription: 'Request Successful' });
+      }
+
       logger.warn({ nipReference, vaAccount }, 'Parallex inflow: no matching PENDING transaction — ACKing without credit');
       return res.status(200).json({ responseCode: '00', responseDescription: 'Request Successful' });
     }

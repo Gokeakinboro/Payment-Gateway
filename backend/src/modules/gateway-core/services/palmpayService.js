@@ -57,10 +57,12 @@ const CBN_TO_NIP = {
   '950': '000026', // Ecobank
   '050': '000026', // Ecobank
 };
+// Some providers (e.g. Parallex) use 100002 for Kuda; PalmPay expects 090267.
+const NIP_OVERRIDES = { '100002': '090267' };
 function toNipCode(code) {
   if (!code) return code;
   const s = String(code);
-  // Already 6-digit NIP code — pass through.
+  if (NIP_OVERRIDES[s]) return NIP_OVERRIDES[s];
   if (s.length === 6) return s;
   return CBN_TO_NIP[s] || s;
 }
