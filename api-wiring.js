@@ -212,13 +212,17 @@ async function loadPayoutsLedger(page=1, filters={}) {
           </div>
         </div>
       </div>
-      <select class="form-input form-select" style="width:140px" onchange="loadPayoutsLedger(1,{status:this.value})">
-        <option value="">All Status</option>
-        <option value="success"${filters.status==='success'?' selected':''}>Success</option>
-        <option value="failed"${filters.status==='failed'?' selected':''}>Failed</option>
-        <option value="processing"${filters.status==='processing'?' selected':''}>Processing</option>
-        <option value="scheduled"${filters.status==='scheduled'?' selected':''}>Scheduled</option>
-      </select>
+      <div class="flex" style="gap:8px;align-items:center;flex-wrap:wrap">
+        <select class="form-input form-select" style="width:140px" onchange="loadPayoutsLedger(1,{status:this.value})">
+          <option value="">All Status</option>
+          <option value="success"${filters.status==='success'?' selected':''}>Success</option>
+          <option value="failed"${filters.status==='failed'?' selected':''}>Failed</option>
+          <option value="processing"${filters.status==='processing'?' selected':''}>Processing</option>
+          <option value="scheduled"${filters.status==='scheduled'?' selected':''}>Scheduled</option>
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="exportPayoutLogsCsv()">&#8681; Payouts CSV</button>
+        <button class="btn btn-outline btn-sm" onclick="exportCombinedCsv()">&#8681; Combined CSV</button>
+      </div>
     </div>
     <div class="card"><div class="table-wrap"><table>
       <thead><tr><th>Batch Ref</th><th>Merchant</th><th>Recipient</th><th>Amount</th><th>Fee</th><th>Status</th><th>Reason / Note</th><th>Date</th></tr></thead>
@@ -296,7 +300,8 @@ async function loadTransactions(page=1, filters={}) {
           <option value="NGN"${filters.currency==='NGN'?' selected':''}>₦ Local (NGN)</option>
           <option value="USD"${filters.currency==='USD'?' selected':''}>$ International (USD)</option>
         </select>
-        <button class="btn btn-outline btn-sm" onclick="exportTransactionsCsv()">&#8681; Export CSV</button>
+        <button class="btn btn-outline btn-sm" onclick="exportTransactionsCsv()">&#8681; Payments CSV</button>
+        <button class="btn btn-outline btn-sm" onclick="exportCombinedCsv()">&#8681; Combined CSV</button>
         <button class="btn btn-outline btn-sm" onclick="emailTransactionsCsv()"><i data-lucide="mail" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Email to me</button>
       </div>
     </div>
@@ -370,6 +375,62 @@ async function exportTransactionsCsv() {
 async function emailTransactionsCsv() {
   try { const { csv, filename } = await _buildTransactionsCsv(); await emailReportFile(filename, _utf8ToBase64(csv), 'text/csv'); }
   catch(e) { alert('Email failed: ' + e.message); }
+}
+async function exportCombinedCsv() {
+  var btn = document.querySelector('button[onclick="exportCombinedCsv()"]');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Exporting…'; }
+    var [txnRes, payRes] = await Promise.all([
+      apiFetch('/transactions?page=1&perPage=5000'),
+      apiFetch('/payouts/logs?page=1&perPage=5000'),
+    ]);
+    var txns  = (txnRes && txnRes.data && txnRes.data.data) || [];
+    var pouts = (payRes && payRes.data && payRes.data.data) || [];
+
+    var headers = ['Date','Type','Reference','Merchant','Beneficiary / Customer','Bank / Channel','Currency','Amount (NGN)','Fee (NGN)','Status','Notes'];
+
+    var txnRows = txns.map(function(t) { return [
+      t.created_at ? new Date(t.created_at).toLocaleDateString('en-NG') : '',
+      'PAYMENT',
+      t.reference || '',
+      (t.merchant && t.merchant.businessName) || '',
+      t.customer_email || '',
+      t.channel || '',
+      t.currency || 'NGN',
+      (Number(t.amount||0)/100).toFixed(2),
+      (Number((t.fees && t.fees.merchant_fee)||0)/100).toFixed(2),
+      t.status || '',
+      t.failure_reason || '',
+    ]; });
+
+    var payRows = pouts.map(function(i) { return [
+      i.created_at ? new Date(i.created_at).toLocaleDateString('en-NG') : '',
+      'PAYOUT',
+      i.batch_ref || '',
+      i.business_name || '',
+      (i.account_name || i.account_number || '') + (i.account_number ? ' · ' + (i.bank_name || i.bank_code || '') : ''),
+      i.bank_name || i.bank_code || '',
+      'NGN',
+      (Number(i.amount||0)/100).toFixed(2),
+      Number(i.fee_naira||0).toFixed(2),
+      i.status || '',
+      (i.failure_reason || '').replace(/,/g, ';'),
+    ]; });
+
+    var allRows = txnRows.concat(payRows).sort(function(a, b) {
+      return new Date(b[0]) - new Date(a[0]);
+    });
+
+    var csv = '﻿' + [headers].concat(allRows).map(function(r) {
+      return r.map(function(v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(',');
+    }).join('\n');
+
+    _downloadText(csv, 'paylode-combined-' + new Date().toISOString().split('T')[0] + '.csv', 'text/csv');
+  } catch(e) {
+    alert('Export failed: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '&#8681; Combined CSV'; }
+  }
 }
 
 // ── MERCHANTS ─────────────────────────────────────────────────────────────────
@@ -2447,6 +2508,97 @@ async function loadMerchSettlements() {
   }
 }
 
+// ── MERCHANT STATEMENT (dedicated nav page) ───────────────────────────────────
+async function loadMerchStatement() {
+  const el = document.getElementById('main-content');
+  const now = new Date();
+  const mon = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  el.innerHTML =
+    '<div class="page-header"><div class="page-title">Account Statement</div>' +
+      '<div class="page-desc">View, download, or email your transaction statement.</div></div>' +
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><div class="card-title">Select Period</div></div>' +
+      '<div class="flex" style="gap:10px;align-items:center;flex-wrap:wrap">' +
+        '<input class="form-input" type="month" id="stmt-month" value="' + mon + '" style="width:180px" onchange="refreshMerchStatement()">' +
+        '<button class="btn btn-lime" onclick="downloadStatement()">&#8681; Download PDF</button>' +
+        '<button class="btn btn-outline" onclick="emailStatement()"><i data-lucide="mail" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i>Email to Me</button>' +
+      '</div>' +
+    '</div>' +
+    '<div id="stmt-preview"><div style="text-align:center;padding:32px;color:var(--gray-400)">Loading statement…</div></div>';
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+  await refreshMerchStatement();
+}
+
+function _stmtDateRange(month) {
+  var now = new Date();
+  var curMon = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  var from = month + '-01';
+  var to = month === curMon
+    ? now.toISOString().slice(0, 10)   // month-to-date: today
+    : month + '-' + String(new Date(month.split('-')[0], parseInt(month.split('-')[1]), 0).getDate()).padStart(2, '0');
+  return { from: from, to: to };
+}
+
+async function refreshMerchStatement() {
+  var monthEl = document.getElementById('stmt-month');
+  var month = monthEl ? monthEl.value : new Date().toISOString().slice(0,7);
+  var range = _stmtDateRange(month);
+  var from = range.from, to = range.to;
+  var preview = document.getElementById('stmt-preview');
+  if (!preview) return;
+  preview.innerHTML = '<div style="text-align:center;padding:24px;color:var(--gray-400)">Loading…</div>';
+  try {
+    var res = await apiFetch('/reports/merchant-statement?from=' + from + '&to=' + to + '&perPage=200');
+    var d = res && res.data;
+    if (!d) { preview.innerHTML = errorBox('Could not load statement data'); return; }
+    var fmt = function(n) { return '₦' + Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    var txns = d.transactions || [];
+    var wallet = d.wallet_activity || [];
+    // Summary cards
+    var summary = d.summary || {};
+    var summaryHtml =
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">' +
+        '<div class="stat-card"><div class="stat-label">Total Collections</div><div class="stat-value">' + fmt(summary.total_collections) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Fees Paid</div><div class="stat-value" style="color:var(--red)">' + fmt(summary.total_fees_paid) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Net Settled</div><div class="stat-value" style="color:var(--green)">' + fmt(summary.net_settled) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Transactions</div><div class="stat-value">' + txns.length + '</div></div>' +
+      '</div>';
+    // Transactions table
+    var txnRows = txns.length ? txns.map(function(t) {
+      return '<tr>' +
+        '<td class="mono" style="font-size:11px">' + (t.reference||'—') + '</td>' +
+        '<td style="font-size:12px">' + (t.date ? new Date(t.date).toLocaleDateString('en-NG') : '—') + '</td>' +
+        '<td style="font-size:12px">' + (t.channel||'—') + '</td>' +
+        '<td style="font-weight:600">' + fmt(t.amount) + '</td>' +
+        '<td style="color:var(--red);font-size:12px">' + fmt(t.fee) + '</td>' +
+        '<td style="font-weight:700;color:var(--green)">' + fmt(t.net) + '</td>' +
+        '<td>' + statusBadge(t.status==='SUCCESS'?'success':t.status==='FAILED'?'failed':'processing') + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gray-400)">No transactions in this period</td></tr>';
+    var txnHtml = '<div class="card" style="margin-bottom:16px"><div class="card-header"><div class="card-title">Transactions</div></div>' +
+      '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Date</th><th>Channel</th><th>Amount</th><th>Fee</th><th>Net</th><th>Status</th></tr></thead><tbody>' + txnRows + '</tbody></table></div></div>';
+    // Wallet activity table
+    var walletHtml = '';
+    if (wallet.length) {
+      var wRows = wallet.map(function(w) {
+        return '<tr>' +
+          '<td class="mono" style="font-size:11px">' + (w.reference||'—') + '</td>' +
+          '<td style="font-size:12px">' + (w.date ? new Date(w.date).toLocaleDateString('en-NG') : '—') + '</td>' +
+          '<td><span class="tag">' + (w.type||'—') + '</span></td>' +
+          '<td style="font-weight:600;color:' + (/CREDIT|REFUND/.test(w.type||'')?'var(--green)':'var(--red)') + '">' + fmt(w.amount) + '</td>' +
+          '<td style="font-size:12px;color:var(--gray-400)">' + fmt(w.balance_after) + '</td>' +
+          '<td style="font-size:12px">' + (w.description||'—') + '</td>' +
+        '</tr>';
+      }).join('');
+      walletHtml = '<div class="card"><div class="card-header"><div class="card-title">Wallet Activity</div></div>' +
+        '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Date</th><th>Type</th><th>Amount</th><th>Balance After</th><th>Description</th></tr></thead><tbody>' + wRows + '</tbody></table></div></div>';
+    }
+    preview.innerHTML = summaryHtml + txnHtml + walletHtml;
+  } catch(e) {
+    preview.innerHTML = errorBox('Failed to load statement: ' + e.message);
+  }
+}
+
 // ── MERCHANT OVERVIEW (merchant role) ─────────────────────────────────────────
 async function loadMerchantOverview() {
   const el = document.getElementById('main-content');
@@ -2508,7 +2660,32 @@ async function loadMerchantOverview() {
           </tbody>
         </table>
       </div>
-    </div>`;
+    </div>
+
+    ${(s?.wallet_activity||[]).length ? `
+    <div class="card section-gap">
+      <div class="card-header"><div class="card-title">Payout Wallet Activity</div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Type</th><th>Description</th><th class="right">Amount</th><th class="right">Balance After</th></tr></thead>
+          <tbody>
+            ${(s.wallet_activity||[]).map(w=>{
+              const isCredit = ['CREDIT','REFUND'].includes(w.type);
+              const color = isCredit ? '#16a34a' : '#dc2626';
+              const sign  = isCredit ? '+' : '-';
+              return `<tr>
+                <td style="font-size:12px;white-space:nowrap">${new Date(w.date).toLocaleDateString('en-NG')}</td>
+                <td><span class="tag" style="background:${isCredit?'#dcfce7':'#fee2e2'};color:${color}">${w.type}</span></td>
+                <td style="font-size:12px;color:var(--gray-500)">${esc(w.description||'')}</td>
+                <td class="right" style="font-weight:600;color:${color};white-space:nowrap">${sign}${fmtMajor(Math.abs(w.amount),'NGN')}</td>
+                <td class="right" style="font-size:12px;white-space:nowrap">${fmtMajor(w.balance_after,'NGN')}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+    `;
     renderMyApplicationBanner();   // surface review status / Activate prompt at the top
   } catch(e) {
     el.innerHTML = errorBox('Failed to load merchant data: ' + e.message);
@@ -5186,7 +5363,10 @@ async function loadPayoutLogs(page=1, filters={}) {
         '<div class="page-title">Payout Transaction Logs</div>' +
         '<div class="page-desc">' + fmtNum(meta.total) + ' payout items total</div>' +
       '</div>' +
-        '<div class="flex" style="gap:6px">' + statusBtns + '</div>' +
+        '<div class="flex" style="gap:6px;align-items:center;flex-wrap:wrap">' +
+          statusBtns +
+          '<button class="btn btn-outline btn-sm" onclick="exportPayoutLogsCsv()" style="margin-left:8px">&#8681; Export CSV</button>' +
+        '</div>' +
       '</div>' +
       '<div class="card"><div class="table-wrap"><table>' +
         '<thead><tr><th>Batch Ref</th><th>Merchant</th><th>Beneficiary</th><th>Amount</th><th>Fee</th><th>VAT</th><th>Status</th><th>Date</th></tr></thead>' +
@@ -5201,6 +5381,55 @@ async function loadPayoutLogs(page=1, filters={}) {
       '</div></div>';
   } catch(e) {
     el.innerHTML = errorBox('Failed to load payout logs: ' + e.message);
+  }
+}
+
+// ── EXPORT PAYOUT LOGS AS CSV ─────────────────────────────────────────────────
+async function exportPayoutLogsCsv() {
+  try {
+    var btn = document.querySelector('button[onclick="exportPayoutLogsCsv()"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Exporting…'; }
+
+    // Fetch up to 5000 items — enough for a full export
+    var res = await apiFetch('/payouts/logs?page=1&perPage=5000');
+    var items = (res && res.data && res.data.data) || [];
+
+    if (!items.length) { alert('No payout items to export.'); return; }
+
+    var headers = ['Batch Ref','Merchant','Merchant Code','Account Number','Account Name','Bank','Amount (NGN)','Fee (NGN)','VAT (NGN)','Status','Failure Reason','Date'];
+    var csvRows = [headers.join(',')];
+
+    items.forEach(function(i) {
+      csvRows.push([
+        i.batch_ref        || '',
+        i.business_name    || '',
+        i.merchant_code    || '',
+        i.account_number   || '',
+        i.account_name     || '',
+        i.bank_name        || i.bank_code || '',
+        i.amount != null   ? (i.amount / 100).toFixed(2) : '',
+        i.fee_naira != null ? Number(i.fee_naira).toFixed(2) : '',
+        i.vat_naira != null ? Number(i.vat_naira).toFixed(2) : '',
+        i.status           || '',
+        (i.failure_reason  || '').replace(/,/g, ';'),
+        i.created_at       ? new Date(i.created_at).toLocaleDateString('en-NG') : '',
+      ].map(function(v){ return '"' + String(v).replace(/"/g,'""') + '"'; }).join(','));
+    });
+
+    var blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+    var url  = URL.createObjectURL(blob);
+    var a    = document.createElement('a');
+    a.href   = url;
+    a.download = 'payout-logs-' + new Date().toISOString().split('T')[0] + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch(e) {
+    alert('Export failed: ' + e.message);
+  } finally {
+    var btn = document.querySelector('button[onclick="exportPayoutLogsCsv()"]');
+    if (btn) { btn.disabled = false; btn.innerHTML = '&#8681; Export CSV'; }
   }
 }
 
@@ -5293,9 +5522,8 @@ async function emailPayoutReport() { var b = _buildPayoutReportCsv(); if (!b) { 
 async function downloadStatement() {
   var monthEl = document.getElementById('stmt-month');
   var month = monthEl ? monthEl.value : new Date().toISOString().slice(0,7);
-  var from = month + '-01';
-  var lastDay = new Date(month.split('-')[0], parseInt(month.split('-')[1]), 0).getDate();
-  var to = month + '-' + String(lastDay).padStart(2,'0');
+  var range = _stmtDateRange(month);
+  var from = range.from, to = range.to;
 
   var btn = document.querySelector('[onclick="downloadStatement()"]');
   if (btn) { btn.textContent = '⟳ Generating...'; btn.disabled = true; }
@@ -5351,9 +5579,8 @@ async function downloadStatement() {
 async function emailStatement() {
   var monthEl = document.getElementById('stmt-month');
   var month = monthEl ? monthEl.value : new Date().toISOString().slice(0,7);
-  var from = month + '-01';
-  var lastDay = new Date(month.split('-')[0], parseInt(month.split('-')[1]), 0).getDate();
-  var to = month + '-' + String(lastDay).padStart(2,'0');
+  var range = _stmtDateRange(month);
+  var from = range.from, to = range.to;
 
   var user = getUser();
   if (!confirm('Email the ' + month + ' statement to ' + (user.email||'your registered email') + '?')) return;
@@ -5710,6 +5937,7 @@ function loadPageData(page) {
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
     case 'merch_settlements':   loadMerchSettlements(); break;
+    case 'merch_statement':     loadMerchStatement(); break;
     case 'merch_reconciliation': loadMerchReconciliation(); break;
     case 'merch_apikeys':       loadMerchApiKeys(); break;
     case 'merch_webhooks':      loadMerchWebhooks(); break;
@@ -6397,11 +6625,11 @@ async function viewBatch(id) {
     <div class="stat-card"><div class="stat-label">Total Payout</div><div class="stat-value">${fmtNaira(batch.total_amount)}</div><div class="stat-sub">To beneficiaries</div></div>
     <div class="stat-card"><div class="stat-label">Fee + VAT</div><div class="stat-value" style="font-size:18px">${fmtNaira(((batch.total_fee_naira||0)+(batch.total_vat_naira||0))*100)}</div><div class="stat-sub">${batch.fee_rate_pct||'0%'} + 7.5% VAT</div></div>
     <div class="stat-card"><div class="stat-label">Processed</div><div class="stat-value" style="color:var(--green)">${batch.processed_items}</div><div class="stat-sub">of ${batch.total_items}</div></div>
-    <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value" style="color:var(--red)">${batch.failed_items}</div><div class="stat-sub">${batch.failed_items > 0 ? 'Held for SA review' : 'None'}</div></div>
+    <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value" style="color:var(--red)">${batch.failed_items}</div><div class="stat-sub">${batch.failed_items > 0 ? 'Auto-refunded' : 'None'}</div></div>
   </div>
   ${feeInfo}
   ${reconCard}
-  ${batch.failed_items > 0 ? `<div class="warn-box" style="margin-bottom:12px;font-size:12px">&#9888; <strong>${batch.failed_items} payout(s) failed.</strong> Refunds are held — SA must approve in Pending Refunds before funds return to your wallet. To resend, download and upload as a NEW batch.</div>` : ''}
+  ${batch.failed_items > 0 ? `<div class="warn-box" style="margin-bottom:12px;font-size:12px">&#9888; <strong>${batch.failed_items} payout(s) failed.</strong> Funds have been refunded to your wallet. To resend, download and upload as a NEW batch.</div>` : ''}
   <div class="card">
     <div class="card-header"><div class="card-title">Payout Items</div>
       ${batch.failed_items > 0 ? `<button class="btn btn-lime btn-sm" onclick="downloadFailedForResend()">&#8681; Download failed for resend</button>` : ''}
@@ -6417,7 +6645,7 @@ async function viewBatch(id) {
           <td class="mono" style="font-size:12px;color:var(--gray-500)">${i.vat_naira > 0 ? fmtNaira(i.vat_naira*100) : '—'}</td>
           <td style="font-size:12px">${i.narration||'—'}</td>
           <td>${statusBadge(i.status)}${i.refund_status==='pending_review'?'<br><span style="font-size:10px;color:var(--amber)">refund pending SA</span>':i.refund_status==='approved'?'<br><span style="font-size:10px;color:var(--green)">refunded</span>':i.refund_status==='rejected'?'<br><span style="font-size:10px;color:var(--gray-400)">refund rejected</span>':''}</td>
-          <td style="font-size:12px;color:var(--red);max-width:200px">${i.failure_reason||'—'}</td>
+          <td style="font-size:12px;color:var(--red);max-width:200px">${i.status==='failed'?'Transaction failed — please retry':'—'}</td>
         </tr>`).join('')}
       </tbody>
     </table></div>

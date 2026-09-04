@@ -135,7 +135,7 @@ var NAV = {
   ],
   merchant: [
     { section:'Dashboard',    items:[{id:'merch_overview',icon:'layout-dashboard',label:'Dashboard'}]},
-    { section:'Transactions', items:[{id:'merch_transactions',icon:'arrow-right-left',label:'Transactions'},{id:'merch_settlements',icon:'circle-check',label:'Settlements'},{id:'merch_reconciliation',icon:'git-compare',label:'Reconciliation'}]},
+    { section:'Transactions', items:[{id:'merch_transactions',icon:'arrow-right-left',label:'Transactions'},{id:'merch_settlements',icon:'circle-check',label:'Settlements'},{id:'merch_statement',icon:'file-text',label:'Statement'},{id:'merch_reconciliation',icon:'git-compare',label:'Reconciliation'}]},
     { section:'Payment Links & QR Code', items:[{id:'merch_payments',icon:'qr-code',label:'Payment Links & QR Code'}]},
     { section:'Sell Online', items:[{id:'merch_sell_online',icon:'megaphone',label:'Sell Online'}]},
     { section:'Invoice & Collect', items:[{id:'merch_invoicing',icon:'receipt',label:'Invoice & Collect'}]},
