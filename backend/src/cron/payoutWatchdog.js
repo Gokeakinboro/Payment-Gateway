@@ -21,6 +21,22 @@ const STUCK_THRESHOLD_MS = 15 * 60 * 1000;
 const alreadyFixed = new Set();
 
 async function autoFix(item, railOrderId) {
+  // Guard: re-read live state before acting — another process (manual script, cron,
+  // or a prior watchdog tick) may have already refunded or settled this item.
+  const liveState = await p['$queryRawUnsafe'](
+    `SELECT status, refund_status FROM payout_items WHERE id = $1::uuid`, item.id
+  );
+  const live = liveState[0];
+  if (!live || live.status !== 'processing') {
+    logger.info({ itemId: item.id, status: live?.status }, '[watchdog] item no longer processing — skipping');
+    return { action: 'skipped', reason: `status is ${live?.status || 'gone'} — already handled` };
+  }
+  if (live.refund_status === 'approved' || live.refund_status === 'pending_review') {
+    logger.warn({ itemId: item.id, refund_status: live.refund_status },
+      '[watchdog] item already refunded — skipping to prevent double reversal');
+    return { action: 'skipped', reason: `refund_status=${live.refund_status} — double reversal prevented` };
+  }
+
   let parallelStatus = null;
   try {
     const r = await parallexTransfer.queryPayoutResult({ orderId: railOrderId });
