@@ -560,9 +560,9 @@ router.post('/batches', requireAuthOrApiKey,
       if (!merchant) return fail(res, 'No merchant account');
       // Recall window setting (raw — not in Prisma schema).
       const recallRow = await prisma.$queryRawUnsafe(
-        'SELECT payout_recall_window_minutes FROM merchants WHERE id = $1::uuid', merchantId);
-      const recallMinutes = Number(recallRow[0]?.payout_recall_window_minutes || 0);
-      const hasRecallWindow = recallMinutes > 0;
+        'SELECT payout_recall_window_seconds FROM merchants WHERE id = $1::uuid', merchantId);
+      const recallSeconds = Number(recallRow[0]?.payout_recall_window_seconds || 0);
+      const hasRecallWindow = recallSeconds > 0;
       // Payouts are prepaid — a merchant still undergoing KYC MAY run live payouts
       // as long as their wallet is funded (the balance check below is the safeguard).
       // Only a SUSPENDED or REJECTED account is hard-blocked from payouts.
@@ -636,7 +636,7 @@ router.post('/batches', requireAuthOrApiKey,
       // Recall window: pending_review delays dispatch so merchant can edit/recall.
       // NE is pre-fetched during the window to make dispatch Transfer-only.
       const scheduledAt = hasRecallWindow
-        ? new Date(Date.now() + recallMinutes * 60_000)
+        ? new Date(Date.now() + recallSeconds * 1_000)
         : (scheduled_at ? new Date(scheduled_at) : new Date());
       const batchStatus = hasRecallWindow ? 'pending_review' : 'needs_routing';
       const itemStatus  = 'queued';
@@ -806,7 +806,7 @@ router.post('/batches', requireAuthOrApiKey,
         wallet_balance_after: koboToNaira(walletAfterTotal),
         fee_rate_pct:         (feeRate * 100).toFixed(2) + '%',
       }, hasRecallWindow
-        ? `Batch queued — ${items.length} recipients, ₦${koboToNaira(totalAmount).toLocaleString('en-NG')}. Review window: ${recallMinutes} min. Dispatches at ${scheduledAt.toLocaleTimeString('en-NG')}.`
+        ? `Batch queued — ${items.length} recipients, ₦${koboToNaira(totalAmount).toLocaleString('en-NG')}. Review window: ${recallSeconds}s. Dispatches at ${scheduledAt.toLocaleTimeString('en-NG')}.`
         : `Payout received — ${items.length} beneficiaries, ₦${koboToNaira(totalAmount).toLocaleString('en-NG')} (fee: ₦${koboToNaira(totalFee).toLocaleString('en-NG')})`);
 
       if (hasRecallWindow) {
@@ -1706,8 +1706,6 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     })();
 
     let nOk = 0, nFail = 0, nPending = 0;
-    const transferQueue = [];   // { leg, nePrefetch }
-    let neProducerDone = false;
 
     const doLeg = async (leg, nePrefetch) => {
       // Kuda → PalmPay just-in-time funding:
@@ -1864,76 +1862,71 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
       firePayoutWebhook(hookLeg(leg), 'payout.failed', { errorMsg: reason });
     };
 
-    // NE Producer: runs NE for every Parallex interbank leg, pushes to transferQueue.
-    // 1. Pre-fetched session (< 60 min old): skip live NE — use cached session directly.
-    // 2. Live NE: try Parallex twice. If Parallex NE fails, fall back to PalmPay NE + JIT funding.
-    // 3. Both rails failed NE: queue with no session; doLeg will fail and auto-refund merchant.
-    const NE_TTL_MS = 60 * 60 * 1000; // 60 min — proven safe (TTL test 2026-08-30)
-    const neProducer = runPool(legs.map(leg => async () => {
+    // Chunk dispatch: split legs into DISPATCH_CHUNK_SIZE groups, each running its
+    // own NE+transfer pipeline concurrently. For a 50-item batch with chunk=10:
+    //   5 chunks × (4s NE + 10s transfer) all in parallel → ~14s total (vs ~30s serial).
+    const NE_TTL_MS   = 60 * 60 * 1000;
+    const CHUNK_SIZE  = Number(process.env.DISPATCH_CHUNK_SIZE || 10);
+    const NE_PER_CHUNK = Number(process.env.PARALLEX_NE_CONCURRENCY || 10);
+    const hasPrefetchedNE = legs.some(leg => leg.ne_session_id && leg.ne_fetched_at);
+    const xferSlots = Math.min(dispatchConcurrency(hasPrefetchedNE), CHUNK_SIZE);
+
+    // Resolve NE for one leg → returns { leg, nePrefetch } (same logic as before).
+    const resolveNE = async (leg) => {
       const rail = railById[leg.rail_id];
       const isParallexRail = rail && /parallex/i.test(rail.name || '');
       const isIntra = !leg.bank_code || leg.bank_code === (process.env.PARALLEX_TRANSFER_BANK_CODE || '999015');
-      if (!isParallexRail || isIntra || !plxAdapter || !plxAdapter.isConfigured()) {
-        transferQueue.push({ leg, nePrefetch: {} });
-        return;
-      }
-      // Kuda payouts: Parallex NIP can't resolve Kuda accounts (code 25).
-      // Try each JIT rail for NE in priority order (PalmPay first).
+      if (!isParallexRail || isIntra || !plxAdapter || !plxAdapter.isConfigured())
+        return { leg, nePrefetch: {} };
       const KUDA_CODES = new Set(['090267', '100002', '100']);
       if (KUDA_CODES.has(String(leg.bank_code || ''))) {
         for (const jitRail of jitRails) {
           const jitNE = await jitRail.adapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
-          if (jitNE.ok && jitNE.accountName) {
-            transferQueue.push({ leg, nePrefetch: { useJitRailId: jitRail.id, jitAccountName: jitNE.accountName,
-              jitSettleBank: jitRail.settle.bank_code, jitSettleAcct: jitRail.settle.account_number, jitAdapter: jitRail.adapter } });
-            return;
-          }
+          if (jitNE.ok && jitNE.accountName)
+            return { leg, nePrefetch: { useJitRailId: jitRail.id, jitAccountName: jitNE.accountName,
+              jitSettleBank: jitRail.settle.bank_code, jitSettleAcct: jitRail.settle.account_number, jitAdapter: jitRail.adapter } };
         }
-        // All JIT rails failed NE for Kuda — fall through to Parallex NE (will likely fail too).
       }
-      // Use pre-fetched NE session if still fresh.
       const neFetchedAt = leg.ne_fetched_at ? new Date(leg.ne_fetched_at).getTime() : 0;
-      if (neFetchedAt && (Date.now() - neFetchedAt) < NE_TTL_MS && leg.ne_session_id) {
-        transferQueue.push({ leg, nePrefetch: { neSessionId: leg.ne_session_id, neAccountName: leg.ne_account_name || '', neKycLevel: '' } });
-        return;
-      }
-      // Live NE with one immediate retry on failure before handing to Transfer.
+      if (neFetchedAt && (Date.now() - neFetchedAt) < NE_TTL_MS && leg.ne_session_id)
+        return { leg, nePrefetch: { neSessionId: leg.ne_session_id, neAccountName: leg.ne_account_name || '', neKycLevel: '' } };
       let ne = await plxAdapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
       if (!ne.ok || !ne.sessionId) {
         await new Promise(r => setTimeout(r, 2000));
         ne = await plxAdapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
       }
-      if (ne.ok && ne.sessionId) {
-        transferQueue.push({ leg, nePrefetch: { neSessionId: ne.sessionId, neAccountName: ne.accountName, neKycLevel: ne.kycLevel || '' } });
-        return;
-      }
-      // Parallex NE failed — try each JIT rail in priority order.
+      if (ne.ok && ne.sessionId)
+        return { leg, nePrefetch: { neSessionId: ne.sessionId, neAccountName: ne.accountName, neKycLevel: ne.kycLevel || '' } };
       for (const jitRail of jitRails) {
         const jitNE = await jitRail.adapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
-        if (jitNE.ok && jitNE.accountName) {
-          transferQueue.push({ leg, nePrefetch: { useJitRailId: jitRail.id, jitAccountName: jitNE.accountName,
-            jitSettleBank: jitRail.settle.bank_code, jitSettleAcct: jitRail.settle.account_number, jitAdapter: jitRail.adapter } });
-          return;
-        }
+        if (jitNE.ok && jitNE.accountName)
+          return { leg, nePrefetch: { useJitRailId: jitRail.id, jitAccountName: jitNE.accountName,
+            jitSettleBank: jitRail.settle.bank_code, jitSettleAcct: jitRail.settle.account_number, jitAdapter: jitRail.adapter } };
       }
-      // All rails failed NE — queue with no session; doLeg will fail and auto-refund.
-      transferQueue.push({ leg, nePrefetch: {} });
-    }), Number(process.env.PARALLEX_NE_CONCURRENCY || 10)).then(() => { neProducerDone = true; });
+      return { leg, nePrefetch: {} };
+    };
 
-    // Transfer consumer: 30 concurrent when NE pre-fetched, 8 when live NE.
-    const hasPrefetchedNE = legs.some(leg => leg.ne_session_id && leg.ne_fetched_at);
-    const concurrency = dispatchConcurrency(hasPrefetchedNE);
-    const transferConsumers = Promise.all(
-      Array.from({ length: concurrency }, async () => {
-        while (!neProducerDone || transferQueue.length > 0) {
-          if (transferQueue.length === 0) { await new Promise(r => setTimeout(r, 20)); continue; }
-          const item = transferQueue.shift();
+    // Split all legs into chunks and dispatch each chunk concurrently.
+    const chunks = [];
+    for (let i = 0; i < legs.length; i += CHUNK_SIZE) chunks.push(legs.slice(i, i + CHUNK_SIZE));
+
+    await Promise.all(chunks.map(async (chunk) => {
+      const queue = [];
+      let done = false;
+      const neP = runPool(chunk.map(leg => async () => {
+          queue.push(await resolveNE(leg).catch(() => ({ leg, nePrefetch: {} })));
+        }), Math.min(NE_PER_CHUNK, chunk.length))
+        .then(() => { done = true; })
+        .catch((e) => { done = true; throw e; });
+      const xfer = Promise.all(Array.from({ length: Math.min(xferSlots, chunk.length) }, async () => {
+        while (!done || queue.length > 0) {
+          if (queue.length === 0) { await new Promise(r => setTimeout(r, 20)); continue; }
+          const item = queue.shift();
           if (item) await doLeg(item.leg, item.nePrefetch);
         }
-      })
-    );
-
-    await Promise.all([neProducer, transferConsumers]);
+      }));
+      await Promise.all([neP, xfer]);
+    }));
     // Batch is terminal only once nothing is still in flight; pending → 'processing'.
     const finalStatus = nPending > 0 ? 'processing'
       : nFail === 0 ? 'completed'
@@ -2079,10 +2072,18 @@ async function autoDispatchDuePayouts({ limit = 25 } = {}) {
     FROM claimed WHERE payout_batches.id = claimed.id
     RETURNING payout_batches.id`;
   let fired = 0, held = 0;
-  for (const b of due) {
-    try { await dispatchBatch({ batchId: b.id }); fired++; }
-    catch (e) { held++; if (!e || !e._client) logger.error({ err: e, batchId: b.id }, 'auto-dispatch payout failed'); }
-  }
+  // Concurrent batch dispatch — run up to BATCH_DISPATCH_CONCURRENCY batches in parallel.
+  // Sequential was the bottleneck for high-volume merchants (e.g. 160 txns/min).
+  const BATCH_CONCURRENCY = Number(process.env.BATCH_DISPATCH_CONCURRENCY || 10);
+  const queue = [...due];
+  await Promise.all(Array.from({ length: Math.min(BATCH_CONCURRENCY, due.length) }, async () => {
+    while (queue.length > 0) {
+      const b = queue.shift();
+      if (!b) break;
+      try { await dispatchBatch({ batchId: b.id }); fired++; }
+      catch (e) { held++; if (!e || !e._client) logger.error({ err: e, batchId: b.id }, 'auto-dispatch payout failed'); }
+    }
+  }));
   return { considered: due.length, fired, held };
 }
 
@@ -2335,8 +2336,8 @@ router.get('/settings', requireAuth, async (req, res, next) => {
     const merchantId = req.user.merchant?.id;
     if (!merchantId) return fail(res, 'No merchant account');
     const rows = await prisma.$queryRawUnsafe(
-      'SELECT payout_recall_window_minutes FROM merchants WHERE id = $1::uuid', merchantId);
-    ok(res, { recall_window_minutes: Number(rows[0]?.payout_recall_window_minutes || 0) });
+      'SELECT payout_recall_window_seconds FROM merchants WHERE id = $1::uuid', merchantId);
+    ok(res, { recall_window_seconds: Number(rows[0]?.payout_recall_window_seconds || 0) });
   } catch (e) { next(e); }
 });
 
@@ -2345,14 +2346,15 @@ router.patch('/settings', requireAuth, async (req, res, next) => {
   try {
     const merchantId = req.user.merchant?.id;
     if (!merchantId) return fail(res, 'No merchant account');
-    const { recall_window_minutes } = req.body || {};
-    const allowed = [0, 15, 30, 60];
-    if (!allowed.includes(Number(recall_window_minutes))) return fail(res, `recall_window_minutes must be one of: ${allowed.join(', ')}`, 'INVALID');
+    const { recall_window_seconds } = req.body || {};
+    const secs = Number(recall_window_seconds);
+    if (!Number.isInteger(secs) || secs < 0 || secs > 3600) return fail(res, 'recall_window_seconds must be an integer between 0 and 3600', 'INVALID');
     await prisma.$executeRawUnsafe(
-      'UPDATE merchants SET payout_recall_window_minutes = $1 WHERE id = $2::uuid', Number(recall_window_minutes), merchantId);
-    ok(res, { recall_window_minutes: Number(recall_window_minutes) },
-      recall_window_minutes > 0
-        ? `Recall window enabled — new batches will have a ${recall_window_minutes}-minute review period before dispatch.`
+      'UPDATE merchants SET payout_recall_window_seconds = $1, payout_recall_window_minutes = $2 WHERE id = $3::uuid',
+      secs, Math.round(secs / 60), merchantId);
+    ok(res, { recall_window_seconds: secs },
+      secs > 0
+        ? `Recall window enabled — new batches will have a ${secs}s review period before dispatch.`
         : 'Recall window disabled — batches will dispatch immediately.');
   } catch (e) { next(e); }
 });
@@ -2360,16 +2362,17 @@ router.patch('/settings', requireAuth, async (req, res, next) => {
 // ── PATCH /api/v1/payouts/admin/merchants/:id/payout-settings — SA per-merchant ──
 router.patch('/admin/merchants/:id/payout-settings', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
-    const { recall_window_minutes } = req.body || {};
-    const allowed = [0, 15, 30, 60];
-    if (recall_window_minutes !== undefined && !allowed.includes(Number(recall_window_minutes))) return fail(res, `recall_window_minutes must be one of: ${allowed.join(', ')}`, 'INVALID');
-    if (recall_window_minutes !== undefined) {
+    const { recall_window_seconds } = req.body || {};
+    if (recall_window_seconds !== undefined) {
+      const secs = Number(recall_window_seconds);
+      if (!Number.isInteger(secs) || secs < 0 || secs > 3600) return fail(res, 'recall_window_seconds must be an integer between 0 and 3600', 'INVALID');
       await prisma.$executeRawUnsafe(
-        'UPDATE merchants SET payout_recall_window_minutes = $1 WHERE id = $2::uuid', Number(recall_window_minutes), req.params.id);
+        'UPDATE merchants SET payout_recall_window_seconds = $1, payout_recall_window_minutes = $2 WHERE id = $3::uuid',
+        secs, Math.round(secs / 60), req.params.id);
     }
     const rows = await prisma.$queryRawUnsafe(
-      'SELECT payout_recall_window_minutes FROM merchants WHERE id = $1::uuid', req.params.id);
-    ok(res, { recall_window_minutes: Number(rows[0]?.payout_recall_window_minutes || 0) }, 'Payout settings updated.');
+      'SELECT payout_recall_window_seconds FROM merchants WHERE id = $1::uuid', req.params.id);
+    ok(res, { recall_window_seconds: Number(rows[0]?.payout_recall_window_seconds || 0) }, 'Payout settings updated.');
   } catch (e) { next(e); }
 });
 
@@ -2513,8 +2516,8 @@ async function prefetchNEForBatch(batchId) {
     "SELECT id, bank_code, account_number FROM payout_items WHERE batch_id = $1::uuid AND status = 'queued'", batchId);
   const interbank = items.filter(i => i.bank_code && i.bank_code !== BANK_CODE_PARALLEX);
 
-  // 5 concurrent NE calls during the window — well under DO relay ceiling.
-  const CONCURRENCY = 5;
+  // 10 concurrent NE calls during the window — balanced against relay ceiling.
+  const CONCURRENCY = Number(process.env.PREFETCH_NE_CONCURRENCY || 10);
   for (let i = 0; i < interbank.length; i += CONCURRENCY) {
     await Promise.all(interbank.slice(i, i + CONCURRENCY).map(async item => {
       try {
