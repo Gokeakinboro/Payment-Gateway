@@ -2585,7 +2585,7 @@ async function refreshMerchStatement() {
           '<td class="mono" style="font-size:11px">' + (w.reference||'—') + '</td>' +
           '<td style="font-size:12px">' + (w.date ? new Date(w.date).toLocaleDateString('en-NG') : '—') + '</td>' +
           '<td><span class="tag">' + (w.type||'—') + '</span></td>' +
-          '<td style="font-weight:600;color:' + (/CREDIT|REFUND/.test(w.type||'')?'var(--green)':'var(--red)') + '">' + fmt(w.amount) + '</td>' +
+          '<td style="font-weight:600;color:' + (/CREDIT|REFUND|REVERSAL/.test(w.type||'')?'var(--green)':'var(--red)') + '">' + fmt(w.amount) + '</td>' +
           '<td style="font-size:12px;color:var(--gray-400)">' + fmt(w.balance_after) + '</td>' +
           '<td style="font-size:12px">' + (w.description||'—') + '</td>' +
         '</tr>';
@@ -2670,7 +2670,7 @@ async function loadMerchantOverview() {
           <thead><tr><th>Date</th><th>Type</th><th>Description</th><th class="right">Amount</th><th class="right">Balance After</th></tr></thead>
           <tbody>
             ${(s.wallet_activity||[]).map(w=>{
-              const isCredit = ['CREDIT','REFUND'].includes(w.type);
+              const isCredit = ['CREDIT','REFUND','REVERSAL'].includes(w.type);
               const color = isCredit ? '#16a34a' : '#dc2626';
               const sign  = isCredit ? '+' : '-';
               return `<tr>
