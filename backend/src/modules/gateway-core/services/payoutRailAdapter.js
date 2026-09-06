@@ -6,13 +6,15 @@
 // queryPayoutResult({orderId}) · nameEnquiry() · getBanks().
 // Returns the adapter ONLY when it's configured (env set), else null — an
 // unconfigured/unknown rail behaves exactly as before (no adapter → not sent).
-const palmpay = require('./palmpayService');
+const palmpay          = require('./palmpayService');
 const parallexTransfer = require('./parallexTransferService');
+const opay             = require('./opayService');
 
 function payoutAdapterForName(name) {
   const n = (name || '').toLowerCase();
-  if (/palmpay/.test(n)  && palmpay.isConfigured())          return palmpay;
-  if (/parallex/.test(n) && parallexTransfer.isConfigured()) return parallexTransfer;
+  if (/palmpay/.test(n)  && palmpay.isConfigured())              return palmpay;
+  if (/parallex/.test(n) && parallexTransfer.isConfigured())     return parallexTransfer;
+  if (/opay/.test(n)     && opay.isPayoutConfigured())           return opay;
   return null;
 }
 

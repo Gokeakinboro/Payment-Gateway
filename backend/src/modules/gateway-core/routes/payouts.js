@@ -22,6 +22,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 const ON_US_CODES_BY_RAIL = {
   palmpay:  new Set(['100033']),
   parallex: new Set([process.env.PARALLEX_TRANSFER_BANK_CODE || '999015']),
+  opay:     new Set(['100004']),  // OPay NIP institution code (CBN 304/305/328)
 };
 // Union of all on-us codes across every rail — used for merchant fee pricing at
 // payout creation time (before a specific rail is assigned). A destination that
@@ -1757,11 +1758,31 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         nPending++;
         await recordRailResult(rail, { ok: true });
       } else {
+        // Parallex rejected synchronously — try PalmPay as fallback before writing the failure.
+        // Guard: only when Parallex explicitly rejected (r.ok false), not on a pending/in-flight leg,
+        // and only once (usePalmPayRailId prevents re-entry on the recursive PalmPay call).
+        if (!r.ok && !nePrefetch.usePalmPayRailId && /parallex/i.test((rail && rail.name) || '') && palmpay.isConfigured()) {
+          const pmRailFb = Object.values(railById).find(r2 => /palmpay/i.test(r2.name || ''));
+          if (pmRailFb) {
+            const palmNEFb = await palmpay.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
+            if (palmNEFb.ok && palmNEFb.accountName) {
+              return doLeg(leg, { usePalmPayRailId: pmRailFb.id, palmPayAccountName: palmNEFb.accountName });
+            }
+          }
+        }
         const reason = r.ok ? `Rail returned orderStatus ${os}` : (r.reason || 'failed');
         const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
         const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
         await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
-        await prisma.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW() WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)`;
+        const wUpd = await prisma.$queryRaw`
+          UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW()
+          WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)
+          RETURNING id, rail_id, balance - ${merchBack} AS balance_before, balance AS balance_after`;
+        if (wUpd && wUpd[0]) {
+          const w = wUpd[0];
+          await prisma.$executeRaw`INSERT INTO wallet_ledger (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
+            VALUES (${batch.merchant_id}::uuid, ${w.rail_id}::uuid, 'REVERSAL', ${merchBack}, ${w.balance_before}, ${w.balance_after}, ${leg.rail_order_id}, ${'Payout failed — auto-refunded: ' + String(leg.rail_order_id || '').slice(0, 60)}, NULL, NOW())`;
+        }
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
         await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='approved', refund_reviewed_at=NOW(), refund_reviewed_by='auto', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
         nFail++;
@@ -1776,7 +1797,15 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
       const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
       const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
       await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
-      await prisma.$executeRaw`UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW() WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)`;
+      const wUpd = await prisma.$queryRaw`
+        UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW()
+        WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)
+        RETURNING id, rail_id, balance - ${merchBack} AS balance_before, balance AS balance_after`;
+      if (wUpd && wUpd[0]) {
+        const w = wUpd[0];
+        await prisma.$executeRaw`INSERT INTO wallet_ledger (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
+          VALUES (${batch.merchant_id}::uuid, ${w.rail_id}::uuid, 'REVERSAL', ${merchBack}, ${w.balance_before}, ${w.balance_after}, ${leg.rail_order_id}, ${'Payout failed — auto-refunded: ' + String(leg.rail_order_id || '').slice(0, 60)}, NULL, NOW())`;
+      }
       await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
       await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='approved', refund_reviewed_at=NOW(), refund_reviewed_by='auto', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
       nFail++;
@@ -1785,8 +1814,8 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
 
     // NE Producer: runs NE for every Parallex interbank leg, pushes to transferQueue.
     // 1. Pre-fetched session (< 60 min old): skip live NE — use cached session directly.
-    // 2. Live NE needed: try once; on failure proceed with null session (Option B —
-    //    Transfer is the authoritative failure signal, not NE).
+    // 2. Live NE: try Parallex twice. If Parallex NE fails, fall back to PalmPay NE + JIT funding.
+    // 3. Both rails failed NE: queue with no session; doLeg will fail and auto-refund merchant.
     const NE_TTL_MS = 60 * 60 * 1000; // 60 min — proven safe (TTL test 2026-08-30)
     const neProducer = runPool(legs.map(leg => async () => {
       const rail = railById[leg.rail_id];
@@ -1821,9 +1850,23 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         await new Promise(r => setTimeout(r, 2000));
         ne = await plxAdapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
       }
-      transferQueue.push({ leg, nePrefetch: ne.ok && ne.sessionId
-        ? { neSessionId: ne.sessionId, neAccountName: ne.accountName, neKycLevel: ne.kycLevel || '' }
-        : {} });
+      if (ne.ok && ne.sessionId) {
+        transferQueue.push({ leg, nePrefetch: { neSessionId: ne.sessionId, neAccountName: ne.accountName, neKycLevel: ne.kycLevel || '' } });
+        return;
+      }
+      // Parallex NE failed — fall back to PalmPay rail (JIT fund + fire via PalmPay).
+      if (palmpay.isConfigured()) {
+        const pmRail = Object.values(railById).find(r => /palmpay/i.test(r.name || ''));
+        if (pmRail) {
+          const palmNE = await palmpay.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
+          if (palmNE.ok && palmNE.accountName) {
+            transferQueue.push({ leg, nePrefetch: { usePalmPayRailId: pmRail.id, palmPayAccountName: palmNE.accountName } });
+            return;
+          }
+        }
+      }
+      // Both rails failed NE — queue with no session; doLeg will fail and auto-refund.
+      transferQueue.push({ leg, nePrefetch: {} });
     }), Number(process.env.PARALLEX_NE_CONCURRENCY || 10)).then(() => { neProducerDone = true; });
 
     // Transfer consumer: 30 concurrent when NE pre-fetched, 8 when live NE.

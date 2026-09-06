@@ -482,15 +482,23 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
         failure_reason:  t.failureReason,
         metadata:        t.metadata,
       })),
-      wallet_activity: ledgerEntries.map(l => ({
-        reference:       l.reference,
-        date:            l.createdAt,
-        type:            l.entryType,
-        amount:          Number(l.amount) / 100,
-        balance_before:  Number(l.balanceBefore) / 100,
-        balance_after:   Number(l.balanceAfter) / 100,
-        description:     l.description,
-      })),
+      wallet_activity: ledgerEntries
+        .slice()
+        .sort((a, b) => {
+          const tA = new Date(a.createdAt).getTime(), tB = new Date(b.createdAt).getTime();
+          if (tB !== tA) return tB - tA;
+          const order = { DEBIT: 1, FEE: 2, VAT: 3, CREDIT: 4, REVERSAL: 5 };
+          return (order[a.entryType] || 9) - (order[b.entryType] || 9);
+        })
+        .map(l => ({
+          reference:       l.reference,
+          date:            l.createdAt,
+          type:            l.entryType,
+          amount:          Number(l.amount) / 100,
+          balance_before:  Number(l.balanceBefore) / 100,
+          balance_after:   Number(l.balanceAfter) / 100,
+          description:     l.description,
+        })),
     });
   } catch (e) { next(e); }
 });

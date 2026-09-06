@@ -14,17 +14,43 @@ router.get('/dashboard', requireAuth, requireSuperAdmin, async (req,res,next) =>
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
 
     // Group by currency so NGN (local) and USD (international cards) stay separate.
-    const [todayGroups, mtdGroups, merchantCount, aggCount, kycPending] = await Promise.all([
+    // Payout items (payout_batches/payout_items) are separate from transactions but
+    // contribute to platform volume, fees earned, and Paylode margin.
+    const [todayGroups, mtdGroups, merchantCount, aggCount, kycPending,
+           todayPayouts, mtdPayouts] = await Promise.all([
       prisma.transaction.groupBy({ by:['currency'], where:{createdAt:{gte:today},isSandbox:false,status:'SUCCESS'}, _count:true, _sum:{amount:true,merchantFee:true,paylodeMargin:true} }),
       prisma.transaction.groupBy({ by:['currency'], where:{createdAt:{gte:monthStart},isSandbox:false,status:'SUCCESS'}, _count:true, _sum:{amount:true,merchantFee:true,paylodeMargin:true} }),
       prisma.merchant.count({ where:{isActive:true} }),
       prisma.aggregator.count({ where:{status:'active'} }),
       prisma.kycSubmission.count({ where:{status:{in:['submitted','in_review']}} }),
+      // Payout totals: volume + fee charged to merchant + Paylode margin (fee − rail cost)
+      prisma.$queryRaw`
+        SELECT COALESCE(SUM(pi.amount),0)::bigint    AS volume,
+               COALESCE(SUM(pi.item_fee),0)::bigint  AS fees,
+               COALESCE(SUM(pi.item_fee),0)::bigint - COALESCE(SUM(rd.rail_fee_sum),0)::bigint AS paylode_net,
+               COUNT(*)::int                          AS txn_count
+        FROM payout_items pi
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(rail_fee),0) AS rail_fee_sum
+          FROM rail_disbursements WHERE payout_item_id = pi.id AND status = 'success'
+        ) rd ON true
+        WHERE pi.status = 'success' AND pi.created_at >= ${today}`,
+      prisma.$queryRaw`
+        SELECT COALESCE(SUM(pi.amount),0)::bigint    AS volume,
+               COALESCE(SUM(pi.item_fee),0)::bigint  AS fees,
+               COALESCE(SUM(pi.item_fee),0)::bigint - COALESCE(SUM(rd.rail_fee_sum),0)::bigint AS paylode_net,
+               COUNT(*)::int                          AS txn_count
+        FROM payout_items pi
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(rail_fee),0) AS rail_fee_sum
+          FROM rail_disbursements WHERE payout_item_id = pi.id AND status = 'success'
+        ) rd ON true
+        WHERE pi.status = 'success' AND pi.created_at >= ${monthStart}`,
     ]);
 
     // Always return both NGN and USD blocks (USD shows zeros until intl cards transact).
     const blankCcy = () => ({ txn_count:0, volume:0, fees:0, paylode_net:0 });
-    const shape = (groups) => {
+    const shape = (groups, payoutRow) => {
       const out = { NGN: blankCcy(), USD: blankCcy() };
       groups.forEach(g => {
         const c = (g.currency === 'USD') ? 'USD' : 'NGN';
@@ -35,11 +61,19 @@ router.get('/dashboard', requireAuth, requireSuperAdmin, async (req,res,next) =>
           paylode_net: Number(g._sum.paylodeMargin||0)/100,
         };
       });
+      // Fold in payout activity (always NGN)
+      if (payoutRow) {
+        const p = payoutRow[0] || {};
+        out.NGN.txn_count   += Number(p.txn_count   || 0);
+        out.NGN.volume      += Number(p.volume      || 0) / 100;
+        out.NGN.fees        += Number(p.fees        || 0) / 100;
+        out.NGN.paylode_net += Number(p.paylode_net || 0) / 100;
+      }
       return out;
     };
 
-    const todayBy = shape(todayGroups);
-    const mtdBy   = shape(mtdGroups);
+    const todayBy = shape(todayGroups, todayPayouts);
+    const mtdBy   = shape(mtdGroups,   mtdPayouts);
 
     ok(res, {
       // by_currency blocks (new — separated)
