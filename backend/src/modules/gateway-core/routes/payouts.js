@@ -22,7 +22,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 const ON_US_CODES_BY_RAIL = {
   palmpay:  new Set(['100033']),
   parallex: new Set([process.env.PARALLEX_TRANSFER_BANK_CODE || '999015']),
-  opay:     new Set(['100004']),  // OPay NIP institution code (CBN 304/305/328)
+  opay:     new Set(['100004', '328']),  // institution code + CBN code — both settle on-us via OPay rail
 };
 // Union of all on-us codes across every rail — used for merchant fee pricing at
 // payout creation time (before a specific rail is assigned). A destination that
@@ -718,30 +718,44 @@ router.post('/batches', requireAuthOrApiKey,
               (${merchantId}::uuid, ${primaryRail.rail_id}::uuid, 'VAT', ${totalVat}, ${afterFee}, ${afterAll}, ${batchRef},
                ${'VAT on payout fee (7.5%)'}, ${req.user.id}::uuid, NOW())`;
 
-          // Smart routing: OPay-destined txns → OPay on-us rail (near-zero cost, high SR);
-          // everything else uses the merchant's configured route rail(s).
-          // OPay rail is only used when it exists in payment_rails as LIVE + payout_enabled.
-          const opayRailRow = await tx.paymentRail.findFirst({
-            where: { name: { contains: 'opay', mode: 'insensitive' }, status: 'LIVE', payoutEnabled: true },
+          // Smart routing: for each item, check if any LIVE payout rail offers on-us
+          // settlement for the destination bank (matched via ON_US_CODES_BY_RAIL).
+          // On-us = internal settlement, near-zero NIP cost, highest SR.
+          // To add a new rail: add its on-us bank codes to ON_US_CODES_BY_RAIL above
+          // and insert its row into payment_rails — the router picks it up automatically.
+          const allLiveRails = await tx.paymentRail.findMany({
+            where: { status: 'LIVE', payoutEnabled: true },
             select: { id: true, name: true, dailyValueCap: true },
           });
-          const opayRouteEntry = opayRailRow
-            ? { rail_id: opayRailRow.id, rail_name: opayRailRow.name, daily_value_cap: opayRailRow.dailyValueCap, pct: 0 }
-            : null;
 
-          // Count non-OPay items for weighted-block proportional assignment
-          const nonOpayCount = opayRouteEntry
-            ? itemsWithFees.filter(it => !isOnUsBank(it.bank_code, 'opay')).length
-            : itemsWithFees.length;
-          let nonOpayIdx = 0;
+          // Build bank_code → rail lookup from ON_US_CODES_BY_RAIL + live rails.
+          // Parallex is the default fallback — exclude it from the on-us map so
+          // on-us routing only fires for specialist rails (PalmPay, OPay, etc.).
+          const onUsRailFor = new Map();  // bank_code → { rail_id, rail_name, daily_value_cap, pct }
+          for (const rail of allLiveRails) {
+            const nameLower = (rail.name || '').toLowerCase();
+            for (const [key, codes] of Object.entries(ON_US_CODES_BY_RAIL)) {
+              if (key === 'parallex') continue;  // Parallex = default, never on-us route
+              if (nameLower.includes(key)) {
+                for (const code of codes) {
+                  if (!onUsRailFor.has(code))
+                    onUsRailFor.set(code, { rail_id: rail.id, rail_name: rail.name, daily_value_cap: rail.dailyValueCap, pct: 0 });
+                }
+              }
+            }
+          }
+
+          // Count non-on-us items for weighted-block proportional assignment
+          const nonOnUsCount = itemsWithFees.filter(it => !onUsRailFor.has(String(it.bank_code || ''))).length;
+          let nonOnUsIdx = 0;
 
           const railAssignment = itemsWithFees.map((item) => {
-            // OPay-destined: route to OPay on-us rail regardless of merchant config
-            if (opayRouteEntry && isOnUsBank(item.bank_code, 'opay')) return opayRouteEntry;
-            // Non-OPay: weighted block across merchant's configured route rails
-            if (routeRails.length === 1) { nonOpayIdx++; return routeRails[0]; }
-            const progress = nonOpayCount > 0 ? (nonOpayIdx + 1) / nonOpayCount : 1;
-            nonOpayIdx++;
+            const onUsRail = onUsRailFor.get(String(item.bank_code || ''));
+            if (onUsRail) return onUsRail;
+            // Non-on-us: weighted block across merchant's configured route rails
+            if (routeRails.length === 1) { nonOnUsIdx++; return routeRails[0]; }
+            const progress = nonOnUsCount > 0 ? (nonOnUsIdx + 1) / nonOnUsCount : 1;
+            nonOnUsIdx++;
             let cumPct = 0;
             for (const rr of routeRails) {
               cumPct += rr.pct / 100;
