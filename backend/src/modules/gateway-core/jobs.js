@@ -80,6 +80,23 @@ function startCoreJobs({ logger }) {
     logger.error({ err: e }, '  ✗ payout auto-dispatch failed to start (continuing)');
   }
 
+  // Stuck payout monitor — every 5 min, finds processing batches with unsent legs
+  // (dispatch crashed after setup tx, before any rail transfer) and recovers them:
+  // returns float, deletes pending disbursements, resets items + batch for re-dispatch.
+  // Sends an alert email when anything is found. Complements the 30s Step-0 recovery
+  // inside autoDispatchDuePayouts (which is the primary fix path; this is the safety net).
+  try {
+    const { recoverStuckPayouts, INTERVAL_S: STUCK_MS } = require('../../cron/stuckPayoutCron');
+    const stuckRun = () => recoverStuckPayouts(prisma)
+      .then(r => { if (r && r.found) logger.warn(r, '[stuck-payout-cron] cycle complete'); })
+      .catch(e => logger.error({ err: e }, '[stuck-payout-cron] run error'));
+    setTimeout(stuckRun, 2 * 60 * 1000);  // first check 2 min after boot
+    setInterval(stuckRun, STUCK_MS);
+    logger.info('  Stuck payout monitor every 5 min (worker 0)');
+  } catch (e) {
+    logger.error({ err: e }, '  ✗ stuck payout monitor failed to start (continuing)');
+  }
+
   // Daily settlement GENERATION for the prior NIGERIAN day, at 00:01 Africa/Lagos, so
   // settlements populate without a manual "Run Batch". The day boundary is Lagos-keyed
   // (see settlementProcess.js). Idempotent (skips days already settled) → the boot
