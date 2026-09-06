@@ -32,7 +32,7 @@ const INTERVAL_S = 5 * 60 * 1000; // 5 minutes
 async function recoverStuckPayouts() {
   // ── 1. Find stuck batches ──────────────────────────────────────────────────
   const stuck = await p.$queryRaw`
-    SELECT DISTINCT
+    SELECT
       pb.id::text          AS id,
       pb.batch_ref,
       pb.merchant_id::text AS merchant_id,
