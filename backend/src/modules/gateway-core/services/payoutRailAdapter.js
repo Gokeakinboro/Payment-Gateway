@@ -13,6 +13,11 @@ function payoutAdapterForName(name) {
   const n = (name || '').toLowerCase();
   if (/palmpay/.test(n)  && palmpay.isConfigured())          return palmpay;
   if (/parallex/.test(n) && parallexTransfer.isConfigured()) return parallexTransfer;
+  // OPay — loaded only when the service file exists and is configured
+  try {
+    const opay = require('./opayService');
+    if (/opay/.test(n) && opay.isConfigured()) return opay;
+  } catch (_) {}
   return null;
 }
 
