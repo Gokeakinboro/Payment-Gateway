@@ -62,12 +62,21 @@ async function autoFix(item, railOrderId) {
   }
 
   // Credit merchant wallet + write REVERSAL ledger
-  const walletRows = await p['$queryRawUnsafe'](
-    `UPDATE merchant_wallets SET balance=balance+$1, updated_at=NOW()
-     WHERE merchant_id=$2::uuid
-     RETURNING id, balance-$1 AS bal_before, balance AS bal_after`,
-    refundKobo, item.merchantId
-  );
+  // Target the specific rail wallet (leg.railId); fall back to the highest-balance
+  // wallet if the leg has no railId. Never update ALL wallets — that causes over-refunds.
+  const walletRows = item.leg?.railId
+    ? await p['$queryRawUnsafe'](
+        `UPDATE merchant_wallets SET balance=balance+$1, updated_at=NOW()
+         WHERE merchant_id=$2::uuid AND rail_id=$3::uuid
+         RETURNING id, balance-$1 AS bal_before, balance AS bal_after`,
+        refundKobo, item.merchantId, item.leg.railId
+      )
+    : await p['$queryRawUnsafe'](
+        `UPDATE merchant_wallets SET balance=balance+$1, updated_at=NOW()
+         WHERE id=(SELECT id FROM merchant_wallets WHERE merchant_id=$2::uuid ORDER BY balance DESC LIMIT 1)
+         RETURNING id, balance-$1 AS bal_before, balance AS bal_after`,
+        refundKobo, item.merchantId
+      );
   const wallet = walletRows[0];
   if (wallet) {
     const railId = item.leg?.railId;
@@ -115,7 +124,7 @@ async function check() {
       FROM payout_items pi
       JOIN payout_batches pb ON pb.id = pi.batch_id
       JOIN merchants m ON m.id = pi.merchant_id
-      LEFT JOIN rail_disbursements rd ON rd.payout_item_id = pi.id
+      LEFT JOIN rail_disbursements rd ON rd.payout_item_id = pi.id AND rd.sent_at IS NOT NULL
       WHERE pi.status = 'processing' AND pi.created_at < $1
     `, cutoff);
 
