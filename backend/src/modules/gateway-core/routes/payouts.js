@@ -1652,7 +1652,15 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     const { payoutAdapterForName } = require('../services/payoutRailAdapter');
     const { firePayoutWebhook } = require('../services/payoutSettle');
     const railAdapter = (name) => payoutAdapterForName(name);
-    // Load all LIVE non-Parallex payout rails into railById (for JIT reroutes).
+    // JIT settle accounts — Parallex NIP funds these when a non-Parallex rail is used
+    // for a txn that Parallex cannot complete on its own. Keep in sync with
+    // railFundingCron.js RAIL_SETTLEMENT. Add new rails here as they go live.
+    const JIT_SETTLE = {
+      palmpay: { bank_code: '100033', account_number: '8882777449' },
+      opay:    { bank_code: process.env.OPAY_SETTLE_BANK || '', account_number: process.env.OPAY_SETTLE_ACCOUNT || '' },
+    };
+
+        // Load all LIVE non-Parallex payout rails into railById (for JIT reroutes).
     const palmpay = require('../services/palmpayService');
     const nonPlxRails = await prisma.paymentRail.findMany({
       where: { payoutEnabled: true, status: 'LIVE', NOT: { name: { contains: 'parallex', mode: 'insensitive' } } },
@@ -1700,14 +1708,6 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     let nOk = 0, nFail = 0, nPending = 0;
     const transferQueue = [];   // { leg, nePrefetch }
     let neProducerDone = false;
-
-    // JIT settle accounts — Parallex NIP funds these when a non-Parallex rail is used
-    // for a txn that Parallex cannot complete on its own. Keep in sync with
-    // railFundingCron.js RAIL_SETTLEMENT. Add new rails here as they go live.
-    const JIT_SETTLE = {
-      palmpay: { bank_code: '100033', account_number: '8882777449' },
-      opay:    { bank_code: process.env.OPAY_SETTLE_BANK || '', account_number: process.env.OPAY_SETTLE_ACCOUNT || '' },
-    };
 
     const doLeg = async (leg, nePrefetch) => {
       // Kuda → PalmPay just-in-time funding:
@@ -1998,7 +1998,75 @@ async function runBatchRecon(batchId) {
 // due (immediate batches carry scheduled_at = creation time). A client-stop (no float
 // / rail down / cap) leaves the batch in needs_routing → the merchant/SA exception queue.
 async function autoDispatchDuePayouts({ limit = 25 } = {}) {
-  // Atomically claim batches as 'dispatching' so concurrent workers can't double-fire.
+  // ── Step 0: Recover batches stuck in 'processing' with no legs sent ────────────
+  // Happens when dispatchBatch throws AFTER the setup tx (items → 'processing',
+  // rail_disbursements inserted as 'pending') but BEFORE any leg was sent (e.g.
+  // JIT_SETTLE TDZ crash, uncaught throw in the NE pipeline). The batch stays in
+  // 'processing' forever since the main loop only queries needs_routing/pending_review.
+  // 5-minute grace period avoids racing with a live in-progress dispatch.
+  // Safety guard: NOT EXISTS (sent_at IS NOT NULL) ensures no leg moved money.
+  try {
+    const stuck = await prisma.$queryRaw`
+      SELECT DISTINCT pb.id::text AS id
+      FROM payout_batches pb
+      WHERE pb.status = 'processing'
+        AND pb.updated_at < NOW() - INTERVAL '5 minutes'
+        AND EXISTS (
+          SELECT 1 FROM rail_disbursements rd
+          JOIN payout_items pi ON pi.id = rd.payout_item_id
+          WHERE pi.batch_id = pb.id AND rd.status = 'pending' AND rd.sent_at IS NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM rail_disbursements rd2
+          JOIN payout_items pi2 ON pi2.id = rd2.payout_item_id
+          WHERE pi2.batch_id = pb.id AND rd2.sent_at IS NOT NULL
+        )
+    `;
+    for (const { id: stuckId } of stuck) {
+      try {
+        await prisma.$transaction(async tx => {
+          // Return float for all unsent pending disbursements (grouped by rail)
+          await tx.$executeRaw`
+            UPDATE payment_rails SET float_balance = float_balance + sub.refund, updated_at = NOW()
+            FROM (
+              SELECT rd.rail_id, SUM(rd.amount + rd.rail_cost + rd.rail_vat) AS refund
+              FROM rail_disbursements rd
+              JOIN payout_items pi ON pi.id = rd.payout_item_id
+              WHERE pi.batch_id = ${stuckId}::uuid AND rd.status = 'pending' AND rd.sent_at IS NULL
+              GROUP BY rd.rail_id
+            ) sub
+            WHERE payment_rails.id = sub.rail_id
+          `;
+          // Delete the unsent disbursements so dispatchBatch recreates them fresh
+          await tx.$executeRaw`
+            DELETE FROM rail_disbursements
+            WHERE id IN (
+              SELECT rd.id FROM rail_disbursements rd
+              JOIN payout_items pi ON pi.id = rd.payout_item_id
+              WHERE pi.batch_id = ${stuckId}::uuid AND rd.status = 'pending' AND rd.sent_at IS NULL
+            )
+          `;
+          // Reset items back to queued
+          await tx.$executeRaw`
+            UPDATE payout_items SET status = 'queued', updated_at = NOW()
+            WHERE batch_id = ${stuckId}::uuid AND status = 'processing'
+          `;
+          // Reset batch → needs_routing so the main loop claims it this tick
+          await tx.$executeRaw`
+            UPDATE payout_batches SET status = 'needs_routing', updated_at = NOW()
+            WHERE id = ${stuckId}::uuid AND status = 'processing'
+          `;
+        });
+        logger.warn({ batchId: stuckId }, '[auto-dispatch] recovered stuck processing batch → needs_routing');
+      } catch (recErr) {
+        logger.error({ err: recErr, batchId: stuckId }, '[auto-dispatch] failed to recover stuck batch');
+      }
+    }
+  } catch (e) {
+    logger.error({ err: e }, '[auto-dispatch] stuck-batch recovery query failed');
+  }
+
+  // ── Step 1: Atomically claim batches as 'dispatching' so concurrent workers can't double-fire.
   const due = await prisma.$queryRaw`
     WITH claimed AS (
       SELECT id FROM payout_batches
