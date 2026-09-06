@@ -81,30 +81,60 @@ function settlementFor(railName) {
 }
 
 /**
- * Compute average daily payout demand for a set of destination bank codes
- * using actual payout_items history (not rail_disbursements — avoids old
- * routing bias before smart routing was enabled).
- * Returns { avgDailyKobo: BigInt, totalKobo: BigInt, txnCount: number }
+ * Compute average daily payout demand for a rail.
+ *
+ * Two signals are combined and the higher one wins:
+ *   A) destination-bank traffic  — payout_items WHERE bank_code IN (on-us codes)
+ *      Reflects genuine future on-us demand regardless of how it was routed in
+ *      the past. Good signal once smart routing is active.
+ *   B) historical rail usage     — rail_disbursements WHERE rail_id = this rail
+ *      Captures anything the rail has actually processed: JIT fallbacks, Kuda
+ *      re-routing, or any non-on-us traffic that landed here. Must not be
+ *      ignored even if routing bias existed before smart routing.
+ *
+ * avgDailyKobo = MAX(A_avg, B_avg)   (conservative: neither signal is discarded)
+ * Returns { avgDailyKobo, totalKoboA, totalKoboB, txnCountA, txnCountB }
  */
-async function projectedDemand(bankCodes) {
-  if (!bankCodes || !bankCodes.length) return { avgDailyKobo: 0n, totalKobo: 0n, txnCount: 0 };
+async function projectedDemand(bankCodes, railId) {
+  // Signal A: destination bank traffic
+  let totalKoboA = 0n, txnCountA = 0;
+  if (bankCodes && bankCodes.length) {
+    const placeholders = bankCodes.map((_, i) => `$${i + 1}`).join(', ');
+    const rowsA = await p['$queryRawUnsafe'](`
+      SELECT
+        COALESCE(SUM(amount), 0) AS total_kobo,
+        COUNT(*)                  AS txn_count
+      FROM payout_items
+      WHERE bank_code IN (${placeholders})
+        AND created_at > NOW() - INTERVAL '${HISTORY_DAYS} days'
+        AND status != 'failed'
+    `, ...bankCodes);
+    totalKoboA = BigInt(rowsA[0].total_kobo || 0);
+    txnCountA  = Number(rowsA[0].txn_count  || 0);
+  }
 
-  const placeholders = bankCodes.map((_, i) => `$${i + 1}`).join(', ');
-  const rows = await p['$queryRawUnsafe'](`
-    SELECT
-      COALESCE(SUM(amount), 0)  AS total_kobo,
-      COUNT(*)                   AS txn_count,
-      COUNT(DISTINCT bank_code)  AS bank_count
-    FROM payout_items
-    WHERE bank_code IN (${placeholders})
-      AND created_at > NOW() - INTERVAL '${HISTORY_DAYS} days'
-      AND status != 'failed'
-  `, ...bankCodes);
+  // Signal B: historical rail disbursement volume (actual usage of this rail)
+  let totalKoboB = 0n, txnCountB = 0;
+  if (railId) {
+    const rowsB = await p['$queryRawUnsafe'](`
+      SELECT
+        COALESCE(SUM(amount), 0) AS total_kobo,
+        COUNT(*)                  AS txn_count
+      FROM rail_disbursements
+      WHERE rail_id = $1::uuid
+        AND created_at > NOW() - INTERVAL '${HISTORY_DAYS} days'
+        AND status != 'failed'
+    `, railId);
+    totalKoboB = BigInt(rowsB[0].total_kobo || 0);
+    txnCountB  = Number(rowsB[0].txn_count  || 0);
+  }
 
-  const totalKobo    = BigInt(rows[0].total_kobo || 0);
-  const txnCount     = Number(rows[0].txn_count  || 0);
-  const avgDailyKobo = totalKobo / BigInt(HISTORY_DAYS);
-  return { avgDailyKobo, totalKobo, txnCount };
+  const avgDailyA = totalKoboA / BigInt(HISTORY_DAYS);
+  const avgDailyB = totalKoboB / BigInt(HISTORY_DAYS);
+  const avgDailyKobo = avgDailyA > avgDailyB ? avgDailyA : avgDailyB;
+
+  return { avgDailyKobo, totalKoboA, totalKoboB, txnCountA, txnCountB,
+           signalUsed: avgDailyA >= avgDailyB ? 'destination' : 'rail_history' };
 }
 
 /**
@@ -124,7 +154,7 @@ async function topupRail(rail, currentFloatKobo, parallexRailId) {
     return null;
   }
 
-  const { avgDailyKobo, totalKobo, txnCount } = await projectedDemand(bankCodes);
+  const { avgDailyKobo, totalKoboA, totalKoboB, txnCountA, txnCountB, signalUsed } = await projectedDemand(bankCodes, rail.id);
 
   // Target: 2× avg daily demand × safety buffer, floored at MIN_FLOAT_KOBO
   const projected2Day = BigInt(Math.ceil(Number(avgDailyKobo) * 2 * BUFFER_MULT));
@@ -132,13 +162,15 @@ async function topupRail(rail, currentFloatKobo, parallexRailId) {
   const shortfall     = target - currentFloatKobo;
 
   logger.info({
-    rail: rail.name, bankCodes,
+    rail: rail.name, bankCodes, signalUsed,
     currentFloatNaira:  Number(currentFloatKobo) / 100,
     avgDailyNaira:      Number(avgDailyKobo) / 100,
     targetNaira:        Number(target) / 100,
     shortfallNaira:     Number(shortfall > 0n ? shortfall : 0n) / 100,
-    txnCount14d:        txnCount,
-    totalVol14dNaira:   Number(totalKobo) / 100,
+    txnCount14d_dest:   txnCountA,
+    txnCount14d_rail:   txnCountB,
+    vol14dNaira_dest:   Number(totalKoboA) / 100,
+    vol14dNaira_rail:   Number(totalKoboB) / 100,
   }, '[rail-funding] float assessment');
 
   if (shortfall <= 0n) {
@@ -216,7 +248,9 @@ async function topupRail(rail, currentFloatKobo, parallexRailId) {
     topupNaira:     Number(shortfall) / 100,
     targetNaira:    Number(target) / 100,
     floatBeforeNaira: Number(currentFloatKobo) / 100,
-    txnCount14d:    txnCount,
+    txnCountA14d:   txnCountA,
+    txnCountB14d:   txnCountB,
+    signalUsed,
     avgDailyNaira:  Number(avgDailyKobo) / 100,
     orderId,
   };
@@ -259,7 +293,7 @@ async function runFundingCheck() {
         <td>${r.rail}</td>
         <td><strong>${r.status}</strong></td>
         <td>${r.status === 'FUNDED' ? `₦${r.topupNaira.toLocaleString('en-NG', { minimumFractionDigits: 2 })}` : '-'}</td>
-        <td>${r.txnCount14d != null ? `${r.txnCount14d} txns / ₦${(r.avgDailyNaira||0).toLocaleString('en-NG', {minimumFractionDigits: 2})}/day avg` : '-'}</td>
+        <td>${r.avgDailyNaira != null ? `${r.txnCountA14d||0}d/${r.txnCountB14d||0}r txns · ₦${(r.avgDailyNaira||0).toLocaleString('en-NG', {minimumFractionDigits: 2})}/day (${r.signalUsed||'?'})` : '-'}</td>
         <td style="font-size:11px;color:#666">${r.reason || r.orderId || ''}</td>
       </tr>`).join('');
 
