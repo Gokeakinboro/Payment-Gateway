@@ -70,7 +70,6 @@ enum UserRole {
   AUDIT
   AGGREGATOR
   MERCHANT
-  STAFF
 }
 
 enum PayoutStatus {
@@ -92,10 +91,7 @@ model User {
   isActive     Boolean  @default(true) @map("is_active")
   lastLoginAt  DateTime? @map("last_login_at")
   createdAt    DateTime @default(now()) @map("created_at")
-  phone        String?  @map("phone")
-  jobTitle      String?  @map("job_title")
-  contractType  String?  @map("contract_type")
-  totpSecret    String?  @map("totp_secret")
+  totpSecret   String?  @map("totp_secret")
   totpEnabled  Boolean  @default(false) @map("totp_enabled")
   mustChangePassword Boolean @default(false) @map("must_change_password")
 
@@ -176,14 +172,6 @@ model Merchant {
   // LIVE rail). Set only for controlled routing (e.g. a single test merchant → a new
   // rail in sandbox) so live merchants are NEVER affected. See feeEngine.resolvePayinRail.
   payinRailId           String?   @map("payin_rail_id") @db.Uuid
-  // null/'with_paylode' → "<businessName>/Paylode"; 'name_only' → business name alone
-  parallexVaNameFormat  String?   @map("parallex_va_name_format")
-  merchantType      String    @default("retail") @map("merchant_type")
-  accountOfficerId  String?   @map("account_officer_id") @db.Uuid
-  pipelineStage     String    @default("prospect") @map("pipeline_stage")
-  firstEngagementAt DateTime? @map("first_engagement_at")
-  offRampAt         DateTime? @map("off_ramp_at")
-  offRampReason     String?   @map("off_ramp_reason")
   isActive          Boolean   @default(false) @map("is_active") // false until KYC done
   liveEnabled       Boolean   @default(false) @map("live_enabled") // false until SA clicks Go-Live — activation != live processing
   webhookUrl        String?   @map("webhook_url")
@@ -213,10 +201,7 @@ model Merchant {
   payoutItems    PayoutItem[]
   payoutRail     PaymentRail?   @relation("MerchantPayoutRoute", fields: [payoutRailId], references: [id])
   payinRail      PaymentRail?   @relation("MerchantPayinRoute", fields: [payinRailId], references: [id])
-  payoutSplits   MerchantPayoutSplit[]
-  beneficiaries  MerchantBeneficiary[]
   mpgsConfig     MerchantMpgsConfig?
-  payoutFundingVas PayoutFundingVa[]
 
   @@index([kycStatus])
   @@index([isActive])
@@ -279,56 +264,8 @@ model PaymentRail {
   wallets      MerchantWallet[]
   routedMerchants Merchant[]  @relation("MerchantPayoutRoute")
   payinMerchants  Merchant[]  @relation("MerchantPayinRoute")
-  payoutSplits MerchantPayoutSplit[]
-  payoutFundingVas PayoutFundingVa[]
 
   @@map("payment_rails")
-}
-
-// Per-merchant payout split routing. When rows exist (is_active=true), items
-// in a new batch are assigned to rails proportionally (pct columns must sum to 100).
-// Takes priority over merchants.payout_rail_id. Falls back to global default when
-// no active splits.
-model MerchantPayoutSplit {
-  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  merchantId String      @map("merchant_id") @db.Uuid
-  railId     String      @map("rail_id") @db.Uuid
-  pct        Int
-  isActive   Boolean     @default(true) @map("is_active")
-  createdAt  DateTime    @default(now()) @map("created_at")
-  updatedAt  DateTime    @updatedAt @map("updated_at")
-
-  merchant   Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  rail       PaymentRail @relation(fields: [railId], references: [id], onDelete: Cascade)
-
-  @@unique([merchantId, railId])
-  @@index([merchantId])
-  @@map("merchant_payout_splits")
-}
-
-// Merchant beneficiary address book. Accounts are NE-verified at upload so
-// dispatch pre-runs NE in parallel and passes session IDs to sendPayout,
-// skipping the inline NE that was doubling per-leg dispatch time.
-model MerchantBeneficiary {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  merchantId       String    @map("merchant_id") @db.Uuid
-  accountNumber    String    @map("account_number")
-  bankCode         String    @map("bank_code")
-  bankName         String?   @map("bank_name")
-  accountName      String?   @map("account_name")    // NE-resolved canonical name
-  alias            String?                            // merchant-supplied label
-  neStatus         String    @default("pending") @map("ne_status") // pending/verified/failed
-  neCheckedAt      DateTime? @map("ne_checked_at")
-  neFailureReason  String?   @map("ne_failure_reason")
-  isActive         Boolean   @default(true) @map("is_active")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-
-  merchant         Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-
-  @@unique([merchantId, bankCode, accountNumber])
-  @@index([merchantId])
-  @@map("merchant_beneficiaries")
 }
 
 model RailCost {
@@ -862,33 +799,6 @@ model RailRebalance {
   @@index([merchantId])
   @@index([status])
   @@map("rail_rebalances")
-}
-
-// ─── PAYOUT FUNDING VAs ───────────────────────────────────────────────────────
-// Tracks timed Parallex VAs generated so a merchant can pre-fund their payout
-// balance. When the inflow webhook fires, we match on referenceId / vaAccountNumber,
-// credit merchant_wallets for the appropriate rail, and mark this COMPLETED.
-
-model PayoutFundingVa {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  merchantId      String    @map("merchant_id") @db.Uuid
-  railId          String    @map("rail_id") @db.Uuid
-  referenceId     String    @unique @map("reference_id")
-  vaAccountNumber String?   @map("va_account_number")
-  amountKobo      BigInt    @map("amount_kobo")
-  status          String    @default("PENDING")  // PENDING | COMPLETED | EXPIRED
-  expiresAt       DateTime? @map("expires_at")
-  completedAt     DateTime? @map("completed_at")
-  paidKobo        BigInt?   @map("paid_kobo")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
-
-  merchant  Merchant     @relation(fields: [merchantId], references: [id])
-  rail      PaymentRail  @relation(fields: [railId], references: [id])
-
-  @@index([merchantId])
-  @@index([vaAccountNumber])
-  @@map("payout_funding_vas")
 }
 
 // ─── PAYOUT BATCHES ───────────────────────────────────────────────────────────
