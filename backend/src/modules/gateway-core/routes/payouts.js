@@ -1652,15 +1652,29 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     const { payoutAdapterForName } = require('../services/payoutRailAdapter');
     const { firePayoutWebhook } = require('../services/payoutSettle');
     const railAdapter = (name) => payoutAdapterForName(name);
-    // Load PalmPay rail into railById so Kuda reroutes can find it even on Parallex-only batches.
+    // Load all LIVE non-Parallex payout rails into railById (for JIT reroutes).
     const palmpay = require('../services/palmpayService');
-    if (palmpay.isConfigured()) {
-      const pmRailRows = await prisma.paymentRail.findMany({
-        where: { name: { contains: 'PalmPay', mode: 'insensitive' }, payoutEnabled: true, status: 'LIVE' },
-        select: { id: true, name: true, payoutEnabled: true, payoutFlatCost: true, payoutFlatCostOnUs: true, dailyValueCap: true },
-      });
-      for (const r of pmRailRows) if (!railById[r.id]) railById[r.id] = r;
-    }
+    const nonPlxRails = await prisma.paymentRail.findMany({
+      where: { payoutEnabled: true, status: 'LIVE', NOT: { name: { contains: 'parallex', mode: 'insensitive' } } },
+      select: { id: true, name: true, payoutEnabled: true, payoutFlatCost: true, payoutFlatCostOnUs: true, dailyValueCap: true },
+    });
+    for (const r of nonPlxRails) if (!railById[r.id]) railById[r.id] = r;
+
+    // Build ordered JIT candidate list: rails with a configured adapter + settle account.
+    // PalmPay is always first (most battle-tested); others follow by name order.
+    const jitRails = nonPlxRails
+      .map(r => {
+        const nameLower = (r.name || '').toLowerCase();
+        const settleKey = Object.keys(JIT_SETTLE).find(k => nameLower.includes(k));
+        if (!settleKey) return null;
+        const settle = JIT_SETTLE[settleKey];
+        if (!settle.bank_code || !settle.account_number) return null;
+        const adapter = /palmpay/.test(nameLower) ? palmpay : railAdapter(r.name);
+        if (!adapter || !adapter.isConfigured()) return null;
+        return { ...r, settle, adapter };
+      })
+      .filter(Boolean)
+      .sort((a, b) => /palmpay/i.test(a.name) ? -1 : /palmpay/i.test(b.name) ? 1 : 0);
     const legs = await prisma.$queryRaw`
       SELECT rd.id AS leg_id, rd.rail_id, rd.amount, rd.rail_cost, rd.rail_vat, rd.rail_order_id,
              pi.id AS item_id, pi.account_number, pi.account_name, pi.bank_code, pi.bank_name, pi.narration,
@@ -1687,8 +1701,13 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     const transferQueue = [];   // { leg, nePrefetch }
     let neProducerDone = false;
 
-    const PALMPAY_SETTLE_BANK = '100033';
-    const PALMPAY_SETTLE_ACCT = '8882777449';
+    // JIT settle accounts — Parallex NIP funds these when a non-Parallex rail is used
+    // for a txn that Parallex cannot complete on its own. Keep in sync with
+    // railFundingCron.js RAIL_SETTLEMENT. Add new rails here as they go live.
+    const JIT_SETTLE = {
+      palmpay: { bank_code: '100033', account_number: '8882777449' },
+      opay:    { bank_code: process.env.OPAY_SETTLE_BANK || '', account_number: process.env.OPAY_SETTLE_ACCOUNT || '' },
+    };
 
     const doLeg = async (leg, nePrefetch) => {
       // Kuda → PalmPay just-in-time funding:
@@ -1697,56 +1716,59 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
       // The Parallex float was already debited at batch-dispatch and stays debited
       // (money moved from Parallex → PalmPay → Kuda); on PalmPay payout failure
       // the float refund goes to PalmPay (money is now sitting there).
-      if (nePrefetch && nePrefetch.usePalmPayRailId) {
-        const plmRailId = nePrefetch.usePalmPayRailId;
-        // Unique orderId for the Parallex → PalmPay funding leg (≤32 chars).
-        const fundingOrderId = 'KF-' + String(leg.leg_id).replace(/-/g, '').slice(0, 29);
+      if (nePrefetch && nePrefetch.useJitRailId) {
+        const jitRailId    = nePrefetch.useJitRailId;
+        const jitSettleBank = nePrefetch.jitSettleBank;
+        const jitSettleAcct = nePrefetch.jitSettleAcct;
+        const jitAdapter    = nePrefetch.jitAdapter || palmpay;
+        // Unique orderId for the Parallex → JIT rail funding leg (≤32 chars).
+        const fundingOrderId = 'JF-' + String(leg.leg_id).replace(/-/g, '').slice(0, 29);
 
-        // NE on PalmPay settlement account (needed by Parallex InterbankTransfer).
-        let pmNe = await (plxAdapter && plxAdapter.nameEnquiry
-          ? plxAdapter.nameEnquiry(PALMPAY_SETTLE_BANK, PALMPAY_SETTLE_ACCT)
+        // NE on JIT rail settlement account (needed by Parallex InterbankTransfer).
+        let jitNe = await (plxAdapter && plxAdapter.nameEnquiry
+          ? plxAdapter.nameEnquiry(jitSettleBank, jitSettleAcct)
           : Promise.resolve({ ok: false })).catch(() => ({ ok: false }));
-        if (!pmNe.ok || !pmNe.sessionId) {
+        if (!jitNe.ok || !jitNe.sessionId) {
           await new Promise(r => setTimeout(r, 2000));
-          pmNe = await (plxAdapter && plxAdapter.nameEnquiry
-            ? plxAdapter.nameEnquiry(PALMPAY_SETTLE_BANK, PALMPAY_SETTLE_ACCT)
+          jitNe = await (plxAdapter && plxAdapter.nameEnquiry
+            ? plxAdapter.nameEnquiry(jitSettleBank, jitSettleAcct)
             : Promise.resolve({ ok: false })).catch(() => ({ ok: false }));
         }
-        if (!pmNe.ok || !pmNe.sessionId) {
-          await pendingRefundLeg(leg, 'Kuda payout: PalmPay settlement NE failed — refunded');
+        if (!jitNe.ok || !jitNe.sessionId) {
+          await pendingRefundLeg(leg, `JIT funding: settlement NE failed — refunded`);
           return;
         }
 
-        // Fund PalmPay via Parallex (using the already-debited Parallex float).
+        // Fund JIT rail via Parallex (using the already-debited Parallex float).
         let fundR;
         try {
           fundR = await plxAdapter.sendPayout({
             orderId: fundingOrderId, amount: leg.amount,
-            bank_code: PALMPAY_SETTLE_BANK, account_number: PALMPAY_SETTLE_ACCT,
-            account_name: pmNe.accountName || 'PalmPay', narration: `KF:${leg.rail_order_id}`.slice(0, 50),
-            neSessionId: pmNe.sessionId, neAccountName: pmNe.accountName, neKycLevel: pmNe.kycLevel || '',
+            bank_code: jitSettleBank, account_number: jitSettleAcct,
+            account_name: jitNe.accountName || 'JIT Rail', narration: `JF:${leg.rail_order_id}`.slice(0, 50),
+            neSessionId: jitNe.sessionId, neAccountName: jitNe.accountName, neKycLevel: jitNe.kycLevel || '',
           });
-        } catch (e) { await pendingRefundLeg(leg, `Kuda funding threw: ${e.message}`); return; }
+        } catch (e) { await pendingRefundLeg(leg, `JIT funding threw: ${e.message}`); return; }
 
         if (!fundR.ok) {
-          await pendingRefundLeg(leg, `Kuda funding failed: ${fundR.reason || fundR.code}`);
+          await pendingRefundLeg(leg, `JIT funding failed: ${fundR.reason || fundR.code}`);
           return;
         }
 
-        // Poll PalmPay balance until our merchant account shows ≥ payout amount.
+        // Poll JIT rail balance until merchant account shows ≥ payout amount.
         // NIP typically settles in seconds; allow up to 90s before proceeding anyway.
         const pollDeadline = Date.now() + 90_000;
         const amtKobo = BigInt(leg.amount);
-        let pmBal = await palmpay.getBalance().catch(() => null);
-        while (pmBal === null || pmBal < amtKobo) {
+        let jitBal = await jitAdapter.getBalance().catch(() => null);
+        while (jitBal === null || jitBal < amtKobo) {
           if (Date.now() >= pollDeadline) break;
           await new Promise(r => setTimeout(r, 6000));
-          pmBal = await palmpay.getBalance().catch(() => null);
+          jitBal = await jitAdapter.getBalance().catch(() => null);
         }
 
-        // Switch the disbursement record and leg to PalmPay rail for the Kuda payout.
-        await prisma.$executeRaw`UPDATE rail_disbursements SET rail_id=${plmRailId}::uuid WHERE id=${leg.leg_id}::uuid`;
-        leg = { ...leg, rail_id: plmRailId };
+        // Switch the disbursement record and leg to the JIT rail.
+        await prisma.$executeRaw`UPDATE rail_disbursements SET rail_id=${jitRailId}::uuid WHERE id=${leg.leg_id}::uuid`;
+        leg = { ...leg, rail_id: jitRailId };
         nePrefetch = {};
       }
       const rail = railById[leg.rail_id];
@@ -1788,15 +1810,15 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         nPending++;
         await recordRailResult(rail, { ok: true });
       } else {
-        // Parallex rejected synchronously — try PalmPay as fallback before writing the failure.
+        // Parallex rejected synchronously — try JIT rails as fallback before writing the failure.
         // Guard: only when Parallex explicitly rejected (r.ok false), not on a pending/in-flight leg,
-        // and only once (usePalmPayRailId prevents re-entry on the recursive PalmPay call).
-        if (!r.ok && !nePrefetch.usePalmPayRailId && /parallex/i.test((rail && rail.name) || '') && palmpay.isConfigured()) {
-          const pmRailFb = Object.values(railById).find(r2 => /palmpay/i.test(r2.name || ''));
-          if (pmRailFb) {
-            const palmNEFb = await palmpay.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
-            if (palmNEFb.ok && palmNEFb.accountName) {
-              return doLeg(leg, { usePalmPayRailId: pmRailFb.id, palmPayAccountName: palmNEFb.accountName });
+        // and only once (useJitRailId prevents re-entry on the recursive JIT call).
+        if (!r.ok && !nePrefetch.useJitRailId && /parallex/i.test((rail && rail.name) || '')) {
+          for (const jitRail of jitRails) {
+            const jitNEFb = await jitRail.adapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
+            if (jitNEFb.ok && jitNEFb.accountName) {
+              return doLeg(leg, { useJitRailId: jitRail.id, jitAccountName: jitNEFb.accountName,
+                jitSettleBank: jitRail.settle.bank_code, jitSettleAcct: jitRail.settle.account_number, jitAdapter: jitRail.adapter });
             }
           }
         }
@@ -1855,18 +1877,19 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         transferQueue.push({ leg, nePrefetch: {} });
         return;
       }
-      // Kuda payouts: Parallex NIP can't resolve Kuda accounts (code 25). Try PalmPay NE instead.
+      // Kuda payouts: Parallex NIP can't resolve Kuda accounts (code 25).
+      // Try each JIT rail for NE in priority order (PalmPay first).
       const KUDA_CODES = new Set(['090267', '100002', '100']);
-      if (KUDA_CODES.has(String(leg.bank_code || '')) && palmpay.isConfigured()) {
-        const pmRail = Object.values(railById).find(r => /palmpay/i.test(r.name || ''));
-        if (pmRail) {
-          const palmNE = await palmpay.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
-          if (palmNE.ok && palmNE.accountName) {
-            transferQueue.push({ leg, nePrefetch: { usePalmPayRailId: pmRail.id, palmPayAccountName: palmNE.accountName } });
+      if (KUDA_CODES.has(String(leg.bank_code || ''))) {
+        for (const jitRail of jitRails) {
+          const jitNE = await jitRail.adapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
+          if (jitNE.ok && jitNE.accountName) {
+            transferQueue.push({ leg, nePrefetch: { useJitRailId: jitRail.id, jitAccountName: jitNE.accountName,
+              jitSettleBank: jitRail.settle.bank_code, jitSettleAcct: jitRail.settle.account_number, jitAdapter: jitRail.adapter } });
             return;
           }
-          // PalmPay NE also failed — fall through; Parallex NE will fail too and auto-refund fires.
         }
+        // All JIT rails failed NE for Kuda — fall through to Parallex NE (will likely fail too).
       }
       // Use pre-fetched NE session if still fresh.
       const neFetchedAt = leg.ne_fetched_at ? new Date(leg.ne_fetched_at).getTime() : 0;
@@ -1884,18 +1907,16 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         transferQueue.push({ leg, nePrefetch: { neSessionId: ne.sessionId, neAccountName: ne.accountName, neKycLevel: ne.kycLevel || '' } });
         return;
       }
-      // Parallex NE failed — fall back to PalmPay rail (JIT fund + fire via PalmPay).
-      if (palmpay.isConfigured()) {
-        const pmRail = Object.values(railById).find(r => /palmpay/i.test(r.name || ''));
-        if (pmRail) {
-          const palmNE = await palmpay.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
-          if (palmNE.ok && palmNE.accountName) {
-            transferQueue.push({ leg, nePrefetch: { usePalmPayRailId: pmRail.id, palmPayAccountName: palmNE.accountName } });
-            return;
-          }
+      // Parallex NE failed — try each JIT rail in priority order.
+      for (const jitRail of jitRails) {
+        const jitNE = await jitRail.adapter.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
+        if (jitNE.ok && jitNE.accountName) {
+          transferQueue.push({ leg, nePrefetch: { useJitRailId: jitRail.id, jitAccountName: jitNE.accountName,
+            jitSettleBank: jitRail.settle.bank_code, jitSettleAcct: jitRail.settle.account_number, jitAdapter: jitRail.adapter } });
+          return;
         }
       }
-      // Both rails failed NE — queue with no session; doLeg will fail and auto-refund.
+      // All rails failed NE — queue with no session; doLeg will fail and auto-refund.
       transferQueue.push({ leg, nePrefetch: {} });
     }), Number(process.env.PARALLEX_NE_CONCURRENCY || 10)).then(() => { neProducerDone = true; });
 
