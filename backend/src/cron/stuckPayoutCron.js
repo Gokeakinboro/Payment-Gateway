@@ -19,16 +19,19 @@
  * (partial dispatch) are left to the watchdog + manual review.
  */
 
+const { PrismaClient } = require('../../node_modules/.prisma/client');
 const { logger } = require('../utils/logger');
 const { sendEmail } = require('../services/emailService');
 
+const p = new PrismaClient();
+
 const ALERT_TO   = 'gokeakinboro@gmail.com';
-const GRACE_MIN  = 5;    // minutes a batch must be stuck before we act
+const GRACE_MIN  = 5;             // minutes a batch must be stuck before we act
 const INTERVAL_S = 5 * 60 * 1000; // 5 minutes
 
-async function recoverStuckPayouts(prisma) {
+async function recoverStuckPayouts() {
   // ── 1. Find stuck batches ──────────────────────────────────────────────────
-  const stuck = await prisma.$queryRaw`
+  const stuck = await p.$queryRaw`
     SELECT DISTINCT
       pb.id::text          AS id,
       pb.batch_ref,
@@ -43,7 +46,7 @@ async function recoverStuckPayouts(prisma) {
     JOIN payout_items pi ON pi.batch_id = pb.id
     JOIN rail_disbursements rd ON rd.payout_item_id = pi.id
     WHERE pb.status = 'processing'
-      AND pb.updated_at < NOW() - (${GRACE_MIN} || ' minutes')::interval
+      AND pb.updated_at < NOW() - INTERVAL '5 minutes'
       AND rd.status  = 'pending'
       AND rd.sent_at IS NULL
       AND NOT EXISTS (
@@ -69,7 +72,7 @@ async function recoverStuckPayouts(prisma) {
   // ── 2. Recover each batch ─────────────────────────────────────────────────
   for (const batch of stuck) {
     try {
-      await prisma.$transaction(async tx => {
+      await p.$transaction(async tx => {
         // Return float for all unsent pending disbursements (grouped by rail)
         await tx.$executeRaw`
           UPDATE payment_rails

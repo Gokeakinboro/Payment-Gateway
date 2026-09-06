@@ -2048,7 +2048,7 @@ async function autoDispatchDuePayouts({ limit = 25 } = {}) {
           `;
           // Reset items back to queued
           await tx.$executeRaw`
-            UPDATE payout_items SET status = 'queued', updated_at = NOW()
+            UPDATE payout_items SET status = 'queued'
             WHERE batch_id = ${stuckId}::uuid AND status = 'processing'
           `;
           // Reset batch → needs_routing so the main loop claims it this tick

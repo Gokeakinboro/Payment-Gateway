@@ -87,7 +87,7 @@ function startCoreJobs({ logger }) {
   // inside autoDispatchDuePayouts (which is the primary fix path; this is the safety net).
   try {
     const { recoverStuckPayouts, INTERVAL_S: STUCK_MS } = require('../../cron/stuckPayoutCron');
-    const stuckRun = () => recoverStuckPayouts(prisma)
+    const stuckRun = () => recoverStuckPayouts()
       .then(r => { if (r && r.found) logger.warn(r, '[stuck-payout-cron] cycle complete'); })
       .catch(e => logger.error({ err: e }, '[stuck-payout-cron] run error'));
     setTimeout(stuckRun, 2 * 60 * 1000);  // first check 2 min after boot
