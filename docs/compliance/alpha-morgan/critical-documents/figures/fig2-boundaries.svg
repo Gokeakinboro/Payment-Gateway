@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="560" viewBox="0 0 1240 560" font-family="Helvetica,Arial,sans-serif">
+  <rect width="1240" height="560" fill="#ffffff"/>
+  <text x="30" y="38" font-size="21" font-weight="bold" fill="#0f172a">Trust Boundaries and Crossing Controls</text>
+  <text x="30" y="60" font-size="13" fill="#64748b">Each numbered boundary corresponds to the markers in Figure 1</text>
+  <g font-size="13">
+    <rect x="30" y="78" width="1180" height="34" fill="#0b3d5c"/>
+    <text x="46" y="100" fill="#ffffff" font-weight="bold">#</text>
+    <text x="92" y="100" fill="#ffffff" font-weight="bold">Boundary</text>
+    <text x="470" y="100" fill="#ffffff" font-weight="bold">Control at the crossing</text>
+    <text x="1010" y="100" fill="#ffffff" font-weight="bold">Direction</text>
+
+    <rect x="30" y="112" width="1180" height="62" fill="#f8fafc" stroke="#e2e8f0"/>
+    <circle cx="52" cy="143" r="12" fill="#0b3d5c"/><text x="52" y="148" fill="#fff" text-anchor="middle" font-weight="bold" font-size="12">1</text>
+    <text x="92" y="138" fill="#0f172a" font-weight="bold">Internet to Cloudflare edge</text>
+    <text x="92" y="158" fill="#475569" font-size="12">Public anycast entry point</text>
+    <text x="470" y="138" fill="#334155" font-size="12">TLS 1.2 minimum, 1.3 preferred; DDoS absorption;</text>
+    <text x="470" y="156" fill="#334155" font-size="12">WAF managed ruleset; bot control</text>
+    <text x="1010" y="147" fill="#334155" font-size="12">Inbound</text>
+
+    <rect x="30" y="174" width="1180" height="62" fill="#ffffff" stroke="#e2e8f0"/>
+    <circle cx="52" cy="205" r="12" fill="#0b3d5c"/><text x="52" y="210" fill="#fff" text-anchor="middle" font-weight="bold" font-size="12">2</text>
+    <text x="92" y="200" fill="#0f172a" font-weight="bold">Cloudflare to web tier (45)</text>
+    <text x="92" y="220" fill="#475569" font-size="12">Origin fetch</text>
+    <text x="470" y="200" fill="#334155" font-size="12">HTTPS with a Let's Encrypt certificate;</text>
+    <text x="470" y="218" fill="#334155" font-size="12">HSTS max-age 31536000 includeSubDomains</text>
+    <text x="1010" y="209" fill="#334155" font-size="12">Inbound</text>
+
+    <rect x="30" y="236" width="1180" height="62" fill="#f8fafc" stroke="#e2e8f0"/>
+    <circle cx="52" cy="267" r="12" fill="#0b3d5c"/><text x="52" y="272" fill="#fff" text-anchor="middle" font-weight="bold" font-size="12">3</text>
+    <text x="92" y="262" fill="#0f172a" font-weight="bold">Web tier to application tier</text>
+    <text x="92" y="282" fill="#475569" font-size="12">45.141.122.223 to 176.57.188.45:3000</text>
+    <text x="470" y="262" fill="#334155" font-size="12">Server-to-server proxy; the application host accepts</text>
+    <text x="470" y="280" fill="#334155" font-size="12">:3000 only from the web tier address</text>
+    <text x="1010" y="271" fill="#334155" font-size="12">Inbound</text>
+
+    <rect x="30" y="298" width="1180" height="62" fill="#ffffff" stroke="#e2e8f0"/>
+    <circle cx="52" cy="329" r="12" fill="#0b3d5c"/><text x="52" y="334" fill="#fff" text-anchor="middle" font-weight="bold" font-size="12">4</text>
+    <text x="92" y="324" fill="#0f172a" font-weight="bold">Router to application services</text>
+    <text x="92" y="344" fill="#475569" font-size="12">nginx :3000 to pm2 :3001/:3101/:3102/:3103</text>
+    <text x="470" y="324" fill="#334155" font-size="12">Loopback only; one shared middleware stack so security</text>
+    <text x="470" y="342" fill="#334155" font-size="12">headers and rate limits cannot drift between services</text>
+    <text x="1010" y="333" fill="#334155" font-size="12">Internal</text>
+
+    <rect x="30" y="360" width="1180" height="62" fill="#f8fafc" stroke="#e2e8f0"/>
+    <circle cx="52" cy="391" r="12" fill="#0b3d5c"/><text x="52" y="396" fill="#fff" text-anchor="middle" font-weight="bold" font-size="12">5</text>
+    <text x="92" y="386" fill="#0f172a" font-weight="bold">Application to data stores</text>
+    <text x="92" y="406" fill="#475569" font-size="12">PostgreSQL :5432 · Redis :6379</text>
+    <text x="470" y="386" fill="#334155" font-size="12">Bound to 127.0.0.1; not published to any network;</text>
+    <text x="470" y="404" fill="#334155" font-size="12">credentials held in environment configuration</text>
+    <text x="1010" y="395" fill="#334155" font-size="12">Internal</text>
+
+    <rect x="30" y="422" width="1180" height="66" fill="#eff6ff" stroke="#3b82f6" stroke-width="2"/>
+    <circle cx="52" cy="455" r="12" fill="#b91c1c"/><text x="52" y="460" fill="#fff" text-anchor="middle" font-weight="bold" font-size="12">6</text>
+    <text x="92" y="448" fill="#0f172a" font-weight="bold">Application to Alpha Morgan Bank</text>
+    <text x="92" y="468" fill="#1e40af" font-size="12">The Bank-facing integration</text>
+    <text x="470" y="443" fill="#1e3a8a" font-size="12" font-weight="bold">Outbound HTTPS from 176.57.188.45/32 only — whitelist this address.</text>
+    <text x="470" y="461" fill="#334155" font-size="12">TLS 1.2+; per-partner credentials in environment configuration;</text>
+    <text x="470" y="479" fill="#334155" font-size="12">mTLS or an IPSec/WireGuard tunnel available on the Bank's request.</text>
+    <text x="1010" y="461" fill="#334155" font-size="12">Outbound</text>
+
+    <rect x="30" y="488" width="1180" height="52" fill="#ffffff" stroke="#e2e8f0"/>
+    <circle cx="52" cy="514" r="12" fill="#0b3d5c"/><text x="52" y="519" fill="#fff" text-anchor="middle" font-weight="bold" font-size="12">7</text>
+    <text x="92" y="510" fill="#0f172a" font-weight="bold">Application to merchant endpoints</text>
+    <text x="92" y="528" fill="#475569" font-size="12">Outbound webhooks</text>
+    <text x="470" y="510" fill="#334155" font-size="12">HMAC-SHA512 signature in X-Paylode-Signature; queued</text>
+    <text x="470" y="528" fill="#334155" font-size="12">delivery with retry; every attempt recorded</text>
+    <text x="1010" y="519" fill="#334155" font-size="12">Outbound</text>
+  </g>
+</svg>

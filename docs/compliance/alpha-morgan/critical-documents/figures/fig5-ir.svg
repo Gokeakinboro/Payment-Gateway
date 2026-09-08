@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="700" viewBox="0 0 1240 700" font-family="Helvetica,Arial,sans-serif">
+  <defs><marker id="b" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0,0 L9,3.5 L0,7 z" fill="#334155"/></marker></defs>
+  <rect width="1240" height="700" fill="#ffffff"/>
+  <text x="30" y="38" font-size="21" font-weight="bold" fill="#0f172a">Incident Response — severity, escalation and notification clocks</text>
+  <text x="30" y="60" font-size="13" fill="#64748b">The Bank notification clock starts at confirmation of impact, not at conclusion of the investigation</text>
+
+  <rect x="30" y="80" width="1180" height="46" rx="6" fill="#e2e8f0" stroke="#64748b"/>
+  <text x="620" y="102" font-size="14" font-weight="bold" fill="#0f172a" text-anchor="middle">DETECT</text>
+  <text x="620" y="119" font-size="11.5" fill="#475569" text-anchor="middle">automated alert · staff report · merchant or partner report · external disclosure to security@paylodeservices.com</text>
+
+  <rect x="30" y="146" width="1180" height="46" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="620" y="168" font-size="14" font-weight="bold" fill="#1e3a8a" text-anchor="middle">TRIAGE — Incident Commander assigns severity and opens the incident record</text>
+  <text x="620" y="185" font-size="11.5" fill="#1e40af" text-anchor="middle">a running timeline is maintained from this point until closure</text>
+
+  <rect x="30" y="212" width="286" height="128" rx="6" fill="#fee2e2" stroke="#b91c1c" stroke-width="2"/>
+  <text x="173" y="234" font-size="14" font-weight="bold" fill="#991b1b" text-anchor="middle">P1 CRITICAL</text>
+  <text x="173" y="254" font-size="11.5" fill="#7f1d1d" text-anchor="middle">Confirmed breach of customer</text>
+  <text x="173" y="270" font-size="11.5" fill="#7f1d1d" text-anchor="middle">or Bank data · funds at risk</text>
+  <text x="173" y="286" font-size="11.5" fill="#7f1d1d" text-anchor="middle">production down · ransomware</text>
+  <text x="173" y="310" font-size="12" font-weight="bold" fill="#991b1b" text-anchor="middle">Team assembled: 30 minutes</text>
+  <text x="173" y="328" font-size="12" font-weight="bold" fill="#991b1b" text-anchor="middle">Containment target: 4 hours</text>
+
+  <rect x="328" y="212" width="286" height="128" rx="6" fill="#ffedd5" stroke="#ea580c" stroke-width="2"/>
+  <text x="471" y="234" font-size="14" font-weight="bold" fill="#9a3412" text-anchor="middle">P2 HIGH</text>
+  <text x="471" y="254" font-size="11.5" fill="#7c2d12" text-anchor="middle">Suspected breach · partial</text>
+  <text x="471" y="270" font-size="11.5" fill="#7c2d12" text-anchor="middle">outage of a money path</text>
+  <text x="471" y="286" font-size="11.5" fill="#7c2d12" text-anchor="middle">credential exposure, no known use</text>
+  <text x="471" y="310" font-size="12" font-weight="bold" fill="#9a3412" text-anchor="middle">Response: 2 hours</text>
+  <text x="471" y="328" font-size="12" font-weight="bold" fill="#9a3412" text-anchor="middle">Resolution target: 24 hours</text>
+
+  <rect x="626" y="212" width="286" height="128" rx="6" fill="#fef9c3" stroke="#ca8a04" stroke-width="2"/>
+  <text x="769" y="234" font-size="14" font-weight="bold" fill="#854d0e" text-anchor="middle">P3 MEDIUM</text>
+  <text x="769" y="254" font-size="11.5" fill="#713f12" text-anchor="middle">Isolated control failure</text>
+  <text x="769" y="270" font-size="11.5" fill="#713f12" text-anchor="middle">single account compromise,</text>
+  <text x="769" y="286" font-size="11.5" fill="#713f12" text-anchor="middle">contained · degraded service</text>
+  <text x="769" y="310" font-size="12" font-weight="bold" fill="#854d0e" text-anchor="middle">Response: 1 business day</text>
+
+  <rect x="924" y="212" width="286" height="128" rx="6" fill="#f1f5f9" stroke="#64748b" stroke-width="2"/>
+  <text x="1067" y="234" font-size="14" font-weight="bold" fill="#334155" text-anchor="middle">P4 LOW</text>
+  <text x="1067" y="254" font-size="11.5" fill="#475569" text-anchor="middle">Policy violation, no data impact</text>
+  <text x="1067" y="270" font-size="11.5" fill="#475569" text-anchor="middle">unsuccessful attack observed</text>
+  <text x="1067" y="310" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">Response: 5 business days</text>
+
+  <rect x="30" y="360" width="1180" height="60" rx="6" fill="#0b3d5c"/>
+  <text x="620" y="382" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">CONTAIN — preserve evidence BEFORE remediating</text>
+  <text x="620" y="400" font-size="11.5" fill="#bfdbfe" text-anchor="middle">capture logs, database state and system images first · isolate affected systems · revoke and rotate compromised credentials</text>
+  <text x="620" y="414" font-size="11" fill="#93c5fd" text-anchor="middle">premature cleanup destroys the forensic record and the ability to scope the incident</text>
+
+  <rect x="30" y="440" width="380" height="46" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="220" y="461" font-size="13" font-weight="bold" fill="#14532d" text-anchor="middle">ERADICATE</text>
+  <text x="220" y="478" font-size="11.5" fill="#166534" text-anchor="middle">remove cause · patch · rebuild from known-good</text>
+  <rect x="430" y="440" width="380" height="46" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="620" y="461" font-size="13" font-weight="bold" fill="#14532d" text-anchor="middle">RECOVER</text>
+  <text x="620" y="478" font-size="11.5" fill="#166534" text-anchor="middle">restore · verify integrity · heightened monitoring</text>
+  <rect x="830" y="440" width="380" height="46" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="1020" y="461" font-size="13" font-weight="bold" fill="#14532d" text-anchor="middle">REVIEW</text>
+  <text x="1020" y="478" font-size="11.5" fill="#166534" text-anchor="middle">post-incident review within 10 business days</text>
+
+  <text x="30" y="524" font-size="14" font-weight="bold" fill="#0f172a">NOTIFICATION CLOCKS</text>
+  <rect x="30" y="536" width="286" height="90" rx="6" fill="#0b3d5c"/>
+  <text x="173" y="560" font-size="13" font-weight="bold" fill="#ffffff" text-anchor="middle">ALPHA MORGAN BANK</text>
+  <text x="173" y="584" font-size="20" font-weight="bold" fill="#ffffff" text-anchor="middle">24 hours</text>
+  <text x="173" y="604" font-size="11" fill="#bfdbfe" text-anchor="middle">from confirmation of impact</text>
+  <text x="173" y="619" font-size="11" fill="#93c5fd" text-anchor="middle">then every 24h until closure</text>
+
+  <rect x="328" y="536" width="286" height="90" rx="6" fill="#1e3a8a"/>
+  <text x="471" y="560" font-size="13" font-weight="bold" fill="#ffffff" text-anchor="middle">NDPC</text>
+  <text x="471" y="584" font-size="20" font-weight="bold" fill="#ffffff" text-anchor="middle">72 hours</text>
+  <text x="471" y="604" font-size="11" fill="#bfdbfe" text-anchor="middle">from becoming aware</text>
+  <text x="471" y="619" font-size="11" fill="#93c5fd" text-anchor="middle">personal data breach</text>
+
+  <rect x="626" y="536" width="286" height="90" rx="6" fill="#1e3a8a"/>
+  <text x="769" y="560" font-size="13" font-weight="bold" fill="#ffffff" text-anchor="middle">AFFECTED MERCHANTS</text>
+  <text x="769" y="584" font-size="20" font-weight="bold" fill="#ffffff" text-anchor="middle">24 hours</text>
+  <text x="769" y="604" font-size="11" fill="#bfdbfe" text-anchor="middle">from confirmation</text>
+
+  <rect x="924" y="536" width="286" height="90" rx="6" fill="#334155"/>
+  <text x="1067" y="560" font-size="13" font-weight="bold" fill="#ffffff" text-anchor="middle">CBN</text>
+  <text x="1067" y="584" font-size="15" font-weight="bold" fill="#ffffff" text-anchor="middle">Per licence conditions</text>
+  <text x="1067" y="606" font-size="11" fill="#cbd5e1" text-anchor="middle">and the applicable circular</text>
+
+  <rect x="30" y="642" width="1180" height="44" rx="6" fill="#f1f5f9" stroke="#94a3b8"/>
+  <text x="46" y="662" font-size="12" font-weight="bold" fill="#0f172a">Every Bank notification contains:</text>
+  <text x="46" y="679" font-size="11.5" fill="#334155">incident summary and status · affected data classes and record volume · discovery and confirmation times · containment and eradication steps · named Paylode contacts</text>
+
+  <line x1="620" y1="126" x2="620" y2="144" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="192" x2="620" y2="210" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="340" x2="620" y2="358" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="420" x2="620" y2="438" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+</svg>

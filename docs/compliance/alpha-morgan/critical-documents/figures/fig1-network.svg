@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="820" viewBox="0 0 1240 820" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#334155"/></marker>
+    <marker id="ar" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#b91c1c"/></marker>
+  </defs>
+  <rect width="1240" height="820" fill="#ffffff"/>
+  <text x="30" y="40" font-size="23" font-weight="bold" fill="#0f172a">Paylode Services Limited — Network Architecture</text>
+  <text x="30" y="63" font-size="14" fill="#64748b">Production topology and trust boundaries · Bank-facing integration highlighted</text>
+
+  <!-- Internet -->
+  <rect x="30" y="90" width="1180" height="58" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+  <text x="620" y="118" font-size="16" font-weight="bold" fill="#0f172a" text-anchor="middle">INTERNET</text>
+  <text x="620" y="136" font-size="12" fill="#64748b" text-anchor="middle">Merchants · payers · administrators · Alpha Morgan Bank webhook callbacks</text>
+
+  <!-- Boundary 1 -->
+  <circle cx="52" cy="178" r="11" fill="#0b3d5c"/><text x="52" y="183" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">1</text>
+
+  <!-- Cloudflare -->
+  <rect x="30" y="196" width="1180" height="86" rx="8" fill="#fff7ed" stroke="#fb923c" stroke-width="2"/>
+  <text x="46" y="222" font-size="15" font-weight="bold" fill="#9a3412">EDGE — Cloudflare (anycast)</text>
+  <text x="46" y="245" font-size="12.5" fill="#7c2d12">TLS 1.2 min / 1.3 preferred · CDN · L3/L4 + L7 DDoS absorption · WAF managed ruleset · DNS</text>
+  <text x="46" y="266" font-size="12.5" fill="#7c2d12">Hostnames: paylodeservices.com · billspay.net · api.paylodeservices.com</text>
+
+  <circle cx="52" cy="308" r="11" fill="#0b3d5c"/><text x="52" y="313" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">2</text>
+
+  <!-- WEB TIER -->
+  <rect x="30" y="326" width="530" height="168" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="2"/>
+  <text x="46" y="352" font-size="15" font-weight="bold" fill="#1e3a8a">WEB TIER — 45.141.122.223</text>
+  <text x="46" y="371" font-size="12" fill="#1e40af">Internet-facing · static content only · no application code · no database</text>
+  <rect x="46" y="384" width="240" height="46" rx="5" fill="#dbeafe" stroke="#60a5fa"/>
+  <text x="56" y="403" font-size="12.5" font-weight="bold" fill="#1e3a8a">Host firewall</text>
+  <text x="56" y="420" font-size="11.5" fill="#1e40af">allow 80/443 · SSH key-only</text>
+  <rect x="300" y="384" width="244" height="46" rx="5" fill="#dbeafe" stroke="#60a5fa"/>
+  <text x="310" y="403" font-size="12.5" font-weight="bold" fill="#1e3a8a">nginx · TLS (Let's Encrypt)</text>
+  <text x="310" y="420" font-size="11.5" fill="#1e40af">/var/www/paylode · /api/ → 176</text>
+  <text x="46" y="454" font-size="11.5" fill="#1e40af">Cloudflare failover origin configured for static content</text>
+  <text x="46" y="474" font-size="11.5" fill="#1e40af">HSTS max-age=31536000; includeSubDomains</text>
+
+  <!-- Egress box -->
+  <rect x="590" y="326" width="620" height="168" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+  <text x="606" y="352" font-size="15" font-weight="bold" fill="#0f172a">EGRESS — outbound from 176.57.188.45 only</text>
+  <rect x="606" y="366" width="588" height="52" rx="5" fill="#0b3d5c"/>
+  <text x="618" y="386" font-size="13" font-weight="bold" fill="#ffffff">ALPHA MORGAN BANK — VA issuance API · payout rail · name enquiry · statements</text>
+  <text x="618" y="406" font-size="12" fill="#bfdbfe">Whitelist this source: 176.57.188.45/32 · TLS 1.2+ · mutual auth credentials</text>
+  <rect x="606" y="428" width="284" height="50" rx="5" fill="#e2e8f0" stroke="#94a3b8"/>
+  <text x="616" y="447" font-size="12" font-weight="bold" fill="#0f172a">Payment rails</text>
+  <text x="616" y="465" font-size="11.5" fill="#334155">PalmPay · Parallex Bank · Interswitch</text>
+  <rect x="902" y="428" width="292" height="50" rx="5" fill="#e2e8f0" stroke="#94a3b8"/>
+  <text x="912" y="447" font-size="12" font-weight="bold" fill="#0f172a">Service providers</text>
+  <text x="912" y="465" font-size="11.5" fill="#334155">KYC · document storage · SMS/email</text>
+
+  <circle cx="52" cy="516" r="11" fill="#0b3d5c"/><text x="52" y="521" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">3</text>
+
+  <!-- APP TIER -->
+  <rect x="30" y="534" width="1180" height="266" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="46" y="560" font-size="15" font-weight="bold" fill="#14532d">APPLICATION + DATA TIER — 176.57.188.45</text>
+  <text x="46" y="579" font-size="12" fill="#166534">Not published for web traffic · reachable on :3000 from the web tier · SSH key-only</text>
+
+  <rect x="46" y="592" width="250" height="54" rx="5" fill="#dcfce7" stroke="#4ade80"/>
+  <text x="56" y="612" font-size="12.5" font-weight="bold" fill="#14532d">Host firewall</text>
+  <text x="56" y="629" font-size="11.5" fill="#166534">:3000 ← web tier · 5432/6379 closed</text>
+
+  <rect x="312" y="592" width="230" height="54" rx="5" fill="#dcfce7" stroke="#4ade80"/>
+  <text x="322" y="612" font-size="12.5" font-weight="bold" fill="#14532d">nginx path router :3000</text>
+  <text x="322" y="629" font-size="11.5" fill="#166534">one public port, four services</text>
+
+  <circle cx="570" cy="619" r="11" fill="#0b3d5c"/><text x="570" y="624" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">4</text>
+
+  <!-- services -->
+  <rect x="46" y="664" width="272" height="88" rx="6" fill="#bbf7d0" stroke="#16a34a" stroke-width="2"/>
+  <text x="56" y="684" font-size="13" font-weight="bold" fill="#14532d">paylode-core :3001 (cluster ×2)</text>
+  <text x="56" y="703" font-size="11.5" fill="#166534">Money core: collections, payouts,</text>
+  <text x="56" y="720" font-size="11.5" fill="#166534">settlement, reconciliation, KYC, admin</text>
+  <text x="56" y="740" font-size="11.5" font-style="italic" fill="#15803d">Bank integration runs here</text>
+
+  <rect x="334" y="664" width="208" height="88" rx="6" fill="#dcfce7" stroke="#4ade80"/>
+  <text x="344" y="684" font-size="12.5" font-weight="bold" fill="#14532d">Product services</text>
+  <text x="344" y="703" font-size="11.5" fill="#166534">invoicing :3101</text>
+  <text x="344" y="720" font-size="11.5" fill="#166534">wallet :3102</text>
+  <text x="344" y="737" font-size="11.5" fill="#166534">assistant :3103</text>
+
+  <rect x="558" y="664" width="200" height="88" rx="6" fill="#dcfce7" stroke="#4ade80"/>
+  <text x="568" y="684" font-size="12.5" font-weight="bold" fill="#14532d">Workers</text>
+  <text x="568" y="703" font-size="11.5" fill="#166534">webhook-worker</text>
+  <text x="568" y="720" font-size="11.5" fill="#166534">invoicing-worker</text>
+  <text x="568" y="737" font-size="11.5" fill="#166534">scheduled reconciliation jobs</text>
+
+  <rect x="774" y="664" width="196" height="88" rx="6" fill="#f1f5f9" stroke="#64748b" stroke-width="2"/>
+  <text x="784" y="684" font-size="12.5" font-weight="bold" fill="#0f172a">PostgreSQL :5432</text>
+  <text x="784" y="703" font-size="11.5" fill="#334155">bound to 127.0.0.1</text>
+  <text x="784" y="720" font-size="11.5" fill="#334155">not internet-reachable</text>
+  <text x="784" y="740" font-size="11.5" font-style="italic" fill="#475569">ledger · transactions · audit</text>
+
+  <rect x="986" y="664" width="208" height="88" rx="6" fill="#f1f5f9" stroke="#64748b" stroke-width="2"/>
+  <text x="996" y="684" font-size="12.5" font-weight="bold" fill="#0f172a">Redis :6379</text>
+  <text x="996" y="703" font-size="11.5" fill="#334155">bound to 127.0.0.1</text>
+  <text x="996" y="720" font-size="11.5" fill="#334155">not internet-reachable</text>
+  <text x="996" y="740" font-size="11.5" font-style="italic" fill="#475569">BullMQ delivery queues</text>
+
+  <circle cx="700" cy="782" r="11" fill="#0b3d5c"/><text x="700" y="787" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">5</text>
+  <text x="718" y="787" font-size="12" fill="#166534">Loopback only — the data stores are never exposed beyond the host</text>
+
+
+  <!-- arrows -->
+  <line x1="620" y1="148" x2="620" y2="194" stroke="#334155" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="295" y1="282" x2="295" y2="324" stroke="#334155" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="295" y1="494" x2="295" y2="532" stroke="#334155" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="900" y1="532" x2="900" y2="496" stroke="#b91c1c" stroke-width="2.5" marker-end="url(#ar)"/>
+  <text x="912" y="518" font-size="11.5" font-weight="bold" fill="#b91c1c">outbound API calls to the Bank</text>
+  <line x1="430" y1="646" x2="430" y2="662" stroke="#334155" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="182" y1="646" x2="182" y2="662" stroke="#334155" stroke-width="2" marker-end="url(#a)"/>
+</svg>

@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1000" viewBox="0 0 1240 1000" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="g" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#16a34a"/></marker>
+    <marker id="r" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#b91c1c"/></marker>
+    <marker id="b" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#334155"/></marker>
+  </defs>
+  <rect width="1240" height="1000" fill="#ffffff"/>
+  <text x="30" y="38" font-size="21" font-weight="bold" fill="#0f172a">Payout Control Flow — every gate a disbursement must pass</text>
+  <text x="30" y="60" font-size="13" fill="#64748b">Red paths are rejections. No instruction is ever re-sent on an ambiguous response.</text>
+
+  <rect x="410" y="82" width="420" height="46" rx="6" fill="#e2e8f0" stroke="#64748b"/>
+  <text x="620" y="103" font-size="13.5" font-weight="bold" fill="#0f172a" text-anchor="middle">Payout batch submitted</text>
+  <text x="620" y="120" font-size="11.5" fill="#475569" text-anchor="middle">merchant dashboard (JWT) or API key (sk_live_)</text>
+
+  <rect x="410" y="152" width="420" height="52" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="620" y="173" font-size="13" font-weight="bold" fill="#92400e" text-anchor="middle">GATE 1 — Live-mode authorisation</text>
+  <text x="620" y="192" font-size="11.5" fill="#78350f" text-anchor="middle">merchant.isActive AND merchant.liveEnabled must both be true</text>
+  <rect x="880" y="158" width="330" height="40" rx="5" fill="#fee2e2" stroke="#b91c1c"/>
+  <text x="1045" y="183" font-size="12" fill="#991b1b" text-anchor="middle">Reject — live mode not enabled</text>
+
+  <rect x="410" y="228" width="420" height="52" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="620" y="249" font-size="13" font-weight="bold" fill="#92400e" text-anchor="middle">GATE 2 — Prepaid float check</text>
+  <text x="620" y="268" font-size="11.5" fill="#78350f" text-anchor="middle">rail wallet balance checked INSIDE the debit transaction</text>
+  <rect x="880" y="234" width="330" height="40" rx="5" fill="#fee2e2" stroke="#b91c1c"/>
+  <text x="1045" y="259" font-size="12" fill="#991b1b" text-anchor="middle">Reject — INSUFFICIENT_FUNDS</text>
+
+  <rect x="410" y="304" width="420" height="52" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="620" y="325" font-size="13" font-weight="bold" fill="#92400e" text-anchor="middle">GATE 3 — Daily value cap</text>
+  <text x="620" y="344" font-size="11.5" fill="#78350f" text-anchor="middle">cap minus today's non-failed disbursements on that rail</text>
+  <rect x="880" y="310" width="330" height="40" rx="5" fill="#fee2e2" stroke="#b91c1c"/>
+  <text x="1045" y="335" font-size="12" fill="#991b1b" text-anchor="middle">Reject — daily limit reached</text>
+
+  <rect x="410" y="380" width="420" height="46" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="620" y="401" font-size="13" font-weight="bold" fill="#1e3a8a" text-anchor="middle">Debit merchant wallet · batch = pending_review</text>
+  <text x="620" y="418" font-size="11.5" fill="#1e40af" text-anchor="middle">funds reserved before any instruction leaves Paylode</text>
+
+  <rect x="330" y="450" width="580" height="60" rx="6" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"/>
+  <text x="620" y="472" font-size="13.5" font-weight="bold" fill="#5b21b6" text-anchor="middle">RECALL / REVIEW WINDOW</text>
+  <text x="620" y="491" font-size="11.5" fill="#5b21b6" text-anchor="middle">per-merchant delay before dispatch — the merchant may amend or recall the batch</text>
+  <text x="620" y="506" font-size="11" fill="#6d28d9" text-anchor="middle">name enquiry is pre-fetched during the window, so the delay costs no dispatch latency</text>
+
+  <rect x="410" y="534" width="420" height="46" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="620" y="555" font-size="13" font-weight="bold" fill="#1e3a8a" text-anchor="middle">Name enquiry per beneficiary</text>
+  <text x="620" y="572" font-size="11.5" fill="#1e40af" text-anchor="middle">account resolved at the rail before any transfer is sent</text>
+
+  <rect x="410" y="604" width="420" height="52" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="620" y="625" font-size="13" font-weight="bold" fill="#92400e" text-anchor="middle">GATE 4 — Rail health and routing</text>
+  <text x="620" y="644" font-size="11.5" fill="#78350f" text-anchor="middle">a rail not LIVE / payout_enabled is excluded, not retried</text>
+  <rect x="60" y="610" width="320" height="40" rx="5" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="220" y="628" font-size="12" font-weight="bold" fill="#14532d" text-anchor="middle">Re-route to another live rail</text>
+  <text x="220" y="644" font-size="11" fill="#166534" text-anchor="middle">split %, merchant override, or default</text>
+
+  <rect x="410" y="680" width="420" height="46" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="620" y="701" font-size="13" font-weight="bold" fill="#1e3a8a" text-anchor="middle">Dispatch — chunked, bounded by rail TPS limit</text>
+  <text x="620" y="718" font-size="11.5" fill="#1e40af" text-anchor="middle">unique reference per instruction (idempotent at the rail)</text>
+
+  <rect x="410" y="750" width="420" height="40" rx="6" fill="#f1f5f9" stroke="#64748b"/>
+  <text x="620" y="775" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">Outcome from the rail?</text>
+
+  <rect x="40" y="820" width="360" height="76" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="220" y="842" font-size="13" font-weight="bold" fill="#14532d" text-anchor="middle">SUCCESS</text>
+  <text x="220" y="862" font-size="11.5" fill="#166534" text-anchor="middle">item marked settled</text>
+  <text x="220" y="880" font-size="11.5" fill="#166534" text-anchor="middle">ledger entry written</text>
+
+  <rect x="424" y="820" width="392" height="76" rx="6" fill="#fee2e2" stroke="#b91c1c" stroke-width="2"/>
+  <text x="620" y="842" font-size="13" font-weight="bold" fill="#991b1b" text-anchor="middle">CONFIRMED FAILURE</text>
+  <text x="620" y="862" font-size="11.5" fill="#7f1d1d" text-anchor="middle">failure reason stored · item marked failed</text>
+  <text x="620" y="880" font-size="11.5" font-weight="bold" fill="#7f1d1d" text-anchor="middle">merchant wallet refunded automatically</text>
+
+  <rect x="840" y="820" width="370" height="76" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="1025" y="842" font-size="13" font-weight="bold" fill="#92400e" text-anchor="middle">AMBIGUOUS / NO RESPONSE</text>
+  <text x="1025" y="862" font-size="11.5" font-weight="bold" fill="#78350f" text-anchor="middle">left in processing — NEVER re-sent</text>
+  <text x="1025" y="880" font-size="11.5" fill="#78350f" text-anchor="middle">resolved by status re-query only</text>
+
+  <rect x="600" y="924" width="610" height="58" rx="6" fill="#0b3d5c"/>
+  <text x="905" y="946" font-size="13" font-weight="bold" fill="#ffffff" text-anchor="middle">WATCHDOGS — independent reconciliation</text>
+  <text x="905" y="964" font-size="11.5" fill="#bfdbfe" text-anchor="middle">auto-dispatch recovery 30s · stuck-batch monitor 5 min · status re-query for items processing &gt; 15 min</text>
+  <text x="905" y="978" font-size="11" fill="#93c5fd" text-anchor="middle">each ambiguous item is driven to a confirmed success or a refunded failure</text>
+
+  <line x1="620" y1="128" x2="620" y2="150" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="204" x2="620" y2="226" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="280" x2="620" y2="302" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="356" x2="620" y2="378" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="426" x2="620" y2="448" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="510" x2="620" y2="532" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="580" x2="620" y2="602" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="656" x2="620" y2="678" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="620" y1="726" x2="620" y2="748" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="830" y1="178" x2="876" y2="178" stroke="#b91c1c" stroke-width="2" marker-end="url(#r)"/>
+  <line x1="830" y1="254" x2="876" y2="254" stroke="#b91c1c" stroke-width="2" marker-end="url(#r)"/>
+  <line x1="830" y1="330" x2="876" y2="330" stroke="#b91c1c" stroke-width="2" marker-end="url(#r)"/>
+  <line x1="408" y1="630" x2="384" y2="630" stroke="#16a34a" stroke-width="2" marker-end="url(#g)"/>
+  <line x1="220" y1="650" x2="220" y2="700" stroke="#16a34a" stroke-width="2"/>
+  <line x1="220" y1="700" x2="406" y2="700" stroke="#16a34a" stroke-width="2" marker-end="url(#g)"/>
+  <line x1="520" y1="790" x2="300" y2="818" stroke="#16a34a" stroke-width="2" marker-end="url(#g)"/>
+  <line x1="620" y1="790" x2="620" y2="818" stroke="#b91c1c" stroke-width="2" marker-end="url(#r)"/>
+  <line x1="740" y1="790" x2="960" y2="818" stroke="#d97706" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="1025" y1="896" x2="1025" y2="922" stroke="#334155" stroke-width="2" marker-end="url(#b)"/>
+</svg>

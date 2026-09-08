@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="720" viewBox="0 0 1240 720" font-family="Helvetica,Arial,sans-serif">
+  <defs><marker id="b" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0,0 L9,3.5 L0,7 z" fill="#334155"/></marker></defs>
+  <rect width="1240" height="720" fill="#ffffff"/>
+  <text x="30" y="38" font-size="21" font-weight="bold" fill="#0f172a">Virtual Account Collection Flow</text>
+  <text x="30" y="60" font-size="13" fill="#64748b">Provisioning happens once per customer; collection repeats per payment</text>
+
+  <!-- lanes -->
+  <rect x="30" y="80" width="180" height="600" fill="#f8fafc" stroke="#cbd5e1"/>
+  <rect x="210" y="80" width="240" height="600" fill="#eff6ff" stroke="#93c5fd"/>
+  <rect x="450" y="80" width="300" height="600" fill="#f0fdf4" stroke="#86efac"/>
+  <rect x="750" y="80" width="230" height="600" fill="#fefce8" stroke="#fde047"/>
+  <rect x="980" y="80" width="230" height="600" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="120" y="104" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">Payer</text>
+  <text x="330" y="104" font-size="13" font-weight="bold" fill="#1e3a8a" text-anchor="middle">Alpha Morgan Bank</text>
+  <text x="600" y="104" font-size="13" font-weight="bold" fill="#14532d" text-anchor="middle">Paylode API</text>
+  <text x="865" y="104" font-size="13" font-weight="bold" fill="#854d0e" text-anchor="middle">PostgreSQL</text>
+  <text x="1095" y="104" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">Merchant</text>
+
+  <text x="46" y="140" font-size="12.5" font-weight="bold" fill="#475569">PROVISIONING — once per customer</text>
+  <line x1="30" y1="148" x2="1210" y2="148" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+
+  <rect x="466" y="160" width="268" height="42" rx="5" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="600" y="178" font-size="12" font-weight="bold" fill="#14532d" text-anchor="middle">Request virtual account</text>
+  <text x="600" y="194" font-size="11" fill="#166534" text-anchor="middle">customer name · unique reference</text>
+
+  <rect x="226" y="160" width="208" height="42" rx="5" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="330" y="178" font-size="12" font-weight="bold" fill="#1e3a8a" text-anchor="middle">VA issued</text>
+  <text x="330" y="194" font-size="11" fill="#1e40af" text-anchor="middle">unique, never reused</text>
+
+  <rect x="466" y="216" width="268" height="40" rx="5" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="600" y="241" font-size="12" fill="#14532d" text-anchor="middle">Persist VA to merchant/customer map</text>
+  <rect x="766" y="216" width="198" height="40" rx="5" fill="#fef9c3" stroke="#ca8a04"/>
+  <text x="865" y="241" font-size="11.5" fill="#854d0e" text-anchor="middle">merchant_virtual_accounts</text>
+  <line x1="736" y1="236" x2="764" y2="236" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <line x1="464" y1="172" x2="436" y2="172" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <text x="450" y="166" font-size="9.5" fill="#475569" text-anchor="middle">request</text>
+  <line x1="436" y1="192" x2="464" y2="192" stroke="#16a34a" stroke-width="1.6" marker-end="url(#b)"/>
+  <text x="450" y="206" font-size="9.5" fill="#166534" text-anchor="middle">VA returned</text>
+
+  <text x="46" y="292" font-size="12.5" font-weight="bold" fill="#475569">COLLECTION — per payment</text>
+  <line x1="30" y1="300" x2="1210" y2="300" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+
+  <rect x="46" y="316" width="148" height="42" rx="5" fill="#e2e8f0" stroke="#64748b"/>
+  <text x="120" y="334" font-size="12" font-weight="bold" fill="#0f172a" text-anchor="middle">NIP transfer</text>
+  <text x="120" y="350" font-size="11" fill="#475569" text-anchor="middle">to the dedicated VA</text>
+  <line x1="194" y1="337" x2="224" y2="337" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+
+  <rect x="226" y="316" width="208" height="42" rx="5" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="330" y="334" font-size="12" font-weight="bold" fill="#1e3a8a" text-anchor="middle">Credit received</text>
+  <text x="330" y="350" font-size="11" fill="#1e40af" text-anchor="middle">webhook to Paylode</text>
+  <line x1="434" y1="337" x2="464" y2="337" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+
+  <rect x="466" y="316" width="268" height="56" rx="5" fill="#bbf7d0" stroke="#16a34a" stroke-width="2"/>
+  <text x="600" y="334" font-size="12" font-weight="bold" fill="#14532d" text-anchor="middle">Verify signature over the RAW body</text>
+  <text x="600" y="350" font-size="11" fill="#166534" text-anchor="middle">raw parser mounted before JSON parsing</text>
+  <text x="600" y="365" font-size="11" fill="#166534" text-anchor="middle">constant-time comparison</text>
+
+  <rect x="466" y="386" width="268" height="42" rx="5" fill="#bbf7d0" stroke="#16a34a" stroke-width="2"/>
+  <text x="600" y="404" font-size="12" font-weight="bold" fill="#14532d" text-anchor="middle">Idempotency check</text>
+  <text x="600" y="420" font-size="11" fill="#166534" text-anchor="middle">provider reference — a replay cannot double-credit</text>
+
+  <rect x="466" y="442" width="268" height="42" rx="5" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="600" y="460" font-size="12" font-weight="bold" fill="#14532d" text-anchor="middle">Write transaction + ledger entries</text>
+  <text x="600" y="476" font-size="11" fill="#166534" text-anchor="middle">integer kobo — no floating point</text>
+  <rect x="766" y="442" width="198" height="42" rx="5" fill="#fef9c3" stroke="#ca8a04"/>
+  <text x="865" y="460" font-size="11.5" fill="#854d0e" text-anchor="middle">transactions</text>
+  <text x="865" y="476" font-size="11.5" fill="#854d0e" text-anchor="middle">wallet_ledger</text>
+  <line x1="736" y1="463" x2="764" y2="463" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+
+  <rect x="466" y="498" width="268" height="42" rx="5" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="600" y="516" font-size="12" font-weight="bold" fill="#14532d" text-anchor="middle">AML rule evaluation</text>
+  <text x="600" y="532" font-size="11" fill="#166534" text-anchor="middle">tier ceiling · velocity · structuring</text>
+  <rect x="766" y="498" width="198" height="42" rx="5" fill="#fef9c3" stroke="#ca8a04"/>
+  <text x="865" y="523" font-size="11.5" fill="#854d0e" text-anchor="middle">aml_flags</text>
+  <line x1="736" y1="519" x2="764" y2="519" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+
+  <rect x="466" y="554" width="268" height="42" rx="5" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="600" y="572" font-size="12" font-weight="bold" fill="#14532d" text-anchor="middle">Queue merchant notification</text>
+  <text x="600" y="588" font-size="11" fill="#166534" text-anchor="middle">Redis / BullMQ — async, retried</text>
+  <rect x="996" y="554" width="198" height="42" rx="5" fill="#e2e8f0" stroke="#64748b"/>
+  <text x="1095" y="572" font-size="12" font-weight="bold" fill="#0f172a" text-anchor="middle">Signed webhook</text>
+  <text x="1095" y="588" font-size="11" fill="#475569" text-anchor="middle">HMAC-SHA512</text>
+  <line x1="736" y1="575" x2="994" y2="575" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+
+  <rect x="466" y="612" width="268" height="42" rx="5" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="600" y="630" font-size="12" font-weight="bold" fill="#14532d" text-anchor="middle">Schedule settlement</text>
+  <text x="600" y="646" font-size="11" fill="#166534" text-anchor="middle">merchant cycle — T+1 default</text>
+
+  <line x1="600" y1="372" x2="600" y2="384" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <line x1="600" y1="428" x2="600" y2="440" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <line x1="600" y1="484" x2="600" y2="496" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <line x1="600" y1="540" x2="600" y2="552" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <line x1="600" y1="596" x2="600" y2="610" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <line x1="600" y1="202" x2="600" y2="214" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+
+  <text x="46" y="676" font-size="11.5" fill="#475569">A slow merchant endpoint cannot back-pressure the Bank-facing path — notification is queued and delivered by a separate worker.</text>
+</svg>
