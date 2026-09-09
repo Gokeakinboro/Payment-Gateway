@@ -2539,6 +2539,94 @@ function _stmtDateRange(month) {
   return { from: from, to: to };
 }
 
+function _switchStmtPanel(val, scope) {
+  document.querySelectorAll('[data-sp][data-ss="' + scope + '"]').forEach(function(p) {
+    p.style.display = p.dataset.sp === val ? '' : 'none';
+  });
+}
+
+function _buildStmtPanels(d, scope) {
+  var fmt = function(n) { return '₦' + Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var va      = (d && d.va_collections)        || [];
+  var card    = (d && d.card_collections)      || [];
+  var wall    = (d && d.wallet_activity)       || [];
+  var opening = (d && d.wallet_opening_balance)|| 0;
+  var pfrom   = (d && d.period && d.period.from) ? new Date(d.period.from).toLocaleDateString('en-NG') : '';
+
+  function collRows(rows) {
+    if (!rows.length) return '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No transactions in this period</td></tr>';
+    var tot=0,fee=0,net=0;
+    var body = rows.map(function(t) {
+      tot+=(t.amount||0); fee+=(t.fee||0); net+=(t.net||0);
+      return '<tr>' +
+        '<td style="font-size:12px;color:var(--gray-500)">'+(t.date?new Date(t.date).toLocaleDateString('en-NG'):'—')+'</td>'+
+        '<td class="mono" style="font-size:11px">'+esc(t.reference||'—')+'</td>'+
+        '<td style="font-size:12px;color:var(--gray-500)">'+esc(t.customer_email||'—')+'</td>'+
+        '<td style="text-align:right;font-weight:600">'+fmt(t.amount)+'</td>'+
+        '<td style="text-align:right;font-size:12px;color:var(--gray-500)">'+fmt(t.fee)+'</td>'+
+        '<td style="text-align:right;font-weight:700;color:var(--green)">'+fmt(t.net)+'</td>'+
+      '</tr>';
+    }).join('');
+    body += '<tr style="border-top:2px solid var(--border)">'+
+      '<td colspan="3" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);padding:10px 14px">Totals</td>'+
+      '<td style="text-align:right;font-weight:700;padding:10px 14px">'+fmt(tot)+'</td>'+
+      '<td style="text-align:right;font-size:12px;font-weight:600;color:var(--gray-500);padding:10px 14px">'+fmt(fee)+'</td>'+
+      '<td style="text-align:right;font-weight:700;color:var(--green);padding:10px 14px">'+fmt(net)+'</td>'+
+    '</tr>';
+    return body;
+  }
+
+  function walletRows() {
+    var rows = '<tr style="background:#eff6ff">'+
+      '<td style="font-size:12px;color:var(--gray-500)">'+pfrom+'</td>'+
+      '<td style="font-style:italic;font-size:12px;color:var(--gray-500)">Balance brought forward</td>'+
+      '<td style="text-align:right;color:var(--gray-400)">—</td>'+
+      '<td style="text-align:right;color:var(--gray-400)">—</td>'+
+      '<td style="text-align:right;font-weight:700;color:#1d4ed8">'+fmt(opening)+'</td>'+
+    '</tr>';
+    wall.forEach(function(w) {
+      var sub = w.description==='Fee'||w.description==='VAT';
+      rows += '<tr>'+
+        '<td style="font-size:12px;color:var(--gray-500)">'+(w.date?new Date(w.date).toLocaleDateString('en-NG'):'—')+'</td>'+
+        '<td style="font-size:'+(sub?'12px':'13px')+';color:'+(sub?'var(--gray-400)':'inherit')+'">'+esc(w.description||'—')+'</td>'+
+        '<td style="text-align:right;font-weight:600;color:var(--green)">'+(w.credit!=null?fmt(w.credit):'—')+'</td>'+
+        '<td style="text-align:right;font-size:'+(sub?'12px':'13px')+';font-weight:'+(sub?'500':'600')+';color:var(--red)">'+(w.debit!=null?fmt(w.debit):'—')+'</td>'+
+        '<td style="text-align:right;font-size:'+(sub?'12px':'13px')+';font-weight:'+(sub?'600':'700')+'">'+fmt(w.balance)+'</td>'+
+      '</tr>';
+    });
+    var closing = wall.length ? wall[wall.length-1].balance : opening;
+    rows += '<tr style="border-top:2px solid var(--border)">'+
+      '<td colspan="4" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);background:var(--gray-50,#f9fafb);padding:12px 14px">Closing Balance</td>'+
+      '<td style="text-align:right;font-weight:800;font-size:16px;color:#1d4ed8;background:var(--gray-50,#f9fafb);padding:12px 14px">'+fmt(closing)+'</td>'+
+    '</tr>';
+    return rows;
+  }
+
+  var collHead = '<thead><tr><th>Date</th><th>Reference</th><th>Customer</th><th style="text-align:right">Amount</th><th style="text-align:right">Fee</th><th style="text-align:right">Net</th></tr></thead>';
+  var wallHead = '<thead><tr><th>Date</th><th>Description</th><th style="text-align:right">Credit</th><th style="text-align:right">Debit</th><th style="text-align:right">Balance</th></tr></thead>';
+
+  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
+    '<label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);white-space:nowrap">Statement</label>'+
+    '<select class="form-control" style="width:auto;font-size:13px;font-weight:600" onchange="_switchStmtPanel(this.value,\''+scope+'\')">'+
+      '<option value="va">Collections — Virtual Account</option>'+
+      '<option value="card">Collections — Card</option>'+
+      '<option value="payout">Payout Wallet</option>'+
+    '</select>'+
+  '</div>'+
+  '<div data-sp="va" data-ss="'+scope+'" class="card">'+
+    '<div class="card-header"><div class="card-title">Collections via Virtual Account</div></div>'+
+    '<div class="table-wrap"><table>'+collHead+'<tbody>'+collRows(va)+'</tbody></table></div>'+
+  '</div>'+
+  '<div data-sp="card" data-ss="'+scope+'" class="card" style="display:none">'+
+    '<div class="card-header"><div class="card-title">Collections — Card</div></div>'+
+    '<div class="table-wrap"><table>'+collHead+'<tbody>'+collRows(card)+'</tbody></table></div>'+
+  '</div>'+
+  '<div data-sp="payout" data-ss="'+scope+'" class="card" style="display:none">'+
+    '<div class="card-header"><div class="card-title">Payout Wallet</div></div>'+
+    '<div class="table-wrap"><table>'+wallHead+'<tbody>'+walletRows()+'</tbody></table></div>'+
+  '</div>';
+}
+
 async function refreshMerchStatement() {
   var monthEl = document.getElementById('stmt-month');
   var month = monthEl ? monthEl.value : new Date().toISOString().slice(0,7);
@@ -2551,49 +2639,7 @@ async function refreshMerchStatement() {
     var res = await apiFetch('/reports/merchant-statement?from=' + from + '&to=' + to + '&perPage=200');
     var d = res && res.data;
     if (!d) { preview.innerHTML = errorBox('Could not load statement data'); return; }
-    var fmt = function(n) { return '₦' + Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2}); };
-    var txns = d.transactions || [];
-    var wallet = d.wallet_activity || [];
-    // Summary cards
-    var summary = d.summary || {};
-    var summaryHtml =
-      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">' +
-        '<div class="stat-card"><div class="stat-label">Total Collections</div><div class="stat-value">' + fmt(summary.total_collections) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Fees Paid</div><div class="stat-value" style="color:var(--red)">' + fmt(summary.total_fees_paid) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Net Settled</div><div class="stat-value" style="color:var(--green)">' + fmt(summary.net_settled) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Transactions</div><div class="stat-value">' + txns.length + '</div></div>' +
-      '</div>';
-    // Transactions table
-    var txnRows = txns.length ? txns.map(function(t) {
-      return '<tr>' +
-        '<td class="mono" style="font-size:11px">' + (t.reference||'—') + '</td>' +
-        '<td style="font-size:12px">' + (t.date ? new Date(t.date).toLocaleDateString('en-NG') : '—') + '</td>' +
-        '<td style="font-size:12px">' + (t.channel||'—') + '</td>' +
-        '<td style="font-weight:600">' + fmt(t.amount) + '</td>' +
-        '<td style="color:var(--red);font-size:12px">' + fmt(t.fee) + '</td>' +
-        '<td style="font-weight:700;color:var(--green)">' + fmt(t.net) + '</td>' +
-        '<td>' + statusBadge(t.status==='SUCCESS'?'success':t.status==='FAILED'?'failed':'processing') + '</td>' +
-      '</tr>';
-    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gray-400)">No transactions in this period</td></tr>';
-    var txnHtml = '<div class="card" style="margin-bottom:16px"><div class="card-header"><div class="card-title">Transactions</div></div>' +
-      '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Date</th><th>Channel</th><th>Amount</th><th>Fee</th><th>Net</th><th>Status</th></tr></thead><tbody>' + txnRows + '</tbody></table></div></div>';
-    // Wallet activity table
-    var walletHtml = '';
-    if (wallet.length) {
-      var wRows = wallet.map(function(w) {
-        return '<tr>' +
-          '<td class="mono" style="font-size:11px">' + (w.reference||'—') + '</td>' +
-          '<td style="font-size:12px">' + (w.date ? new Date(w.date).toLocaleDateString('en-NG') : '—') + '</td>' +
-          '<td><span class="tag">' + (w.type||'—') + '</span></td>' +
-          '<td style="font-weight:600;color:' + (/CREDIT|REFUND|REVERSAL/.test(w.type||'')?'var(--green)':'var(--red)') + '">' + fmt(w.amount) + '</td>' +
-          '<td style="font-size:12px;color:var(--gray-400)">' + fmt(w.balance_after) + '</td>' +
-          '<td style="font-size:12px">' + (w.description||'—') + '</td>' +
-        '</tr>';
-      }).join('');
-      walletHtml = '<div class="card"><div class="card-header"><div class="card-title">Wallet Activity</div></div>' +
-        '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Date</th><th>Type</th><th>Amount</th><th>Balance After</th><th>Description</th></tr></thead><tbody>' + wRows + '</tbody></table></div></div>';
-    }
-    preview.innerHTML = summaryHtml + txnHtml + walletHtml;
+    preview.innerHTML = _buildStmtPanels(d, 'merch-stmt');
   } catch(e) {
     preview.innerHTML = errorBox('Failed to load statement: ' + e.message);
   }
@@ -2662,30 +2708,9 @@ async function loadMerchantOverview() {
       </div>
     </div>
 
-    ${(s?.wallet_activity||[]).length ? `
-    <div class="card section-gap">
-      <div class="card-header"><div class="card-title">Payout Wallet Activity</div></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Date</th><th>Type</th><th>Description</th><th class="right">Amount</th><th class="right">Balance After</th></tr></thead>
-          <tbody>
-            ${(s.wallet_activity||[]).map(w=>{
-              const isCredit = ['CREDIT','REFUND','REVERSAL'].includes(w.type);
-              const color = isCredit ? '#16a34a' : '#dc2626';
-              const sign  = isCredit ? '+' : '-';
-              return `<tr>
-                <td style="font-size:12px;white-space:nowrap">${new Date(w.date).toLocaleDateString('en-NG')}</td>
-                <td><span class="tag" style="background:${isCredit?'#dcfce7':'#fee2e2'};color:${color}">${w.type}</span></td>
-                <td style="font-size:12px;color:var(--gray-500)">${esc(w.description||'')}</td>
-                <td class="right" style="font-weight:600;color:${color};white-space:nowrap">${sign}${fmtMajor(Math.abs(w.amount),'NGN')}</td>
-                <td class="right" style="font-size:12px;white-space:nowrap">${fmtMajor(w.balance_after,'NGN')}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>` : ''}
+    <div class="section-gap" id="merch-ov-stmt-host"></div>
     `;
+    document.getElementById('merch-ov-stmt-host').innerHTML = _buildStmtPanels(s, 'merch-ov');
     renderMyApplicationBanner();   // surface review status / Activate prompt at the top
   } catch(e) {
     el.innerHTML = errorBox('Failed to load merchant data: ' + e.message);
