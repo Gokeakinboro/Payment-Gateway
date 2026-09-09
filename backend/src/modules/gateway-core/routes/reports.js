@@ -420,7 +420,7 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const toDate   = to ? new Date(to + 'T23:59:59Z') : new Date();
 
-    const [txns, byCcy, ledgerEntries] = await Promise.all([
+    const [txns, byCcy, ledgerEntries, openingEntry] = await Promise.all([
       prisma.transaction.findMany({
         where: {
           merchantId: targetMerchantId,
@@ -441,9 +441,20 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
         where: {
           merchantId: targetMerchantId,
           createdAt: { gte: fromDate, lte: toDate },
+          entryType: { notIn: ['REBALANCE'] },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: parseInt(perPage),
+      }),
+      // Last ledger entry before the period — gives us the opening balance
+      prisma.walletLedger.findFirst({
+        where: {
+          merchantId: targetMerchantId,
+          createdAt: { lt: fromDate },
+          entryType: { notIn: ['REBALANCE'] },
         },
         orderBy: { createdAt: 'desc' },
-        take: parseInt(perPage),
+        select: { balanceAfter: true },
       }),
     ]);
 
@@ -462,6 +473,49 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
       };
     });
 
+    // VA collections — BANK_TRANSFER channel, successful only
+    const vaCollections = txns
+      .filter(t => t.channel === 'BANK_TRANSFER' && t.status === 'SUCCESS')
+      .map(t => ({
+        reference:      t.reference,
+        date:           t.createdAt,
+        customer_email: t.customerEmail,
+        amount:         Number(t.amount) / 100,
+        fee:            Number(t.merchantFee) / 100,
+        net:            Number(t.amount - t.merchantFee) / 100,
+      }));
+
+    // Card collections — CARD / CARD_INTL_* channels, successful only
+    const cardCollections = txns
+      .filter(t => t.channel?.startsWith('CARD') && t.status === 'SUCCESS')
+      .map(t => ({
+        reference:      t.reference,
+        date:           t.createdAt,
+        customer_email: t.customerEmail,
+        amount:         Number(t.amount) / 100,
+        fee:            Number(t.merchantFee) / 100,
+        net:            Number(t.amount - t.merchantFee) / 100,
+        currency:       t.currency || 'NGN',
+      }));
+
+    // Payout wallet activity — bank-statement format with running balance
+    const CREDIT_TYPES = new Set(['CREDIT', 'REVERSAL']);
+    const DESC_MAP = { CREDIT: 'Wallet top up', DEBIT: 'Payout', FEE: 'Fee', VAT: 'VAT', REVERSAL: 'Reversal' };
+    let runningBalanceKobo = Number(openingEntry?.balanceAfter ?? 0n);
+    const walletActivity = ledgerEntries.map(l => {
+      const isCredit = CREDIT_TYPES.has(l.entryType);
+      const amtKobo  = Number(l.amount);
+      runningBalanceKobo += isCredit ? amtKobo : -amtKobo;
+      return {
+        reference:   l.reference,
+        date:        l.createdAt,
+        description: DESC_MAP[l.entryType] || l.description || l.entryType,
+        credit:      isCredit ? amtKobo / 100 : null,
+        debit:       isCredit ? null : amtKobo / 100,
+        balance:     runningBalanceKobo / 100,
+      };
+    });
+
     ok(res, {
       merchant,
       period:    { from: fromDate, to: toDate },
@@ -469,36 +523,23 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
       summary: summaryBy.NGN,
       summary_by_currency: summaryBy,
       transactions: txns.map(t => ({
-        reference:       t.reference,
-        date:            t.createdAt,
-        customer_email:  t.customerEmail,
-        currency:        t.currency || 'NGN',
+        reference:        t.reference,
+        date:             t.createdAt,
+        customer_email:   t.customerEmail,
+        currency:         t.currency || 'NGN',
         is_international: t.currency === 'USD',
-        amount:          Number(t.amount) / 100,
-        channel:         t.channel,
-        status:          t.status,
-        fee:             Number(t.merchantFee) / 100,
-        net:             Number(t.amount - t.merchantFee) / 100,
-        failure_reason:  t.failureReason,
-        metadata:        t.metadata,
+        amount:           Number(t.amount) / 100,
+        channel:          t.channel,
+        status:           t.status,
+        fee:              Number(t.merchantFee) / 100,
+        net:              Number(t.amount - t.merchantFee) / 100,
+        failure_reason:   t.failureReason,
+        metadata:         t.metadata,
       })),
-      wallet_activity: ledgerEntries
-        .slice()
-        .sort((a, b) => {
-          const tA = new Date(a.createdAt).getTime(), tB = new Date(b.createdAt).getTime();
-          if (tB !== tA) return tB - tA;
-          const order = { DEBIT: 1, FEE: 2, VAT: 3, CREDIT: 4, REVERSAL: 5 };
-          return (order[a.entryType] || 9) - (order[b.entryType] || 9);
-        })
-        .map(l => ({
-          reference:       l.reference,
-          date:            l.createdAt,
-          type:            l.entryType,
-          amount:          Number(l.amount) / 100,
-          balance_before:  Number(l.balanceBefore) / 100,
-          balance_after:   Number(l.balanceAfter) / 100,
-          description:     l.description,
-        })),
+      va_collections:         vaCollections,
+      card_collections:       cardCollections,
+      wallet_opening_balance: Number(openingEntry?.balanceAfter ?? 0n) / 100,
+      wallet_activity:        walletActivity,
     });
   } catch (e) { next(e); }
 });
