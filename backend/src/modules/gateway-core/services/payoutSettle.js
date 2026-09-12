@@ -17,6 +17,25 @@ const { logger } = require('../../../utils/logger');
 const { dispatchWebhook } = require('../../../services/webhookService');
 const whatsapp = require('../../../services/whatsappService');
 
+function merchantFailureReason(reason) {
+  if (!reason) return 'Transaction failed — please retry';
+  if (/name enquiry|ne failed|account.*not found|invalid.*account|no.*account/i.test(reason))
+    return 'Account not found — please verify the account number and bank';
+  if (/insufficient|balance|low.*fund|fund.*low/i.test(reason))
+    return 'Transaction failed — please contact support';
+  if (/do not honor|declined|not authoris|not authoriz/i.test(reason))
+    return 'Transaction declined by beneficiary bank — please contact the recipient';
+  if (/no record|not found at|never processed/i.test(reason))
+    return 'Transaction could not be completed — please retry';
+  if (/kyc|kyc level|kyc.*limit/i.test(reason))
+    return 'Transaction failed — beneficiary account KYC limit reached';
+  if (/timeout|timed out|connection|network/i.test(reason))
+    return 'Transaction timed out — please retry';
+  if (/cancel/i.test(reason))
+    return 'Transaction cancelled';
+  return 'Transaction failed — please retry or contact support';
+}
+
 // Fire a merchant webhook for a terminal payout leg (payout.success | payout.failed).
 // Fire-and-forget (dispatchWebhook no-ops when the merchant has no webhook URL, and
 // swallows its own errors). Call ONLY when the leg actually transitioned to terminal
@@ -34,7 +53,7 @@ function firePayoutWebhook(leg, event, { orderNo = null, sessionId = null, error
     provider_ref:   orderNo || null,               // rail order number
     session_id:     sessionId || null,
   };
-  if (event === 'payout.failed') payload.failure_reason = errorMsg || 'Rail reported failure';
+  if (event === 'payout.failed') payload.failure_reason = merchantFailureReason(errorMsg);
   dispatchWebhook(leg.merchant_id, event, payload).catch(() => {});
 }
 
@@ -135,13 +154,18 @@ async function applyPayoutResult({ orderId, orderNo, sessionId, orderStatus, err
 
 // Backstop poller — reconcile legs stuck 'sent' (the rail accepted the payout but
 // the webhook never landed) by querying the rail's payout-result API and applying
-// the result. Only rails with a query adapter are polled (PalmPay today). Legs are
-// given a grace period so we don't race a webhook that's about to arrive.
-async function reconcileSentPayouts({ olderThanMs = 120000, limit = 100 } = {}) {
+// the result. Both Parallex and PalmPay are polled (both are registered adapters).
+// Legs are given a grace period so we don't race a webhook that's about to arrive.
+//
+// hardFailAfterMs (default 4h): if Parallex/PalmPay is still returning a non-success,
+// non-NO-RECORD pending status (e.g. code 91 "Beneficiary Bank not available") after
+// this long, the leg is force-closed as failed and the merchant wallet refunded.
+// This prevents legs from polling indefinitely when a destination bank is down.
+async function reconcileSentPayouts({ olderThanMs = 120000, hardFailAfterMs = 4 * 60 * 60 * 1000, limit = 100 } = {}) {
   const { payoutAdapterForName } = require('./payoutRailAdapter');
   const cutoff = new Date(Date.now() - olderThanMs);
   const legs = await prisma.$queryRaw`
-    SELECT rd.rail_order_id, rd.amount, pr.name AS rail_name,
+    SELECT rd.rail_order_id, rd.amount, rd.sent_at, pr.name AS rail_name,
            pi.account_number, pi.bank_code
     FROM rail_disbursements rd
     JOIN payment_rails pr ON rd.rail_id = pr.id
@@ -161,6 +185,18 @@ async function reconcileSentPayouts({ olderThanMs = 120000, limit = 100 } = {}) 
     }
     catch (e) { logger.error({ err: e, orderId: leg.rail_order_id }, 'payout recon query failed'); continue; }
     if (!r || !r.ok) continue;                       // query itself failed → retry next cycle
+
+    // Hard cutoff: leg has been pending longer than hardFailAfterMs AND the rail is
+    // still returning a soft-pending status (orderStatus '1'/'0' — not success, not
+    // NO RECORD). Force-close as failed so the merchant is not left waiting forever.
+    const legAgeMs = leg.sent_at ? Date.now() - new Date(leg.sent_at).getTime() : 0;
+    if (legAgeMs > hardFailAfterMs && r.orderStatus !== '2' && r.ok === true && r.orderStatus !== null) {
+      logger.warn({ orderId: leg.rail_order_id, ageHours: (legAgeMs / 3600000).toFixed(1), code: r.code },
+        'payout recon hard cutoff — force-closing pending leg after 4h');
+      r = { ...r, orderStatus: 'timeout',
+             reason: `Auto-closed after ${Math.round(legAgeMs / 3600000)}h — rail last reported: ${r.reason || r.code}` };
+    }
+
     checked++;
     const out = await applyPayoutResult({
       orderId: leg.rail_order_id, orderNo: r.raw && r.raw.data && r.raw.data.orderNo,
