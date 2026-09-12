@@ -245,6 +245,10 @@ async function reconcileStuckBatches() {
   }
 }
 
-check();
-setInterval(check, INTERVAL_MS);
-logger.info('[watchdog] Paylode payout watchdog started (5-min interval, auto-fix enabled)');
+// 30s startup delay — avoids competing for DB connections during a pm2 reload
+// when paylode-core instances are also initialising.
+setTimeout(() => {
+  check();
+  setInterval(check, INTERVAL_MS);
+}, 30_000);
+logger.info('[watchdog] Paylode payout watchdog started (5-min interval, first tick in 30s)');
