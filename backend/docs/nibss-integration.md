@@ -1,8 +1,18 @@
-# NIBSS National Payment Stack (NPS) — integration notes
+# NIBSS integration notes — NPS (payments) + FAS (identity)
 
-NPS is NIBSS's **ISO 20022** replacement for NIP (NIP spoke SOAP). One rail carries
-three Paylode products: **payouts**, **virtual accounts**, and **identity
-verification (BVN / RC / TIN)**.
+Two SEPARATE NIBSS products, each with its own agreement, documentation and
+credentials:
+
+- **NPS** — the **ISO 20022** replacement for NIP (NIP spoke SOAP). Carries
+  **payouts** and **virtual accounts**.
+- **FAS** (Financial Authentication Service) — **identity verification**,
+  confirmed by NIBSS to cover **BVN and NIN**.
+
+They are kept as separate self-contained clients with separate env prefixes
+(`NIBSS_NPS_*` / `NIBSS_FAS_*`) and no cross-imports — the same structure the
+Parallex products use in production (`parallexService` vs
+`parallexTransferService`). FAS settings fall back to their NPS equivalents, so a
+single credential set works if NIBSS issues one.
 
 Status: **client, rail adapter and callbacks built and DORMANT.** Nothing calls out
 until `NIBSS_NPS_CLIENT_ID` and `NIBSS_NPS_PRIVATE_KEY` are set, and the rail row is
@@ -15,14 +25,25 @@ registered `CONFIG_ONLY` so routing cannot select it.
 | # | Item | Notes |
 |---|------|-------|
 | 1 | Team email addresses | For NIBSS's support Teams group |
-| 2 | **IP Form** | Whitelist **176.57.188.45** (server 176 — origin of every outbound NPS call) |
-| 3 | Sandbox credentials | client id/secret, our 6-digit **institution code**, payout **float NUBAN** |
-| 4 | Key exchange | Send our RSA public key; receive NIBSS's for callback verification |
-| 5 | Pricing | Per payout / VA / KYC check — nothing seeded into `rail_costs` until agreed |
-| 6 | Certification | Sandbox testing + schema validation + sample scenarios before go-live |
+| 2 | **IP Form** | Submitted. Requests **165.22.21.63** (DO droplet — IPSec peer + egress) and **176.57.188.45** (app server behind the tunnel). VPN-peer IP = 165.22.21.63 |
+| 3 | **FAS agreement** | Separate commercial agreement to execute before FAS integration |
+| 4 | Sandbox credentials | client id/secret, our 6-digit **institution code**, payout **float NUBAN**; confirm whether FAS creds are separate |
+| 5 | Key exchange | Send our RSA public key; receive NIBSS's for callback verification |
+| 6 | Pricing | Per payout / VA / identity check — nothing seeded into `rail_costs` until agreed |
+| 7 | Certification | Sandbox testing + schema validation + sample scenarios before go-live |
+| 8 | **Confirm RC/TIN home** | NIBSS confirmed FAS covers BVN + NIN; whether RC and TIN sit under FAS or NPS is unconfirmed |
 
-> ⚠️ The NPS docs portal (`https://nps-documentation.nibss-plc.com.ng`) is
-> **IP-allowlisted** and was unreachable while this was built. Endpoint paths and
+### Connectivity (mirrors the live Parallex model)
+Traffic reaches NIBSS over a site-to-site **IPSec IKEv2** tunnel terminating on the
+DigitalOcean node **165.22.21.63**; the app server **176.57.188.45** sits behind it
+and reaches NIBSS through the tunnel. Paylode already runs a production tunnel from
+that same node to Parallex, so the NIBSS tunnel is a **separate Phase-2 selector on
+the same peer** — a distinct local selector (proposed `10.254.254.2/32`) is required
+to avoid colliding with the live Parallex selector `10.254.254.1/32`.
+
+> ⚠️ Both NIBSS portals — NPS docs (`nps-documentation.nibss-plc.com.ng`) and the
+> FAS API docs (`devportal.nibss-plc.com.ng/api-docs/...`) — are
+> **IP-allowlisted** and were unreachable while this was built. Endpoint paths and
 > field names are derived from the ISO 20022 message definitions NPS is specified
 > against. **Every path is env-overridable and response parsing accepts both the
 > nested ISO shape and a flattened REST shape**, so the first sandbox run can
@@ -41,7 +62,7 @@ registered `CONFIG_ONLY` so routing cannot select it.
 | Recall | `camt.056` → `camt.029` | `NIBSS_NPS_RECALL_PATH` |
 | Balance (our float) | `camt.052` | `NIBSS_NPS_BALANCE_PATH` |
 | VA credit callback | `camt.054` | inbound |
-| KYC BVN / RC / TIN | REST | `NIBSS_NPS_KYC_{BVN,RC,TIN}_PATH` |
+| Identity (FAS — separate product) | REST | `NIBSS_FAS_{BVN,NIN,RC,TIN}_PATH` |
 
 **Auth:** OAuth2 client-credentials → Bearer (token cached; a 401 refreshes and
 replays once) **plus** a detached **RSA-SHA256** signature over the exact request
@@ -97,11 +118,12 @@ NIBSS signs the bytes it sent; re-serialising a parsed body can reorder keys.
 
 ## 5. Not wired yet (deliberate)
 
-- **KYC is not on the live path.** `documents.js` / `kyc.js` / `kycOrchestrator`
-  still use `youverifyService`. Switching is a commercial decision (per-check price).
-  `nibssKycService` returns the identical `normalise()` shape, so the swap is a
-  one-line require change. NPS covers **BVN/RC/TIN only** — NIN, liveness, PEP,
-  sanctions and adverse media stay with the incumbent provider.
+- **FAS is not on the live KYC path.** `documents.js` / `kyc.js` / `kycOrchestrator`
+  still use `youverifyService`. Switching is a commercial decision (per-check price)
+  **and** is gated on the FAS agreement being executed. `nibssFasService` returns the
+  identical `normalise()` shape and aliases `verifyCac`, so the swap is a one-line
+  require change. FAS does **not** cover facial liveness, PEP, sanctions or adverse
+  media — those stay with the incumbent provider regardless.
 - **Static per-merchant VA collections.** That path deducts a merchant-funded fee
   and books a collection; the fee math currently lives inline in
   `palmpay-webhook.js`. Lifting it into a shared service is a money-path refactor
@@ -120,12 +142,12 @@ NIBSS signs the bytes it sent; re-serialising a parsed body can reorder keys.
 | File | Purpose |
 |------|---------|
 | `src/modules/gateway-core/services/nibssNpsService.js` | Client + ISO 20022 builders + rail adapter |
-| `src/services/nibssKycService.js` | BVN / RC / TIN, shared `normalise()` shape |
+| `src/services/nibssFasService.js` | FAS identity — BVN / NIN (+ RC/TIN, unconfirmed); self-contained, shared `normalise()` shape |
 | `src/modules/gateway-core/routes/nibss-webhook.js` | Callbacks |
 | `src/modules/gateway-core/services/payoutRailAdapter.js` | Rail registration |
 | `src/appFactory.js` | Path-scoped raw-body capture |
 | `prisma/manual_sql/20260915_nibss_nps_rail.sql` | Registers the rail `CONFIG_ONLY` |
-| `test/nibss-nps.unit.test.js` | 47 tests — no DB, no network |
+| `test/nibss-nps.unit.test.js` | 57 tests — no DB, no network |
 
 Run the tests: `node test/nibss-nps.unit.test.js`
 
@@ -148,16 +170,29 @@ NIBSS_NPS_NOTIFY_URL=           # our webhook base
 NIBSS_NPS_TIMEOUT_MS=30000
 ```
 
-Path overrides (use these to correct the contract after reading the portal):
+FAS (each falls back to its `NIBSS_NPS_*` equivalent when unset):
+```
+NIBSS_FAS_CLIENT_ID=
+NIBSS_FAS_CLIENT_SECRET=
+NIBSS_FAS_PRIVATE_KEY=
+NIBSS_FAS_BASE_URL=
+NIBSS_FAS_AUTH_URL=
+NIBSS_FAS_ORGANISATION_CODE=
+NIBSS_FAS_TIMEOUT_MS=30000
+```
+
+Path overrides (use these to correct the contract after reading the portals):
 `NIBSS_NPS_TOKEN_PATH`, `_NAME_ENQUIRY_PATH`, `_TRANSFER_PATH`, `_STATUS_PATH`,
 `_RECALL_PATH`, `_BALANCE_PATH`, `_BANKS_PATH`, `_VA_CREATE_PATH`,
-`_VA_QUERY_PATH`, `_KYC_BVN_PATH`, `_KYC_RC_PATH`, `_KYC_TIN_PATH`.
+`_VA_QUERY_PATH`; and for FAS `NIBSS_FAS_TOKEN_PATH`, `_BVN_PATH`, `_NIN_PATH`,
+`_RC_PATH`, `_TIN_PATH`.
 
 ---
 
 ## 8. Go-live sequence
 
-1. IP Form cleared → **read the docs portal, correct any path/field via env**.
+1. IP Form cleared → **read BOTH portals (NPS docs + FAS api-docs), correct any
+   path/field via env**. Execute the FAS agreement in parallel.
 2. Sandbox creds + key exchange → set env on 176, `pm2 reload paylode-api`.
 3. Apply `20260915_nibss_nps_rail.sql` on 176 (safe any time — changes no routing).
 4. Name enquiry first (read-only), then a ₦100 payout to a known test account.

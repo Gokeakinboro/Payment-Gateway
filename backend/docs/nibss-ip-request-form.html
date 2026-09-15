@@ -1,0 +1,174 @@
+<!--
+  NIBSS NCS/NIP Operations — IP Address Request Form, filled for Paylode Services Limited.
+  Source of the PDF sent to NIBSS on 2026-09-15. Kept in the repo so it can be
+  regenerated or amended (e.g. after NIBSS advises its peer IP / crypto profile).
+
+  Regenerate the PDF:
+    chromium --headless --no-pdf-header-footer \
+      --print-to-pdf=NIBSS-IP-Request-Form-Paylode.pdf nibss-ip-request-form.html
+
+  Values in blue were filled by us; the dotted blanks (job title, signature, date,
+  phone) are left for Goke to complete by hand before sending.
+  See nibss-integration.md for the surrounding context.
+-->
+<!doctype html>
+<meta charset="utf-8">
+<title>NIBSS IP Request Form — Paylode Services Limited</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Times New Roman", Times, serif; font-size: 11.5pt; color: #000; margin: 0; line-height: 1.5; }
+  .hdr { text-align: center; margin-bottom: 4mm; }
+  .hdr h1 { font-size: 13pt; font-weight: bold; margin: 0 0 1mm; letter-spacing: .3px; }
+  .hdr h2 { font-size: 12pt; font-weight: bold; margin: 0; text-decoration: underline; }
+  .rule { border-bottom: 1.2px solid #000; margin: 4mm 0 6mm; }
+  .row { margin: 0 0 5.5mm; }
+  .lbl { font-weight: bold; text-transform: uppercase; font-size: 10.5pt; }
+  /* filled values sit on the form's dotted rule, in blue so Goke can see what was entered */
+  .val { color: #0b3d91; font-weight: bold; border-bottom: 1px dotted #555; padding: 0 2px; }
+  .blank { border-bottom: 1px dotted #555; display: inline-block; min-width: 55mm; }
+  .sub { display: block; margin: 1.2mm 0 0 6mm; font-size: 10pt; color: #0b3d91; }
+  .note { font-size: 9pt; color: #555; font-style: italic; margin-left: 6mm; }
+  table.ips { border-collapse: collapse; margin: 1.5mm 0 0 6mm; width: calc(100% - 6mm); }
+  table.ips td { border: 1px solid #000; padding: 1.6mm 2.5mm; font-size: 10pt; vertical-align: top; }
+  table.ips td.ip { font-family: "Courier New", monospace; font-weight: bold; color: #0b3d91; white-space: nowrap; width: 38mm; }
+  .sigblock { margin-top: 10mm; }
+  .office { margin-top: 12mm; border: 1.2px solid #000; padding: 4mm 5mm; }
+  .office h3 { font-size: 10.5pt; margin: 0 0 3mm; text-transform: uppercase; }
+  .office .line { margin: 0 0 5mm; }
+  .foot { margin-top: 6mm; font-size: 8.5pt; color: #666; text-align: center; border-top: .5px solid #bbb; padding-top: 2mm; }
+  .annex { page-break-before: always; }
+  .annex h2 { font-size: 12pt; text-decoration: underline; margin: 0 0 2mm; }
+  .annex p.lead { font-size: 10pt; margin: 0 0 4mm; }
+  table.p { border-collapse: collapse; width: 100%; margin-bottom: 5mm; }
+  table.p th { background: #e8edf5; border: 1px solid #000; padding: 1.8mm 2.5mm; font-size: 9.5pt; text-align: left; }
+  table.p td { border: 1px solid #000; padding: 1.8mm 2.5mm; font-size: 9.5pt; vertical-align: top; }
+  table.p td.k { width: 52mm; font-weight: bold; }
+  table.p td.v { font-family: "Courier New", monospace; color: #0b3d91; }
+  .tbd { color: #a33; font-style: italic; font-family: inherit; }
+</style>
+
+<div class="hdr">
+  <h1>NIGERIA INTERBANK SETTLEMENT PLC.</h1>
+  <h2>NCS / NIP OPERATIONS &mdash; IP ADDRESS REQUEST FORM</h2>
+</div>
+<div class="rule"></div>
+
+<div class="row">
+  <span class="lbl">Date Requested:</span>
+  <span class="val">15 September 2026</span>
+</div>
+
+<div class="row">
+  <span class="lbl">Partner Institution:</span>
+  <span class="val">Paylode Services Limited</span>
+  <span class="sub">CBN&ndash;Licensed Payment Solution Service Provider (PSSP) &mdash; Licence No. CBN/PAY/2024/001847</span>
+</div>
+
+<div class="row">
+  <span class="lbl">Requested By:</span>
+  <span class="val">Goke Akinboro</span> &nbsp;&mdash;&nbsp; <span class="blank">&nbsp;</span>
+  <span class="sub">gokeakinboro@paylodeservices.com</span>
+  <span class="note">Insert job title on the underline before signing.</span>
+</div>
+
+<div class="row">
+  <span class="lbl">Requested IP Address(es):</span>
+  <table class="ips">
+    <tr>
+      <td class="ip">165.22.21.63</td>
+      <td>DigitalOcean cloud node &mdash; IPSec VPN tunnel endpoint and internet egress point for all NIBSS-bound traffic.</td>
+    </tr>
+    <tr>
+      <td class="ip">176.57.188.45</td>
+      <td>Paylode application / API server &mdash; originates all NPS and FAS API calls; reaches NIBSS through the tunnel above.</td>
+    </tr>
+  </table>
+</div>
+
+<div class="row">
+  <span class="lbl">VPN&ndash;Peer IP:</span>
+  <span class="val">165.22.21.63</span>
+  <span class="sub">Our IPSec peer (DigitalOcean). Proposed tunnel parameters are set out in the Annex overleaf.</span>
+</div>
+
+<div class="row">
+  <span class="lbl">Reason for IP Request:</span>
+  <div class="sub" style="text-align: justify; color:#0b3d91; font-weight:normal;">
+    Integration to the <b>NIBSS National Payment Stack (NPS)</b> for funds transfer / payouts and
+    virtual accounts, and to the <b>NIBSS Financial Authentication Service (FAS)</b> for BVN and NIN
+    verification in customer onboarding. The addresses above are required for network permission to
+    the sandbox environment for certification testing, and thereafter to production. Traffic reaches
+    NIBSS over a site&ndash;to&ndash;site IPSec tunnel terminating on 165.22.21.63; 176.57.188.45 is the
+    application server behind that tunnel. This mirrors the connectivity model already in production
+    use between Paylode and Parallex Bank.
+  </div>
+</div>
+
+<div class="sigblock">
+  <span class="lbl">Requestor&rsquo;s Signature:</span> <span class="blank" style="min-width:70mm">&nbsp;</span>
+  &nbsp;&nbsp; <span class="lbl">Date:</span> <span class="blank" style="min-width:32mm">&nbsp;</span>
+</div>
+
+<div class="office">
+  <h3>For Head of Unit Use &mdash; (NIBSS internal)</h3>
+  <div class="line">Name: <span class="blank" style="min-width:75mm">&nbsp;</span></div>
+  <div class="line">Signature: <span class="blank" style="min-width:70mm">&nbsp;</span></div>
+  <div class="line">Date Approved: <span class="blank" style="min-width:62mm">&nbsp;</span></div>
+  <div class="line" style="margin-top:8mm">
+    <span class="blank" style="min-width:80mm">&nbsp;</span><br>
+    <span style="font-size:10pt">Approval by Manager (IT &amp; Network)</span>
+  </div>
+</div>
+
+<div class="foot">Paylode Services Limited &nbsp;&middot;&nbsp; NCS/NIP Operations IP Address Request Form &nbsp;&middot;&nbsp; Page 1 of 2</div>
+
+<!-- ───────────────────────── ANNEX ───────────────────────── -->
+<div class="annex">
+  <h2>Annex &mdash; Proposed IPSec VPN Parameters</h2>
+  <p class="lead">
+    Submitted with the IP Address Request Form of <b>Paylode Services Limited</b>, dated 15 September 2026.
+    Values marked <span class="tbd">to be advised</span> await NIBSS&rsquo;s standard crypto profile and
+    service subnet; Paylode will match whatever NIBSS specifies.
+  </p>
+
+  <table class="p">
+    <tr><th colspan="2">Tunnel endpoints</th></tr>
+    <tr><td class="k">Tunnel type</td><td class="v">IPSec, site&ndash;to&ndash;site, IKEv2</td></tr>
+    <tr><td class="k">Paylode peer (public IP)</td><td class="v">165.22.21.63</td></tr>
+    <tr><td class="k">Paylode peer location</td><td class="v">DigitalOcean cloud node</td></tr>
+    <tr><td class="k">NIBSS peer (public IP)</td><td class="v tbd">To be advised by NIBSS</td></tr>
+  </table>
+
+  <table class="p">
+    <tr><th colspan="2">Phase 2 / traffic selectors</th></tr>
+    <tr><td class="k">Paylode local subnet</td><td class="v">10.254.254.2/32 <span class="tbd">(proposed)</span></td></tr>
+    <tr><td class="k">NIBSS remote subnet</td><td class="v tbd">To be advised by NIBSS</td></tr>
+    <tr><td class="k">Source NAT</td><td class="v">All Paylode traffic SNATs to the local selector above</td></tr>
+    <tr><td class="k">Encryption / DH group</td><td class="v tbd">To match NIBSS standard profile</td></tr>
+    <tr><td class="k">Dead Peer Detection</td><td class="v">Enabled, with automatic re&ndash;establishment</td></tr>
+  </table>
+
+  <table class="p">
+    <tr><th colspan="2">Services to be reached over the tunnel</th></tr>
+    <tr><td class="k">NPS</td><td class="v">Funds transfer / payouts, virtual accounts</td></tr>
+    <tr><td class="k">FAS</td><td class="v">BVN and NIN verification</td></tr>
+    <tr><td class="k">Environments</td><td class="v">Sandbox (certification) then Production</td></tr>
+  </table>
+
+  <table class="p">
+    <tr><th colspan="2">Technical contact</th></tr>
+    <tr><td class="k">Name</td><td class="v">Goke Akinboro</td></tr>
+    <tr><td class="k">Email</td><td class="v">gokeakinboro@paylodeservices.com</td></tr>
+    <tr><td class="k">Phone</td><td class="v tbd">To be completed before sending</td></tr>
+  </table>
+
+  <p style="font-size:9pt; color:#555; font-style:italic; margin-top:6mm;">
+    Note: Paylode already operates a production IPSec IKEv2 tunnel from this same node
+    (165.22.21.63) to a partner bank. The NIBSS tunnel will be a separate Phase&nbsp;2
+    selector on the same peer, which is why a distinct local selector (10.254.254.2/32)
+    is proposed above.
+  </p>
+
+  <div class="foot">Paylode Services Limited &nbsp;&middot;&nbsp; Annex to NCS/NIP IP Address Request Form &nbsp;&middot;&nbsp; Page 2 of 2</div>
+</div>

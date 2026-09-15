@@ -35,7 +35,7 @@ const RAILS = [
     products: [
       { product: 'Payouts',           cost: 'TBD — awaiting NIBSS pricing', kind: 'na' },
       { product: 'Virtual Accounts',  cost: 'TBD — awaiting NIBSS pricing', kind: 'na' },
-      { product: 'Identity (BVN/RC/TIN)', cost: 'TBD — awaiting NIBSS pricing', kind: 'na' },
+      { product: 'Identity — FAS (separate NIBSS product + agreement)', cost: 'TBD — awaiting NIBSS pricing', kind: 'na' },
       { product: 'Cards',             cost: 'Not offered',                  kind: 'na' },
     ],
   },
@@ -52,7 +52,10 @@ const SCREENING = [
   { name: 'YouVerify',   type: 'KYC / Identity',  services: ['BVN', 'NIN', 'CAC', 'Address'], cost: 'TBD per check', status: 'being replaced (too expensive)' },
   { name: 'Dojah',       type: 'KYC / Identity',  services: ['BVN', 'NIN', 'CAC'],            cost: 'TBD per check', status: 'planned replacement' },
   { name: 'Interswitch', type: 'KYC',             services: ['BVN', 'NIN', 'CAC', 'TIN', 'Address'], cost: 'TBD per check', status: 'KIV (run-check)' },
-  { name: 'NIBSS NPS',   type: 'KYC / Identity',  services: ['BVN', 'RC', 'TIN'],            cost: 'TBD per check', status: 'integration in progress (not wired into live KYC)' },
+  // FAS = NIBSS Financial Authentication Service. A SEPARATE product/agreement from
+  // the NPS payment rail, with its own docs and credentials (NIBSS, 2026-09-15).
+  // BVN + NIN confirmed by NIBSS; RC/TIN not yet confirmed as FAS vs NPS.
+  { name: 'NIBSS FAS',   type: 'KYC / Identity',  services: ['BVN', 'NIN', 'RC?', 'TIN?'],   cost: 'TBD per check', status: 'integration in progress — agreement pending; not wired into live KYC' },
   { name: 'Sanctions / PEP', type: 'AML screening', services: ['OFAC/UN/EU sanctions', 'PEP'], cost: 'TBD', status: 'placeholder list in use' },
 ];
 

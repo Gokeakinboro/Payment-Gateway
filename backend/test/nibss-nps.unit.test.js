@@ -245,5 +245,53 @@ test('an unrelated rail name does NOT resolve to NPS', () => {
   assert.notStrictEqual(payoutAdapterForName('Parallex Bank'), nps);
 });
 
+console.log('\n  FAS (Financial Authentication Service) — separate NIBSS product');
+const fas = require('../src/services/nibssFasService');
+test('FAS inherits NPS credentials when NIBSS_FAS_* are unset', () => {
+  // NIBSS may issue one credential set for both products; the fallback means that
+  // works with no code change, while separate creds work by setting NIBSS_FAS_*.
+  assert.strictEqual(fas.isConfigured(), true);
+});
+test('FAS is self-contained — it does not import the NPS client', () => {
+  const src = require('fs').readFileSync(require.resolve('../src/services/nibssFasService'), 'utf8');
+  // Match an actual require, not the module name appearing in a comment.
+  assert.ok(!/require\(\s*['"][^'"]*nibssNpsService/.test(src), 'FAS must not require nibssNpsService');
+  // And nothing from the gateway-core module tree either (no layering inversion).
+  assert.ok(!/require\(\s*['"][^'"]*modules\/gateway-core/.test(src), 'FAS must not require gateway-core');
+});
+test('exposes BVN and NIN — the validations NIBSS confirmed', () => {
+  assert.strictEqual(typeof fas.verifyBvn, 'function');
+  assert.strictEqual(typeof fas.verifyNin, 'function');
+});
+test('verifyCac aliases verifyRc so a provider swap needs no rename', () => {
+  assert.strictEqual(fas.verifyCac, fas.verifyRc);
+});
+test('normalise() returns the shared KYC framework shape', () => {
+  const r = fas.normalise({ httpStatus: 200, data: { verified: true, firstName: 'Jane',
+    lastName: 'Doe', bvn: '22222222222', reference: 'FAS-1' } }, 'bvn');
+  assert.strictEqual(r.success, true);
+  assert.strictEqual(r.data.firstName, 'Jane');
+  assert.strictEqual(r.data.identityNumber, '22222222222');
+  assert.strictEqual(r.requestId, 'FAS-1');
+  assert.strictEqual(r.type, 'bvn');
+});
+test('responseCode 00 counts as verified', () => {
+  assert.strictEqual(fas.normalise({ httpStatus: 200, data: { responseCode: '00' } }, 'bvn').success, true);
+});
+test('an explicit verified:false is NOT success', () => {
+  assert.strictEqual(fas.normalise({ httpStatus: 200, data: { verified: false } }, 'bvn').success, false);
+});
+test('an OUTAGE is success:false with the reason surfaced, not a silent FAIL', () => {
+  const r = fas.normalise({ httpStatus: 503 }, 'bvn');
+  assert.strictEqual(r.success, false);
+  assert.ok(r.message, 'must carry a reason so a mismatch is distinguishable from an outage');
+});
+test('an unparseable body is treated as a failed call', () => {
+  assert.strictEqual(fas.callFailed({ _parseError: true }), true);
+});
+test('surfaces a watchlist flag when FAS returns one', () => {
+  assert.strictEqual(fas.normalise({ httpStatus: 200, data: { verified: true, watchListed: true } }, 'bvn').data.watchlisted, true);
+});
+
 console.log(`\n  ${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

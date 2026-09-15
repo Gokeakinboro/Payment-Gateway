@@ -3,10 +3,15 @@
 //  NIBSS National Payment Stack (NPS) client — scaffold, built ahead of keys.
 //
 //  NPS is NIBSS's ISO 20022 replacement for NIP (NIP spoke SOAP; NPS speaks
-//  ISO 20022). One rail carries three of our products:
+//  ISO 20022). This rail carries two of our products:
 //    • PAYOUT            — pacs.008 credit transfer, pacs.002 status, camt.056 recall
 //    • VIRTUAL ACCOUNTS  — NUBAN provisioning + camt.054 credit notifications
-//    • IDENTITY (KYC)    — BVN / RC / TIN  → see services/nibssKycService.js
+//
+//  IDENTITY IS NOT HERE. NIBSS confirmed (2026-09-15) that BVN/NIN verification is
+//  FAS — Financial Authentication Service — a SEPARATE product with its own
+//  agreement, docs and credentials. It lives in services/nibssFasService.js as a
+//  self-contained client (no imports either way), mirroring how the Parallex
+//  products are split. Do not fold identity back into this file.
 //
 //  ⚠️  ENDPOINT PATHS AND FIELD NAMES BELOW ARE UNCONFIRMED. The NPS portal
 //  (https://nps-documentation.nibss-plc.com.ng) is IP-allowlisted — it is not
