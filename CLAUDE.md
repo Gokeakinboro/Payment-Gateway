@@ -31,6 +31,23 @@ later). Repo: `Payment-Gateway`.
 - Compare box↔repo files LF-normalised (`tr -d '\r'`) — Windows scp adds CRLF.
 - SSH to 176/45 is key-based (BatchMode works).
 
+## File output — where Claude's deliverables go
+**HARD RULE (Goke, 2026-09-15): every file Claude produces for Goke to download goes
+inside a `CLAUDE` folder — NEVER loose on the Desktop.**
+- **Local sessions** (Goke's machine, Windows, user `Goke`): write deliverables to
+  `C:\Users\Goke\Desktop\CLAUDE\` — create the folder if it doesn't exist.
+  Never write a deliverable straight to `C:\Users\Goke\Desktop\`.
+- **Remote / web sessions**: there is no desktop in the container. Write deliverables
+  to a `CLAUDE/` subfolder of the session scratchpad before handing them over, so the
+  folder convention and filename carry across.
+- **Applies to** anything handed to Goke rather than committed: generated PDFs, XLSX,
+  DOCX, PNGs, reports, filled forms, exports, screenshots. Files that belong to the
+  repo still go in their proper repo paths — this rule is about deliverables only.
+- **Limit to state, don't work around:** the browser/desktop-app *download* location
+  is a machine-side setting Claude cannot change from a remote session. If a file
+  lands on the Desktop because of that setting, say so and point at the setting —
+  don't silently save somewhere else instead.
+
 ## Shared project memory
 Detailed context lives in `.claude/memory/` (checked into this repo).
 Start at `.claude/memory/MEMORY.md` — it indexes every memory file.

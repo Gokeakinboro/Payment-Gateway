@@ -2,6 +2,7 @@
 
 _Siloed Claude project. Cross-project items live in the shared home namespace (C--Users-Goke)._
 
+- [🔴 HARD RULE — Claude deliverables go in Desktop\CLAUDE\, not loose on the Desktop](feedback-claude-file-output-location.md) — Goke 2026-09-15, asked to be hard coded. Local: `C:\Users\Goke\Desktop\CLAUDE\` (create if absent); remote sessions: a `CLAUDE/` subfolder of the scratchpad. Deliverables only (PDFs/XLSX/DOCX/PNGs/forms/exports) — repo files keep repo paths. Also in CLAUDE.md. LIMIT: the browser/app download location is machine-side and a remote session can't change it — say so rather than silently saving elsewhere; for ALL projects it must also go in his local `C:\Users\Goke\.claude\CLAUDE.md`.
 - [Paylode money items need sign-off](feedback-paylode-money-signoff.md) — stage #1/#10/#11 for user review, don't auto-deploy
 - [🟡 KIV — Intelligent VA pay-in failover routing](kiv-intelligent-va-routing.md) — auto-switch VA rail when primary is down; default priority order; pay-in only; triggers when new bank VA secured.
 - [🟡 KIV — Accounting-software integration](kiv-accounting-software-integration.md) — hook gateway into QuickBooks/Xero/Zoho/Sage; data ready; blocked on user picking a provider + OAuth creds (discussed 2026-06-20).
