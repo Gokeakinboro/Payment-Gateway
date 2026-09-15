@@ -8,11 +8,14 @@
 // unconfigured/unknown rail behaves exactly as before (no adapter → not sent).
 const palmpay = require('./palmpayService');
 const parallexTransfer = require('./parallexTransferService');
+const nibssNps = require('./nibssNpsService');
 
 function payoutAdapterForName(name) {
   const n = (name || '').toLowerCase();
   if (/palmpay/.test(n)  && palmpay.isConfigured())          return palmpay;
   if (/parallex/.test(n) && parallexTransfer.isConfigured()) return parallexTransfer;
+  // NIBSS NPS — matches 'NIBSS', 'NPS' and 'NIBSS NPS' however the rail is named.
+  if (/nibss|\bnps\b/.test(n) && nibssNps.isConfigured()) return nibssNps;
   // OPay — loaded only when the service file exists and is configured
   try {
     const opay = require('./opayService');

@@ -29,6 +29,17 @@ const RAILS = [
     ],
   },
   {
+    // NIBSS National Payment Stack — the ISO 20022 successor to NIP. One rail,
+    // three products. INTEGRATION IN PROGRESS: pricing not yet advised by NIBSS.
+    name: 'NIBSS NPS', sponsor: 'NIBSS (direct, via sponsor bank)',
+    products: [
+      { product: 'Payouts',           cost: 'TBD — awaiting NIBSS pricing', kind: 'na' },
+      { product: 'Virtual Accounts',  cost: 'TBD — awaiting NIBSS pricing', kind: 'na' },
+      { product: 'Identity (BVN/RC/TIN)', cost: 'TBD — awaiting NIBSS pricing', kind: 'na' },
+      { product: 'Cards',             cost: 'Not offered',                  kind: 'na' },
+    ],
+  },
+  {
     name: 'Interswitch', sponsor: 'switch',
     products: [
       { product: 'Cards', cost: '1.5%', kind: 'pct', rate: 0.015 },
@@ -41,6 +52,7 @@ const SCREENING = [
   { name: 'YouVerify',   type: 'KYC / Identity',  services: ['BVN', 'NIN', 'CAC', 'Address'], cost: 'TBD per check', status: 'being replaced (too expensive)' },
   { name: 'Dojah',       type: 'KYC / Identity',  services: ['BVN', 'NIN', 'CAC'],            cost: 'TBD per check', status: 'planned replacement' },
   { name: 'Interswitch', type: 'KYC',             services: ['BVN', 'NIN', 'CAC', 'TIN', 'Address'], cost: 'TBD per check', status: 'KIV (run-check)' },
+  { name: 'NIBSS NPS',   type: 'KYC / Identity',  services: ['BVN', 'RC', 'TIN'],            cost: 'TBD per check', status: 'integration in progress (not wired into live KYC)' },
   { name: 'Sanctions / PEP', type: 'AML screening', services: ['OFAC/UN/EU sanctions', 'PEP'], cost: 'TBD', status: 'placeholder list in use' },
 ];
 

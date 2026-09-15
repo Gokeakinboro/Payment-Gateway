@@ -73,6 +73,15 @@ function createApp({ modules = MODULES, logger = defaultLogger } = {}) {
   // Onboarding submit carries base64 document scans + the signature image in one
   // JSON body — needs a much larger limit than the default API requests.
   app.use('/api/v1/onboarding/submit', express.json({ limit: process.env.ONBOARDING_BODY_LIMIT || '50mb' }));
+  // NIBSS NPS signs its callbacks over the EXACT bytes it sent; re-serialising the
+  // parsed body can reorder keys and break an otherwise valid signature. Parse this
+  // path first, stashing the raw bytes — the global parser below then skips it
+  // (express.json no-ops once req._body is set), so a router-level `verify` hook
+  // would never run. Scoped to the NPS webhook so we don't retain raw bodies API-wide.
+  app.use('/api/v1/webhooks/nibss', express.json({
+    limit: '2mb',
+    verify: (req, _res, buf) => { req.rawBody = buf && buf.length ? buf.toString('utf8') : null; },
+  }));
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: true }));
 
