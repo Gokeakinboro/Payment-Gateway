@@ -532,6 +532,7 @@ router.post('/batches', requireAuthOrApiKey,
     // bank_code OR bank_name accepted (resolved below). At least one is required.
     body('items.*').custom(it => it && (it.bank_code || it.bank_name)).withMessage('Each item needs a bank_code or bank_name'),
     body('items.*.amount').isInt({ min: 1 }).withMessage('amount in kobo required for each item'),
+    body('items.*.client_ref').optional({ nullable: true }).isString().withMessage('client_ref must be a string'),
   ]),
   async (req, res, next) => {
     try {
@@ -609,11 +610,27 @@ router.post('/batches', requireAuthOrApiKey,
       const rateOnUs  = toRate(onUsRate);
       const feeRate   = rateOther.rate;   // batch-level rate (other-bank reference)
 
+      // ── Aggregator payout flat-fee override ──────────────────────────────────────
+      // If this merchant's aggregator has set a per-merchant flat_fee, use it as the
+      // effective per-item charge instead of the platform flat fee. Aggregator earns
+      // the spread above Paylode's base cost.
+      let aggPayoutFlatFee = null;
+      if (merchant.aggregatorId) {
+        const aggRow = await prisma.$queryRawUnsafe(
+          `SELECT flat_fee FROM aggregator_rate_configs
+           WHERE aggregator_id = $1::uuid AND merchant_id = $2::uuid LIMIT 1`,
+          merchant.aggregatorId, merchantId
+        );
+        const ff = aggRow[0] ? BigInt(aggRow[0].flat_fee || 0) : 0n;
+        if (ff > 0n) aggPayoutFlatFee = ff;
+      }
+
       // ── Per-item fee + VAT calculation (tier picked by destination) ─────────────
       const itemsWithFees = items.map(item => {
         const amt = BigInt(item.amount);
         const r   = isOnUsBank(item.bank_code) ? rateOnUs : rateOther;
-        let fee   = amt * BigInt(Math.round(r.rate * 1_000_000)) / 1_000_000n + r.flatFee;
+        const effectiveFlatFee = aggPayoutFlatFee !== null ? aggPayoutFlatFee : r.flatFee;
+        let fee   = amt * BigInt(Math.round(r.rate * 1_000_000)) / 1_000_000n + effectiveFlatFee;
         if (r.min > 0n && fee < r.min) fee = r.min;
         if (r.cap > 0n && fee > r.cap) fee = r.cap;
         const vat   = fee * BigInt(Math.round(VAT_RATE * 1_000_000)) / 1_000_000n;
@@ -739,16 +756,17 @@ router.post('/batches', requireAuthOrApiKey,
             const item = itemsWithFees[idx];
             const assignedRail = railAssignment[idx];
             const bank = await tx.$queryRaw`SELECT bank_name FROM nigerian_banks WHERE bank_code = ${item.bank_code}`;
+            const clientRef = (item.client_ref && String(item.client_ref).trim()) ? String(item.client_ref).trim() : null;
             await tx.$executeRaw`
               INSERT INTO payout_items
                 (batch_id, merchant_id, account_number, account_name, bank_code, bank_name,
-                 amount, item_fee, item_vat, narration, status, rail_id, scheduled_at, created_at)
+                 amount, item_fee, item_vat, narration, status, rail_id, scheduled_at, client_ref, created_at)
               VALUES
                 (${batchId}::uuid, ${merchantId}::uuid, ${item.account_number}, ${item.account_name||null},
                  ${item.bank_code}, ${bank[0]?.bank_name||item.bank_code},
                  ${BigInt(item.amount)}, ${item.fee}, ${item.vat},
                  ${(item.narration && String(item.narration).trim()) ? item.narration : defaultNarration},
-                 ${itemStatus}, ${assignedRail.rail_id}::uuid, ${scheduledAt}, NOW())`;
+                 ${itemStatus}, ${assignedRail.rail_id}::uuid, ${scheduledAt}, ${clientRef}, NOW())`;
           }
 
           walletAfterTotal = afterAll;
@@ -910,6 +928,30 @@ router.get('/batches', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Translate internal failure reasons to merchant-friendly messages.
+// Never expose rail names, error codes, or internal system details.
+function merchantFailureReason(reason, status) {
+  if (status === 'success') return null;
+  if (!reason) return 'Transaction failed — please retry';
+  const r = String(reason).toLowerCase();
+  if (/name enquiry|ne failed|account.*not found|invalid.*account|no.*account/i.test(reason))
+    return 'Account not found — please verify the account number and bank';
+  if (/insufficient|balance|low.*fund|fund.*low/i.test(reason))
+    return 'Transaction failed — please contact support';
+  if (/do not honor|declined|not authoris|not authoriz/i.test(reason))
+    return 'Transaction declined by beneficiary bank — please contact the recipient';
+  if (/no record|not found at|never processed/i.test(reason))
+    return 'Transaction could not be completed — please retry';
+  if (/kyc|kyc level|kyc.*limit/i.test(reason))
+    return 'Transaction failed — beneficiary account KYC limit reached';
+  if (/timeout|timed out|connection|network/i.test(reason))
+    return 'Transaction timed out — please retry';
+  if (/cancel/i.test(reason))
+    return 'Transaction cancelled';
+  // Catch-all: never expose internal text
+  return 'Transaction failed — please retry or contact support';
+}
+
 // ── GET /api/v1/payouts/batches/:id — get batch details + items ───────────────
 router.get('/batches/:id', requireAuth, async (req, res, next) => {
   try {
@@ -948,13 +990,17 @@ router.get('/batches/:id', requireAuth, async (req, res, next) => {
         total_deducted_naira:  koboToNaira((b.total_amount || 0n) + (b.total_fee || 0n) + (b.total_vat || 0n)),
         fee_rate_pct:          b.fee_rate ? (Number(b.fee_rate) * 100).toFixed(2) + '%' : '0%',
       },
-      items: items.map(i => ({
-        ...i,
-        amount_naira:   koboToNaira(i.amount),
-        fee_naira:      koboToNaira(i.item_fee || 0),
-        vat_naira:      koboToNaira(i.item_vat || 0),
-        total_deducted: koboToNaira((i.amount || 0n) + (i.item_fee || 0n) + (i.item_vat || 0n)),
-      })),
+      items: items.map(i => {
+        const out = {
+          ...i,
+          amount_naira:   koboToNaira(i.amount),
+          fee_naira:      koboToNaira(i.item_fee || 0),
+          vat_naira:      koboToNaira(i.item_vat || 0),
+          total_deducted: koboToNaira((i.amount || 0n) + (i.item_fee || 0n) + (i.item_vat || 0n)),
+        };
+        if (isMerchant) out.failure_reason = merchantFailureReason(i.failure_reason, i.status);
+        return out;
+      }),
     });
   } catch (e) { next(e); }
 });
@@ -1011,7 +1057,7 @@ router.get('/batches/:id/report', requireAuth, async (req, res, next) => {
         amount_naira:   koboToNaira(row.amount),
         fee_naira:      koboToNaira(row.item_fee || 0),
         status:         row.status,
-        failure_reason: row.failure_reason || null,
+        failure_reason: isMerchant ? merchantFailureReason(row.failure_reason, row.status) : (row.failure_reason || null),
         provider_ref:   row.provider_ref   || null,
         sent_at:        row.sent_at        || null,
         settled_at:     row.settled_at     || null,
@@ -1025,7 +1071,7 @@ router.get('/batches/:id/report', requireAuth, async (req, res, next) => {
       }
 
       byCategory[cat].push(itm);
-      if (row.failure_reason) {
+      if (!isMerchant && row.failure_reason) {
         const k = row.failure_reason.substring(0, 80);
         failureReasons[k] = (failureReasons[k] || 0) + 1;
       }
@@ -1095,7 +1141,7 @@ router.get('/batches/:id/report.csv', requireAuth, async (req, res, next) => {
     const rows = [headers.join(',')];
     for (const i of items) {
       const cols = isMerchant
-        ? [i.account_number, i.account_name, i.bank_code, i.bank_name, koboToNaira(i.amount), koboToNaira(i.item_fee || 0), i.status, i.failure_reason, i.provider_ref, i.sent_at, i.settled_at, i.narration]
+        ? [i.account_number, i.account_name, i.bank_code, i.bank_name, koboToNaira(i.amount), koboToNaira(i.item_fee || 0), i.status, merchantFailureReason(i.failure_reason, i.status), i.provider_ref, i.sent_at, i.settled_at, i.narration]
         : [i.account_number, i.account_name, i.bank_code, i.bank_name, koboToNaira(i.amount), koboToNaira(i.item_fee || 0), i.status, i.failure_reason, i.provider_ref, i.rail_order_id, i.sent_at, i.settled_at, i.error_msg, i.narration];
       rows.push(cols.map(esc).join(','));
     }
@@ -1165,7 +1211,7 @@ router.get('/items/:id/status', requireAuth, async (req, res, next) => {
       account_number: row.account_number,
       account_name:   row.account_name,
       bank_name:      row.bank_name,
-      failure_reason: row.failure_reason || null,
+      failure_reason: isMerchant ? merchantFailureReason(row.failure_reason, row.status) : (row.failure_reason || null),
       provider_ref:   row.provider_ref   || null,
       rail_order_id:  isMerchant ? undefined : row.rail_order_id,
       sent_at:        row.sent_at        || null,
@@ -1660,13 +1706,13 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     const PALMPAY_SETTLE_BANK = '100033';
     const PALMPAY_SETTLE_ACCT = '8882777449';
 
+    const PALMPAY_LOW_BALANCE_KOBO = 200_000_000n; // ₦2M — alert threshold
+
     const doLeg = async (leg, nePrefetch) => {
-      // Kuda → PalmPay just-in-time funding:
-      // 1. Fund PalmPay via Parallex interbank to settlement account.
-      // 2. Wait for NIP credit (typically < 5s), then fire via PalmPay.
-      // The Parallex float was already debited at batch-dispatch and stays debited
-      // (money moved from Parallex → PalmPay → Kuda); on PalmPay payout failure
-      // the float refund goes to PalmPay (money is now sitting there).
+      // Kuda → PalmPay routing (and Parallex-failure fallback):
+      // Normal path (Parallex UP): JIT-fund PalmPay via Parallex, wait for credit, fire PalmPay.
+      // Fallback (Parallex DOWN): JIT funding will fail — skip top-up and use the pre-funded
+      // PalmPay reserve directly rather than refunding the merchant.
       if (nePrefetch && nePrefetch.usePalmPayRailId) {
         const plmRailId = nePrefetch.usePalmPayRailId;
         // Unique orderId for the Parallex → PalmPay funding leg (≤32 chars).
@@ -1682,42 +1728,45 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
             ? plxAdapter.nameEnquiry(PALMPAY_SETTLE_BANK, PALMPAY_SETTLE_ACCT)
             : Promise.resolve({ ok: false })).catch(() => ({ ok: false }));
         }
-        if (!pmNe.ok || !pmNe.sessionId) {
-          await pendingRefundLeg(leg, 'Kuda payout: PalmPay settlement NE failed — refunded');
-          return;
+
+        let jitOk = false;
+        if (pmNe.ok && pmNe.sessionId) {
+          // Fund PalmPay via Parallex (using the already-debited Parallex float).
+          let fundR;
+          try {
+            fundR = await plxAdapter.sendPayout({
+              orderId: fundingOrderId, amount: leg.amount,
+              bank_code: PALMPAY_SETTLE_BANK, account_number: PALMPAY_SETTLE_ACCT,
+              account_name: pmNe.accountName || 'PalmPay', narration: `KF:${leg.rail_order_id}`.slice(0, 50),
+              neSessionId: pmNe.sessionId, neAccountName: pmNe.accountName, neKycLevel: pmNe.kycLevel || '',
+            });
+          } catch (e) { fundR = { ok: false, reason: e.message }; }
+
+          if (fundR.ok) {
+            jitOk = true;
+            // Poll PalmPay balance until our merchant account shows ≥ payout amount.
+            // NIP typically settles in seconds; allow up to 90s before proceeding anyway.
+            const pollDeadline = Date.now() + 90_000;
+            const amtKobo = BigInt(leg.amount);
+            let pmBal = await palmpay.getBalance().catch(() => null);
+            while (pmBal === null || pmBal < amtKobo) {
+              if (Date.now() >= pollDeadline) break;
+              await new Promise(r => setTimeout(r, 6000));
+              pmBal = await palmpay.getBalance().catch(() => null);
+            }
+          } else {
+            logger.warn({ leg: leg.leg_id, reason: fundR.reason }, 'JIT funding failed — using pre-funded PalmPay reserve');
+          }
+        } else {
+          logger.warn({ leg: leg.leg_id }, 'JIT: Parallex NE on PalmPay settle account failed — using pre-funded PalmPay reserve');
         }
 
-        // Fund PalmPay via Parallex (using the already-debited Parallex float).
-        let fundR;
-        try {
-          fundR = await plxAdapter.sendPayout({
-            orderId: fundingOrderId, amount: leg.amount,
-            bank_code: PALMPAY_SETTLE_BANK, account_number: PALMPAY_SETTLE_ACCT,
-            account_name: pmNe.accountName || 'PalmPay', narration: `KF:${leg.rail_order_id}`.slice(0, 50),
-            neSessionId: pmNe.sessionId, neAccountName: pmNe.accountName, neKycLevel: pmNe.kycLevel || '',
-          });
-        } catch (e) { await pendingRefundLeg(leg, `Kuda funding threw: ${e.message}`); return; }
-
-        if (!fundR.ok) {
-          await pendingRefundLeg(leg, `Kuda funding failed: ${fundR.reason || fundR.code}`);
-          return;
-        }
-
-        // Poll PalmPay balance until our merchant account shows ≥ payout amount.
-        // NIP typically settles in seconds; allow up to 90s before proceeding anyway.
-        const pollDeadline = Date.now() + 90_000;
-        const amtKobo = BigInt(leg.amount);
-        let pmBal = await palmpay.getBalance().catch(() => null);
-        while (pmBal === null || pmBal < amtKobo) {
-          if (Date.now() >= pollDeadline) break;
-          await new Promise(r => setTimeout(r, 6000));
-          pmBal = await palmpay.getBalance().catch(() => null);
-        }
-
-        // Switch the disbursement record and leg to PalmPay rail for the Kuda payout.
+        // Switch the disbursement record and leg to PalmPay rail for the payout.
+        // Whether JIT succeeded (funded) or fell back (pre-funded reserve), we fire via PalmPay.
         await prisma.$executeRaw`UPDATE rail_disbursements SET rail_id=${plmRailId}::uuid WHERE id=${leg.leg_id}::uuid`;
         leg = { ...leg, rail_id: plmRailId };
         nePrefetch = {};
+        void jitOk; // used only for the poll above
       }
       const rail = railById[leg.rail_id];
       const adapter = /palmpay/i.test((rail && rail.name) || '') ? palmpay : railAdapter(rail && rail.name);
@@ -1744,7 +1793,7 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
 
       const os = r.ok ? String(r.orderStatus == null ? '' : r.orderStatus) : null;
       const railFee = (r.raw && r.raw.data && r.raw.data.fee && r.raw.data.fee.fee) || Number(leg.rail_cost);
-      const sess = (r.raw && r.raw.data && r.raw.data.sessionId) || null;
+      const sess = (r.raw?.data?.sessionId || r.raw?.Data?.sessionId) || r.providerRef || null;
 
       if (r.ok && os === '2') {
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='success', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), settled_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
@@ -1757,11 +1806,21 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         await prisma.$executeRaw`UPDATE payout_items SET status='processing', provider_ref=${r.providerRef || null} WHERE id=${leg.item_id}::uuid`;
         nPending++;
         await recordRailResult(rail, { ok: true });
+      } else if (r.ok && ((/parallex/i.test((rail && rail.name) || '')) || sess)) {
+        // Rail returned HTTP 200 but a non-success orderStatus. Do NOT refund immediately when:
+        //   • Parallex (any non-2 status — some settle after NIP bounce), OR
+        //   • Any rail that returned a NIP session ID — the switch received the transfer;
+        //     a timeout or orderStatus 3 here does NOT confirm no debit occurred.
+        // Hold as 'sent'; the reconciler will query the rail and write the REVERSAL only
+        // once the rail confirms no settlement (code 30 / NO RECORD).
+        await prisma.$executeRaw`UPDATE rail_disbursements SET status='sent', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
+        await prisma.$executeRaw`UPDATE payout_items SET status='processing', provider_ref=${r.providerRef || null} WHERE id=${leg.item_id}::uuid`;
+        nPending++;
+        await recordRailResult(rail, { ok: true });
       } else {
-        // Parallex rejected synchronously — try PalmPay as fallback before writing the failure.
-        // Guard: only when Parallex explicitly rejected (r.ok false), not on a pending/in-flight leg,
-        // and only once (usePalmPayRailId prevents re-entry on the recursive PalmPay call).
-        if (!r.ok && !nePrefetch.usePalmPayRailId && /parallex/i.test((rail && rail.name) || '') && palmpay.isConfigured()) {
+        // r.ok === false: Parallex API returned a hard error (non-200 / network failure),
+        // or a non-Parallex rail failed.
+        if (!r.ok && !nePrefetch.usePalmPayRailId && !/palmpay/i.test((rail && rail.name) || '') && palmpay.isConfigured()) {
           const pmRailFb = Object.values(railById).find(r2 => /palmpay/i.test(r2.name || ''));
           if (pmRailFb) {
             const palmNEFb = await palmpay.nameEnquiry(leg.bank_code, leg.account_number).catch(() => ({ ok: false }));
@@ -1769,6 +1828,54 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
               return doLeg(leg, { usePalmPayRailId: pmRailFb.id, palmPayAccountName: palmNEFb.accountName });
             }
           }
+        }
+        // For Parallex API error codes (not network failures), requery before refunding.
+        // Bank statement reconciliation (Sept 2026) confirmed that codes like "Format error"
+        // and "Transfer limit Exceeded" can be returned even when the NIP actually settled —
+        // refunding without verifying inflates the merchant wallet against the actual bank balance.
+        if (!r.ok && rail && /parallex/i.test(rail.name || '') &&
+            r.code !== 'FETCH_FAILED' && r.code !== 'TIMEOUT' && r.code !== 'PARSE') {
+          let rq = null;
+          try {
+            await new Promise(res => setTimeout(res, 1500));
+            rq = await adapter.queryPayoutResult({
+              orderId: leg.rail_order_id, amount: leg.amount,
+              accountNumber: leg.account_number, bankCode: leg.bank_code,
+            });
+          } catch (_) {}
+          if (rq && rq.orderStatus === '2') {
+            // Parallex confirms settled — record success, no wallet refund.
+            logger.warn({ orderId: leg.rail_order_id, apiCode: r.code, apiReason: r.reason },
+              'Parallex send returned error but requery confirms NIP settled — marking success');
+            await prisma.$executeRaw`UPDATE rail_disbursements SET status='success', rail_order_no=${rq.sessionId || r.providerRef || null}, rail_session_id=${rq.sessionId || sess}, rail_fee=${railFee}, sent_at=NOW(), settled_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
+            await prisma.$executeRaw`UPDATE payout_items SET status='success', provider_ref=${rq.sessionId || r.providerRef || null}, processed_at=NOW() WHERE id=${leg.item_id}::uuid`;
+            nOk++;
+            await recordRailResult(rail, { ok: true });
+            firePayoutWebhook(hookLeg(leg), 'payout.success', { orderNo: rq.sessionId || r.providerRef, sessionId: rq.sessionId || sess });
+            return;
+          } else if (!rq || rq.code !== '30') {
+            // Requery inconclusive or Parallex still pending — hold as 'sent', watchdog will confirm.
+            logger.warn({ orderId: leg.rail_order_id, apiCode: r.code, requeryCode: rq && rq.code },
+              'Parallex send returned error; requery inconclusive — holding as sent for watchdog');
+            await prisma.$executeRaw`UPDATE rail_disbursements SET status='sent', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
+            await prisma.$executeRaw`UPDATE payout_items SET status='processing', failure_reason=${(r.reason || 'Requery pending').slice(0, 280)}, provider_ref=${r.providerRef || null} WHERE id=${leg.item_id}::uuid`;
+            nPending++;
+            await recordRailResult(rail, { ok: true });
+            return;
+          }
+          // rq.code === '30' (NO RECORD) — Parallex confirms nothing went out; fall through to immediate refund.
+        }
+        // Non-Parallex rail (e.g. PalmPay) returned an error but included a NIP session_id.
+        // The session_id means the NIP switch received the transfer; the error does NOT confirm
+        // no debit occurred. Hold as 'sent' — watchdog will requery and reverse only if confirmed.
+        if (sess && !/parallex/i.test((rail && rail.name) || '')) {
+          logger.warn({ orderId: leg.rail_order_id, sess, apiReason: r.reason },
+            'Rail error response includes NIP session_id — holding as sent for watchdog');
+          await prisma.$executeRaw`UPDATE rail_disbursements SET status='sent', rail_order_no=${r.providerRef || null}, rail_session_id=${sess}, rail_fee=${railFee}, sent_at=NOW(), updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
+          await prisma.$executeRaw`UPDATE payout_items SET status='processing', failure_reason=${(r.reason || 'Session present, pending confirm').slice(0, 280)}, provider_ref=${r.providerRef || null} WHERE id=${leg.item_id}::uuid`;
+          nPending++;
+          await recordRailResult(rail, { ok: true });
+          return;
         }
         const reason = r.ok ? `Rail returned orderStatus ${os}` : (r.reason || 'failed');
         const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
@@ -1814,7 +1921,7 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
 
     // NE Producer: runs NE for every Parallex interbank leg, pushes to transferQueue.
     // 1. Pre-fetched session (< 60 min old): skip live NE — use cached session directly.
-    // 2. Live NE: try Parallex twice. If Parallex NE fails, fall back to PalmPay NE + JIT funding.
+    // 2. Live NE: try Parallex twice. If Parallex NE fails, fall back to PalmPay (pre-funded).
     // 3. Both rails failed NE: queue with no session; doLeg will fail and auto-refund merchant.
     const NE_TTL_MS = 60 * 60 * 1000; // 60 min — proven safe (TTL test 2026-08-30)
     const neProducer = runPool(legs.map(leg => async () => {
@@ -1854,7 +1961,7 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         transferQueue.push({ leg, nePrefetch: { neSessionId: ne.sessionId, neAccountName: ne.accountName, neKycLevel: ne.kycLevel || '' } });
         return;
       }
-      // Parallex NE failed — fall back to PalmPay rail (JIT fund + fire via PalmPay).
+      // Parallex NE failed — fall back to PalmPay rail (pre-funded, fire directly).
       if (palmpay.isConfigured()) {
         const pmRail = Object.values(railById).find(r => /palmpay/i.test(r.name || ''));
         if (pmRail) {
@@ -1900,6 +2007,19 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
 
     // Automatic post-batch reconciliation — runs after every dispatch.
     runBatchRecon(batchId).catch(() => {});
+
+    // PalmPay balance alert — fire-and-forget check after any batch that used PalmPay.
+    const pmRailUsed = Object.values(railById).find(r => /palmpay/i.test(r.name || ''));
+    if (pmRailUsed && palmpay.isConfigured()) {
+      palmpay.getBalance().then(bal => {
+        if (bal != null && BigInt(bal) < PALMPAY_LOW_BALANCE_KOBO) {
+          notifyRailIncident(pmRailUsed, `PalmPay balance ₦${(Number(bal) / 100).toLocaleString('en-NG')} — below ₦2M threshold, fund another round`, {
+            kind: 'low-balance', balanceNaira: Number(bal) / 100,
+            suggestedAction: 'Transfer funds to PalmPay settlement account 8882777449.',
+          });
+        }
+      }).catch(() => {});
+    }
 
     return { batch_id: batchId, status: finalStatus, settled: nOk, pending: nPending, failed: nFail };
 }
@@ -2073,6 +2193,23 @@ async function reverseBatch({ batchId, scopeMerchantId = null, actorId = null, i
   });
   await logAudit(actorId, by === 'merchant' ? 'PAYOUT_BATCH_CANCELLED_BY_MERCHANT' : 'PAYOUT_BATCH_CANCELLED', 'payout_batches', batchId,
     { status: 'needs_routing' }, { status: 'reversed', refunded: Number(refund) }, null, ip).catch(() => {});
+
+  // Fire payout.failed webhook for each reversed item so merchants get a callback
+  try {
+    const { firePayoutWebhook } = require('../services/payoutSettle');
+    const items = await prisma.$queryRaw`
+      SELECT pi.account_number, pi.account_name, pi.bank_code, pi.bank_name, pi.narration, pi.amount,
+             pb.batch_ref, pb.merchant_id
+      FROM payout_items pi JOIN payout_batches pb ON pb.id = pi.batch_id
+      WHERE pi.batch_id = ${batchId}::uuid AND pi.status = 'reversed'`;
+    for (const item of items) {
+      firePayoutWebhook(item, 'payout.failed',
+        { errorMsg: `Batch cancelled by ${by} — funds returned to wallet` });
+    }
+  } catch (e) {
+    logger.warn({ batchId, err: e.message }, 'reverseBatch: webhook fire failed (non-fatal)');
+  }
+
   return { batch_id: batchId, status: 'reversed', refunded: Number(refund), refunded_naira: koboToNaira(refund) };
 }
 
@@ -2462,7 +2599,7 @@ router.get('/logs', requireAuth, async (req, res, next) => {
         fee_naira:       koboToNaira(i.item_fee || 0),
         vat_naira:       koboToNaira(i.item_vat || 0),
         total_deducted:  koboToNaira((i.amount || 0n) + (i.item_fee || 0n) + (i.item_vat || 0n)),
-        failure_reason:  i.failure_reason || (i.status === 'failed' ? 'Processing failed — contact support' : null),
+        failure_reason:  isMerchant ? merchantFailureReason(i.failure_reason, i.status) : (i.failure_reason || null),
       })),
       meta: { page: parseInt(page), perPage: parseInt(perPage), total, pages: Math.ceil(total / parseInt(perPage)) },
     });
@@ -2774,6 +2911,249 @@ router.post('/beneficiaries/upload', requireAuth, upload.single('file'), async (
       uploaded: validRows.length, skipped_errors: errors.length, error_samples: errors.slice(0, 5),
       ne_status: 'Name verification running in background — check your address book in a few minutes',
     }, `${validRows.length} accounts added — verifying with bank now`);
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/payouts/items/by-ref/:clientRef — lookup item by merchant's own ref ─
+// Merchants pass their own order reference when creating a batch (items[].client_ref).
+// This endpoint lets them check whether that order was created and its current status —
+// if NOT_FOUND, it is safe to retry; if found, they should wait for the webhook.
+router.get('/items/by-ref/:clientRef', requireAuthOrApiKey, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchant?.id;
+    if (!merchantId) return fail(res, 'No merchant account', 'UNAUTHORIZED', 401);
+    const clientRef = req.params.clientRef;
+
+    const rows = await prisma.$queryRaw`
+      SELECT
+        pi.id::text              AS id,
+        pi.client_ref,
+        pi.batch_id::text        AS batch_id,
+        pb.batch_ref,
+        pi.account_number,
+        pi.account_name,
+        pi.bank_code,
+        pi.bank_name,
+        pi.amount,
+        pi.item_fee,
+        pi.item_vat,
+        pi.narration,
+        pi.status,
+        pi.failure_reason,
+        pi.provider_ref,
+        pi.created_at,
+        pi.processed_at,
+        rd.status                AS leg_status,
+        rd.rail_order_id,
+        rd.sent_at,
+        rd.settled_at
+      FROM payout_items pi
+      JOIN payout_batches pb ON pb.id = pi.batch_id
+      LEFT JOIN rail_disbursements rd ON rd.payout_item_id = pi.id
+      WHERE pi.merchant_id = ${merchantId}::uuid
+        AND pi.client_ref = ${clientRef}
+      ORDER BY pi.created_at DESC
+      LIMIT 1
+    `;
+
+    if (!rows[0]) return notFound(res, 'Payout order');
+    const r = rows[0];
+
+    // If the leg is still in 'sent' state, do a live rail query to get the latest status.
+    if (r.leg_status === 'sent' && r.rail_order_id) {
+      try {
+        const { payoutAdapterForName } = require('../services/payoutRailAdapter');
+        const { applyPayoutResult } = require('../services/payoutSettle');
+        const batchRow = await prisma.$queryRaw`SELECT pr.name AS rail_name FROM payout_batches pb JOIN payment_rails pr ON pb.rail_id = pr.id WHERE pb.id = ${r.batch_id}::uuid`;
+        const adapter = batchRow[0] && payoutAdapterForName(batchRow[0].rail_name);
+        if (adapter && adapter.queryPayoutResult) {
+          const liveR = await adapter.queryPayoutResult({ orderId: r.rail_order_id, amount: r.amount, accountNumber: r.account_number, bankCode: r.bank_code });
+          if (liveR && (liveR.orderStatus === '2' || (liveR.orderStatus !== '1' && liveR.orderStatus !== '0' && liveR.orderStatus !== null))) {
+            await applyPayoutResult({ orderId: r.rail_order_id, orderNo: null, sessionId: null, orderStatus: liveR.orderStatus, errorMsg: liveR.reason, source: 'by-ref-query' });
+            // Refresh from DB after applying
+            const fresh = await prisma.$queryRaw`SELECT status, failure_reason, processed_at FROM payout_items WHERE id = ${r.id}::uuid`;
+            if (fresh[0]) { r.status = fresh[0].status; r.failure_reason = fresh[0].failure_reason; r.processed_at = fresh[0].processed_at; }
+          }
+        }
+      } catch (_) {}
+    }
+
+    const isMerchant = req.user.role === 'MERCHANT';
+    ok(res, {
+      id:             r.id,
+      client_ref:     r.client_ref,
+      batch_ref:      r.batch_ref,
+      status:         r.status,
+      amount_naira:   koboToNaira(r.amount),
+      fee_naira:      koboToNaira(r.item_fee || 0n),
+      account_number: r.account_number,
+      account_name:   r.account_name || null,
+      bank_code:      r.bank_code,
+      bank_name:      r.bank_name || null,
+      narration:      r.narration || null,
+      failure_reason: isMerchant ? merchantFailureReason(r.failure_reason, r.status) : r.failure_reason,
+      provider_ref:   r.provider_ref || null,
+      created_at:     r.created_at,
+      processed_at:   r.processed_at || null,
+      safe_to_retry:  r.status === 'failed',
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/payouts/admin/stuck — SA: batches with items stuck in processing ─
+router.get('/admin/stuck', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRaw`
+      SELECT
+        pb.id::text                  AS id,
+        pb.batch_ref,
+        pb.status,
+        pb.merchant_id::text         AS merchant_id,
+        (pb.created_at AT TIME ZONE 'Africa/Lagos')::text AS created_at,
+        m.business_name,
+        COUNT(pi.id)::int            AS total_items,
+        SUM(CASE WHEN pi.status IN ('queued','processing') THEN 1 ELSE 0 END)::int AS pending_items,
+        SUM(CASE WHEN pi.status IN ('queued','processing') THEN pi.amount ELSE 0 END)::bigint AS stuck_kobo,
+        SUM(CASE WHEN pi.status IN ('queued','processing') AND EXISTS(
+          SELECT 1 FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status IN ('pending','sent')
+        ) THEN 1 ELSE 0 END)::int AS sent_to_rail,
+        SUM(CASE WHEN pi.status IN ('queued','processing') AND NOT EXISTS(
+          SELECT 1 FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status IN ('pending','sent')
+        ) THEN 1 ELSE 0 END)::int AS not_sent_to_rail
+      FROM payout_batches pb
+      JOIN merchants m ON pb.merchant_id = m.id
+      JOIN payout_items pi ON pi.batch_id = pb.id
+      WHERE pb.status IN ('processing','pending')
+        AND pb.created_at > NOW() - INTERVAL '30 days'
+      GROUP BY pb.id, pb.batch_ref, pb.status, pb.merchant_id, pb.created_at, m.business_name
+      HAVING SUM(CASE WHEN pi.status IN ('queued','processing') THEN 1 ELSE 0 END) > 0
+      ORDER BY pb.created_at DESC
+    `;
+    ok(res, {
+      batches: rows.map(b => ({
+        id:              b.id,
+        batch_ref:       b.batch_ref,
+        status:          b.status,
+        merchant_id:     b.merchant_id,
+        business_name:   b.business_name,
+        created_at:      b.created_at,
+        total_items:     Number(b.total_items),
+        pending_items:   Number(b.pending_items),
+        stuck_naira:     Number(b.stuck_kobo) / 100,
+        sent_to_rail:    Number(b.sent_to_rail),
+        not_sent_to_rail: Number(b.not_sent_to_rail),
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/payouts/admin/stuck/:batchId/check — SA: query rail + resolve ─
+// For each stuck item, query the rail and apply a safe resolution:
+//   - Rail confirms settled (orderStatus=2)           → mark success
+//   - NO RECORD (code=30) AND leg >1h old             → reverse (wallet refunded)
+//   - NO RECORD (code=30) AND leg <1h old             → hold (may still process)
+//   - Still in-flight (orderStatus 0/1) or other code → hold, log error
+//   - No rail leg (never dispatched)                  → report pre-dispatch only
+// No money moves without a confirmed NO RECORD + age check. (2026-09-17)
+router.post('/admin/stuck/:batchId/check', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { batchId } = req.params;
+    const { payoutAdapterForName } = require('../services/payoutRailAdapter');
+    const { applyPayoutResult, rollupBatch } = require('../services/payoutSettle');
+
+    const items = await prisma.$queryRaw`
+      SELECT
+        pi.id::text                  AS item_id,
+        pi.status                    AS item_status,
+        pi.amount,
+        pi.account_number,
+        pi.bank_code,
+        rd.id::text                  AS rd_id,
+        rd.status                    AS rd_status,
+        rd.rail_order_id,
+        rd.sent_at,
+        rd.error_msg,
+        pr.name                      AS rail_name
+      FROM payout_items pi
+      LEFT JOIN rail_disbursements rd
+        ON rd.payout_item_id = pi.id AND rd.status IN ('pending','sent')
+      LEFT JOIN payment_rails pr ON rd.rail_id = pr.id
+      WHERE pi.batch_id = ${batchId}::uuid
+        AND pi.status IN ('queued','processing')
+      ORDER BY pi.created_at ASC
+    `;
+
+    if (!items.length)
+      return ok(res, { message: 'No stuck items found', settled: 0, reversed: 0, held: 0, pre_dispatch: 0, details: [] });
+
+    let settled = 0, reversed = 0, held = 0, pre_dispatch = 0;
+    const details = [];
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+
+    for (const item of items) {
+      if (!item.rd_id) {
+        pre_dispatch++;
+        details.push({ item_id: item.item_id, action: 'pre_dispatch', note: 'Not yet sent to rail — use Dispatch button' });
+        continue;
+      }
+      const adapter = payoutAdapterForName(item.rail_name);
+      if (!adapter || !adapter.queryPayoutResult) {
+        held++;
+        details.push({ item_id: item.item_id, action: 'held', note: 'Rail adapter has no query API' });
+        continue;
+      }
+      let r;
+      try {
+        r = await adapter.queryPayoutResult({
+          orderId: item.rail_order_id, amount: item.amount,
+          accountNumber: item.account_number, bankCode: item.bank_code,
+        });
+      } catch (e) {
+        held++;
+        details.push({ item_id: item.item_id, action: 'held', note: 'Rail query error: ' + String(e.message).slice(0, 80) });
+        continue;
+      }
+      if (!r || !r.ok) {
+        held++;
+        details.push({ item_id: item.item_id, action: 'held', note: 'Rail query returned no response' });
+        continue;
+      }
+      const legAgeMs = item.sent_at ? Date.now() - new Date(item.sent_at).getTime() : ONE_HOUR_MS + 1;
+
+      if (r.orderStatus === '2') {
+        await applyPayoutResult({
+          orderId: item.rail_order_id,
+          orderNo: (r.raw?.data?.orderNo || r.raw?.Data?.orderNo) || null,
+          sessionId: r.sessionId, orderStatus: '2', errorMsg: null, source: 'sa-check',
+        });
+        settled++;
+        details.push({ item_id: item.item_id, action: 'settled', note: 'NIP confirmed settled at rail' });
+      } else if (r.code === '30') {
+        if (legAgeMs >= ONE_HOUR_MS) {
+          await applyPayoutResult({
+            orderId: item.rail_order_id, orderNo: null, sessionId: null,
+            orderStatus: 'failed', errorMsg: 'No record at rail — confirmed not processed (SA check)',
+            source: 'sa-check',
+          });
+          reversed++;
+          details.push({ item_id: item.item_id, action: 'reversed', note: 'No record at rail, >1h old — wallet refunded' });
+        } else {
+          held++;
+          details.push({ item_id: item.item_id, action: 'held', note: 'No record at rail but <1h old — check again later' });
+        }
+      } else {
+        const note = 'Rail code: ' + (r.code || r.orderStatus || '?') + (r.reason ? ' — ' + String(r.reason).slice(0, 80) : '');
+        held++;
+        details.push({ item_id: item.item_id, action: 'held', note });
+      }
+    }
+
+    await rollupBatch(batchId);
+    logger.info({ batchId, settled, reversed, held, pre_dispatch }, 'SA stuck-batch check');
+    ok(res, {
+      message: `Check complete: ${settled} settled, ${reversed} reversed, ${held} held, ${pre_dispatch} pre-dispatch`,
+      settled, reversed, held, pre_dispatch, details,
+    });
   } catch (e) { next(e); }
 });
 
