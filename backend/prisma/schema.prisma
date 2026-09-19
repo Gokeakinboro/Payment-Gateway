@@ -655,6 +655,7 @@ model MerchantRateConfig {
   cap        BigInt   @default(0)                           // kobo max fee, 0 = no cap
   minCharge  BigInt   @default(0) @map("min_charge")        // kobo min fee, 0 = no minimum
   vatRate    Decimal  @default(0.075) @map("vat_rate") @db.Decimal(5, 4)  // default 7.5%
+  feePaidBy  String   @default("PAYER") @map("fee_paid_by")               // PAYER | MERCHANT
   notes      String?
   setBy      String?  @map("set_by") @db.Uuid
   createdAt  DateTime @default(now()) @map("created_at")
@@ -700,6 +701,7 @@ model AggregatorRateConfig {
   aggregatorId  String   @map("aggregator_id") @db.Uuid
   merchantId    String?  @map("merchant_id") @db.Uuid  // null = aggregator-wide default
   splitPct      Decimal  @map("split_pct") @db.Decimal(5, 4)  // 0.3000 = 30%
+  flatFee       BigInt   @default(0) @map("flat_fee")          // kobo; payout charge to merchant
   notes         String?
   setBy         String?  @map("set_by") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at")
@@ -1111,4 +1113,19 @@ model MpgsComment {
   createdAt     DateTime        @default(now()) @map("created_at")
 
   @@map("mpgs_comments")
+}
+
+// ─── NIBSS Consent Hub ────────────────────────────────────────────────────────
+
+model NibssConsentToken {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId       String    @unique @map("session_id")
+  retrievalToken  String    @map("retrieval_token")
+  consentStatus   String    @default("Unknown") @map("consent_status")
+  bvnMasked       String?   @map("bvn_masked")
+  usedAt          DateTime? @map("used_at")
+  receivedAt      DateTime  @default(now()) @map("received_at")
+  expiresAt       DateTime? @map("expires_at")
+
+  @@map("nibss_consent_tokens")
 }
