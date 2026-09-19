@@ -77,21 +77,23 @@ async function getMerchantRateConfig(prisma, merchantId, channel) {
 }
 
 /**
- * Resolve effective aggregator split % for a specific merchant.
- * Priority: per-merchant override → aggregator default split
+ * Resolve aggregator split for a specific merchant.
+ * Returns { baseRate, merchantRate, spread } where spread = merchantRate − baseRate.
+ * Priority for merchantRate: per-merchant override → aggregator default.
  */
-async function getAggregatorSplit(prisma, aggregatorId, merchantId) {
-  if (!aggregatorId) return 0;
+async function getAggregatorSplit(prisma, aggregatorId, merchantId, channel = 'VIRTUAL_ACCOUNT') {
+  if (!aggregatorId) return { baseRate: 0, merchantRate: 0, spread: 0 };
 
   const [override, aggregator] = await Promise.all([
     prisma.aggregatorRateConfig.findUnique({
-      where: { aggregatorId_merchantId: { aggregatorId, merchantId } },
+      where: { aggregatorId_merchantId_channel: { aggregatorId, merchantId, channel } },
     }),
     prisma.aggregator.findUnique({ where: { id: aggregatorId }, select: { revenueSplitPct: true } }),
   ]);
 
-  if (override) return Number(override.splitPct);
-  return aggregator ? Number(aggregator.revenueSplitPct) : 0;
+  const baseRate     = aggregator ? Number(aggregator.revenueSplitPct) : 0;
+  const merchantRate = override   ? Number(override.rate)              : baseRate;
+  return { baseRate, merchantRate, spread: Math.max(0, merchantRate - baseRate) };
 }
 
 /**
@@ -205,7 +207,8 @@ function computeFeesForTxn(amount, merchant, rateConfig = null, channel = 'CARD'
   const mCap         = BigInt(cfg.merchantCap || 0);
   const minCharge    = BigInt(cfg.minCharge || 0);
   const rCap         = BigInt(cfg.railCap || 0);
-  const aggSplitPct  = Number(cfg.aggSplitPct || 0);
+  // aggSpread = merchant_rate − aggregator_base_rate (pre-computed by caller via resolvePayinRateConfig)
+  const aggSpread    = Number(cfg.aggSpread != null ? cfg.aggSpread : 0);
 
   // Our charge to the customer (+ VAT)
   let feeRaw = principal * BigInt(Math.round(merchantRate * 1_000_000)) / BASE + flatFee;
@@ -226,8 +229,9 @@ function computeFeesForTxn(amount, merchant, rateConfig = null, channel = 'CARD'
   const merchantSettlement = principal;              // merchant gets the full principal
 
   // Paylode revenue = our fee − rail cost (ex-VAT).
+  // aggShare = principal × spread (merchant_rate − aggregator_base_rate)
   const netPool       = feeRaw - railRaw;
-  const aggShare      = netPool > 0n ? netPool * BigInt(Math.round(aggSplitPct * 1_000_000)) / BASE : 0n;
+  const aggShare      = aggSpread > 0 ? principal * BigInt(Math.round(aggSpread * 1_000_000)) / BASE : 0n;
   const paylodeMargin = netPool - aggShare;
   // VAT we actually remit to FIRS = output VAT (on our fee) − input VAT (rail's VAT).
   const netVat = vatOnFee - vatOnRail;
@@ -264,7 +268,8 @@ function computeFeesForPayin(amount, cfg = {}) {
   const mCap         = BigInt(cfg.merchantCap || 0);
   const minCharge    = BigInt(cfg.minCharge || 0);
   const rCap         = BigInt(cfg.railCap || 0);
-  const aggSplitPct  = Number(cfg.aggSplitPct || 0);
+  // aggSpread = merchant_rate − aggregator_base_rate (pre-computed by caller via resolvePayinRateConfig)
+  const aggSpread    = Number(cfg.aggSpread != null ? cfg.aggSpread : 0);
 
   // Our fee on the FACE amount (+ VAT), capped then floored.
   let feeRaw = principal * BigInt(Math.round(merchantRate * 1_000_000)) / BASE + flatFee;
@@ -283,8 +288,9 @@ function computeFeesForPayin(amount, cfg = {}) {
 
   const merchantSettlement = principal;   // merchant receives the full face amount
 
-  const netPool       = feeRaw - railRaw;                       // ex-VAT margin pool
-  const aggShare      = netPool > 0n ? netPool * BigInt(Math.round(aggSplitPct * 1_000_000)) / BASE : 0n;
+  // aggShare = principal × spread (merchant_rate − aggregator_base_rate)
+  const netPool       = feeRaw - railRaw;
+  const aggShare      = aggSpread > 0 ? principal * BigInt(Math.round(aggSpread * 1_000_000)) / BASE : 0n;
   const paylodeMargin = netPool - aggShare;
 
   return {
@@ -347,7 +353,8 @@ async function resolvePayinRail(prisma, product = 'VIRTUAL_ACCOUNT', merchant = 
 // wallet_fund transactions use 'WALLET_FUND_VA' pricing but 'VIRTUAL_ACCOUNT' rail costs.
 async function resolvePayinRateConfig(prisma, merchant, railId = null, product = 'VIRTUAL_ACCOUNT', pricingProduct = null) {
   const priceKey = pricingProduct || product;
-  const [mOv, plat, railRows] = await Promise.all([
+  const aggId    = merchant.aggregatorId || (merchant.aggregator && merchant.aggregator.id) || null;
+  const [mOv, plat, railRows, aggOv] = await Promise.all([
     prisma.merchantRateConfig.findFirst({ where: { merchantId: merchant.id, channel: { in: [priceKey, 'ALL'] } }, orderBy: { channel: 'desc' } }),
     prisma.platformRateConfig.findFirst({ where: { channel: { in: [priceKey, 'ALL'] } }, orderBy: { channel: 'desc' } }),
     railId
@@ -357,19 +364,45 @@ async function resolvePayinRateConfig(prisma, merchant, railId = null, product =
           WHERE rc.rail_id = ${railId}::uuid AND rc.service_type = ${product} AND rc.effective_to IS NULL
           ORDER BY rc.rate ASC LIMIT 1`
       : Promise.resolve([]),
+    aggId
+      ? prisma.aggregatorRateConfig.findFirst({
+          where: { aggregatorId: aggId, merchantId: merchant.id, channel: priceKey === 'VIRTUAL_ACCOUNT' ? 'VIRTUAL_ACCOUNT' : priceKey },
+        })
+      : Promise.resolve(null),
   ]);
   const rc = mOv || plat;
   const rr = railRows && railRows[0];
+
+  // Start with platform/merchant rate
+  let merchantRate = rc ? Number(rc.rate) : Number(merchant.processingRate || 0.015);
+  let flatFee      = rc ? Number(rc.flatFee) : 0;
+  let merchantCap  = rc ? Number(rc.cap)     : 0;
+  let minCharge    = rc ? Number(rc.minCharge || 0) : 0;
+
+  // Aggregator override: if agg has a rate config for this channel, it fully replaces the fee params.
+  // aggSpread = agg's rate minus their base cost (revenueSplitPct). Flat fee/min are additive margin.
+  let aggSpread = 0;
+  if (aggId && merchant.aggregator) {
+    const aggBaseRate = Number(merchant.aggregator.revenueSplitPct);
+    if (aggOv) {
+      merchantRate = Number(aggOv.rate);
+      if (Number(aggOv.flatFee)   > 0) flatFee     = Number(aggOv.flatFee);
+      if (Number(aggOv.minCharge) > 0) minCharge   = Number(aggOv.minCharge);
+      if (Number(aggOv.maxCharge) > 0) merchantCap = Number(aggOv.maxCharge);
+    }
+    aggSpread = Math.max(0, merchantRate - aggBaseRate);
+  }
+
   return {
-    merchantRate: rc ? Number(rc.rate)         : Number(merchant.processingRate || 0.015),
-    flatFee:      rc ? Number(rc.flatFee)      : 0,
-    merchantCap:  rc ? Number(rc.cap)          : 0,
-    minCharge:    rc ? Number(rc.minCharge || 0) : 0,
-    vatRate:      rc && rc.vatRate != null ? Number(rc.vatRate) : VAT_RATE,
-    railRate:     rr ? Number(rr.rate)         : 0,
-    railCap:      rr ? Number(rr.cap)          : 0,
-    railVatRate:  rr && rr.vat_rate != null ? Number(rr.vat_rate) : VAT_RATE,
-    aggSplitPct:  merchant.aggregator ? Number(merchant.aggregator.revenueSplitPct) : 0,
+    merchantRate,
+    flatFee,
+    merchantCap,
+    minCharge,
+    vatRate:     rc && rc.vatRate != null ? Number(rc.vatRate) : VAT_RATE,
+    railRate:    rr ? Number(rr.rate)      : 0,
+    railCap:     rr ? Number(rr.cap)       : 0,
+    railVatRate: rr && rr.vat_rate != null ? Number(rr.vat_rate) : VAT_RATE,
+    aggSpread,
   };
 }
 

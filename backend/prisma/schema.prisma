@@ -700,8 +700,11 @@ model AggregatorRateConfig {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   aggregatorId  String   @map("aggregator_id") @db.Uuid
   merchantId    String?  @map("merchant_id") @db.Uuid  // null = aggregator-wide default
-  splitPct      Decimal  @map("split_pct") @db.Decimal(5, 4)  // 0.3000 = 30%
-  flatFee       BigInt   @default(0) @map("flat_fee")          // kobo; payout charge to merchant
+  channel       String   @default("VIRTUAL_ACCOUNT")   // VIRTUAL_ACCOUNT | PAYOUT
+  rate          Decimal  @default(0) @map("rate") @db.Decimal(10, 6)  // e.g. 0.030000 = 3%
+  flatFee       BigInt   @default(0) @map("flat_fee")   // kobo flat fee per txn
+  minCharge     BigInt   @default(0) @map("min_charge") // kobo minimum charge
+  maxCharge     BigInt   @default(0) @map("max_charge") // kobo cap; 0 = no cap
   notes         String?
   setBy         String?  @map("set_by") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at")
@@ -710,7 +713,7 @@ model AggregatorRateConfig {
   aggregator Aggregator @relation(fields: [aggregatorId], references: [id], onDelete: Cascade)
   merchant   Merchant?  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
-  @@unique([aggregatorId, merchantId], name: "aggregatorId_merchantId")
+  @@unique([aggregatorId, merchantId, channel], name: "aggregatorId_merchantId_channel")
   @@index([aggregatorId])
   @@map("aggregator_rate_configs")
 }
