@@ -6040,40 +6040,48 @@ async function loadAggRates() {
     ]);
     var d = (ratesRes && ratesRes.data) || {};
     var basePct         = Number(d.base_rate || d.default_split_pct || 0);
-    var payoutBaseCost  = Number(d.payout_base_cost || 0);   // kobo — Paylode's floor for payout flat fee
-    var vaCap           = Number(d.va_cap || 0);             // kobo — SA-set VA cap (read-only)
-    var overrides       = d.overrides || [];
+    var payoutBaseCost  = Number(d.payout_base_cost || 0);   // kobo
+    var vaCap           = Number(d.va_cap || 0);             // kobo — SA-set cap, read-only
+    var overrides       = d.overrides || [];                 // [{merchant_id, va, payout}]
     var merchants       = (merchantsRes && merchantsRes.data) || [];
 
+    // Build lookup: merchantId → {va, payout}
     var overrideMap = {};
     overrides.forEach(function(o) { overrideMap[o.merchant_id] = o; });
 
-    var vaCapNairaLabel = vaCap ? '₦' + (vaCap / 100).toLocaleString('en-NG') : '—';
-    var payoutFloorNairaLabel = payoutBaseCost ? '₦' + (payoutBaseCost / 100).toFixed(2) : '₦0';
+    var vaCapNairaLabel       = vaCap         ? '₦' + (vaCap / 100).toLocaleString('en-NG') : '—';
+    var payoutFloorNairaLabel = payoutBaseCost ? '₦' + (payoutBaseCost / 100).toFixed(2)     : '₦0';
+
+    function fmtChannelCell(cfg, baseKobo, isFlat) {
+      if (!cfg) return '<span class="badge badge-gray">Default</span>';
+      var parts = [];
+      if (Number(cfg.rate)       > 0) parts.push((Number(cfg.rate)*100).toFixed(2) + '%');
+      if (Number(cfg.flat_fee)   > 0) parts.push('₦' + (Number(cfg.flat_fee)/100).toFixed(2));
+      if (Number(cfg.min_charge) > 0) parts.push('min ₦' + (Number(cfg.min_charge)/100).toFixed(2));
+      if (!parts.length) return '<span class="badge badge-gray">Default</span>';
+      return '<span class="badge badge-lime">' + parts.join(' + ') + '</span>';
+    }
 
     var merchantRows = merchants.length ? merchants.map(function(m) {
-      var ov = overrideMap[m.id];
-      var effectivePct    = ov ? Number(ov.split_pct) : basePct;
-      var margin          = Math.max(0, effectivePct - basePct);
-      var flatFeeKobo     = ov ? Number(ov.flat_fee || 0) : 0;
-      var payoutMarginKobo = Math.max(0, flatFeeKobo - payoutBaseCost);
-      var rateCell = ov
-        ? '<span class="badge badge-lime">Custom: ' + (effectivePct*100).toFixed(2) + '%</span>'
-        : '<span class="badge badge-gray">Default: ' + (basePct*100).toFixed(2) + '%</span>';
-      if (margin > 0) rateCell += ' <span class="badge badge-teal" title="Your VA margin">+' + (margin*100).toFixed(2) + '% margin</span>';
-      var flatFeeCell = flatFeeKobo > 0
-        ? '<span class="badge badge-lime">₦' + (flatFeeKobo/100).toFixed(2) + '/txn</span>' +
-          (payoutMarginKobo > 0 ? ' <span class="badge badge-teal" title="Your payout margin">+₦' + (payoutMarginKobo/100).toFixed(2) + ' margin</span>' : '')
-        : '<span class="badge badge-gray">Default (' + payoutFloorNairaLabel + ')</span>';
+      var ov       = overrideMap[m.id];
+      var vaData   = ov ? ov.va     : null;
+      var poData   = ov ? ov.payout : null;
+      var vaCell   = fmtChannelCell(vaData);
+      var poCell   = fmtChannelCell(poData);
+      // Safe JSON for inline onclick — just pass kobo numbers
+      var vd       = vaData || {};
+      var pd       = poData || {};
       var editArgs = "'" + m.id + "','" + m.businessName.replace(/'/g,'') + "'," +
-        (effectivePct*100).toFixed(2) + ',' + (basePct*100).toFixed(2) + ',' +
-        flatFeeKobo + ',' + payoutBaseCost + ',' + vaCap;
+        basePct + "," +
+        "{'rate':" + (Number(vd.rate)||0) + ",'flat_fee':" + (Number(vd.flat_fee)||0) + ",'min_charge':" + (Number(vd.min_charge)||0) + "}," +
+        "{'rate':" + (Number(pd.rate)||0) + ",'flat_fee':" + (Number(pd.flat_fee)||0) + ",'min_charge':" + (Number(pd.min_charge)||0) + "}," +
+        payoutBaseCost + ',' + vaCap;
       return '<tr>' +
         '<td style="font-weight:500">' + m.businessName + '</td>' +
         '<td><span class="tag">' + (m.category||'—') + '</span></td>' +
         '<td>' + statusBadge(m.kycStatus) + '</td>' +
-        '<td>' + rateCell + '</td>' +
-        '<td>' + flatFeeCell + '</td>' +
+        '<td>' + vaCell + '</td>' +
+        '<td>' + poCell + '</td>' +
         '<td style="display:flex;gap:6px;flex-wrap:wrap">' +
           '<button class="btn btn-outline btn-sm" onclick="openAggRateEdit(' + editArgs + ')">Set Rate</button>' +
           (ov ? '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="removeAggSelfRate(\'' + m.id + '\',\'' + m.businessName.replace(/'/g,'') + '\')">Reset</button>' : '') +
@@ -6085,11 +6093,11 @@ async function loadAggRates() {
       '<div class="page-header"><div class="page-title">Merchant Rate Configuration</div>' +
         '<div class="page-desc">Set the rates each merchant pays. Your cost floor: VA <strong>' + (basePct*100).toFixed(2) + '%</strong> · Payout <strong>' + payoutFloorNairaLabel + '/txn</strong>. Your margin is what you charge above that.</div></div>' +
       '<div class="info-box" style="margin-bottom:16px;font-size:13px">' +
-        '<strong>VA / Collections:</strong> Merchant pays the % you set. Your cost is ' + (basePct*100).toFixed(2) + '%. Max charge per VA transaction (Paylode cap): <strong>' + vaCapNairaLabel + '</strong>.' +
-        '<br><strong>Payouts:</strong> Merchant pays the flat fee you set (₦/txn). Your cost is ' + payoutFloorNairaLabel + '/txn. Leave blank to pass through platform default.' +
+        '<strong>VA / Collections:</strong> rate% × amount + flat fee, floored at min charge. Paylode cap: <strong>' + vaCapNairaLabel + '</strong>.' +
+        '<br><strong>Payouts:</strong> same formula. Paylode base cost: <strong>' + payoutFloorNairaLabel + '/txn</strong>. Leave all blank → platform default.' +
       '</div>' +
       '<div class="card"><div class="table-wrap"><table>' +
-        '<thead><tr><th>Merchant</th><th>Category</th><th>KYC Status</th><th>VA Rate / Margin</th><th>Payout Fee / Margin</th><th>Actions</th></tr></thead>' +
+        '<thead><tr><th>Merchant</th><th>Category</th><th>KYC Status</th><th>VA Rate</th><th>Payout Rate</th><th>Actions</th></tr></thead>' +
         '<tbody>' + merchantRows + '</tbody>' +
       '</table></div></div>';
 
@@ -6099,97 +6107,135 @@ async function loadAggRates() {
   }
 }
 
-// currentFlatFeeKobo = current payout flat fee in kobo (0 if not set); payoutFloorKobo = Paylode's base payout flat fee
-function openAggRateEdit(merchantId, merchantName, currentPct, floorPct, currentFlatFeeKobo, payoutFloorKobo, vaCap) {
-  var floor        = Number(floorPct)        || 0;
-  var payoutFloor  = Number(payoutFloorKobo) || 0;
-  var curFlatNaira = currentFlatFeeKobo ? (Number(currentFlatFeeKobo) / 100).toFixed(2) : '';
+// ctx: { merchantId, merchantName, floorPct (%), vaData, payoutData, payoutFloorKobo, vaCap }
+// vaData / payoutData: {rate (0-1 decimal), flat_fee (kobo), min_charge (kobo)} or null
+function openAggRateEdit(merchantId, merchantName, floorPct, vaData, payoutData, payoutFloorKobo, vaCap) {
+  var baseFloor       = Number(floorPct)        || 0;        // aggregator's VA cost floor (%)
+  var payoutFloor     = Number(payoutFloorKobo) || 0;        // Paylode's payout flat fee (kobo)
+  var vaCapNaira      = vaCap ? '₦' + (Number(vaCap) / 100).toLocaleString('en-NG') : '—';
   var payoutFloorNaira = (payoutFloor / 100).toFixed(2);
-  var vaCapNaira   = vaCap ? '₦' + (Number(vaCap) / 100).toLocaleString('en-NG') : '—';
+
+  // current VA values (user-facing: %, ₦, ₦)
+  var vaPct    = vaData    && Number(vaData.rate)        > 0 ? (Number(vaData.rate) * 100).toFixed(2)        : '';
+  var vaFlat   = vaData    && Number(vaData.flat_fee)    > 0 ? (Number(vaData.flat_fee) / 100).toFixed(2)    : '';
+  var vaMin    = vaData    && Number(vaData.min_charge)  > 0 ? (Number(vaData.min_charge) / 100).toFixed(2)  : '';
+
+  var payPct   = payoutData && Number(payoutData.rate)       > 0 ? (Number(payoutData.rate) * 100).toFixed(2)        : '';
+  var payFlat  = payoutData && Number(payoutData.flat_fee)   > 0 ? (Number(payoutData.flat_fee) / 100).toFixed(2)    : '';
+  var payMin   = payoutData && Number(payoutData.min_charge) > 0 ? (Number(payoutData.min_charge) / 100).toFixed(2)  : '';
+
+  function feeGroup(idPrefix, pctVal, flatVal, minVal, hintId) {
+    return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+      '<div class="form-group" style="margin:0"><label class="form-label">Rate (%)</label>' +
+        '<input class="form-input" type="number" id="' + idPrefix + '-pct" value="' + pctVal + '" step="0.01" min="0" max="100" placeholder="0" oninput="aggFeeHint(\'' + idPrefix + '\',' + baseFloor + ',' + payoutFloor + ')"></div>' +
+      '<div class="form-group" style="margin:0"><label class="form-label">Flat fee (₦)</label>' +
+        '<input class="form-input" type="number" id="' + idPrefix + '-flat" value="' + flatVal + '" step="1" min="0" placeholder="0" oninput="aggFeeHint(\'' + idPrefix + '\',' + baseFloor + ',' + payoutFloor + ')"></div>' +
+      '<div class="form-group" style="margin:0"><label class="form-label">Min charge (₦)</label>' +
+        '<input class="form-input" type="number" id="' + idPrefix + '-min" value="' + minVal + '" step="1" min="0" placeholder="0" oninput="aggFeeHint(\'' + idPrefix + '\',' + baseFloor + ',' + payoutFloor + ')"></div>' +
+    '</div>' +
+    '<div class="form-hint" style="margin-top:4px" id="' + hintId + '">—</div>';
+  }
+
   document.getElementById('modal-inner').innerHTML =
     '<div class="modal-header"><div class="modal-title">Set Rate — ' + merchantName + '</div>' +
       '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
 
-    '<div class="info-box" style="font-size:12px;margin-bottom:14px">' +
-      '<strong>VA / Collections</strong> — charge a % of the transaction value. ' +
-      'Your cost floor: <strong>' + floor.toFixed(2) + '%</strong>. ' +
-      'Max charge on any single VA transaction (set by Paylode): <strong>' + vaCapNaira + '</strong>.' +
+    '<div style="font-size:12px;font-weight:600;color:var(--gray-500);letter-spacing:.04em;text-transform:uppercase;margin:0 0 6px">VA / Collections</div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:10px">' +
+      'Your cost floor: <strong>' + baseFloor.toFixed(2) + '%</strong>. ' +
+      'Platform cap (read-only): <strong>' + vaCapNaira + '</strong>. ' +
+      'Fee = rate% × amount + flat fee, floored at min charge.' +
     '</div>' +
-    '<div class="form-group"><label class="form-label">VA / Collections rate (%)</label>' +
-      '<input class="form-input" type="number" id="agr-pct" value="' + currentPct + '" step="0.01" min="' + floor + '" max="100" oninput="aggRatePreview(' + floor + ')">' +
-      '<div class="form-hint" id="agr-margin-preview">Your margin = ' + Math.max(0, currentPct - floor).toFixed(2) + '% (rate − your cost of ' + floor.toFixed(2) + '%)</div></div>' +
+    feeGroup('agr-va', vaPct, vaFlat, vaMin, 'agr-va-hint') +
 
     '<hr style="margin:14px 0;border:none;border-top:1px solid var(--gray-200)">' +
 
-    '<div class="info-box" style="font-size:12px;margin-bottom:14px">' +
-      '<strong>Payouts</strong> — flat ₦ per payout transaction. ' +
-      'Paylode\'s base cost: <strong>₦' + payoutFloorNaira + '</strong>. Set higher to earn margin. Leave blank to use platform default.' +
+    '<div style="font-size:12px;font-weight:600;color:var(--gray-500);letter-spacing:.04em;text-transform:uppercase;margin:0 0 6px">Payouts</div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:10px">' +
+      'Platform base cost: <strong>₦' + payoutFloorNaira + '/txn</strong>. ' +
+      'Fee = rate% × amount + flat fee, floored at min charge. Leave all blank to pass through platform default.' +
     '</div>' +
-    '<div class="form-group"><label class="form-label">Payout flat fee (₦ per transaction)</label>' +
-      '<input class="form-input" type="number" id="agr-flatfee" value="' + curFlatNaira + '" step="1" min="' + payoutFloorNaira + '" placeholder="e.g. ' + (payoutFloor/100 + 5).toFixed(0) + '" oninput="aggFlatFeePreview(' + payoutFloor + ')">' +
-      '<div class="form-hint" id="agr-flatfee-hint">' + (curFlatNaira ? 'Your payout margin = ₦' + Math.max(0, Number(curFlatNaira) - payoutFloor/100).toFixed(2) + '/txn' : 'Leave blank to use platform default (₦' + payoutFloorNaira + ')') + '</div></div>' +
+    feeGroup('agr-po', payPct, payFlat, payMin, 'agr-po-hint') +
 
-    '<div class="form-group"><label class="form-label">Notes (optional)</label>' +
-      '<input class="form-input" id="agr-notes" placeholder="e.g. Negotiated rate for Q4"></div>' +
+    '<div class="form-group" style="margin-top:12px"><label class="form-label">Notes (optional)</label>' +
+      '<input class="form-input" id="agr-notes" placeholder="e.g. Negotiated rate"></div>' +
     '<div style="display:flex;gap:8px">' +
       '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
-      '<button class="btn btn-lime" id="agr-save-btn" onclick="saveAggSelfRate(\'' + merchantId + '\',\'' + merchantName.replace(/'/g,'') + '\',' + floor + ',' + payoutFloor + ')">Save Rate</button>' +
+      '<button class="btn btn-lime" id="agr-save-btn" onclick="saveAggSelfRate(\'' + merchantId + '\',\'' + merchantName.replace(/'/g,'') + '\',' + baseFloor + ',' + payoutFloor + ')">Save Rates</button>' +
     '</div>';
+
   document.getElementById('modal').style.display = 'flex';
+  aggFeeHint('agr-va', baseFloor, payoutFloor);
+  aggFeeHint('agr-po', baseFloor, payoutFloor);
 }
 
-function aggRatePreview(floorPct) {
-  var inp = document.getElementById('agr-pct');
-  var hint = document.getElementById('agr-margin-preview');
-  if (!inp || !hint) return;
-  var val = parseFloat(inp.value);
-  if (isNaN(val)) return;
-  var margin = Math.max(0, val - Number(floorPct)).toFixed(2);
-  hint.textContent = 'Your margin = ' + margin + '% (rate − your cost of ' + Number(floorPct).toFixed(2) + '%)';
-  hint.style.color = val < Number(floorPct) ? 'var(--red)' : '';
+function aggFeeHint(prefix, baseFloor, payoutFloor) {
+  var pct   = parseFloat((document.getElementById(prefix + '-pct')  ||{}).value) || 0;
+  var flat  = parseFloat((document.getElementById(prefix + '-flat') ||{}).value) || 0;
+  var min   = parseFloat((document.getElementById(prefix + '-min')  ||{}).value) || 0;
+  var hint  = document.getElementById(prefix + '-hint');
+  if (!hint) return;
+  if (!pct && !flat && !min) { hint.textContent = 'Leave all blank to use platform default'; hint.style.color = ''; return; }
+  var parts = [];
+  if (pct)  parts.push(pct.toFixed(2) + '%');
+  if (flat) parts.push('₦' + flat.toFixed(2) + ' flat');
+  if (min)  parts.push('min ₦' + min.toFixed(2));
+  // margin hint for VA
+  if (prefix === 'agr-va' && pct > 0 && pct / 100 < baseFloor) {
+    hint.textContent = 'Rate below your cost floor of ' + (baseFloor*100).toFixed(2) + '%';
+    hint.style.color = 'var(--red)'; return;
+  }
+  // margin hint for payout
+  if (prefix === 'agr-po' && flat > 0 && flat * 100 < payoutFloor) {
+    hint.textContent = 'Flat fee below Paylode cost of ₦' + (payoutFloor/100).toFixed(2);
+    hint.style.color = 'var(--red)'; return;
+  }
+  hint.textContent = 'Charge: ' + parts.join(' + ');
+  hint.style.color = '';
 }
 
-function aggFlatFeePreview(payoutFloorKobo) {
-  var inp  = document.getElementById('agr-flatfee');
-  var hint = document.getElementById('agr-flatfee-hint');
-  if (!inp || !hint) return;
-  var val = parseFloat(inp.value);
-  if (!inp.value.trim()) { hint.textContent = 'Leave blank to use platform default'; hint.style.color = ''; return; }
-  if (isNaN(val)) return;
-  var floorNaira = Number(payoutFloorKobo) / 100;
-  var margin = Math.max(0, val - floorNaira).toFixed(2);
-  hint.textContent = 'Your payout margin = ₦' + margin + '/txn (fee − Paylode cost of ₦' + floorNaira.toFixed(2) + ')';
-  hint.style.color = val < floorNaira ? 'var(--red)' : '';
-}
+async function saveAggSelfRate(merchantId, merchantName, baseFloor, payoutFloor) {
+  var btn  = document.getElementById('agr-save-btn');
+  var notes = (document.getElementById('agr-notes')||{}).value || '';
 
-async function saveAggSelfRate(merchantId, merchantName, floorPct, payoutFloorKobo) {
-  var btn         = document.getElementById('agr-save-btn');
-  var pctVal      = parseFloat((document.getElementById('agr-pct')||{}).value);
-  var flatFeeNaira = (document.getElementById('agr-flatfee')||{}).value;
-  var flatFeeKobo  = flatFeeNaira && flatFeeNaira.trim() !== '' ? Math.round(parseFloat(flatFeeNaira) * 100) : null;
+  var vaPct   = parseFloat((document.getElementById('agr-va-pct')  ||{}).value) || 0;
+  var vaFlat  = parseFloat((document.getElementById('agr-va-flat') ||{}).value) || 0;
+  var vaMin   = parseFloat((document.getElementById('agr-va-min')  ||{}).value) || 0;
+  var poPct   = parseFloat((document.getElementById('agr-po-pct')  ||{}).value) || 0;
+  var poFlat  = parseFloat((document.getElementById('agr-po-flat') ||{}).value) || 0;
+  var poMin   = parseFloat((document.getElementById('agr-po-min')  ||{}).value) || 0;
 
-  if (isNaN(pctVal) || pctVal < 0 || pctVal > 100) { alert('Enter a valid percentage (0–100)'); return; }
-  if (pctVal < Number(floorPct)) { alert('VA rate cannot be below your cost of ' + Number(floorPct).toFixed(2) + '%'); return; }
-  if (flatFeeKobo !== null && flatFeeKobo < Number(payoutFloorKobo)) {
-    alert('Payout flat fee cannot be below Paylode\'s cost of ₦' + (Number(payoutFloorKobo)/100).toFixed(2));
-    return;
+  if (vaPct > 0 && vaPct / 100 < baseFloor) {
+    alert('VA rate cannot be below your cost floor of ' + (baseFloor*100).toFixed(2) + '%'); return;
+  }
+  if (poFlat > 0 && poFlat * 100 < payoutFloor) {
+    alert('Payout flat fee cannot be below Paylode cost of ₦' + (payoutFloor/100).toFixed(2)); return;
   }
 
-  var notes = (document.getElementById('agr-notes')||{}).value || '';
   btn.textContent = 'Saving…'; btn.disabled = true;
-  var body = { split_pct: pctVal / 100, notes };
-  if (flatFeeKobo !== null) body.flat_fee = flatFeeKobo;
-  var res = await apiFetch('/aggregators/my/merchants/' + merchantId + '/rates', {
+  var errors = [];
+
+  // Save VA channel
+  var vaRes = await apiFetch('/aggregators/my/merchants/' + merchantId + '/rates', {
     method: 'PUT',
-    body: JSON.stringify(body),
+    body: JSON.stringify({ channel: 'VIRTUAL_ACCOUNT', rate: vaPct / 100, flat_fee: Math.round(vaFlat * 100), min_charge: Math.round(vaMin * 100), notes }),
   });
-  if (res && res.status) {
-    document.getElementById('modal').style.display = 'none';
-    toast('Rate set for ' + merchantName, 'success');
-    loadAggRates();
+  if (!vaRes || !vaRes.status) errors.push('VA: ' + ((vaRes && vaRes.message) || 'failed'));
+
+  // Save PAYOUT channel
+  var poRes = await apiFetch('/aggregators/my/merchants/' + merchantId + '/rates', {
+    method: 'PUT',
+    body: JSON.stringify({ channel: 'PAYOUT', rate: poPct / 100, flat_fee: Math.round(poFlat * 100), min_charge: Math.round(poMin * 100), notes }),
+  });
+  if (!poRes || !poRes.status) errors.push('Payout: ' + ((poRes && poRes.message) || 'failed'));
+
+  if (errors.length) {
+    btn.textContent = 'Save Rates'; btn.disabled = false;
+    alert('Error(s):\n' + errors.join('\n'));
   } else {
-    btn.textContent = 'Save Rate'; btn.disabled = false;
-    alert('Error: ' + ((res && res.message) || 'Save failed'));
+    document.getElementById('modal').style.display = 'none';
+    toast('Rates set for ' + merchantName, 'success');
+    loadAggRates();
   }
 }
 

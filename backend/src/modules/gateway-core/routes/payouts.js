@@ -610,29 +610,40 @@ router.post('/batches', requireAuthOrApiKey,
       const rateOnUs  = toRate(onUsRate);
       const feeRate   = rateOther.rate;   // batch-level rate (other-bank reference)
 
-      // ── Aggregator payout flat-fee override ──────────────────────────────────────
-      // If this merchant's aggregator has set a per-merchant flat_fee, use it as the
-      // effective per-item charge instead of the platform flat fee. Aggregator earns
-      // the spread above Paylode's base cost.
-      let aggPayoutFlatFee = null;
+      // ── Aggregator PAYOUT channel rate override ───────────────────────────────────
+      // If merchant's aggregator has a PAYOUT channel config, use it in full:
+      // rate% × amount + flat_fee, floored at min_charge, capped at max_charge (if set).
+      let aggPayoutCfg = null;
       if (merchant.aggregatorId) {
         const aggRow = await prisma.$queryRawUnsafe(
-          `SELECT flat_fee FROM aggregator_rate_configs
-           WHERE aggregator_id = $1::uuid AND merchant_id = $2::uuid LIMIT 1`,
+          `SELECT rate, flat_fee, min_charge, max_charge FROM aggregator_rate_configs
+           WHERE aggregator_id = $1::uuid AND merchant_id = $2::uuid AND channel = 'PAYOUT' LIMIT 1`,
           merchant.aggregatorId, merchantId
         );
-        const ff = aggRow[0] ? BigInt(aggRow[0].flat_fee || 0) : 0n;
-        if (ff > 0n) aggPayoutFlatFee = ff;
+        if (aggRow[0] && (Number(aggRow[0].rate) > 0 || Number(aggRow[0].flat_fee) > 0)) {
+          aggPayoutCfg = {
+            rate:      Number(aggRow[0].rate      || 0),
+            flatFee:   BigInt(aggRow[0].flat_fee  || 0),
+            minCharge: BigInt(aggRow[0].min_charge || 0),
+            maxCharge: BigInt(aggRow[0].max_charge || 0),
+          };
+        }
       }
 
       // ── Per-item fee + VAT calculation (tier picked by destination) ─────────────
       const itemsWithFees = items.map(item => {
         const amt = BigInt(item.amount);
         const r   = isOnUsBank(item.bank_code) ? rateOnUs : rateOther;
-        const effectiveFlatFee = aggPayoutFlatFee !== null ? aggPayoutFlatFee : r.flatFee;
-        let fee   = amt * BigInt(Math.round(r.rate * 1_000_000)) / 1_000_000n + effectiveFlatFee;
-        if (r.min > 0n && fee < r.min) fee = r.min;
-        if (r.cap > 0n && fee > r.cap) fee = r.cap;
+        let fee;
+        if (aggPayoutCfg) {
+          fee = amt * BigInt(Math.round(aggPayoutCfg.rate * 1_000_000)) / 1_000_000n + aggPayoutCfg.flatFee;
+          if (aggPayoutCfg.minCharge > 0n && fee < aggPayoutCfg.minCharge) fee = aggPayoutCfg.minCharge;
+          if (aggPayoutCfg.maxCharge > 0n && fee > aggPayoutCfg.maxCharge) fee = aggPayoutCfg.maxCharge;
+        } else {
+          fee = amt * BigInt(Math.round(r.rate * 1_000_000)) / 1_000_000n + r.flatFee;
+          if (r.min > 0n && fee < r.min) fee = r.min;
+          if (r.cap > 0n && fee > r.cap) fee = r.cap;
+        }
         const vat   = fee * BigInt(Math.round(VAT_RATE * 1_000_000)) / 1_000_000n;
         const total = amt + fee + vat;  // what gets deducted from wallet for this item
         return { ...item, fee, vat, total };
