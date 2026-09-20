@@ -65,6 +65,7 @@ var SECTION_ICON = {
   'Payouts':'send', 'Integration':'plug', 'Account':'circle-user', 'System':'settings', 'SDK':'code', 'Reference':'book-open',
   'Payment Links & QR Code':'qr-code',
   'Sell Online':'megaphone',
+  'Pricing':'tags',
 };
 var NAV = {
   superadmin: [
@@ -91,6 +92,7 @@ var NAV = {
       {id:'sa_whatsapp',    icon:'message-circle', label:'WhatsApp Billing'},
     ]},
     { section:'Reports', items:[
+      {id:'sa_stuck_payouts',  icon:'alert-triangle',    label:'Stuck Payouts'     },
       {id:'revenue',           icon:'banknote',          label:'Revenue Report'    },
       {id:'vat_report',        icon:'receipt-text',      label:'VAT Report'        },
       {id:'cbn_report',        icon:'file-spreadsheet',  label:'CBN Report'        },
@@ -99,10 +101,12 @@ var NAV = {
       {id:'mpgs_activity',     icon:'credit-card',       label:'MPGS Activity'     },
       {id:'partner_revenue',   icon:'handshake',         label:'Partner Revenue'   },
       {id:'user_type_summary', icon:'pie-chart',         label:'Volume by User Type'},
+      {id:'agg_payouts_admin', icon:'hand-coins',        label:'Aggregator Payouts' },
     ]},
     { section:'System Config', items:[
       {id:'service_providers',   icon:'server', label:'Service Providers'},
-      {id:'fee_config',          icon:'tags', label:'Merchant Pricing'},
+      {id:'fee_config',          icon:'tags',    label:'Merchant Pricing'},
+      {id:'agg_pricing',         icon:'percent', label:'Aggregator Pricing'},
       {id:'rails',               icon:'waypoints', label:'Rail Configuration'},
       {id:'settle_verification', icon:'badge-check', label:'Bank Verification'},
       {id:'email_tpl',           icon:'mail', label:'Email Templates'  },
@@ -110,8 +114,8 @@ var NAV = {
       {id:'sa_connections',      icon:'radio-tower', label:'Connections'      },
       {id:'sa_reconciliation',   icon:'git-compare', label:'Reconciliation'   },
       {id:'sa_collection_wallets',icon:'wallet-cards', label:'Collection Wallets'},
-      {id:'sa_payouts',          icon:'hand-coins', label:'Payouts'          },
-      {id:'invite_tracking',     icon:'mail-check', label:'Invite Tracking'  },
+      {id:'sa_payouts',          icon:'hand-coins',    label:'Payouts'          },
+      {id:'invite_tracking',     icon:'mail-check',    label:'Invite Tracking'  },
       {id:'sa_wallet',           icon:'clipboard-check', label:'Wallet Approvals' },
       {id:'settings',            icon:'settings', label:'Settings'         },
     ]},
@@ -130,7 +134,8 @@ var NAV = {
   aggregator: [
     { section:'Dashboard',  items:[{id:'agg_overview',icon:'layout-dashboard',label:'Dashboard'}]},
     { section:'Merchants',  items:[{id:'agg_merchants',icon:'store',label:'My Merchants'},{id:'agg_onboard',icon:'user-plus',label:'Onboard Merchant'}]},
-    { section:'Finance',    items:[{id:'agg_revenue',icon:'banknote',label:'Revenue Share'},{id:'agg_transactions',icon:'arrow-right-left',label:'Transactions'}]},
+    { section:'Pricing',    items:[{id:'agg_rates',icon:'tags',label:'Merchant Pricing'}]},
+    { section:'Finance',    items:[{id:'agg_revenue',icon:'banknote',label:'Revenue Share'},{id:'agg_earnings',icon:'trending-up',label:'My Earnings'},{id:'agg_transactions',icon:'arrow-right-left',label:'Transactions'}]},
     { section:'Developer',  items:DEV_SDK_ITEMS },
   ],
   merchant: [
@@ -229,10 +234,11 @@ var NAV_PERM = {
   deferrals:'view_doc_referrals', users:'view_staff', overview:'view_dashboard',
   transactions:'view_transactions', settlement:'view_settlements', rail_settlement:'view_settlements',
   payout_report:'view_payouts', wallets:'view_wallets', revenue:'view_revenue', vat_report:'view_reports', reports_hub:'view_reports', cbn_report:'view_reports', compliance:'view_compliance', compliance_centre:'view_compliance', compliance_exceptions:'view_compliance',
-  onboarding_apps:'view_onboarding', invite_tracking:'view_audit_log', fee_config:'view_fees', rails:'view_rails', service_providers:'view_rails',
+  onboarding_apps:'view_onboarding', invite_tracking:'view_audit_log', fee_config:'view_fees', agg_pricing:'view_fees', rails:'view_rails', service_providers:'view_rails',
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
   activity_log:'view_audit_log', sa_connections:'view_audit_log', sa_reconciliation:'view_settlements', merch_reconciliation:'view_settlements',
   sa_collection_wallets:'view_settlements', sa_payouts:'view_payouts',
+  sa_stuck_payouts:'view_payouts',
   sa_merchant_funding:'view_wallets',
 };
 // Does the logged-in user hold this permission? (SUPER_ADMIN bypasses everything.)
@@ -438,7 +444,7 @@ function renderPage() {
     users:renderUserManagement,
     agg_overview:renderAggOverview, agg_merchants:renderAggMerchants,
     agg_onboard:renderAggOnboard, agg_revenue:renderAggRevenue,
-    agg_transactions:renderAggTransactions,
+    agg_transactions:renderAggTransactions, agg_earnings:renderAggEarnings,
     merch_overview:renderMerchOverview, merch_transactions:renderMerchTransactions,
     merch_settlements:renderMerchSettlements, merch_apikeys:renderMerchApiKeys,
     merch_payments:function(){ return '<div class="page-header"><div class="page-title">Payment Links</div></div><div class="card" style="text-align:center;padding:40px;color:#999">Loading…</div>'; },
@@ -1129,6 +1135,10 @@ function downloadAggRevenueCsv() {
   a.click();
 }
 
+function renderAggEarnings() {
+  return '<div class="page-header"><div class="page-title">My Earnings</div><div class="page-desc">Your daily margin breakdown by merchant.</div></div>' +
+    '<div class="card" style="text-align:center;padding:40px;color:#999">Loading…</div>';
+}
 function renderAggTransactions() {
   var rows = TRANSACTIONS.filter(function(t){ return ['Bolt Nigeria','Shoprite Nigeria'].indexOf(t.merchant)>-1; }).map(function(t) {
     return '<tr><td class="mono" style="font-size:11px">' + t.ref + '</td><td>' + t.merchant + '</td>' +
