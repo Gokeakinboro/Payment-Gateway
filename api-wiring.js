@@ -234,13 +234,18 @@ async function loadSuperOverview() {
 
 // ── TRANSACTIONS ──────────────────────────────────────────────────────────────
 // Payouts are a transaction type too — surfaced alongside payments via a toggle.
-async function loadPayoutsLedger(page=1, filters={}) {
+if (!window._poF) window._poF = { status: '', from: '', to: '' };
+async function loadPayoutsLedger(page=1, newFilters) {
+  if (newFilters !== undefined) Object.assign(window._poF, newFilters);
+  const filters = window._poF;
   const el = document.getElementById('main-content');
   if (!el) return;
   el.innerHTML = loading();
   try {
     let url = `/payouts/logs?page=${page}&perPage=20`;
     if (filters.status) url += `&status=${filters.status}`;
+    if (filters.from)   url += `&from=${filters.from}`;
+    if (filters.to)     url += `&to=${filters.to}`;
     const res = await apiFetch(url);
     if (!res?.data) { el.innerHTML = errorBox('Could not load payouts'); return; }
     const items = res.data.data || [];
@@ -260,10 +265,13 @@ async function loadPayoutsLedger(page=1, filters={}) {
         </div>
       </div>
       <div class="flex" style="gap:8px;align-items:center;flex-wrap:wrap">
+        <input class="form-input" type="date" style="width:135px" value="${filters.from||''}" title="From date" onchange="loadPayoutsLedger(1,{from:this.value})">
+        <input class="form-input" type="date" style="width:135px" value="${filters.to||''}" title="To date" onchange="loadPayoutsLedger(1,{to:this.value})">
         <select class="form-input form-select" style="width:140px" onchange="loadPayoutsLedger(1,{status:this.value})">
           <option value="">All Status</option>
           <option value="success"${filters.status==='success'?' selected':''}>Success</option>
           <option value="failed"${filters.status==='failed'?' selected':''}>Failed</option>
+          <option value="reversed"${filters.status==='reversed'?' selected':''}>Reversed</option>
           <option value="processing"${filters.status==='processing'?' selected':''}>Processing</option>
           <option value="scheduled"${filters.status==='scheduled'?' selected':''}>Scheduled</option>
         </select>
@@ -1781,17 +1789,45 @@ async function loadAggregators() {
   el.innerHTML = loading();
 
   try {
-    const res = await apiFetch('/aggregators');
+    const [res, pendingRes] = await Promise.all([
+      apiFetch('/aggregators'),
+      apiFetch('/onboarding/submissions?form_type=aggregator&status=pending'),
+    ]);
     if (!res?.data) { el.innerHTML = errorBox('Could not load aggregators'); return; }
 
     const aggs = res.data;
+    const pending = (pendingRes?.data || []);
     window._aggData = aggs;   // cached for the Edit modal
+
+    var pendingSection = '';
+    if (pending.length) {
+      pendingSection = `
+      <div style="margin-top:28px">
+        <div style="font-size:15px;font-weight:600;margin-bottom:12px">Pending Applications <span class="badge badge-amber" style="margin-left:6px;vertical-align:middle">${pending.length}</span></div>
+        <div class="grid-2">
+          ${pending.map(p => `
+          <div class="card" style="border-left:3px solid var(--amber,#f59e0b)">
+            <div class="card-header">
+              <div>
+                <div class="card-title">${p.businessName||'—'}</div>
+                <div class="card-subtitle mono" style="font-size:11px">${p.reference}</div>
+              </div>
+              ${statusBadge(p.status)}
+            </div>
+            <div class="rev-row"><span class="rev-label">Submitted</span><span class="rev-value">${p.submittedAt ? new Date(p.submittedAt).toLocaleDateString('en-NG') : '—'}</span></div>
+            <div style="margin-top:12px">
+              <button class="btn btn-lime btn-sm" onclick="viewOnboardingApp('${(p.reference||'').replace(/'/g,"\\'")}')">Review Application</button>
+            </div>
+          </div>`).join('')}
+        </div>
+      </div>`;
+    }
 
     el.innerHTML = `
     <div class="page-header flex-between">
       <div>
         <div class="page-title">Aggregators</div>
-        <div class="page-desc">${aggs.length} active aggregator partners</div>
+        <div class="page-desc">${aggs.length} active aggregator partner${aggs.length !== 1 ? 's' : ''}</div>
       </div>
       <div class="flex" style="gap:6px">
         <button class="btn btn-outline" onclick="inviteAggregator()"><i data-lucide="mail" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Invite to Self-Onboard</button>
@@ -1821,7 +1857,8 @@ async function loadAggregators() {
           <button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="deleteAggregator('${a.id}','${(a.companyName||'').replace(/'/g,'')}')"><i data-lucide="trash-2" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Delete</button>
         </div>
       </div>`).join('')}
-    </div>`;
+    </div>
+    ${pendingSection}`;
   } catch(e) {
     el.innerHTML = errorBox('Failed to load aggregators: ' + e.message);
   }
@@ -3379,6 +3416,8 @@ function editAggregator(id) {
   var a = (window._aggData || []).find(function(x){ return x.id === id; });
   if (!a) { alert('Aggregator not found — reload the page.'); return; }
   var esc = function(s){ return String(s||'').replace(/"/g,'&quot;'); };
+  var payoutFloorNaira = a.payoutFloorKobo != null ? (Number(a.payoutFloorKobo)/100).toFixed(0) : '';
+  var vaCapNaira       = a.vaCapKobo        != null ? (Number(a.vaCapKobo)       /100).toFixed(0) : '';
   showModal(
     '<div class="modal-header"><div class="modal-title">Edit Aggregator</div>' +
     '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
@@ -3391,6 +3430,11 @@ function editAggregator(id) {
       '<div class="form-group"><label class="form-label">Settlement bank</label><input class="form-input" id="ea-bank" value="' + esc(a.settlementBank) + '"></div>' +
       '<div class="form-group"><label class="form-label">Settlement account</label><input class="form-input" id="ea-acct" value="' + esc(a.settlementAccount) + '" maxlength="10"></div>' +
     '</div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:10px">Pricing overrides — leave blank to inherit platform default (Payout ₦30 · VA cap ₦10,000). Clear a saved override by entering 0.</div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">Payout floor ₦ <span style="color:var(--gray-400);font-weight:400">(per txn)</span></label><input class="form-input" id="ea-payout-floor" type="number" min="0" step="1" value="' + payoutFloorNaira + '" placeholder="Platform default ₦30"></div>' +
+      '<div class="form-group"><label class="form-label">VA cap ₦ <span style="color:var(--gray-400);font-weight:400">(max VA fee)</span></label><input class="form-input" id="ea-va-cap" type="number" min="0" step="1" value="' + vaCapNaira + '" placeholder="Platform default ₦10,000"></div>' +
+    '</div>' +
     '<div class="flex-between" style="margin-top:8px">' +
       '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
       '<button class="btn btn-lime" id="ea-btn" onclick="saveAggregatorEdit(\'' + id + '\')">Save Changes</button></div>' +
@@ -3398,6 +3442,8 @@ function editAggregator(id) {
 }
 async function saveAggregatorEdit(id) {
   var splitPct = parseFloat(document.getElementById('ea-split').value);
+  var payoutFloorNaira = document.getElementById('ea-payout-floor').value.trim();
+  var vaCapNaira       = document.getElementById('ea-va-cap').value.trim();
   var body = {
     company_name:       document.getElementById('ea-name').value.trim(),
     rc_number:          document.getElementById('ea-rc').value.trim(),
@@ -3405,6 +3451,15 @@ async function saveAggregatorEdit(id) {
     settlement_account: document.getElementById('ea-acct').value.trim(),
   };
   if (!isNaN(splitPct)) body.revenue_split_pct = splitPct / 100;
+  // pricing overrides: blank → null (inherit platform); 0 → null (clear); positive → kobo
+  if (payoutFloorNaira !== '') {
+    var pf = parseFloat(payoutFloorNaira);
+    body.payout_floor_kobo = (!isNaN(pf) && pf > 0) ? Math.round(pf * 100) : null;
+  }
+  if (vaCapNaira !== '') {
+    var vc = parseFloat(vaCapNaira);
+    body.va_cap_kobo = (!isNaN(vc) && vc > 0) ? Math.round(vc * 100) : null;
+  }
   var btn = document.getElementById('ea-btn'); btn.disabled = true; btn.textContent = 'Saving...';
   var res = await apiFetch('/aggregators/' + id, { method: 'PUT', body: JSON.stringify(body) });
   if (res && res.status) { document.getElementById('modal').style.display = 'none'; loadAggregators(); }
@@ -5275,6 +5330,130 @@ async function loadFeeConfig() {
   }
 }
 
+// ── SA: AGGREGATOR PRICING ────────────────────────────────────────────────────
+// Model: Paylode sets a rate for each aggregator (their cost). The aggregator
+// then sets rates for their merchants. Aggregator margin = merchant rate − Paylode rate.
+async function loadAggPricing() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/aggregators');
+    if (!res || !res.data) { el.innerHTML = errorBox('Could not load aggregators'); return; }
+    var aggs = res.data;
+    window._aggPricingData = aggs;
+
+    function fmtPct(v)  { return v ? (Number(v)*100).toFixed(2) + '%' : '<span style="color:var(--gray-400)">—</span>'; }
+    function fmtKobo(v) { return v != null && Number(v) > 0 ? '₦' + (Number(v)/100).toLocaleString('en-NG',{minimumFractionDigits:2}) : '<span style="color:var(--gray-400)">—</span>'; }
+
+    var rows = aggs.length ? aggs.map(function(a) {
+      var vaRate    = fmtPct(a.revenueSplitPct);
+      var payFee    = fmtKobo(a.payoutFloorKobo);
+      var vaCap     = fmtKobo(a.vaCapKobo);
+      var idSafe    = a.id;
+      var nameSafe  = (a.companyName||'').replace(/'/g,'');
+      return '<tr>' +
+        '<td style="font-weight:500">' + (a.companyName||'—') + '</td>' +
+        '<td>' + (a.merchant_count||0) + '</td>' +
+        '<td>' + vaRate + '</td>' +
+        '<td>' + payFee + '</td>' +
+        '<td>' + vaCap + '</td>' +
+        '<td><button class="btn btn-outline btn-sm" onclick="openAggPricingEdit(\'' + idSafe + '\',\'' + nameSafe + '\')">Set Rate</button></td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No aggregators yet</td></tr>';
+
+    el.innerHTML =
+      '<div class="page-header flex-between">' +
+        '<div><div class="page-title">Aggregator Pricing</div>' +
+          '<div class="page-desc">Rates Paylode charges each aggregator. The aggregator sees these as their cost floor when pricing their own merchants — their margin is the difference.</div></div>' +
+        '<button class="btn btn-outline btn-sm" onclick="loadAggPricing()">&#8635; Refresh</button>' +
+      '</div>' +
+      '<div class="info-box" style="margin-bottom:16px;font-size:13px">' +
+        '<strong>VA Rate</strong> — % of each VA collection Paylode charges the aggregator. ' +
+        '<strong>Payout Fee</strong> — flat ₦ fee per payout Paylode charges the aggregator. ' +
+        '<strong>VA Cap</strong> — maximum VA fee the aggregator may charge their merchants (Paylode-enforced ceiling).' +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Aggregator</th><th>Merchants</th><th>VA Rate (our charge)</th><th>Payout Fee (our charge)</th><th>VA Cap</th><th></th></tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table></div></div>';
+
+    if (window.lucide) lucide.createIcons();
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load aggregator pricing: ' + e.message);
+  }
+}
+
+function openAggPricingEdit(aggId, aggName) {
+  var agg       = (window._aggPricingData||[]).find(function(a){ return a.id === aggId; }) || {};
+  var vaRateVal = agg.revenueSplitPct ? (Number(agg.revenueSplitPct)*100).toFixed(2) : '';
+  var payFeeVal = agg.payoutFloorKobo != null && Number(agg.payoutFloorKobo) > 0 ? (Number(agg.payoutFloorKobo)/100).toFixed(2) : '';
+  var vaCapVal  = agg.vaCapKobo       != null && Number(agg.vaCapKobo)       > 0 ? (Number(agg.vaCapKobo)/100).toFixed(2)       : '';
+
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Set Rate — ' + aggName + '</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:14px">' +
+      'These are <strong>Paylode\'s charges to this aggregator</strong>. The aggregator sets their own merchant rates on top — their margin is the difference.' +
+    '</div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">VA Rate (%) <span style="color:var(--gray-500);font-weight:400">% we charge aggregator per VA collection</span></label>' +
+        '<input class="form-input" type="number" id="ap-va-rate" value="' + vaRateVal + '" min="0" max="100" step="0.01" placeholder="e.g. 1.50"></div>' +
+      '<div class="form-group"><label class="form-label">Payout Fee (₦/txn) <span style="color:var(--gray-500);font-weight:400">flat fee we charge per payout</span></label>' +
+        '<input class="form-input" type="number" id="ap-pay-fee" value="' + payFeeVal + '" min="0" step="0.01" placeholder="e.g. 10.00"></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">VA Cap (₦) <span style="color:var(--gray-500);font-weight:400">max VA fee aggregator may charge their merchants (leave blank = no cap)</span></label>' +
+      '<input class="form-input" type="number" id="ap-va-cap" value="' + vaCapVal + '" min="0" step="0.01" placeholder="e.g. 200.00"></div>' +
+    '<div id="ap-msg"></div>' +
+    '<div style="display:flex;gap:8px;margin-top:4px">' +
+      '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+      '<button class="btn btn-lime" id="ap-save-btn" onclick="saveAggPricing(\'' + aggId + '\',\'' + aggName.replace(/'/g,'') + '\')">Save</button>' +
+    '</div>';
+
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function saveAggPricing(aggId, aggName) {
+  var btn       = document.getElementById('ap-save-btn');
+  var msg       = document.getElementById('ap-msg');
+  var vaRateRaw = (document.getElementById('ap-va-rate')||{}).value || '';
+  var payFeeRaw = (document.getElementById('ap-pay-fee')||{}).value || '';
+  var vaCapRaw  = (document.getElementById('ap-va-cap')||{}).value  || '';
+
+  var vaRate = vaRateRaw.trim() === '' ? null : parseFloat(vaRateRaw);
+  if (vaRate !== null && (isNaN(vaRate)||vaRate<0||vaRate>100)) {
+    msg.innerHTML='<div class="warn-box" style="font-size:12px">VA rate must be 0–100.</div>'; return;
+  }
+  var payFeeKobo = payFeeRaw.trim()==='' ? null : Math.round(parseFloat(payFeeRaw)*100);
+  if (payFeeKobo !== null && isNaN(payFeeKobo)) {
+    msg.innerHTML='<div class="warn-box" style="font-size:12px">Invalid payout fee.</div>'; return;
+  }
+  var vaCapKobo = vaCapRaw.trim()==='' ? null : Math.round(parseFloat(vaCapRaw)*100);
+  if (vaCapKobo !== null && isNaN(vaCapKobo)) {
+    msg.innerHTML='<div class="warn-box" style="font-size:12px">Invalid VA cap.</div>'; return;
+  }
+
+  var body = {};
+  if (vaRate      !== null) body.revenue_split_pct = vaRate/100;
+  if (payFeeKobo  !== null) body.payout_floor_kobo  = payFeeKobo;
+  if (vaCapKobo   !== null) body.va_cap_kobo         = vaCapKobo;
+  // Explicit null clears the field on the backend
+  if (vaRateRaw.trim()  === '') body.revenue_split_pct = 0;
+  if (payFeeRaw.trim()  === '') body.payout_floor_kobo  = null;
+  if (vaCapRaw.trim()   === '') body.va_cap_kobo         = null;
+
+  btn.textContent='Saving…'; btn.disabled=true;
+  var res = await apiFetch('/aggregators/'+aggId, { method:'PUT', body: JSON.stringify(body) });
+  if (res && res.status) {
+    document.getElementById('modal').style.display='none';
+    toast('Pricing updated for '+aggName,'success');
+    loadAggPricing();
+  } else {
+    msg.innerHTML='<div class="warn-box" style="font-size:12px">'+(res&&res.message?res.message:'Update failed')+'</div>';
+    btn.textContent='Save'; btn.disabled=false;
+  }
+}
+
 function editPlatformRate(channel) {
   var rates = window._feeConfigRates || [];
   var r = rates.find(function(x) { return x.channel === channel; }) || {};
@@ -6090,8 +6269,8 @@ async function loadAggRates() {
     }).join('') : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No merchants yet</td></tr>';
 
     el.innerHTML =
-      '<div class="page-header"><div class="page-title">Merchant Rate Configuration</div>' +
-        '<div class="page-desc">Set the rates each merchant pays. Your cost floor: VA <strong>' + (basePct*100).toFixed(2) + '%</strong> · Payout <strong>' + payoutFloorNairaLabel + '/txn</strong>. Your margin is what you charge above that.</div></div>' +
+      '<div class="page-header"><div class="page-title">Merchant Pricing</div>' +
+        '<div class="page-desc">Set the rates each merchant pays. Your cost (Paylode\'s charge to you): VA <strong>' + (basePct*100).toFixed(2) + '%</strong> · Payout <strong>' + payoutFloorNairaLabel + '/txn</strong>. Your margin is what you charge above that.</div></div>' +
       '<div class="info-box" style="margin-bottom:16px;font-size:13px">' +
         '<strong>VA / Collections:</strong> rate% × amount + flat fee, floored at min charge. Paylode cap: <strong>' + vaCapNairaLabel + '</strong>.' +
         '<br><strong>Payouts:</strong> same formula. Paylode base cost: <strong>' + payoutFloorNairaLabel + '/txn</strong>. Leave all blank → platform default.' +
@@ -8526,6 +8705,7 @@ loadPageData = function(page) {
     case 'cbn_report':           loadCbnReport(); break;
     case 'reports_hub':          loadReportsHub(); break;
     case 'fee_config':           loadFeeConfig(); break;
+    case 'agg_pricing':          loadAggPricing(); break;
     case 'rail_settlement':      loadRailSettlement(); break;
     case 'rails':                loadRails(); break;
     case 'service_providers':    loadServiceProviders(); break;
@@ -8951,7 +9131,27 @@ async function viewOnboardingApp(ref) {
   var docs = (a.documents || []).filter(function(d){ return d.path; }).map(function(d) {
     return '<button class="btn btn-outline btn-sm" style="margin:0 6px 6px 0" onclick="downloadAppDoc(\'' + _escA(a.reference) + '\',\'' + _escA(d.key) + '\')">↓ ' + _escA(d.name || d.key) + '</button>';
   }).join('');
-  var docsHtml = docs ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Documents</div><div>' + docs + '</div>' : '<div class="info-box" style="margin-top:12px;font-size:12px">No document files stored on server.</div>';
+  // aggregator onboarding declares docs as checkboxes in data.documents; show them as a checklist
+  var DOC_LABELS = {
+    doc_cac_cert:'CAC Certificate of Incorporation', doc_cac_memo:'MEMART',
+    doc_cac_co2:'CAC CO2 / Status Report', doc_utility:'Utility Bill (proof of address)',
+    doc_passport:'Passport Photograph', doc_id:'Government-issued ID',
+    doc_bvn:'BVN Slip', doc_padss:'PCI-DSS Certificate', doc_notes:'Additional notes',
+  };
+  var declaredDocs = '';
+  if (data.documents && typeof data.documents === 'object') {
+    var docItems = Object.keys(data.documents).filter(function(k){ return data.documents[k] === '1'; });
+    if (docItems.length) {
+      declaredDocs = '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Declared Documents</div>' +
+        '<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px">' +
+        docItems.map(function(k){ return '<span class="badge badge-green">&#10003; ' + _escA(DOC_LABELS[k] || k.replace(/_/g,' ')) + '</span>'; }).join('') +
+        '</div>' +
+        '<div class="info-box" style="font-size:11px;margin-top:8px">Applicant declared these documents are available. Physical copies must be collected and verified. After approval, use the <strong>Documents</strong> tab on the aggregator profile to upload scanned copies.</div>';
+    }
+  }
+  var docsHtml = docs
+    ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Documents</div><div>' + docs + '</div>' + declaredDocs
+    : (declaredDocs || '<div class="info-box" style="margin-top:12px;font-size:12px">No document files stored on server.</div>');
 
   var notes = (a.screeningNotes || []);
 
@@ -9007,6 +9207,10 @@ async function viewOnboardingApp(ref) {
     section('Individual', data.np_identity) +
     section('Business', data.np_business) +
     section('Entity', data.entity_details) +
+    section('Institution', data.institution) +
+    section('Contact', data.contact) +
+    section('Portfolio', data.portfolio) +
+    section('Signatory', data.signature) +
     _onbTimelineHtml(a) +
     principalsHtml +
     docsHtml +
@@ -9033,7 +9237,7 @@ function rejectChecklistHtml(a) {
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">' +
       docItems.map(function(d){return ck(d,'doc');}).join('') + infoItems.map(function(d){return ck(d,'info');}).join('') +
     '</div>' +
-    '<div style="font-size:11px;color:var(--gray-500);margin-top:6px">Sent to the merchant as their correction checklist; ticked documents are flagged for re-upload.</div>' +
+    '<div style="font-size:11px;color:var(--gray-500);margin-top:6px">Sent to the applicant as their correction checklist; ticked items are flagged for re-submission.</div>' +
   '</div>';
 }
 
