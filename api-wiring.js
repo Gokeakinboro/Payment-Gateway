@@ -5343,13 +5343,25 @@ async function loadAggPricing() {
     var aggs = res.data;
     window._aggPricingData = aggs;
 
-    function fmtPct(v)  { return v ? (Number(v)*100).toFixed(2) + '%' : '<span style="color:var(--gray-400)">—</span>'; }
-    function fmtKobo(v) { return v != null && Number(v) > 0 ? '₦' + (Number(v)/100).toLocaleString('en-NG',{minimumFractionDigits:2}) : '<span style="color:var(--gray-400)">—</span>'; }
+    var platVaRate   = aggs.length ? Number(aggs[0]._platform_va_rate   || 0) : 0;
+    var platPayFloor = aggs.length ? Number(aggs[0]._platform_payout_floor || 0) : 0;
+    var platVaCap    = aggs.length ? Number(aggs[0]._platform_va_cap    || 0) : 0;
+
+    function fmtPctOrDef(v, plat) {
+      if (v && Number(v) > 0) return (Number(v)*100).toFixed(2) + '%';
+      if (plat > 0) return '<span style="color:var(--gray-400)">Default (' + (plat*100).toFixed(2) + '%)</span>';
+      return '<span style="color:var(--gray-400)">—</span>';
+    }
+    function fmtKoboOrDef(v, plat) {
+      if (v != null && Number(v) > 0) return '₦' + (Number(v)/100).toLocaleString('en-NG',{minimumFractionDigits:2});
+      if (plat > 0) return '<span style="color:var(--gray-400)">Default (₦' + (plat/100).toFixed(2) + ')</span>';
+      return '<span style="color:var(--gray-400)">—</span>';
+    }
 
     var rows = aggs.length ? aggs.map(function(a) {
-      var vaRate    = fmtPct(a.revenueSplitPct);
-      var payFee    = fmtKobo(a.payoutFloorKobo);
-      var vaCap     = fmtKobo(a.vaCapKobo);
+      var vaRate    = fmtPctOrDef(a.revenueSplitPct, platVaRate);
+      var payFee    = fmtKoboOrDef(a.payoutFloorKobo, platPayFloor);
+      var vaCap     = fmtKoboOrDef(a.vaCapKobo, platVaCap);
       var idSafe    = a.id;
       var nameSafe  = (a.companyName||'').replace(/'/g,'');
       return '<tr>' +
@@ -5385,25 +5397,28 @@ async function loadAggPricing() {
 }
 
 function openAggPricingEdit(aggId, aggName) {
-  var agg       = (window._aggPricingData||[]).find(function(a){ return a.id === aggId; }) || {};
-  var vaRateVal = agg.revenueSplitPct ? (Number(agg.revenueSplitPct)*100).toFixed(2) : '';
-  var payFeeVal = agg.payoutFloorKobo != null && Number(agg.payoutFloorKobo) > 0 ? (Number(agg.payoutFloorKobo)/100).toFixed(2) : '';
-  var vaCapVal  = agg.vaCapKobo       != null && Number(agg.vaCapKobo)       > 0 ? (Number(agg.vaCapKobo)/100).toFixed(2)       : '';
+  var agg         = (window._aggPricingData||[]).find(function(a){ return a.id === aggId; }) || {};
+  var vaRateVal   = agg.revenueSplitPct && Number(agg.revenueSplitPct) > 0 ? (Number(agg.revenueSplitPct)*100).toFixed(2) : '';
+  var payFeeVal   = agg.payoutFloorKobo != null && Number(agg.payoutFloorKobo) > 0 ? (Number(agg.payoutFloorKobo)/100).toFixed(2) : '';
+  var vaCapVal    = agg.vaCapKobo       != null && Number(agg.vaCapKobo)       > 0 ? (Number(agg.vaCapKobo)/100).toFixed(2)       : '';
+  var platVaLabel = agg._platform_va_rate   ? 'Default: ' + (Number(agg._platform_va_rate)*100).toFixed(2) + '%'   : 'e.g. 1.50';
+  var platPoLabel = agg._platform_payout_floor ? 'Default: ₦' + (Number(agg._platform_payout_floor)/100).toFixed(2) : 'e.g. 10.00';
+  var platCpLabel = agg._platform_va_cap   ? 'Default: ₦' + (Number(agg._platform_va_cap)/100).toFixed(2)          : 'e.g. 200.00';
 
   document.getElementById('modal-inner').innerHTML =
     '<div class="modal-header"><div class="modal-title">Set Rate — ' + aggName + '</div>' +
       '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
     '<div class="info-box" style="font-size:12px;margin-bottom:14px">' +
-      'These are <strong>Paylode\'s charges to this aggregator</strong>. The aggregator sets their own merchant rates on top — their margin is the difference.' +
+      'These are <strong>Paylode\'s charges to this aggregator</strong>. Leave a field blank to use the platform default. The aggregator sets their own merchant rates on top — their margin is the difference.' +
     '</div>' +
     '<div class="form-grid">' +
       '<div class="form-group"><label class="form-label">VA Rate (%) <span style="color:var(--gray-500);font-weight:400">% we charge aggregator per VA collection</span></label>' +
-        '<input class="form-input" type="number" id="ap-va-rate" value="' + vaRateVal + '" min="0" max="100" step="0.01" placeholder="e.g. 1.50"></div>' +
+        '<input class="form-input" type="number" id="ap-va-rate" value="' + vaRateVal + '" min="0" max="100" step="0.01" placeholder="' + platVaLabel + '"></div>' +
       '<div class="form-group"><label class="form-label">Payout Fee (₦/txn) <span style="color:var(--gray-500);font-weight:400">flat fee we charge per payout</span></label>' +
-        '<input class="form-input" type="number" id="ap-pay-fee" value="' + payFeeVal + '" min="0" step="0.01" placeholder="e.g. 10.00"></div>' +
+        '<input class="form-input" type="number" id="ap-pay-fee" value="' + payFeeVal + '" min="0" step="0.01" placeholder="' + platPoLabel + '"></div>' +
     '</div>' +
-    '<div class="form-group"><label class="form-label">VA Cap (₦) <span style="color:var(--gray-500);font-weight:400">max VA fee aggregator may charge their merchants (leave blank = no cap)</span></label>' +
-      '<input class="form-input" type="number" id="ap-va-cap" value="' + vaCapVal + '" min="0" step="0.01" placeholder="e.g. 200.00"></div>' +
+    '<div class="form-group"><label class="form-label">VA Cap (₦) <span style="color:var(--gray-500);font-weight:400">max VA fee aggregator may charge their merchants (leave blank = platform default)</span></label>' +
+      '<input class="form-input" type="number" id="ap-va-cap" value="' + vaCapVal + '" min="0" step="0.01" placeholder="' + platCpLabel + '"></div>' +
     '<div id="ap-msg"></div>' +
     '<div style="display:flex;gap:8px;margin-top:4px">' +
       '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
