@@ -22,11 +22,24 @@ function redactAggContact(a, viewer) {
 // Read access for staff with view_aggregators (SA bypasses); contact redacted per #8.
 aggRouter.get('/', requireAuth, requirePermission('view_aggregators'), async (req,res,next) => {
   try {
-    const aggs = await prisma.aggregator.findMany({
-      include: { _count:{select:{merchants:true}}, user:{select:{email:true,firstName:true,lastName:true}} },
-      orderBy: { createdAt:'desc' },
-    });
-    ok(res, aggs.map(a => redactAggContact({ ...a, merchant_count: a._count.merchants }, req.user)));
+    const [aggs, vaPlat, payPlat] = await Promise.all([
+      prisma.aggregator.findMany({
+        include: { _count:{select:{merchants:true}}, user:{select:{email:true,firstName:true,lastName:true}} },
+        orderBy: { createdAt:'desc' },
+      }),
+      prisma.platformRateConfig.findFirst({ where: { channel: 'VIRTUAL_ACCOUNT' } }),
+      prisma.platformRateConfig.findFirst({ where: { channel: 'PAYOUT' } }),
+    ]);
+    const platVaRate   = vaPlat  ? Number(vaPlat.rate)    : 0;
+    const platPayFloor = payPlat ? Number(payPlat.flatFee) : 0;
+    const platVaCap    = vaPlat  ? Number(vaPlat.cap)      : 0;
+    ok(res, aggs.map(a => redactAggContact({
+      ...a,
+      merchant_count:         a._count.merchants,
+      _platform_va_rate:      platVaRate,
+      _platform_payout_floor: platPayFloor,
+      _platform_va_cap:       platVaCap,
+    }, req.user)));
   } catch(e){next(e);}
 });
 
@@ -91,21 +104,33 @@ aggRouter.put('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => 
   try {
     const agg = await prisma.aggregator.findUnique({ where: { id: req.params.id } });
     if (!agg) return notFound(res, 'Aggregator');
-    const { company_name, rc_number, settlement_bank, settlement_account, revenue_split_pct } = req.body;
+    const { company_name, rc_number, settlement_bank, settlement_account, revenue_split_pct, payout_floor_kobo, va_cap_kobo } = req.body;
     const data = {};
-    if (company_name      !== undefined) data.companyName       = String(company_name).trim();
-    if (rc_number         !== undefined) data.rcNumber          = rc_number || null;
-    if (settlement_bank   !== undefined) data.settlementBank    = settlement_bank || null;
-    if (settlement_account!== undefined) data.settlementAccount = settlement_account || null;
-    if (revenue_split_pct !== undefined) {
+    if (company_name       !== undefined) data.companyName       = String(company_name).trim();
+    if (rc_number          !== undefined) data.rcNumber          = rc_number || null;
+    if (settlement_bank    !== undefined) data.settlementBank    = settlement_bank || null;
+    if (settlement_account !== undefined) data.settlementAccount = settlement_account || null;
+    if (revenue_split_pct  !== undefined) {
       const split = parseFloat(revenue_split_pct);
       if (isNaN(split) || split < 0 || split > 1) return fail(res, 'revenue_split_pct must be 0-1 (e.g. 0.30 for 30%)');
       data.revenueSplitPct = split;
     }
+    // per-aggregator pricing overrides (null clears to platform default)
+    if (payout_floor_kobo !== undefined)
+      data.payoutFloorKobo = payout_floor_kobo === null ? null : BigInt(Math.max(0, Math.round(Number(payout_floor_kobo))));
+    if (va_cap_kobo !== undefined)
+      data.vaCapKobo = va_cap_kobo === null ? null : BigInt(Math.max(0, Math.round(Number(va_cap_kobo))));
+
     if (!Object.keys(data).length) return fail(res, 'Nothing to update');
     const updated = await prisma.aggregator.update({ where: { id: req.params.id }, data });
     await logAudit(req.user.id, 'AGGREGATOR_UPDATED', 'aggregators', updated.id, null, data, null, req.ip);
-    ok(res, { aggregator_id: updated.id, company_name: updated.companyName, revenue_split_pct: Number(updated.revenueSplitPct) }, 'Aggregator updated');
+    ok(res, {
+      aggregator_id:      updated.id,
+      company_name:       updated.companyName,
+      revenue_split_pct:  Number(updated.revenueSplitPct),
+      payout_floor_kobo:  updated.payoutFloorKobo != null ? Number(updated.payoutFloorKobo) : null,
+      va_cap_kobo:        updated.vaCapKobo        != null ? Number(updated.vaCapKobo)        : null,
+    }, 'Aggregator updated');
   } catch (e) { next(e); }
 });
 
@@ -113,7 +138,7 @@ aggRouter.put('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => 
 
 aggRouter.get('/:id/rates', requireAuth, requireSuperAdmin, async (req,res,next) => {
   try {
-    const agg = await prisma.aggregator.findUnique({ where:{id:req.params.id}, select:{id:true,companyName:true,revenueSplitPct:true} });
+    const agg = await prisma.aggregator.findUnique({ where:{id:req.params.id}, select:{id:true,companyName:true,revenueSplitPct:true,payoutFloorKobo:true,vaCapKobo:true} });
     if (!agg) return notFound(res);
 
     const overrides = await prisma.aggregatorRateConfig.findMany({
@@ -123,9 +148,11 @@ aggRouter.get('/:id/rates', requireAuth, requireSuperAdmin, async (req,res,next)
     });
 
     ok(res, {
-      aggregator_id:     agg.id,
-      company_name:      agg.companyName,
-      default_split_pct: Number(agg.revenueSplitPct),
+      aggregator_id:      agg.id,
+      company_name:       agg.companyName,
+      default_split_pct:  Number(agg.revenueSplitPct),
+      payout_floor_kobo:  agg.payoutFloorKobo != null ? Number(agg.payoutFloorKobo) : null,
+      va_cap_kobo:        agg.vaCapKobo        != null ? Number(agg.vaCapKobo)        : null,
       overrides: overrides.map(o => ({
         id:          o.id,
         merchant_id: o.merchantId,
@@ -335,13 +362,19 @@ aggRouter.get('/my/rates', requireAuth, requireAggregator, async (req, res, next
       }),
       prisma.platformRateConfig.findFirst({ where: { channel: 'PAYOUT' } }),
       prisma.platformRateConfig.findFirst({ where: { channel: 'VIRTUAL_ACCOUNT' } }),
-      prisma.aggregator.findUnique({ where: { id: agg.id }, select: { revenueSplitPct: true } }),
+      prisma.aggregator.findUnique({ where: { id: agg.id }, select: { revenueSplitPct: true, payoutFloorKobo: true, vaCapKobo: true } }),
     ]);
 
-    const basePct        = Number(fullAgg?.revenueSplitPct || agg.revenueSplitPct);
-    const payoutBaseCost = payoutPlatform ? Number(payoutPlatform.flatFee) : 0;  // kobo
-    const vaMinCharge    = vaPlatform     ? Number(vaPlatform.minCharge)   : 0;  // kobo
-    const vaCap          = vaPlatform     ? Number(vaPlatform.cap)         : 0;  // kobo — SA cap, read-only
+    const rawBasePct = Number(fullAgg?.revenueSplitPct ?? agg.revenueSplitPct);
+
+    // Per-aggregator floor/cap overrides; fall back to platform defaults
+    const platformPayoutFloor = payoutPlatform ? Number(payoutPlatform.flatFee) : 0;
+    const platformVaCap       = vaPlatform     ? Number(vaPlatform.cap)         : 0;
+    const platformVaRate      = vaPlatform     ? Number(vaPlatform.rate)        : 0;
+    const basePct        = rawBasePct > 0 ? rawBasePct : platformVaRate;
+    const payoutBaseCost = fullAgg?.payoutFloorKobo != null ? Number(fullAgg.payoutFloorKobo) : platformPayoutFloor;
+    const vaCap          = fullAgg?.vaCapKobo        != null ? Number(fullAgg.vaCapKobo)        : platformVaCap;
+    const vaMinCharge    = vaPlatform ? Number(vaPlatform.minCharge) : 0;
 
     // Group overrides by merchant for convenience
     const overrideMap = {};
@@ -360,6 +393,7 @@ aggRouter.get('/my/rates', requireAuth, requireAggregator, async (req, res, next
     ok(res, {
       base_rate:         basePct,
       default_split_pct: basePct,           // backward compat
+      platform_va_rate:  platformVaRate,    // raw platform default (0 = not set)
       payout_base_cost:  payoutBaseCost,    // Paylode's payout flat fee (kobo) — floor
       va_min_charge:     vaMinCharge,       // platform VA min charge (kobo) — info only
       va_cap:            vaCap,             // SA cap on VA (kobo) — read-only for agg
@@ -400,7 +434,7 @@ aggRouter.put('/my/merchants/:merchantId/rates', requireAuth, requireAggregator,
 
     // Floor guards
     const [fullAgg, payoutPlatform] = await Promise.all([
-      prisma.aggregator.findUnique({ where: { id: agg.id }, select: { revenueSplitPct: true } }),
+      prisma.aggregator.findUnique({ where: { id: agg.id }, select: { revenueSplitPct: true, payoutFloorKobo: true, vaCapKobo: true } }),
       prisma.platformRateConfig.findFirst({ where: { channel: 'PAYOUT' } }),
     ]);
 
@@ -408,9 +442,11 @@ aggRouter.put('/my/merchants/:merchantId/rates', requireAuth, requireAggregator,
       return fail(res, `VA rate (${(rateVal*100).toFixed(2)}%) cannot be below your base rate of ${(Number(fullAgg.revenueSplitPct)*100).toFixed(2)}%`);
 
     if (channel === 'PAYOUT') {
-      const payoutFloor = payoutPlatform ? BigInt(payoutPlatform.flatFee) : 0n;
+      // Use per-aggregator floor if SA set one, else platform default
+      const platformPayoutFloor = payoutPlatform ? BigInt(payoutPlatform.flatFee) : 0n;
+      const payoutFloor = fullAgg?.payoutFloorKobo != null ? BigInt(fullAgg.payoutFloorKobo) : platformPayoutFloor;
       if (flatFee > 0n && flatFee < payoutFloor)
-        return fail(res, `Payout flat fee (₦${Number(flatFee)/100}) cannot be below Paylode's base cost of ₦${Number(payoutFloor)/100}`);
+        return fail(res, `Payout flat fee (₦${Number(flatFee)/100}) cannot be below your Paylode base cost of ₦${Number(payoutFloor)/100}`);
     }
 
     const config = await prisma.aggregatorRateConfig.upsert({
