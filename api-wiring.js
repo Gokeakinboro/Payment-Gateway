@@ -8739,6 +8739,7 @@ loadPageData = function(page) {
     case 'sdk_mobile':
     case 'sdk_errors':
     case 'sdk_test':
+      break;
     case 'merch_notifications': loadMerchNotifSettings(); break;
     case 'sa_whatsapp':         loadSaWhatsappPage(); break;
     case 'merch_webhooks':
