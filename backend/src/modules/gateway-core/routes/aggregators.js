@@ -109,7 +109,7 @@ aggRouter.put('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
-// ── Per-merchant split overrides ─────────────────────────────────────────────
+// ── Per-merchant rate overrides (SA) ─────────────────────────────────────────
 
 aggRouter.get('/:id/rates', requireAuth, requireSuperAdmin, async (req,res,next) => {
   try {
@@ -119,18 +119,22 @@ aggRouter.get('/:id/rates', requireAuth, requireSuperAdmin, async (req,res,next)
     const overrides = await prisma.aggregatorRateConfig.findMany({
       where: { aggregatorId: req.params.id },
       include: { merchant: { select:{ id:true, businessName:true, merchantCode:true } } },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ merchantId: 'asc' }, { channel: 'asc' }],
     });
 
     ok(res, {
-      aggregator_id:    agg.id,
-      company_name:     agg.companyName,
+      aggregator_id:     agg.id,
+      company_name:      agg.companyName,
       default_split_pct: Number(agg.revenueSplitPct),
       overrides: overrides.map(o => ({
         id:          o.id,
         merchant_id: o.merchantId,
         merchant:    o.merchant,
-        split_pct:   Number(o.splitPct),
+        channel:     o.channel,
+        rate:        Number(o.rate),
+        flat_fee:    Number(o.flatFee    || 0),
+        min_charge:  Number(o.minCharge  || 0),
+        max_charge:  Number(o.maxCharge  || 0),
         notes:       o.notes,
         created_at:  o.createdAt,
       })),
@@ -138,44 +142,55 @@ aggRouter.get('/:id/rates', requireAuth, requireSuperAdmin, async (req,res,next)
   } catch(e){next(e);}
 });
 
+// SA sets a per-merchant per-channel rate override.
+// channel: VIRTUAL_ACCOUNT | PAYOUT (required when merchant_id is set)
 aggRouter.post('/:id/rates', requireAuth, requireSuperAdmin, async (req,res,next) => {
   try {
-    const { merchant_id = null, split_pct, notes } = req.body;
-    const split = parseFloat(split_pct);
-    if (isNaN(split) || split < 0 || split > 1) return fail(res, 'split_pct must be 0-1');
+    const { merchant_id = null, channel = 'VIRTUAL_ACCOUNT', rate, flat_fee, min_charge, notes } = req.body;
+    const rateVal      = rate      != null ? parseFloat(rate)                                              : null;
+    const flatFee      = flat_fee  != null ? BigInt(Math.max(0, Math.round(Number(flat_fee))))             : 0n;
+    const minCharge    = min_charge!= null ? BigInt(Math.max(0, Math.round(Number(min_charge))))           : 0n;
+    if (rateVal != null && (isNaN(rateVal) || rateVal < 0 || rateVal > 1)) return fail(res, 'rate must be 0-1');
 
-    // merchant_id = null means default override (replaces aggregator.revenueSplitPct)
+    // no merchant_id → update aggregator's default VA base rate
     if (!merchant_id) {
-      const agg = await prisma.aggregator.update({
-        where: { id: req.params.id },
-        data: { revenueSplitPct: split },
-      });
-      await logAudit(req.user.id, 'AGG_DEFAULT_SPLIT_CHANGED', 'aggregators', agg.id, null, { split_pct: split }, notes);
-      return ok(res, { aggregator_id: agg.id, default_split_pct: split, scope: 'default' });
+      if (rateVal == null) return fail(res, 'rate required when updating default');
+      const agg = await prisma.aggregator.update({ where:{id:req.params.id}, data:{revenueSplitPct:rateVal} });
+      await logAudit(req.user.id,'AGG_DEFAULT_SPLIT_CHANGED','aggregators',agg.id,null,{rate:rateVal},notes);
+      return ok(res,{aggregator_id:agg.id,default_split_pct:rateVal,scope:'default'});
     }
 
+    const agg = await prisma.aggregator.findUnique({where:{id:req.params.id},select:{revenueSplitPct:true}});
+    if (channel==='VIRTUAL_ACCOUNT' && rateVal != null && agg && rateVal < Number(agg.revenueSplitPct))
+      return fail(res,`VA rate (${(rateVal*100).toFixed(2)}%) cannot be below aggregator base rate of ${(Number(agg.revenueSplitPct)*100).toFixed(2)}%`);
+
     const config = await prisma.aggregatorRateConfig.upsert({
-      where: { aggregatorId_merchantId: { aggregatorId: req.params.id, merchantId: merchant_id } },
-      create: { aggregatorId: req.params.id, merchantId: merchant_id, splitPct: split, notes, setBy: req.user.id },
-      update: { splitPct: split, notes, setBy: req.user.id, updatedAt: new Date() },
+      where: { aggregatorId_merchantId_channel: { aggregatorId: req.params.id, merchantId: merchant_id, channel } },
+      create: { aggregatorId: req.params.id, merchantId: merchant_id, channel, rate: rateVal ?? 0, flatFee, minCharge, notes, setBy: req.user.id },
+      update: { rate: rateVal ?? 0, flatFee, minCharge, notes, setBy: req.user.id, updatedAt: new Date() },
     });
-
-    await logAudit(req.user.id, 'AGG_MERCHANT_SPLIT_SET', 'aggregator_rate_configs', config.id,
-      null, { merchant_id, split_pct: split }, notes);
-
-    ok(res, { ...config, split_pct: Number(config.splitPct), scope: 'merchant-override' });
+    await logAudit(req.user.id,'AGG_MERCHANT_RATE_SET','aggregator_rate_configs',config.id,
+      null,{merchant_id,channel,rate:rateVal,flat_fee:Number(flatFee),min_charge:Number(minCharge)},notes);
+    ok(res, { id: config.id, merchant_id, channel, rate: Number(config.rate), flat_fee: Number(config.flatFee), min_charge: Number(config.minCharge), scope: 'merchant-override' });
   } catch(e){next(e);}
 });
 
 aggRouter.delete('/:id/rates/:merchantId', requireAuth, requireSuperAdmin, async (req,res,next) => {
   try {
-    const config = await prisma.aggregatorRateConfig.findUnique({
-      where: { aggregatorId_merchantId: { aggregatorId: req.params.id, merchantId: req.params.merchantId } },
-    });
-    if (!config) return notFound(res);
-    await prisma.aggregatorRateConfig.delete({ where: { id: config.id } });
-    await logAudit(req.user.id, 'AGG_MERCHANT_SPLIT_REMOVED', 'aggregator_rate_configs', config.id, config, null);
-    ok(res, { message: 'Override removed — merchant now uses aggregator default split' });
+    const channel = req.query.channel || null;
+    const where = channel
+      ? { aggregatorId_merchantId_channel: { aggregatorId: req.params.id, merchantId: req.params.merchantId, channel } }
+      : undefined;
+    if (where) {
+      const config = await prisma.aggregatorRateConfig.findUnique({ where });
+      if (!config) return notFound(res);
+      await prisma.aggregatorRateConfig.delete({ where: { id: config.id } });
+      await logAudit(req.user.id,'AGG_MERCHANT_RATE_REMOVED','aggregator_rate_configs',config.id,config,null);
+    } else {
+      // delete all channels for this merchant
+      await prisma.aggregatorRateConfig.deleteMany({ where: { aggregatorId: req.params.id, merchantId: req.params.merchantId } });
+    }
+    ok(res, { message: 'Override removed' });
   } catch(e){next(e);}
 });
 
@@ -264,6 +279,279 @@ aggRouter.get('/my/revenue', requireAuth, requireAggregator, async (req,res,next
       share_all_by_currency: allBy,
     });
   } catch(e){ next(e); }
+});
+
+// ── SA: list all agg_payouts (monthly margin buckets) ────────────────────────
+aggRouter.get('/payouts', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const rows = await prisma.aggPayout.findMany({
+      orderBy: [{ periodMonth: 'desc' }, { createdAt: 'desc' }],
+      include: { aggregator: { select: { id: true, companyName: true, settlementBank: true, settlementAccount: true } } },
+    });
+    ok(res, rows.map(r => ({
+      id:                  r.id,
+      aggregator_id:       r.aggregatorId,
+      aggregator:          r.aggregator,
+      period_month:        r.periodMonth,
+      total_merchant_fees: Number(r.totalMerchantFees),
+      rail_deduction:      Number(r.railDeduction),
+      net_pool:            Number(r.netPool),
+      agg_share_amount:    Number(r.aggShareAmount),
+      txn_count:           r.txnCount,
+      status:              r.status,
+      paid_at:             r.paidAt,
+      created_at:          r.createdAt,
+    })));
+  } catch (e) { next(e); }
+});
+
+// ── SA: mark an agg_payout as PAID ───────────────────────────────────────────
+aggRouter.put('/payouts/:id/mark-paid', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const payout = await prisma.aggPayout.findUnique({ where: { id: req.params.id } });
+    if (!payout) return notFound(res, 'Payout record not found');
+    if (payout.status === 'PAID') return fail(res, 'Already marked as paid');
+    const updated = await prisma.aggPayout.update({
+      where: { id: payout.id },
+      data:  { status: 'PAID', paidAt: new Date() },
+    });
+    await logAudit(req.user.id, 'AGG_PAYOUT_MARKED_PAID', 'agg_payouts', payout.id,
+      { status: 'PENDING' }, { status: 'PAID', paid_at: updated.paidAt }, req.body.notes || null, req.ip);
+    ok(res, { id: payout.id, status: 'PAID', paid_at: updated.paidAt }, 'Payout marked as paid');
+  } catch (e) { next(e); }
+});
+
+// ── Aggregator self-service: view own rate config ────────────────────────────
+aggRouter.get('/my/rates', requireAuth, requireAggregator, async (req, res, next) => {
+  try {
+    const agg = req.user.aggregator;
+    if (!agg) return fail(res, 'No aggregator account');
+
+    const [overrides, payoutPlatform, vaPlatform, fullAgg] = await Promise.all([
+      prisma.aggregatorRateConfig.findMany({
+        where: { aggregatorId: agg.id },
+        include: { merchant: { select: { id: true, businessName: true, merchantCode: true } } },
+        orderBy: [{ merchantId: 'asc' }, { channel: 'asc' }],
+      }),
+      prisma.platformRateConfig.findFirst({ where: { channel: 'PAYOUT' } }),
+      prisma.platformRateConfig.findFirst({ where: { channel: 'VIRTUAL_ACCOUNT' } }),
+      prisma.aggregator.findUnique({ where: { id: agg.id }, select: { revenueSplitPct: true } }),
+    ]);
+
+    const basePct        = Number(fullAgg?.revenueSplitPct || agg.revenueSplitPct);
+    const payoutBaseCost = payoutPlatform ? Number(payoutPlatform.flatFee) : 0;  // kobo
+    const vaMinCharge    = vaPlatform     ? Number(vaPlatform.minCharge)   : 0;  // kobo
+    const vaCap          = vaPlatform     ? Number(vaPlatform.cap)         : 0;  // kobo — SA cap, read-only
+
+    // Group overrides by merchant for convenience
+    const overrideMap = {};
+    overrides.forEach(o => {
+      if (!overrideMap[o.merchantId]) overrideMap[o.merchantId] = { merchant: o.merchant };
+      overrideMap[o.merchantId][o.channel] = {
+        rate:        Number(o.rate),
+        flat_fee:    Number(o.flatFee    || 0),
+        min_charge:  Number(o.minCharge  || 0),
+        max_charge:  Number(o.maxCharge  || 0),
+        notes:       o.notes,
+        created_at:  o.createdAt,
+      };
+    });
+
+    ok(res, {
+      base_rate:         basePct,
+      default_split_pct: basePct,           // backward compat
+      payout_base_cost:  payoutBaseCost,    // Paylode's payout flat fee (kobo) — floor
+      va_min_charge:     vaMinCharge,       // platform VA min charge (kobo) — info only
+      va_cap:            vaCap,             // SA cap on VA (kobo) — read-only for agg
+      overrides: Object.entries(overrideMap).map(([merchantId, data]) => ({
+        merchant_id: merchantId,
+        merchant:    data.merchant,
+        va:          data['VIRTUAL_ACCOUNT'] || null,
+        payout:      data['PAYOUT'] || null,
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+// ── Aggregator self-service: set rate for one of their own merchants ──────────
+// Body: { channel: 'VIRTUAL_ACCOUNT'|'PAYOUT', rate, flat_fee, min_charge, notes }
+// rate, flat_fee, min_charge all optional; channel defaults to VIRTUAL_ACCOUNT.
+aggRouter.put('/my/merchants/:merchantId/rates', requireAuth, requireAggregator, async (req, res, next) => {
+  try {
+    const agg = req.user.aggregator;
+    if (!agg) return fail(res, 'No aggregator account');
+
+    const merchant = await prisma.merchant.findFirst({
+      where: { id: req.params.merchantId, aggregatorId: agg.id },
+      select: { id: true, businessName: true },
+    });
+    if (!merchant) return fail(res, 'Merchant not found under your account', 'NOT_FOUND');
+
+    const channel   = (req.body.channel || 'VIRTUAL_ACCOUNT').toUpperCase();
+    if (!['VIRTUAL_ACCOUNT','PAYOUT'].includes(channel))
+      return fail(res, 'channel must be VIRTUAL_ACCOUNT or PAYOUT');
+
+    const rateVal   = req.body.rate      != null ? parseFloat(req.body.rate)                                    : 0;
+    const flatFee   = req.body.flat_fee  != null ? BigInt(Math.max(0, Math.round(Number(req.body.flat_fee))))   : 0n;
+    const minCharge = req.body.min_charge!= null ? BigInt(Math.max(0, Math.round(Number(req.body.min_charge)))) : 0n;
+
+    if (isNaN(rateVal) || rateVal < 0 || rateVal > 1)
+      return fail(res, 'rate must be between 0 and 1 (e.g. 0.035 for 3.5%)');
+
+    // Floor guards
+    const [fullAgg, payoutPlatform] = await Promise.all([
+      prisma.aggregator.findUnique({ where: { id: agg.id }, select: { revenueSplitPct: true } }),
+      prisma.platformRateConfig.findFirst({ where: { channel: 'PAYOUT' } }),
+    ]);
+
+    if (channel === 'VIRTUAL_ACCOUNT' && rateVal > 0 && fullAgg && rateVal < Number(fullAgg.revenueSplitPct))
+      return fail(res, `VA rate (${(rateVal*100).toFixed(2)}%) cannot be below your base rate of ${(Number(fullAgg.revenueSplitPct)*100).toFixed(2)}%`);
+
+    if (channel === 'PAYOUT') {
+      const payoutFloor = payoutPlatform ? BigInt(payoutPlatform.flatFee) : 0n;
+      if (flatFee > 0n && flatFee < payoutFloor)
+        return fail(res, `Payout flat fee (₦${Number(flatFee)/100}) cannot be below Paylode's base cost of ₦${Number(payoutFloor)/100}`);
+    }
+
+    const config = await prisma.aggregatorRateConfig.upsert({
+      where: { aggregatorId_merchantId_channel: { aggregatorId: agg.id, merchantId: merchant.id, channel } },
+      create: { aggregatorId: agg.id, merchantId: merchant.id, channel, rate: rateVal, flatFee, minCharge, notes: req.body.notes || null, setBy: req.user.id },
+      update: { rate: rateVal, flatFee, minCharge, notes: req.body.notes || null, setBy: req.user.id, updatedAt: new Date() },
+    });
+    await logAudit(req.user.id, 'AGG_SELF_SET_MERCHANT_RATE', 'aggregator_rate_configs', config.id,
+      null, { merchant_id: merchant.id, channel, rate: rateVal, flat_fee: Number(flatFee), min_charge: Number(minCharge) }, req.body.notes || null, req.ip);
+    ok(res, { merchant_id: merchant.id, merchant_name: merchant.businessName, channel, rate: rateVal, flat_fee: Number(flatFee), min_charge: Number(minCharge) },
+      `Rate set for ${merchant.businessName}`);
+  } catch (e) { next(e); }
+});
+
+// ── Aggregator self-service: remove a merchant rate override ─────────────────
+// ?channel=VIRTUAL_ACCOUNT removes just that channel; omit to remove all
+aggRouter.delete('/my/merchants/:merchantId/rates', requireAuth, requireAggregator, async (req, res, next) => {
+  try {
+    const agg = req.user.aggregator;
+    if (!agg) return fail(res, 'No aggregator account');
+    const channel = req.query.channel || null;
+    if (channel) {
+      const config = await prisma.aggregatorRateConfig.findUnique({
+        where: { aggregatorId_merchantId_channel: { aggregatorId: agg.id, merchantId: req.params.merchantId, channel } },
+      });
+      if (!config) return notFound(res, 'Rate override not found');
+      await prisma.aggregatorRateConfig.delete({ where: { id: config.id } });
+      await logAudit(req.user.id, 'AGG_SELF_REMOVE_MERCHANT_RATE', 'aggregator_rate_configs', config.id, config, null, null, req.ip);
+    } else {
+      await prisma.aggregatorRateConfig.deleteMany({ where: { aggregatorId: agg.id, merchantId: req.params.merchantId } });
+    }
+    ok(res, { message: 'Override removed — merchant now uses your default rate' });
+  } catch (e) { next(e); }
+});
+
+// ── Aggregator self-service: full transaction visibility ──────────────────────
+aggRouter.get('/my/transactions', requireAuth, requireAggregator, async (req, res, next) => {
+  try {
+    const agg = req.user.aggregator;
+    if (!agg) return fail(res, 'No aggregator account');
+
+    const page    = Math.max(1, parseInt(req.query.page  || '1'));
+    const limit   = Math.min(100, Math.max(1, parseInt(req.query.limit || '50')));
+    const skip    = (page - 1) * limit;
+    const status  = req.query.status  || undefined;
+    const channel = req.query.channel || undefined;
+    const from    = req.query.from ? new Date(req.query.from) : undefined;
+    const to      = req.query.to   ? new Date(req.query.to)   : undefined;
+
+    const merchants = await prisma.merchant.findMany({
+      where: { aggregatorId: agg.id },
+      select: { id: true },
+    });
+    const merchantIds = merchants.map(m => m.id);
+    if (!merchantIds.length) return ok(res, { data: [], total: 0, page, limit });
+
+    const where = {
+      merchantId: { in: merchantIds },
+      isSandbox:  false,
+      ...(status  && { status: status.toUpperCase() }),
+      ...(channel && { channel: channel.toUpperCase() }),
+      ...(from || to) && { createdAt: { ...(from && { gte: from }), ...(to && { lte: to }) } },
+    };
+
+    const [txns, total] = await Promise.all([
+      prisma.transaction.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: { merchant: { select: { id: true, businessName: true, merchantCode: true } } },
+      }),
+      prisma.transaction.count({ where }),
+    ]);
+
+    ok(res, {
+      data: txns.map(t => ({
+        id:                  t.id,
+        reference:           t.reference,
+        merchant_id:         t.merchantId,
+        merchant:            t.merchant,
+        status:              t.status,
+        channel:             t.channel,
+        amount:              Number(t.amount),
+        fee:                 Number(t.merchantFee),
+        agg_share:           Number(t.aggShare),
+        currency:            t.currency,
+        customer_email:      t.customerEmail,
+        created_at:          t.createdAt,
+        paid_at:             t.paidAt,
+      })),
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit),
+    });
+  } catch (e) { next(e); }
+});
+
+// ── Aggregator self-service: daily earnings / margin breakdown ───────────────
+aggRouter.get('/my/earnings', requireAuth, requireAggregator, async (req, res, next) => {
+  try {
+    const agg = req.user.aggregator;
+    if (!agg) return fail(res, 'No aggregator account');
+
+    const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const to   = req.query.to   ? new Date(req.query.to)   : new Date();
+    const filterMerchantId = req.query.merchant_id || null;
+
+    const merchants = await prisma.merchant.findMany({
+      where: { aggregatorId: agg.id, ...(filterMerchantId && { id: filterMerchantId }) },
+      select: { id: true, businessName: true, merchantCode: true },
+    });
+    const merchantIds = merchants.map(m => m.id);
+    if (!merchantIds.length) return ok(res, { merchants: [], data: [], total_agg_share: 0, total_txn_count: 0 });
+
+    const txns = await prisma.transaction.findMany({
+      where: { merchantId: { in: merchantIds }, status: 'SUCCESS', isSandbox: false, createdAt: { gte: from, lte: to } },
+      select: { merchantId: true, aggShare: true, merchantFee: true, amount: true, currency: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 10000,
+    });
+
+    const merchantMap = Object.fromEntries(merchants.map(m => [m.id, m.businessName]));
+    const grouped = {};
+    for (const t of txns) {
+      const day = t.createdAt.toISOString().slice(0, 10);
+      const key = `${day}|${t.merchantId}|${t.currency}`;
+      if (!grouped[key]) grouped[key] = { day, merchant_id: t.merchantId, merchant_name: merchantMap[t.merchantId] || '', currency: t.currency, agg_share: 0, merchant_fees: 0, volume: 0, txn_count: 0 };
+      grouped[key].agg_share    += Number(t.aggShare);
+      grouped[key].merchant_fees += Number(t.merchantFee);
+      grouped[key].volume       += Number(t.amount);
+      grouped[key].txn_count++;
+    }
+    const data = Object.values(grouped).sort((a, b) => b.day.localeCompare(a.day) || a.merchant_name.localeCompare(b.merchant_name));
+
+    const total_agg_share = data.reduce((s, r) => s + r.agg_share, 0);
+    const total_txn_count = data.reduce((s, r) => s + r.txn_count, 0);
+
+    ok(res, { merchants, data, total_agg_share, total_txn_count });
+  } catch (e) { next(e); }
 });
 
 // ── DELETE an aggregator — SUPER_ADMIN only. GUARDED hard delete. ─────────────

@@ -51,9 +51,39 @@ function errorBox(msg) {
 }
 
 // ── SUPER ADMIN OVERVIEW ──────────────────────────────────────────────────────
+var _railBalTimer = null;
+async function loadRailBalances(force) {
+  var sec     = document.getElementById('rail-bal-section');
+  if (!sec) { if (_railBalTimer) { clearInterval(_railBalTimer); _railBalTimer = null; } return; }
+  var content = document.getElementById('rail-bal-content');
+  var ageEl   = document.getElementById('rail-bal-age');
+  try {
+    var r = await apiFetch('/admin/rail-balances' + (force ? '?force=1' : ''));
+    if (!r?.data) { content.innerHTML = '<span style="color:#ef4444">Failed to load balances</span>'; return; }
+    var d = r.data;
+    var total = d.balances.reduce(function(s, b) { return s + (b.balance_naira !== null ? b.balance_naira : 0); }, 0);
+    var rows = d.balances.map(function(b) {
+      if (b.balance_naira !== null) {
+        return '<div class="rev-row"><span class="rev-label" style="font-weight:600">' + b.label + '</span>' +
+               '<span class="rev-value" style="font-weight:800;color:#166534">' + fmtMajor(b.balance_naira, 'NGN') + '</span></div>';
+      }
+      return '<div class="rev-row"><span class="rev-label" style="font-weight:600">' + b.label + '</span>' +
+             '<span class="rev-value" style="font-size:12px;color:var(--gray-400)">Unavailable — ' + (b.error || 'error') + '</span></div>';
+    }).join('');
+    content.innerHTML = rows +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding:10px 0 6px;border-top:2px solid var(--gray-200)">' +
+        '<span style="font-size:13px;font-weight:700;color:var(--gray-700)">Total Rail Bank Balance</span>' +
+        '<span style="font-size:17px;font-weight:900;color:#166534">' + fmtMajor(total, 'NGN') + '</span>' +
+      '</div>';
+    if (ageEl) ageEl.textContent = 'as of ' + new Date(d.fetched_at).toLocaleTimeString('en-NG') + (d.cached ? ' (cached)' : '');
+  } catch(e) {
+    if (content) content.innerHTML = '<span style="color:#ef4444">Error: ' + e.message + '</span>';
+  }
+}
 async function loadSuperOverview() {
   const el = document.getElementById('main-content');
   if (!el) return;
+  if (_railBalTimer) { clearInterval(_railBalTimer); _railBalTimer = null; }
   el.innerHTML = loading();
 
   try {
@@ -79,6 +109,21 @@ async function loadSuperOverview() {
     <div class="page-header">
       <div class="page-title">Platform Overview</div>
       <div class="page-desc">Live data — ${new Date().toLocaleDateString('en-NG',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div>
+    </div>
+
+    <div class="section-gap" id="rail-bal-section">
+      <div class="card">
+        <div class="card-header" style="justify-content:space-between">
+          <div class="card-title">Rail Balances</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="rail-bal-age" style="font-size:11px;color:var(--gray-400)"></span>
+            <button class="btn btn-outline btn-sm" onclick="loadRailBalances(true)">&#x21bb; Refresh</button>
+          </div>
+        </div>
+        <div id="rail-bal-content" style="padding:12px 16px 4px">
+          <div style="color:var(--gray-400);font-size:13px">Loading&#8230;</div>
+        </div>
+      </div>
     </div>
 
     <!-- LOCAL (NGN) block -->
@@ -180,6 +225,8 @@ async function loadSuperOverview() {
       </div>
     </div>
     ${d.kyc_pending > 0 ? `<div class="section-gap"><div class="warn-box">⚠ ${d.kyc_pending} KYC application${d.kyc_pending>1?'s':''} pending review — <a href="#" onclick="navigate('compliance')">Review now →</a></div></div>` : ''}`;
+    loadRailBalances(false);
+    _railBalTimer = setInterval(function() { loadRailBalances(false); }, 5 * 60 * 1000);
   } catch(e) {
     el.innerHTML = errorBox('Failed to load dashboard: ' + e.message);
   }
@@ -187,13 +234,18 @@ async function loadSuperOverview() {
 
 // ── TRANSACTIONS ──────────────────────────────────────────────────────────────
 // Payouts are a transaction type too — surfaced alongside payments via a toggle.
-async function loadPayoutsLedger(page=1, filters={}) {
+if (!window._poF) window._poF = { status: '', from: '', to: '' };
+async function loadPayoutsLedger(page=1, newFilters) {
+  if (newFilters !== undefined) Object.assign(window._poF, newFilters);
+  const filters = window._poF;
   const el = document.getElementById('main-content');
   if (!el) return;
   el.innerHTML = loading();
   try {
     let url = `/payouts/logs?page=${page}&perPage=20`;
     if (filters.status) url += `&status=${filters.status}`;
+    if (filters.from)   url += `&from=${filters.from}`;
+    if (filters.to)     url += `&to=${filters.to}`;
     const res = await apiFetch(url);
     if (!res?.data) { el.innerHTML = errorBox('Could not load payouts'); return; }
     const items = res.data.data || [];
@@ -213,10 +265,13 @@ async function loadPayoutsLedger(page=1, filters={}) {
         </div>
       </div>
       <div class="flex" style="gap:8px;align-items:center;flex-wrap:wrap">
+        <input class="form-input" type="date" style="width:135px" value="${filters.from||''}" title="From date" onchange="loadPayoutsLedger(1,{from:this.value})">
+        <input class="form-input" type="date" style="width:135px" value="${filters.to||''}" title="To date" onchange="loadPayoutsLedger(1,{to:this.value})">
         <select class="form-input form-select" style="width:140px" onchange="loadPayoutsLedger(1,{status:this.value})">
           <option value="">All Status</option>
           <option value="success"${filters.status==='success'?' selected':''}>Success</option>
           <option value="failed"${filters.status==='failed'?' selected':''}>Failed</option>
+          <option value="reversed"${filters.status==='reversed'?' selected':''}>Reversed</option>
           <option value="processing"${filters.status==='processing'?' selected':''}>Processing</option>
           <option value="scheduled"${filters.status==='scheduled'?' selected':''}>Scheduled</option>
         </select>
@@ -249,93 +304,150 @@ async function loadPayoutsLedger(page=1, filters={}) {
   } catch(e) { el.innerHTML = errorBox('Failed to load payouts: ' + e.message); }
 }
 
-async function loadTransactions(page=1, filters={}) {
-  const el = document.getElementById('main-content');
+// Persistent filter state — survives pagination clicks
+if (!window._txnF) window._txnF = { page:1, status:'', channel:'', currency:'', from:'', to:'', merchant:'', reference:'', email:'' };
+
+async function loadTransactions(page) {
+  if (page !== undefined) window._txnF.page = page;
+  var f   = window._txnF;
+  var el  = document.getElementById('main-content');
   if (!el) return;
-  el.innerHTML = loading();
+
+  var isSA = currentRole === 'superadmin' || currentRole === 'admin' || currentRole === 'compliance' || currentRole === 'audit';
+
+  // Build URL
+  var url = '/transactions?page=' + f.page + '&perPage=20';
+  if (f.status)    url += '&status='    + encodeURIComponent(f.status);
+  if (f.channel)   url += '&channel='   + encodeURIComponent(f.channel);
+  if (f.currency)  url += '&currency='  + encodeURIComponent(f.currency);
+  if (f.from)      url += '&from='      + encodeURIComponent(f.from);
+  if (f.to)        url += '&to='        + encodeURIComponent(f.to);
+  if (f.merchant)  url += '&merchant='  + encodeURIComponent(f.merchant);
+  if (f.reference) url += '&reference=' + encodeURIComponent(f.reference);
+  if (f.email)     url += '&email='     + encodeURIComponent(f.email);
+
+  // Render skeleton with filter bar immediately so user sees filters while loading
+  var filterBar =
+    '<div class="card" style="margin-bottom:16px;padding:16px">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">' +
+        '<div><label class="form-label">Reference</label>' +
+          '<input class="form-input" id="tf-ref" placeholder="Search reference…" value="' + (f.reference||'') + '" onkeydown="if(event.key===\'Enter\')_txnApply()"></div>' +
+        (isSA ? '<div><label class="form-label">Merchant name</label>' +
+          '<input class="form-input" id="tf-merchant" placeholder="e.g. Bolt Nigeria" value="' + (f.merchant||'') + '" onkeydown="if(event.key===\'Enter\')_txnApply()"></div>' : '<div></div>') +
+        '<div><label class="form-label">Customer email</label>' +
+          '<input class="form-input" id="tf-email" placeholder="customer@email.com" value="' + (f.email||'') + '" onkeydown="if(event.key===\'Enter\')_txnApply()"></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:10px;align-items:flex-end">' +
+        '<div><label class="form-label">Status</label>' +
+          '<select class="form-input form-select" id="tf-status">' +
+            '<option value="">All</option>' +
+            ['SUCCESS','FAILED','PENDING','ABANDONED','REVERSED'].map(function(s){
+              return '<option value="'+s+'"'+(f.status===s?' selected':'')+'>'+s+'</option>';
+            }).join('') +
+          '</select></div>' +
+        '<div><label class="form-label">Channel</label>' +
+          '<select class="form-input form-select" id="tf-channel">' +
+            '<option value="">All</option>' +
+            ['CARD','BANK_TRANSFER','USSD'].map(function(c){
+              return '<option value="'+c+'"'+(f.channel===c?' selected':'')+'>'+c+'</option>';
+            }).join('') +
+          '</select></div>' +
+        '<div><label class="form-label">Currency</label>' +
+          '<select class="form-input form-select" id="tf-currency">' +
+            '<option value="">All</option>' +
+            '<option value="NGN"'+(f.currency==='NGN'?' selected':'')+'>₦ NGN</option>' +
+            '<option value="USD"'+(f.currency==='USD'?' selected':'')+'>$ USD</option>' +
+          '</select></div>' +
+        '<div><label class="form-label">From</label>' +
+          '<input class="form-input" type="date" id="tf-from" value="'+(f.from||'')+'"></div>' +
+        '<div><label class="form-label">To</label>' +
+          '<input class="form-input" type="date" id="tf-to" value="'+(f.to||'')+'"></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:12px">' +
+        '<button class="btn btn-primary btn-sm" onclick="_txnApply()">Apply Filters</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="_txnReset()">Reset</button>' +
+        (isSA ? '<button class="btn btn-outline btn-sm" onclick="exportTransactionsCsv()" style="margin-left:auto">&#8681; CSV</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="exportCombinedCsv()">&#8681; Combined</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="emailTransactionsCsv()">&#9993; Email</button>' : '') +
+      '</div>' +
+    '</div>';
+
+  el.innerHTML =
+    '<div class="page-header flex-between" style="margin-bottom:16px">' +
+      '<div style="display:flex;align-items:center;gap:12px">' +
+        '<button class="btn btn-outline btn-sm" onclick="goBack()">&#8592; Back</button>' +
+        '<div><div class="page-title">All Transactions</div>' +
+          (isSA ? '<div style="margin-top:4px"><button class="btn btn-primary btn-sm">Payments</button>' +
+            '<button class="btn btn-outline btn-sm" onclick="loadPayoutsLedger(1)" style="margin-left:6px">Payouts</button></div>' : '') +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    filterBar +
+    '<div id="txn-table-wrap">' + loading() + '</div>';
 
   try {
-    let url = `/transactions?page=${page}&perPage=20`;
-    if (filters.status)   url += `&status=${filters.status}`;
-    if (filters.channel)  url += `&channel=${filters.channel}`;
-    if (filters.currency) url += `&currency=${filters.currency}`;
-    if (filters.from)     url += `&from=${filters.from}`;
-    if (filters.to)       url += `&to=${filters.to}`;
+    var res = await apiFetch(url);
+    if (!res || !res.data) { document.getElementById('txn-table-wrap').innerHTML = errorBox('Could not load transactions'); return; }
+    var txns = res.data.data || [];
+    var meta = res.data.meta || { total:0, page:1, pages:1 };
 
-    const res = await apiFetch(url);
-    if (!res?.data) { el.innerHTML = errorBox('Could not load transactions'); return; }
+    var activeFilters = [f.status, f.channel, f.currency, f.from, f.to, f.merchant, f.reference, f.email].filter(Boolean).length;
+    var filterNote = activeFilters ? '<span class="badge badge-amber" style="margin-left:8px">'+activeFilters+' filter'+(activeFilters>1?'s':'')+' active</span>' : '';
 
-    const { data: txns, meta } = res.data;
-    const backPage = currentRole === 'merchant' ? 'merch_overview' : currentRole === 'aggregator' ? 'agg_overview' : 'overview';
+    var tableRows = txns.length ? txns.map(function(t) {
+      var intl = t.currency === 'USD';
+      return '<tr'+(intl?' style="background:#f8fbff"':'')+'>'+
+        '<td class="mono" style="font-size:11px">'+(t.reference||'—')+'</td>'+
+        '<td style="font-weight:500">'+(t.merchant&&t.merchant.businessName||'—')+'</td>'+
+        '<td style="font-weight:600;white-space:nowrap">'+fmtMoney(t.amount,t.currency)+'</td>'+
+        '<td class="mono" style="font-size:12px">'+fmtMoney(t.fees&&t.fees.merchant_fee||0,t.currency)+'</td>'+
+        '<td class="mono text-lime" style="font-size:12px;font-weight:600">'+fmtMoney(t.settlement_amount!=null?t.settlement_amount:(Number(t.amount)-(t.fees&&t.fees.merchant_fee||0)),t.currency)+'</td>'+
+        '<td><span class="tag">'+(t.channel||'—')+(intl?' · Intl':'')+'</span></td>'+
+        '<td>'+ccyChip(t.currency)+'</td>'+
+        '<td>'+statusBadge(t.status)+'</td>'+
+        '<td style="font-size:12px;color:var(--gray-400)">'+(t.customer_email||'—')+'</td>'+
+        '<td style="font-size:11px;color:var(--gray-400)">'+(t.created_at?new Date(t.created_at).toLocaleDateString('en-NG'):'—')+'</td>'+
+      '</tr>';
+    }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--gray-400);padding:24px">No transactions match the current filters</td></tr>';
 
-    el.innerHTML = `
-    <div class="page-header flex-between">
-      <div style="display:flex;align-items:center;gap:12px">
-        <button class="btn btn-outline btn-sm" onclick="goBack()" style="font-size:12px">&#8592; Back</button>
-        <div>
-          <div class="page-title">All Transactions</div>
-          <div class="page-desc">${fmtNum(meta.total)} total transactions</div>
-          <div style="margin-top:6px">
-            <button class="btn btn-primary btn-sm">Payments</button>
-            <button class="btn btn-outline btn-sm" onclick="loadPayoutsLedger(1)">Payouts</button>
-          </div>
-        </div>
-      </div>
-      <div class="flex">
-        <select class="form-input form-select" style="width:130px;margin-right:8px" onchange="loadTransactions(1,{status:this.value})">
-          <option value="">All Status</option>
-          <option value="SUCCESS">Success</option>
-          <option value="FAILED">Failed</option>
-          <option value="PENDING">Pending</option>
-          <option value="REVERSED">Reversed</option>
-        </select>
-        <select class="form-input form-select" style="width:140px;margin-right:8px" onchange="loadTransactions(1,{channel:this.value})">
-          <option value="">All Channels</option>
-          <option value="CARD">Card</option>
-          <option value="BANK_TRANSFER">Bank Transfer</option>
-          <option value="USSD">USSD</option>
-        </select>
-        <select class="form-input form-select" style="width:150px;margin-right:8px" onchange="loadTransactions(1,{currency:this.value})">
-          <option value="">All Currencies</option>
-          <option value="NGN"${filters.currency==='NGN'?' selected':''}>₦ Local (NGN)</option>
-          <option value="USD"${filters.currency==='USD'?' selected':''}>$ International (USD)</option>
-        </select>
-        <button class="btn btn-outline btn-sm" onclick="exportTransactionsCsv()">&#8681; Payments CSV</button>
-        <button class="btn btn-outline btn-sm" onclick="exportCombinedCsv()">&#8681; Combined CSV</button>
-        <button class="btn btn-outline btn-sm" onclick="emailTransactionsCsv()"><i data-lucide="mail" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Email to me</button>
-      </div>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Reference</th><th>Merchant</th><th>Amount</th><th>Fee</th><th>Settled</th><th>Channel</th><th>Currency</th><th>Status</th><th>Date</th></tr></thead>
-          <tbody>
-            ${txns.length ? txns.map(t => `<tr ${t.currency==='USD'?'style="background:#f8fbff"':''}>
-              <td class="mono" style="font-size:11px">${t.reference}</td>
-              <td>${t.merchant?.businessName||'—'}</td>
-              <td style="font-weight:600;white-space:nowrap" title="Gross collected">${fmtMoney(t.amount, t.currency)}</td>
-              <td class="mono" style="font-size:12px">${fmtMoney(t.fees?.merchant_fee||0, t.currency)}</td>
-              <td class="mono text-lime" style="font-size:12px;font-weight:600" title="Amount the merchant receives">${fmtMoney(t.settlement_amount != null ? t.settlement_amount : (Number(t.amount) - (t.fees?.merchant_fee||0)), t.currency)}</td>
-              <td><span class="tag">${t.channel}${t.currency==='USD'?' · Intl':''}</span></td>
-              <td>${ccyChip(t.currency)}</td>
-              <td>${statusBadge(t.status)}</td>
-              <td style="font-size:12px;color:var(--gray-400)">${new Date(t.created_at).toLocaleDateString('en-NG')}</td>
-            </tr>`).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--gray-400);padding:20px">No transactions found</td></tr>'}
-          </tbody>
-        </table>
-      </div>
-      <div class="flex-between" style="margin-top:16px">
-        <div style="font-size:12px;color:var(--gray-500)">Page ${meta.page} of ${meta.pages}</div>
-        <div class="flex">
-          ${meta.page > 1 ? `<button class="btn btn-outline btn-sm" onclick="loadTransactions(${meta.page-1})">← Previous</button>` : ''}
-          ${meta.page < meta.pages ? `<button class="btn btn-outline btn-sm" onclick="loadTransactions(${meta.page+1})">Next →</button>` : ''}
-        </div>
-      </div>
-    </div>`;
+    document.getElementById('txn-table-wrap').innerHTML =
+      '<div style="display:flex;align-items:center;margin-bottom:8px">' +
+        '<span style="font-size:13px;color:var(--gray-500)">' + fmtNum(meta.total) + ' transaction' + (meta.total!==1?'s':'') + '</span>' + filterNote +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Reference</th><th>Merchant</th><th>Amount</th><th>Fee</th><th>Settled</th><th>Channel</th><th>CCY</th><th>Status</th><th>Customer</th><th>Date</th></tr></thead>' +
+        '<tbody>'+tableRows+'</tbody>' +
+      '</table></div>' +
+      (meta.pages > 1 ?
+        '<div class="flex-between" style="margin-top:14px">' +
+          '<span style="font-size:12px;color:var(--gray-500)">Page '+meta.page+' of '+meta.pages+'</span>' +
+          '<div class="flex">' +
+            (meta.page>1?'<button class="btn btn-outline btn-sm" onclick="loadTransactions('+(meta.page-1)+')">&#8592; Prev</button>':'') +
+            (meta.page<meta.pages?'<button class="btn btn-outline btn-sm" onclick="loadTransactions('+(meta.page+1)+')">Next &#8594;</button>':'') +
+          '</div>' +
+        '</div>' : '') +
+      '</div>';
   } catch(e) {
-    el.innerHTML = errorBox('Failed to load transactions: ' + e.message);
+    var tw = document.getElementById('txn-table-wrap');
+    if (tw) tw.innerHTML = errorBox('Failed to load transactions: ' + e.message);
   }
 }
+
+function _txnApply() {
+  window._txnF = {
+    page:      1,
+    reference: (document.getElementById('tf-ref')      ||{}).value || '',
+    merchant:  (document.getElementById('tf-merchant') ||{}).value || '',
+    email:     (document.getElementById('tf-email')    ||{}).value || '',
+    status:    (document.getElementById('tf-status')   ||{}).value || '',
+    channel:   (document.getElementById('tf-channel')  ||{}).value || '',
+    currency:  (document.getElementById('tf-currency') ||{}).value || '',
+    from:      (document.getElementById('tf-from')     ||{}).value || '',
+    to:        (document.getElementById('tf-to')       ||{}).value || '',
+  };
+  loadTransactions();
+}
+function _txnReset() { window._txnF = { page:1, status:'', channel:'', currency:'', from:'', to:'', merchant:'', reference:'', email:'' }; loadTransactions(); }
 
 // ── Generic report helpers — download OR email any client-built report ───────
 function _utf8ToBase64(str) { return btoa(unescape(encodeURIComponent(str))); }
@@ -1677,17 +1789,45 @@ async function loadAggregators() {
   el.innerHTML = loading();
 
   try {
-    const res = await apiFetch('/aggregators');
+    const [res, pendingRes] = await Promise.all([
+      apiFetch('/aggregators'),
+      apiFetch('/onboarding/submissions?form_type=aggregator&status=pending'),
+    ]);
     if (!res?.data) { el.innerHTML = errorBox('Could not load aggregators'); return; }
 
     const aggs = res.data;
+    const pending = (pendingRes?.data || []);
     window._aggData = aggs;   // cached for the Edit modal
+
+    var pendingSection = '';
+    if (pending.length) {
+      pendingSection = `
+      <div style="margin-top:28px">
+        <div style="font-size:15px;font-weight:600;margin-bottom:12px">Pending Applications <span class="badge badge-amber" style="margin-left:6px;vertical-align:middle">${pending.length}</span></div>
+        <div class="grid-2">
+          ${pending.map(p => `
+          <div class="card" style="border-left:3px solid var(--amber,#f59e0b)">
+            <div class="card-header">
+              <div>
+                <div class="card-title">${p.businessName||'—'}</div>
+                <div class="card-subtitle mono" style="font-size:11px">${p.reference}</div>
+              </div>
+              ${statusBadge(p.status)}
+            </div>
+            <div class="rev-row"><span class="rev-label">Submitted</span><span class="rev-value">${p.submittedAt ? new Date(p.submittedAt).toLocaleDateString('en-NG') : '—'}</span></div>
+            <div style="margin-top:12px">
+              <button class="btn btn-lime btn-sm" onclick="viewOnboardingApp('${(p.reference||'').replace(/'/g,"\\'")}')">Review Application</button>
+            </div>
+          </div>`).join('')}
+        </div>
+      </div>`;
+    }
 
     el.innerHTML = `
     <div class="page-header flex-between">
       <div>
         <div class="page-title">Aggregators</div>
-        <div class="page-desc">${aggs.length} active aggregator partners</div>
+        <div class="page-desc">${aggs.length} active aggregator partner${aggs.length !== 1 ? 's' : ''}</div>
       </div>
       <div class="flex" style="gap:6px">
         <button class="btn btn-outline" onclick="inviteAggregator()"><i data-lucide="mail" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Invite to Self-Onboard</button>
@@ -1717,7 +1857,8 @@ async function loadAggregators() {
           <button class="btn btn-outline btn-sm" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="deleteAggregator('${a.id}','${(a.companyName||'').replace(/'/g,'')}')"><i data-lucide="trash-2" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Delete</button>
         </div>
       </div>`).join('')}
-    </div>`;
+    </div>
+    ${pendingSection}`;
   } catch(e) {
     el.innerHTML = errorBox('Failed to load aggregators: ' + e.message);
   }
@@ -2376,6 +2517,93 @@ async function loadPayoutsBreakdown() {
   } catch(e) { host.innerHTML = errorBox('Failed to load payouts: ' + e.message); }
 }
 
+// ── SA: STUCK PAYOUTS — NIP status check + safe resolution per batch ─────────
+async function loadStuckPayouts() {
+  var host = document.getElementById('main-content'); if (!host) return;
+  host.innerHTML = loading();
+  try {
+    var res = await apiFetch('/payouts/admin/stuck');
+    var batches = (res && res.data && res.data.batches) || [];
+    var money = function(n){ return '₦' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2}); };
+    var rows = batches.map(function(b) {
+      var ageMs = Date.now() - new Date(b.created_at).getTime();
+      var ageH  = Math.floor(ageMs / 3600000);
+      var ageM  = Math.floor((ageMs % 3600000) / 60000);
+      var ageLabel = ageH > 0 ? ageH + 'h ' + ageM + 'm' : ageM + 'm';
+      var railNote = b.sent_to_rail > 0
+        ? (b.not_sent_to_rail > 0 ? b.sent_to_rail + ' on rail, ' + b.not_sent_to_rail + ' pre-dispatch' : b.sent_to_rail + ' on rail')
+        : b.not_sent_to_rail + ' not yet dispatched';
+      return '<tr>' +
+        '<td class="mono" style="font-size:10px">' + (b.batch_ref||'—') + '</td>' +
+        '<td style="font-size:12px;font-weight:500">' + (b.business_name||'—') + '</td>' +
+        '<td style="text-align:center;color:#d97706">' + b.pending_items + '/' + b.total_items + '</td>' +
+        '<td class="mono" style="text-align:right;font-weight:700;color:#d97706">' + money(b.stuck_naira) + '</td>' +
+        '<td style="font-size:11px;color:var(--gray-400)">' + ageLabel + '</td>' +
+        '<td style="font-size:11px;color:var(--gray-400)">' + railNote + '</td>' +
+        '<td>' +
+          '<button class="btn btn-outline btn-sm" id="chk-btn-' + b.id + '" onclick="checkStuckBatch(\'' + b.id + '\',\'' + (b.batch_ref||'').replace(/'/g,'') + '\')">' +
+            'Check &amp; Resolve</button>' +
+          (b.not_sent_to_rail > 0
+            ? ' <button class="btn btn-lime btn-sm" onclick="releaseBatch(\'' + b.id + '\')">Dispatch</button>'
+            : '') +
+        '</td>' +
+      '</tr>';
+    }).join('');
+    host.innerHTML =
+      '<div class="page-header">' +
+        '<div class="page-title">Stuck Payouts</div>' +
+        '<div class="page-desc">Batches with items stuck in processing state. Check &amp; Resolve queries the rail and closes each item safely — reversal only happens when NO RECORD is confirmed after &gt;1h.</div>' +
+      '</div>' +
+      '<div style="margin-bottom:10px"><button class="btn btn-outline btn-sm" onclick="loadStuckPayouts()">&#8635; Refresh</button></div>' +
+      (batches.length === 0
+        ? '<div class="card" style="padding:40px;text-align:center;color:var(--gray-400)">No stuck batches ✓</div>'
+        : '<div class="card"><div class="table-wrap"><table>' +
+            '<thead><tr><th>Batch</th><th>Merchant</th><th>Pending/Total</th><th class="right">Stuck Amount</th><th>Age</th><th>Rail state</th><th>Action</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody>' +
+          '</table></div></div>') +
+      '<div id="stuck-result" style="margin-top:14px"></div>';
+  } catch(e) { host.innerHTML = errorBox('Failed to load stuck payouts: ' + e.message); }
+}
+async function checkStuckBatch(batchId, batchRef) {
+  var btn = document.getElementById('chk-btn-' + batchId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  var resultBox = document.getElementById('stuck-result');
+  if (resultBox) resultBox.innerHTML = '<div style="color:var(--gray-400);font-size:13px;padding:8px 0">Querying rail — this may take a few seconds…</div>';
+  try {
+    var res = await apiFetch('/payouts/admin/stuck/' + batchId + '/check', { method: 'POST' });
+    if (!res || res.success === false) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Check & Resolve'; }
+      if (resultBox) resultBox.innerHTML = errorBox((res && res.message) || 'Check failed');
+      return;
+    }
+    var d = res.data || {};
+    var parts = [];
+    if ((d.settled    || 0) > 0) parts.push('<span style="color:#16a34a;font-weight:600">✓ ' + d.settled    + ' settled</span>');
+    if ((d.reversed   || 0) > 0) parts.push('<span style="color:#d97706;font-weight:600">↩ ' + d.reversed   + ' reversed (wallet refunded)</span>');
+    if ((d.held       || 0) > 0) parts.push('<span style="color:var(--gray-400)">⏸ ' + d.held       + ' held (still processing)</span>');
+    if ((d.pre_dispatch||0) > 0) parts.push('<span style="color:var(--gray-400)">◻ ' + d.pre_dispatch + ' pre-dispatch (use Dispatch)</span>');
+    var detailRows = (d.details || []).map(function(det){
+      var color = det.action==='settled' ? '#16a34a' : det.action==='reversed' ? '#d97706' : 'var(--gray-400)';
+      return '<tr><td class="mono" style="font-size:10px">' + (det.item_id||'').slice(0,8) + '…</td>' +
+             '<td style="font-size:12px;font-weight:600;color:' + color + '">' + (det.action||'') + '</td>' +
+             '<td style="font-size:11px;color:var(--gray-400)">' + (det.note||'') + '</td></tr>';
+    }).join('');
+    if (resultBox) resultBox.innerHTML =
+      '<div class="card" style="margin-top:4px">' +
+        '<div style="font-weight:600;margin-bottom:8px">' + (batchRef||'Batch') + ' — ' + (res.message||'') + '</div>' +
+        '<div style="margin-bottom:12px;font-size:13px">' + (parts.join(' &nbsp;·&nbsp; ') || 'No changes') + '</div>' +
+        (detailRows
+          ? '<div class="table-wrap"><table><thead><tr><th>Item</th><th>Action</th><th>Note</th></tr></thead><tbody>' + detailRows + '</tbody></table></div>'
+          : '') +
+      '</div>';
+    if ((d.settled || 0) > 0 || (d.reversed || 0) > 0) setTimeout(loadStuckPayouts, 1500);
+    else if (btn) { btn.disabled = false; btn.textContent = 'Check & Resolve'; }
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Check & Resolve'; }
+    if (resultBox) resultBox.innerHTML = errorBox('Check failed: ' + e.message);
+  }
+}
+
 // ── SA: MERCHANT ROUTING — global default + per-merchant payout route ──────────
 // ── SA: MERCHANT FUNDING & ROUTING (one page) ─────────────────────────────────
 // Fund a merchant (a payout ROUTE must be chosen to fund) + set each merchant's
@@ -2512,88 +2740,148 @@ async function loadMerchSettlements() {
 async function loadMerchStatement() {
   const el = document.getElementById('main-content');
   const now = new Date();
-  const mon = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const todayStr = now.toISOString().slice(0, 10);
+  const fromStr  = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-01';
   el.innerHTML =
     '<div class="page-header"><div class="page-title">Account Statement</div>' +
       '<div class="page-desc">View, download, or email your transaction statement.</div></div>' +
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><div class="card-title">Select Period</div></div>' +
       '<div class="flex" style="gap:10px;align-items:center;flex-wrap:wrap">' +
-        '<input class="form-input" type="month" id="stmt-month" value="' + mon + '" style="width:180px" onchange="refreshMerchStatement()">' +
+        '<label class="form-label" style="margin:0;white-space:nowrap">From</label>' +
+        '<input class="form-input" type="date" id="stmt-from" value="' + fromStr + '" style="width:160px" onchange="refreshMerchStatement()">' +
+        '<label class="form-label" style="margin:0;white-space:nowrap">To</label>' +
+        '<input class="form-input" type="date" id="stmt-to" value="' + todayStr + '" style="width:160px" onchange="refreshMerchStatement()">' +
         '<button class="btn btn-lime" onclick="downloadStatement()">&#8681; Download PDF</button>' +
         '<button class="btn btn-outline" onclick="emailStatement()"><i data-lucide="mail" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i>Email to Me</button>' +
       '</div>' +
+      '<div class="form-hint" style="margin-top:8px">View up to 3 months &nbsp;·&nbsp; Download up to 6 months</div>' +
     '</div>' +
     '<div id="stmt-preview"><div style="text-align:center;padding:32px;color:var(--gray-400)">Loading statement…</div></div>';
   if (typeof lucide !== 'undefined') lucide.createIcons();
   await refreshMerchStatement();
 }
 
-function _stmtDateRange(month) {
-  var now = new Date();
-  var curMon = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
-  var from = month + '-01';
-  var to = month === curMon
-    ? now.toISOString().slice(0, 10)   // month-to-date: today
-    : month + '-' + String(new Date(month.split('-')[0], parseInt(month.split('-')[1]), 0).getDate()).padStart(2, '0');
+function _stmtGetRange() {
+  var fromEl = document.getElementById('stmt-from');
+  var toEl   = document.getElementById('stmt-to');
+  var now    = new Date();
+  var from   = fromEl ? fromEl.value : now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-01';
+  var to     = toEl   ? toEl.value   : now.toISOString().slice(0,10);
   return { from: from, to: to };
 }
 
+function _switchStmtPanel(val, scope) {
+  document.querySelectorAll('[data-sp][data-ss="' + scope + '"]').forEach(function(p) {
+    p.style.display = p.dataset.sp === val ? '' : 'none';
+  });
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function _buildStmtPanels(d, scope) {
+  var fmt = function(n) { return '₦' + Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var va      = (d && d.va_collections)        || [];
+  var card    = (d && d.card_collections)      || [];
+  var wall    = (d && d.wallet_activity)       || [];
+  var opening = (d && d.wallet_opening_balance)|| 0;
+  var closing = (d && d.wallet_closing_balance != null) ? d.wallet_closing_balance : (wall.length ? wall[wall.length-1].balance : 0);
+  var pfrom   = (d && d.period && d.period.from) ? new Date(d.period.from).toLocaleDateString('en-NG') : '';
+
+  function collRows(rows) {
+    if (!rows.length) return '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No transactions in this period</td></tr>';
+    var tot=0,fee=0,net=0;
+    var body = rows.map(function(t) {
+      tot+=(t.amount||0); fee+=(t.fee||0); net+=(t.net||0);
+      return '<tr>' +
+        '<td style="font-size:12px;color:var(--gray-500)">'+(t.date?new Date(t.date).toLocaleDateString('en-NG'):'—')+'</td>'+
+        '<td class="mono" style="font-size:11px">'+esc(t.reference||'—')+'</td>'+
+        '<td style="font-size:12px;color:var(--gray-500)">'+esc(t.customer_email||'—')+'</td>'+
+        '<td style="text-align:right;font-weight:600">'+fmt(t.amount)+'</td>'+
+        '<td style="text-align:right;font-size:12px;color:var(--gray-500)">'+fmt(t.fee)+'</td>'+
+        '<td style="text-align:right;font-weight:700;color:var(--green)">'+fmt(t.net)+'</td>'+
+      '</tr>';
+    }).join('');
+    body += '<tr style="border-top:2px solid var(--border)">'+
+      '<td colspan="3" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);padding:10px 14px">Totals</td>'+
+      '<td style="text-align:right;font-weight:700;padding:10px 14px">'+fmt(tot)+'</td>'+
+      '<td style="text-align:right;font-size:12px;font-weight:600;color:var(--gray-500);padding:10px 14px">'+fmt(fee)+'</td>'+
+      '<td style="text-align:right;font-weight:700;color:var(--green);padding:10px 14px">'+fmt(net)+'</td>'+
+    '</tr>';
+    return body;
+  }
+
+  function walletRows() {
+    if (!wall.length) {
+      return '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--gray-400)">No transactions in this period</td></tr>';
+    }
+    // Closing balance pinned at top; entries newest-first; opening balance at bottom
+    var rows = '<tr style="border-bottom:2px solid var(--border)">'+
+      '<td colspan="4" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);background:var(--gray-50,#f9fafb);padding:12px 14px">Closing Balance</td>'+
+      '<td style="text-align:right;font-weight:800;font-size:16px;color:#1d4ed8;background:var(--gray-50,#f9fafb);padding:12px 14px">'+fmt(closing)+'</td>'+
+    '</tr>';
+    wall.slice().reverse().forEach(function(w) {
+      var sub = w.description==='Fee'||w.description==='VAT';
+      rows += '<tr>'+
+        '<td style="font-size:12px;color:var(--gray-500)">'+(w.date?new Date(w.date).toLocaleDateString('en-NG'):'—')+'</td>'+
+        '<td style="font-size:'+(sub?'12px':'13px')+';color:'+(sub?'var(--gray-400)':'inherit')+'">'+esc(w.description||'—')+'</td>'+
+        '<td style="text-align:right;font-weight:600;color:var(--green)">'+(w.credit!=null?fmt(w.credit):'—')+'</td>'+
+        '<td style="text-align:right;font-size:'+(sub?'12px':'13px')+';font-weight:'+(sub?'500':'600')+';color:var(--red)">'+(w.debit!=null?fmt(w.debit):'—')+'</td>'+
+        '<td style="text-align:right;font-size:'+(sub?'12px':'13px')+';font-weight:'+(sub?'600':'700')+'">'+fmt(w.balance)+'</td>'+
+      '</tr>';
+    });
+    rows += '<tr style="background:#eff6ff">'+
+      '<td style="font-size:12px;color:var(--gray-500)">'+pfrom+'</td>'+
+      '<td style="font-style:italic;font-size:12px;color:var(--gray-500)">Balance brought forward</td>'+
+      '<td style="text-align:right;color:var(--gray-400)">—</td>'+
+      '<td style="text-align:right;color:var(--gray-400)">—</td>'+
+      '<td style="text-align:right;font-weight:700;color:#1d4ed8">'+fmt(opening)+'</td>'+
+    '</tr>';
+    return rows;
+  }
+
+  var collHead = '<thead><tr><th>Date</th><th>Reference</th><th>Customer</th><th style="text-align:right">Amount</th><th style="text-align:right">Fee</th><th style="text-align:right">Net</th></tr></thead>';
+  var wallHead = '<thead><tr><th>Date</th><th>Description</th><th style="text-align:right">Credit</th><th style="text-align:right">Debit</th><th style="text-align:right">Balance</th></tr></thead>';
+
+  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
+    '<label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);white-space:nowrap">Statement</label>'+
+    '<select class="form-control" style="width:auto;font-size:13px;font-weight:600" onchange="_switchStmtPanel(this.value,\''+scope+'\')">'+
+      '<option value="va">Collections — Virtual Account</option>'+
+      '<option value="card">Collections — Card</option>'+
+      '<option value="payout">Payout Wallet</option>'+
+    '</select>'+
+  '</div>'+
+  '<div data-sp="va" data-ss="'+scope+'" class="card">'+
+    '<div class="card-header"><div class="card-title">Collections via Virtual Account</div></div>'+
+    '<div class="table-wrap"><table>'+collHead+'<tbody>'+collRows(va)+'</tbody></table></div>'+
+  '</div>'+
+  '<div data-sp="card" data-ss="'+scope+'" class="card" style="display:none">'+
+    '<div class="card-header"><div class="card-title">Collections — Card</div></div>'+
+    '<div class="table-wrap"><table>'+collHead+'<tbody>'+collRows(card)+'</tbody></table></div>'+
+  '</div>'+
+  '<div data-sp="payout" data-ss="'+scope+'" class="card" style="display:none">'+
+    '<div class="card-header"><div class="card-title">Payout Wallet</div></div>'+
+    '<div class="table-wrap"><table>'+wallHead+'<tbody>'+walletRows()+'</tbody></table></div>'+
+  '</div>';
+}
+
 async function refreshMerchStatement() {
-  var monthEl = document.getElementById('stmt-month');
-  var month = monthEl ? monthEl.value : new Date().toISOString().slice(0,7);
-  var range = _stmtDateRange(month);
+  var range   = _stmtGetRange();
   var from = range.from, to = range.to;
   var preview = document.getElementById('stmt-preview');
   if (!preview) return;
+  var days = (new Date(to) - new Date(from)) / 86400000;
+  if (days < 0)  { preview.innerHTML = errorBox('"To" date must be after "From" date'); return; }
+  if (days > 92) { preview.innerHTML = errorBox('View window is limited to 3 months. For a longer period use Download PDF (up to 6 months).'); return; }
   preview.innerHTML = '<div style="text-align:center;padding:24px;color:var(--gray-400)">Loading…</div>';
   try {
     var res = await apiFetch('/reports/merchant-statement?from=' + from + '&to=' + to + '&perPage=200');
     var d = res && res.data;
     if (!d) { preview.innerHTML = errorBox('Could not load statement data'); return; }
-    var fmt = function(n) { return '₦' + Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2}); };
-    var txns = d.transactions || [];
-    var wallet = d.wallet_activity || [];
-    // Summary cards
-    var summary = d.summary || {};
-    var summaryHtml =
-      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">' +
-        '<div class="stat-card"><div class="stat-label">Total Collections</div><div class="stat-value">' + fmt(summary.total_collections) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Fees Paid</div><div class="stat-value" style="color:var(--red)">' + fmt(summary.total_fees_paid) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Net Settled</div><div class="stat-value" style="color:var(--green)">' + fmt(summary.net_settled) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-label">Transactions</div><div class="stat-value">' + txns.length + '</div></div>' +
-      '</div>';
-    // Transactions table
-    var txnRows = txns.length ? txns.map(function(t) {
-      return '<tr>' +
-        '<td class="mono" style="font-size:11px">' + (t.reference||'—') + '</td>' +
-        '<td style="font-size:12px">' + (t.date ? new Date(t.date).toLocaleDateString('en-NG') : '—') + '</td>' +
-        '<td style="font-size:12px">' + (t.channel||'—') + '</td>' +
-        '<td style="font-weight:600">' + fmt(t.amount) + '</td>' +
-        '<td style="color:var(--red);font-size:12px">' + fmt(t.fee) + '</td>' +
-        '<td style="font-weight:700;color:var(--green)">' + fmt(t.net) + '</td>' +
-        '<td>' + statusBadge(t.status==='SUCCESS'?'success':t.status==='FAILED'?'failed':'processing') + '</td>' +
-      '</tr>';
-    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gray-400)">No transactions in this period</td></tr>';
-    var txnHtml = '<div class="card" style="margin-bottom:16px"><div class="card-header"><div class="card-title">Transactions</div></div>' +
-      '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Date</th><th>Channel</th><th>Amount</th><th>Fee</th><th>Net</th><th>Status</th></tr></thead><tbody>' + txnRows + '</tbody></table></div></div>';
-    // Wallet activity table
-    var walletHtml = '';
-    if (wallet.length) {
-      var wRows = wallet.map(function(w) {
-        return '<tr>' +
-          '<td class="mono" style="font-size:11px">' + (w.reference||'—') + '</td>' +
-          '<td style="font-size:12px">' + (w.date ? new Date(w.date).toLocaleDateString('en-NG') : '—') + '</td>' +
-          '<td><span class="tag">' + (w.type||'—') + '</span></td>' +
-          '<td style="font-weight:600;color:' + (/CREDIT|REFUND/.test(w.type||'')?'var(--green)':'var(--red)') + '">' + fmt(w.amount) + '</td>' +
-          '<td style="font-size:12px;color:var(--gray-400)">' + fmt(w.balance_after) + '</td>' +
-          '<td style="font-size:12px">' + (w.description||'—') + '</td>' +
-        '</tr>';
-      }).join('');
-      walletHtml = '<div class="card"><div class="card-header"><div class="card-title">Wallet Activity</div></div>' +
-        '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Date</th><th>Type</th><th>Amount</th><th>Balance After</th><th>Description</th></tr></thead><tbody>' + wRows + '</tbody></table></div></div>';
-    }
-    preview.innerHTML = summaryHtml + txnHtml + walletHtml;
+    preview.innerHTML = _buildStmtPanels(d, 'merch-stmt');
   } catch(e) {
     preview.innerHTML = errorBox('Failed to load statement: ' + e.message);
   }
@@ -2662,30 +2950,9 @@ async function loadMerchantOverview() {
       </div>
     </div>
 
-    ${(s?.wallet_activity||[]).length ? `
-    <div class="card section-gap">
-      <div class="card-header"><div class="card-title">Payout Wallet Activity</div></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Date</th><th>Type</th><th>Description</th><th class="right">Amount</th><th class="right">Balance After</th></tr></thead>
-          <tbody>
-            ${(s.wallet_activity||[]).map(w=>{
-              const isCredit = ['CREDIT','REFUND'].includes(w.type);
-              const color = isCredit ? '#16a34a' : '#dc2626';
-              const sign  = isCredit ? '+' : '-';
-              return `<tr>
-                <td style="font-size:12px;white-space:nowrap">${new Date(w.date).toLocaleDateString('en-NG')}</td>
-                <td><span class="tag" style="background:${isCredit?'#dcfce7':'#fee2e2'};color:${color}">${w.type}</span></td>
-                <td style="font-size:12px;color:var(--gray-500)">${esc(w.description||'')}</td>
-                <td class="right" style="font-weight:600;color:${color};white-space:nowrap">${sign}${fmtMajor(Math.abs(w.amount),'NGN')}</td>
-                <td class="right" style="font-size:12px;white-space:nowrap">${fmtMajor(w.balance_after,'NGN')}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>` : ''}
+    <div class="section-gap" id="merch-ov-stmt-host"></div>
     `;
+    document.getElementById('merch-ov-stmt-host').innerHTML = _buildStmtPanels(s, 'merch-ov');
     renderMyApplicationBanner();   // surface review status / Activate prompt at the top
   } catch(e) {
     el.innerHTML = errorBox('Failed to load merchant data: ' + e.message);
@@ -3149,6 +3416,8 @@ function editAggregator(id) {
   var a = (window._aggData || []).find(function(x){ return x.id === id; });
   if (!a) { alert('Aggregator not found — reload the page.'); return; }
   var esc = function(s){ return String(s||'').replace(/"/g,'&quot;'); };
+  var payoutFloorNaira = a.payoutFloorKobo != null ? (Number(a.payoutFloorKobo)/100).toFixed(0) : '';
+  var vaCapNaira       = a.vaCapKobo        != null ? (Number(a.vaCapKobo)       /100).toFixed(0) : '';
   showModal(
     '<div class="modal-header"><div class="modal-title">Edit Aggregator</div>' +
     '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
@@ -3161,6 +3430,11 @@ function editAggregator(id) {
       '<div class="form-group"><label class="form-label">Settlement bank</label><input class="form-input" id="ea-bank" value="' + esc(a.settlementBank) + '"></div>' +
       '<div class="form-group"><label class="form-label">Settlement account</label><input class="form-input" id="ea-acct" value="' + esc(a.settlementAccount) + '" maxlength="10"></div>' +
     '</div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:10px">Pricing overrides — leave blank to inherit platform default (Payout ₦30 · VA cap ₦10,000). Clear a saved override by entering 0.</div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">Payout floor ₦ <span style="color:var(--gray-400);font-weight:400">(per txn)</span></label><input class="form-input" id="ea-payout-floor" type="number" min="0" step="1" value="' + payoutFloorNaira + '" placeholder="Platform default ₦30"></div>' +
+      '<div class="form-group"><label class="form-label">VA cap ₦ <span style="color:var(--gray-400);font-weight:400">(max VA fee)</span></label><input class="form-input" id="ea-va-cap" type="number" min="0" step="1" value="' + vaCapNaira + '" placeholder="Platform default ₦10,000"></div>' +
+    '</div>' +
     '<div class="flex-between" style="margin-top:8px">' +
       '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
       '<button class="btn btn-lime" id="ea-btn" onclick="saveAggregatorEdit(\'' + id + '\')">Save Changes</button></div>' +
@@ -3168,6 +3442,8 @@ function editAggregator(id) {
 }
 async function saveAggregatorEdit(id) {
   var splitPct = parseFloat(document.getElementById('ea-split').value);
+  var payoutFloorNaira = document.getElementById('ea-payout-floor').value.trim();
+  var vaCapNaira       = document.getElementById('ea-va-cap').value.trim();
   var body = {
     company_name:       document.getElementById('ea-name').value.trim(),
     rc_number:          document.getElementById('ea-rc').value.trim(),
@@ -3175,6 +3451,15 @@ async function saveAggregatorEdit(id) {
     settlement_account: document.getElementById('ea-acct').value.trim(),
   };
   if (!isNaN(splitPct)) body.revenue_split_pct = splitPct / 100;
+  // pricing overrides: blank → null (inherit platform); 0 → null (clear); positive → kobo
+  if (payoutFloorNaira !== '') {
+    var pf = parseFloat(payoutFloorNaira);
+    body.payout_floor_kobo = (!isNaN(pf) && pf > 0) ? Math.round(pf * 100) : null;
+  }
+  if (vaCapNaira !== '') {
+    var vc = parseFloat(vaCapNaira);
+    body.va_cap_kobo = (!isNaN(vc) && vc > 0) ? Math.round(vc * 100) : null;
+  }
   var btn = document.getElementById('ea-btn'); btn.disabled = true; btn.textContent = 'Saving...';
   var res = await apiFetch('/aggregators/' + id, { method: 'PUT', body: JSON.stringify(body) });
   if (res && res.status) { document.getElementById('modal').style.display = 'none'; loadAggregators(); }
@@ -5045,6 +5330,130 @@ async function loadFeeConfig() {
   }
 }
 
+// ── SA: AGGREGATOR PRICING ────────────────────────────────────────────────────
+// Model: Paylode sets a rate for each aggregator (their cost). The aggregator
+// then sets rates for their merchants. Aggregator margin = merchant rate − Paylode rate.
+async function loadAggPricing() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/aggregators');
+    if (!res || !res.data) { el.innerHTML = errorBox('Could not load aggregators'); return; }
+    var aggs = res.data;
+    window._aggPricingData = aggs;
+
+    function fmtPct(v)  { return v ? (Number(v)*100).toFixed(2) + '%' : '<span style="color:var(--gray-400)">—</span>'; }
+    function fmtKobo(v) { return v != null && Number(v) > 0 ? '₦' + (Number(v)/100).toLocaleString('en-NG',{minimumFractionDigits:2}) : '<span style="color:var(--gray-400)">—</span>'; }
+
+    var rows = aggs.length ? aggs.map(function(a) {
+      var vaRate    = fmtPct(a.revenueSplitPct);
+      var payFee    = fmtKobo(a.payoutFloorKobo);
+      var vaCap     = fmtKobo(a.vaCapKobo);
+      var idSafe    = a.id;
+      var nameSafe  = (a.companyName||'').replace(/'/g,'');
+      return '<tr>' +
+        '<td style="font-weight:500">' + (a.companyName||'—') + '</td>' +
+        '<td>' + (a.merchant_count||0) + '</td>' +
+        '<td>' + vaRate + '</td>' +
+        '<td>' + payFee + '</td>' +
+        '<td>' + vaCap + '</td>' +
+        '<td><button class="btn btn-outline btn-sm" onclick="openAggPricingEdit(\'' + idSafe + '\',\'' + nameSafe + '\')">Set Rate</button></td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No aggregators yet</td></tr>';
+
+    el.innerHTML =
+      '<div class="page-header flex-between">' +
+        '<div><div class="page-title">Aggregator Pricing</div>' +
+          '<div class="page-desc">Rates Paylode charges each aggregator. The aggregator sees these as their cost floor when pricing their own merchants — their margin is the difference.</div></div>' +
+        '<button class="btn btn-outline btn-sm" onclick="loadAggPricing()">&#8635; Refresh</button>' +
+      '</div>' +
+      '<div class="info-box" style="margin-bottom:16px;font-size:13px">' +
+        '<strong>VA Rate</strong> — % of each VA collection Paylode charges the aggregator. ' +
+        '<strong>Payout Fee</strong> — flat ₦ fee per payout Paylode charges the aggregator. ' +
+        '<strong>VA Cap</strong> — maximum VA fee the aggregator may charge their merchants (Paylode-enforced ceiling).' +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Aggregator</th><th>Merchants</th><th>VA Rate (our charge)</th><th>Payout Fee (our charge)</th><th>VA Cap</th><th></th></tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table></div></div>';
+
+    if (window.lucide) lucide.createIcons();
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load aggregator pricing: ' + e.message);
+  }
+}
+
+function openAggPricingEdit(aggId, aggName) {
+  var agg       = (window._aggPricingData||[]).find(function(a){ return a.id === aggId; }) || {};
+  var vaRateVal = agg.revenueSplitPct ? (Number(agg.revenueSplitPct)*100).toFixed(2) : '';
+  var payFeeVal = agg.payoutFloorKobo != null && Number(agg.payoutFloorKobo) > 0 ? (Number(agg.payoutFloorKobo)/100).toFixed(2) : '';
+  var vaCapVal  = agg.vaCapKobo       != null && Number(agg.vaCapKobo)       > 0 ? (Number(agg.vaCapKobo)/100).toFixed(2)       : '';
+
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Set Rate — ' + aggName + '</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:14px">' +
+      'These are <strong>Paylode\'s charges to this aggregator</strong>. The aggregator sets their own merchant rates on top — their margin is the difference.' +
+    '</div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label class="form-label">VA Rate (%) <span style="color:var(--gray-500);font-weight:400">% we charge aggregator per VA collection</span></label>' +
+        '<input class="form-input" type="number" id="ap-va-rate" value="' + vaRateVal + '" min="0" max="100" step="0.01" placeholder="e.g. 1.50"></div>' +
+      '<div class="form-group"><label class="form-label">Payout Fee (₦/txn) <span style="color:var(--gray-500);font-weight:400">flat fee we charge per payout</span></label>' +
+        '<input class="form-input" type="number" id="ap-pay-fee" value="' + payFeeVal + '" min="0" step="0.01" placeholder="e.g. 10.00"></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">VA Cap (₦) <span style="color:var(--gray-500);font-weight:400">max VA fee aggregator may charge their merchants (leave blank = no cap)</span></label>' +
+      '<input class="form-input" type="number" id="ap-va-cap" value="' + vaCapVal + '" min="0" step="0.01" placeholder="e.g. 200.00"></div>' +
+    '<div id="ap-msg"></div>' +
+    '<div style="display:flex;gap:8px;margin-top:4px">' +
+      '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+      '<button class="btn btn-lime" id="ap-save-btn" onclick="saveAggPricing(\'' + aggId + '\',\'' + aggName.replace(/'/g,'') + '\')">Save</button>' +
+    '</div>';
+
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function saveAggPricing(aggId, aggName) {
+  var btn       = document.getElementById('ap-save-btn');
+  var msg       = document.getElementById('ap-msg');
+  var vaRateRaw = (document.getElementById('ap-va-rate')||{}).value || '';
+  var payFeeRaw = (document.getElementById('ap-pay-fee')||{}).value || '';
+  var vaCapRaw  = (document.getElementById('ap-va-cap')||{}).value  || '';
+
+  var vaRate = vaRateRaw.trim() === '' ? null : parseFloat(vaRateRaw);
+  if (vaRate !== null && (isNaN(vaRate)||vaRate<0||vaRate>100)) {
+    msg.innerHTML='<div class="warn-box" style="font-size:12px">VA rate must be 0–100.</div>'; return;
+  }
+  var payFeeKobo = payFeeRaw.trim()==='' ? null : Math.round(parseFloat(payFeeRaw)*100);
+  if (payFeeKobo !== null && isNaN(payFeeKobo)) {
+    msg.innerHTML='<div class="warn-box" style="font-size:12px">Invalid payout fee.</div>'; return;
+  }
+  var vaCapKobo = vaCapRaw.trim()==='' ? null : Math.round(parseFloat(vaCapRaw)*100);
+  if (vaCapKobo !== null && isNaN(vaCapKobo)) {
+    msg.innerHTML='<div class="warn-box" style="font-size:12px">Invalid VA cap.</div>'; return;
+  }
+
+  var body = {};
+  if (vaRate      !== null) body.revenue_split_pct = vaRate/100;
+  if (payFeeKobo  !== null) body.payout_floor_kobo  = payFeeKobo;
+  if (vaCapKobo   !== null) body.va_cap_kobo         = vaCapKobo;
+  // Explicit null clears the field on the backend
+  if (vaRateRaw.trim()  === '') body.revenue_split_pct = 0;
+  if (payFeeRaw.trim()  === '') body.payout_floor_kobo  = null;
+  if (vaCapRaw.trim()   === '') body.va_cap_kobo         = null;
+
+  btn.textContent='Saving…'; btn.disabled=true;
+  var res = await apiFetch('/aggregators/'+aggId, { method:'PUT', body: JSON.stringify(body) });
+  if (res && res.status) {
+    document.getElementById('modal').style.display='none';
+    toast('Pricing updated for '+aggName,'success');
+    loadAggPricing();
+  } else {
+    msg.innerHTML='<div class="warn-box" style="font-size:12px">'+(res&&res.message?res.message:'Update failed')+'</div>';
+    btn.textContent='Save'; btn.disabled=false;
+  }
+}
+
 function editPlatformRate(channel) {
   var rates = window._feeConfigRates || [];
   var r = rates.find(function(x) { return x.channel === channel; }) || {};
@@ -5520,10 +5929,11 @@ async function emailPayoutReport() { var b = _buildPayoutReportCsv(); if (!b) { 
 
 // ── SETTLEMENT STATEMENT ──────────────────────────────────────────────────────
 async function downloadStatement() {
-  var monthEl = document.getElementById('stmt-month');
-  var month = monthEl ? monthEl.value : new Date().toISOString().slice(0,7);
-  var range = _stmtDateRange(month);
+  var range = _stmtGetRange();
   var from = range.from, to = range.to;
+  var days = (new Date(to) - new Date(from)) / 86400000;
+  if (days < 0)   { alert('"To" date must be after "From" date'); return; }
+  if (days > 184) { alert('Download window is limited to 6 months. Please narrow your date range.'); return; }
 
   var btn = document.querySelector('[onclick="downloadStatement()"]');
   if (btn) { btn.textContent = '⟳ Generating...'; btn.disabled = true; }
@@ -5577,13 +5987,14 @@ async function downloadStatement() {
 }
 
 async function emailStatement() {
-  var monthEl = document.getElementById('stmt-month');
-  var month = monthEl ? monthEl.value : new Date().toISOString().slice(0,7);
-  var range = _stmtDateRange(month);
+  var range = _stmtGetRange();
   var from = range.from, to = range.to;
+  var days = (new Date(to) - new Date(from)) / 86400000;
+  if (days < 0)  { alert('"To" date must be after "From" date'); return; }
+  if (days > 92) { alert('Email window is limited to 3 months. Please narrow your date range.'); return; }
 
   var user = getUser();
-  if (!confirm('Email the ' + month + ' statement to ' + (user.email||'your registered email') + '?')) return;
+  if (!confirm('Email the statement (' + from + ' to ' + to + ') to ' + (user.email||'your registered email') + '?')) return;
 
   var btn = document.querySelector('[onclick="emailStatement()"]');
   if (btn) { btn.textContent = '⟳ Sending...'; btn.disabled = true; }
@@ -5694,6 +6105,475 @@ async function disable2FA() {
   }
 }
 
+// ── AGGREGATOR TRANSACTIONS ───────────────────────────────────────────────────
+async function loadAggTransactions() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+
+  // build filter bar state
+  if (!window._aggTxnFilters) window._aggTxnFilters = { page:1, status:'', channel:'', from:'', to:'' };
+  var f = window._aggTxnFilters;
+
+  function render(data) {
+    var rows = data && data.data || [];
+    var total = data && data.total || 0;
+    var pages = data && data.pages || 1;
+    var tableRows = rows.length ? rows.map(function(t) {
+      var aggShare = t.agg_share ? '<span style="color:var(--lime-dark);font-weight:600">' + fmtNaira(t.agg_share) + '</span>' : '—';
+      return '<tr>' +
+        '<td class="mono" style="font-size:11px">' + (t.reference||'—') + '</td>' +
+        '<td style="font-weight:500">' + (t.merchant&&t.merchant.businessName||'—') + '</td>' +
+        '<td class="mono">' + fmtNaira(t.amount) + '</td>' +
+        '<td class="mono" style="font-size:12px">' + fmtNaira(t.fee) + '</td>' +
+        '<td>' + aggShare + '</td>' +
+        '<td><span class="badge badge-gray" style="font-size:10px">' + (t.channel||'—') + '</span></td>' +
+        '<td>' + statusBadge((t.status||'').toLowerCase()) + '</td>' +
+        '<td style="font-size:11px;color:var(--gray-400)">' + (t.created_at ? new Date(t.created_at).toLocaleDateString('en-NG') : '—') + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--gray-400)">No transactions found</td></tr>';
+
+    el.innerHTML =
+      '<div class="page-header flex-between">' +
+        '<div><div class="page-title">My Merchants\' Transactions</div>' +
+          '<div class="page-desc">' + fmtNum(total) + ' total transactions across all your merchants</div></div>' +
+        '<button class="btn btn-outline btn-sm" onclick="exportAggTxnCsv()">&#8681; CSV</button>' +
+      '</div>' +
+      '<div class="card" style="margin-bottom:16px">' +
+        '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">' +
+          '<div><label class="form-label">Status</label>' +
+            '<select class="form-input form-select" id="atf-status" style="width:130px" onchange="aggTxnFilter()">' +
+              '<option value="">All</option>' +
+              ['SUCCESS','FAILED','PENDING','ABANDONED'].map(function(s){return '<option value="'+s+'"'+(f.status===s?' selected':'')+'>'+s+'</option>';}).join('') +
+            '</select></div>' +
+          '<div><label class="form-label">Channel</label>' +
+            '<select class="form-input form-select" id="atf-channel" style="width:130px" onchange="aggTxnFilter()">' +
+              '<option value="">All</option>' +
+              ['CARD','BANK_TRANSFER','USSD'].map(function(c){return '<option value="'+c+'"'+(f.channel===c?' selected':'')+'>'+c+'</option>';}).join('') +
+            '</select></div>' +
+          '<div><label class="form-label">From</label><input class="form-input" type="date" id="atf-from" value="'+f.from+'" style="width:145px" onchange="aggTxnFilter()"></div>' +
+          '<div><label class="form-label">To</label><input class="form-input" type="date" id="atf-to" value="'+f.to+'" style="width:145px" onchange="aggTxnFilter()"></div>' +
+          '<button class="btn btn-outline btn-sm" onclick="window._aggTxnFilters={page:1,status:\'\',channel:\'\',from:\'\',to:\'\'};loadAggTransactions()">Reset</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Reference</th><th>Merchant</th><th>Amount</th><th>Fee</th><th>Your Share</th><th>Channel</th><th>Status</th><th>Date</th></tr></thead>' +
+        '<tbody>' + tableRows + '</tbody>' +
+      '</table></div>' +
+      (pages > 1 ? '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 4px">' +
+        '<span style="font-size:12px;color:var(--gray-500)">Page ' + f.page + ' of ' + pages + '</span>' +
+        '<div style="display:flex;gap:8px">' +
+          (f.page > 1 ? '<button class="btn btn-outline btn-sm" onclick="aggTxnPage(-1)">&#8592; Prev</button>' : '') +
+          (f.page < pages ? '<button class="btn btn-outline btn-sm" onclick="aggTxnPage(1)">Next &#8594;</button>' : '') +
+        '</div></div>' : '') +
+      '</div>';
+
+    window._aggTxnData = rows;
+  }
+
+  el.innerHTML = loading();
+  var qs = '?page=' + f.page + '&limit=50' +
+    (f.status  ? '&status='  + f.status  : '') +
+    (f.channel ? '&channel=' + f.channel : '') +
+    (f.from    ? '&from='    + f.from    : '') +
+    (f.to      ? '&to='      + f.to      : '');
+  try {
+    var res = await apiFetch('/aggregators/my/transactions' + qs);
+    render(res && res.data ? res : { data:[], total:0, pages:1 });
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load transactions: ' + e.message);
+  }
+}
+function aggTxnFilter() {
+  window._aggTxnFilters = {
+    page:    1,
+    status:  (document.getElementById('atf-status')||{}).value  || '',
+    channel: (document.getElementById('atf-channel')||{}).value || '',
+    from:    (document.getElementById('atf-from')||{}).value    || '',
+    to:      (document.getElementById('atf-to')||{}).value      || '',
+  };
+  loadAggTransactions();
+}
+function aggTxnPage(delta) {
+  window._aggTxnFilters.page = (window._aggTxnFilters.page || 1) + delta;
+  loadAggTransactions();
+}
+function exportAggTxnCsv() {
+  var rows = window._aggTxnData || [];
+  if (!rows.length) { alert('No data to export'); return; }
+  var h = ['Reference','Merchant','Amount (kobo)','Fee (kobo)','Your Share (kobo)','Channel','Status','Date'];
+  var csv = '﻿' + [h].concat(rows.map(function(t) {
+    return [t.reference, t.merchant&&t.merchant.businessName||'', t.amount, t.fee, t.agg_share, t.channel, t.status, t.created_at ? new Date(t.created_at).toLocaleDateString('en-NG') : ''];
+  })).map(function(r){ return r.map(function(v){ return '"'+String(v||'').replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
+  _downloadText(csv, 'agg-transactions-' + new Date().toISOString().split('T')[0] + '.csv', 'text/csv');
+}
+
+// ── AGGREGATOR RATE MANAGEMENT ────────────────────────────────────────────────
+async function loadAggRates() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var [ratesRes, merchantsRes] = await Promise.all([
+      apiFetch('/aggregators/my/rates'),
+      apiFetch('/aggregators/my/merchants'),
+    ]);
+    var d = (ratesRes && ratesRes.data) || {};
+    var basePct         = Number(d.base_rate || d.default_split_pct || 0);
+    var payoutBaseCost  = Number(d.payout_base_cost || 0);   // kobo
+    var vaCap           = Number(d.va_cap || 0);             // kobo — SA-set cap, read-only
+    var overrides       = d.overrides || [];                 // [{merchant_id, va, payout}]
+    var merchants       = (merchantsRes && merchantsRes.data) || [];
+
+    // Build lookup: merchantId → {va, payout}
+    var overrideMap = {};
+    overrides.forEach(function(o) { overrideMap[o.merchant_id] = o; });
+
+    var vaCapNairaLabel       = vaCap         ? '₦' + (vaCap / 100).toLocaleString('en-NG') : '—';
+    var payoutFloorNairaLabel = payoutBaseCost ? '₦' + (payoutBaseCost / 100).toFixed(2)     : '₦0';
+
+    function fmtChannelCell(cfg, baseKobo, isFlat) {
+      if (!cfg) return '<span class="badge badge-gray">Default</span>';
+      var parts = [];
+      if (Number(cfg.rate)       > 0) parts.push((Number(cfg.rate)*100).toFixed(2) + '%');
+      if (Number(cfg.flat_fee)   > 0) parts.push('₦' + (Number(cfg.flat_fee)/100).toFixed(2));
+      if (Number(cfg.min_charge) > 0) parts.push('min ₦' + (Number(cfg.min_charge)/100).toFixed(2));
+      if (!parts.length) return '<span class="badge badge-gray">Default</span>';
+      return '<span class="badge badge-lime">' + parts.join(' + ') + '</span>';
+    }
+
+    var merchantRows = merchants.length ? merchants.map(function(m) {
+      var ov       = overrideMap[m.id];
+      var vaData   = ov ? ov.va     : null;
+      var poData   = ov ? ov.payout : null;
+      var vaCell   = fmtChannelCell(vaData);
+      var poCell   = fmtChannelCell(poData);
+      // Safe JSON for inline onclick — just pass kobo numbers
+      var vd       = vaData || {};
+      var pd       = poData || {};
+      var editArgs = "'" + m.id + "','" + m.businessName.replace(/'/g,'') + "'," +
+        basePct + "," +
+        "{'rate':" + (Number(vd.rate)||0) + ",'flat_fee':" + (Number(vd.flat_fee)||0) + ",'min_charge':" + (Number(vd.min_charge)||0) + "}," +
+        "{'rate':" + (Number(pd.rate)||0) + ",'flat_fee':" + (Number(pd.flat_fee)||0) + ",'min_charge':" + (Number(pd.min_charge)||0) + "}," +
+        payoutBaseCost + ',' + vaCap;
+      return '<tr>' +
+        '<td style="font-weight:500">' + m.businessName + '</td>' +
+        '<td><span class="tag">' + (m.category||'—') + '</span></td>' +
+        '<td>' + statusBadge(m.kycStatus) + '</td>' +
+        '<td>' + vaCell + '</td>' +
+        '<td>' + poCell + '</td>' +
+        '<td style="display:flex;gap:6px;flex-wrap:wrap">' +
+          '<button class="btn btn-outline btn-sm" onclick="openAggRateEdit(' + editArgs + ')">Set Rate</button>' +
+          (ov ? '<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="removeAggSelfRate(\'' + m.id + '\',\'' + m.businessName.replace(/'/g,'') + '\')">Reset</button>' : '') +
+        '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No merchants yet</td></tr>';
+
+    el.innerHTML =
+      '<div class="page-header"><div class="page-title">Merchant Pricing</div>' +
+        '<div class="page-desc">Set the rates each merchant pays. Your cost (Paylode\'s charge to you): VA <strong>' + (basePct*100).toFixed(2) + '%</strong> · Payout <strong>' + payoutFloorNairaLabel + '/txn</strong>. Your margin is what you charge above that.</div></div>' +
+      '<div class="info-box" style="margin-bottom:16px;font-size:13px">' +
+        '<strong>VA / Collections:</strong> rate% × amount + flat fee, floored at min charge. Paylode cap: <strong>' + vaCapNairaLabel + '</strong>.' +
+        '<br><strong>Payouts:</strong> same formula. Paylode base cost: <strong>' + payoutFloorNairaLabel + '/txn</strong>. Leave all blank → platform default.' +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Merchant</th><th>Category</th><th>KYC Status</th><th>VA Rate</th><th>Payout Rate</th><th>Actions</th></tr></thead>' +
+        '<tbody>' + merchantRows + '</tbody>' +
+      '</table></div></div>';
+
+    if (window.lucide) lucide.createIcons();
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load rates: ' + e.message);
+  }
+}
+
+// ctx: { merchantId, merchantName, floorPct (%), vaData, payoutData, payoutFloorKobo, vaCap }
+// vaData / payoutData: {rate (0-1 decimal), flat_fee (kobo), min_charge (kobo)} or null
+function openAggRateEdit(merchantId, merchantName, floorPct, vaData, payoutData, payoutFloorKobo, vaCap) {
+  var baseFloor       = Number(floorPct)        || 0;        // aggregator's VA cost floor (%)
+  var payoutFloor     = Number(payoutFloorKobo) || 0;        // Paylode's payout flat fee (kobo)
+  var vaCapNaira      = vaCap ? '₦' + (Number(vaCap) / 100).toLocaleString('en-NG') : '—';
+  var payoutFloorNaira = (payoutFloor / 100).toFixed(2);
+
+  // current VA values (user-facing: %, ₦, ₦)
+  var vaPct    = vaData    && Number(vaData.rate)        > 0 ? (Number(vaData.rate) * 100).toFixed(2)        : '';
+  var vaFlat   = vaData    && Number(vaData.flat_fee)    > 0 ? (Number(vaData.flat_fee) / 100).toFixed(2)    : '';
+  var vaMin    = vaData    && Number(vaData.min_charge)  > 0 ? (Number(vaData.min_charge) / 100).toFixed(2)  : '';
+
+  var payPct   = payoutData && Number(payoutData.rate)       > 0 ? (Number(payoutData.rate) * 100).toFixed(2)        : '';
+  var payFlat  = payoutData && Number(payoutData.flat_fee)   > 0 ? (Number(payoutData.flat_fee) / 100).toFixed(2)    : '';
+  var payMin   = payoutData && Number(payoutData.min_charge) > 0 ? (Number(payoutData.min_charge) / 100).toFixed(2)  : '';
+
+  function feeGroup(idPrefix, pctVal, flatVal, minVal, hintId) {
+    return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+      '<div class="form-group" style="margin:0"><label class="form-label">Rate (%)</label>' +
+        '<input class="form-input" type="number" id="' + idPrefix + '-pct" value="' + pctVal + '" step="0.01" min="0" max="100" placeholder="0" oninput="aggFeeHint(\'' + idPrefix + '\',' + baseFloor + ',' + payoutFloor + ')"></div>' +
+      '<div class="form-group" style="margin:0"><label class="form-label">Flat fee (₦)</label>' +
+        '<input class="form-input" type="number" id="' + idPrefix + '-flat" value="' + flatVal + '" step="1" min="0" placeholder="0" oninput="aggFeeHint(\'' + idPrefix + '\',' + baseFloor + ',' + payoutFloor + ')"></div>' +
+      '<div class="form-group" style="margin:0"><label class="form-label">Min charge (₦)</label>' +
+        '<input class="form-input" type="number" id="' + idPrefix + '-min" value="' + minVal + '" step="1" min="0" placeholder="0" oninput="aggFeeHint(\'' + idPrefix + '\',' + baseFloor + ',' + payoutFloor + ')"></div>' +
+    '</div>' +
+    '<div class="form-hint" style="margin-top:4px" id="' + hintId + '">—</div>';
+  }
+
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">Set Rate — ' + merchantName + '</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+
+    '<div style="font-size:12px;font-weight:600;color:var(--gray-500);letter-spacing:.04em;text-transform:uppercase;margin:0 0 6px">VA / Collections</div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:10px">' +
+      'Your cost floor: <strong>' + baseFloor.toFixed(2) + '%</strong>. ' +
+      'Platform cap (read-only): <strong>' + vaCapNaira + '</strong>. ' +
+      'Fee = rate% × amount + flat fee, floored at min charge.' +
+    '</div>' +
+    feeGroup('agr-va', vaPct, vaFlat, vaMin, 'agr-va-hint') +
+
+    '<hr style="margin:14px 0;border:none;border-top:1px solid var(--gray-200)">' +
+
+    '<div style="font-size:12px;font-weight:600;color:var(--gray-500);letter-spacing:.04em;text-transform:uppercase;margin:0 0 6px">Payouts</div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:10px">' +
+      'Platform base cost: <strong>₦' + payoutFloorNaira + '/txn</strong>. ' +
+      'Fee = rate% × amount + flat fee, floored at min charge. Leave all blank to pass through platform default.' +
+    '</div>' +
+    feeGroup('agr-po', payPct, payFlat, payMin, 'agr-po-hint') +
+
+    '<div class="form-group" style="margin-top:12px"><label class="form-label">Notes (optional)</label>' +
+      '<input class="form-input" id="agr-notes" placeholder="e.g. Negotiated rate"></div>' +
+    '<div style="display:flex;gap:8px">' +
+      '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+      '<button class="btn btn-lime" id="agr-save-btn" onclick="saveAggSelfRate(\'' + merchantId + '\',\'' + merchantName.replace(/'/g,'') + '\',' + baseFloor + ',' + payoutFloor + ')">Save Rates</button>' +
+    '</div>';
+
+  document.getElementById('modal').style.display = 'flex';
+  aggFeeHint('agr-va', baseFloor, payoutFloor);
+  aggFeeHint('agr-po', baseFloor, payoutFloor);
+}
+
+function aggFeeHint(prefix, baseFloor, payoutFloor) {
+  var pct   = parseFloat((document.getElementById(prefix + '-pct')  ||{}).value) || 0;
+  var flat  = parseFloat((document.getElementById(prefix + '-flat') ||{}).value) || 0;
+  var min   = parseFloat((document.getElementById(prefix + '-min')  ||{}).value) || 0;
+  var hint  = document.getElementById(prefix + '-hint');
+  if (!hint) return;
+  if (!pct && !flat && !min) { hint.textContent = 'Leave all blank to use platform default'; hint.style.color = ''; return; }
+  var parts = [];
+  if (pct)  parts.push(pct.toFixed(2) + '%');
+  if (flat) parts.push('₦' + flat.toFixed(2) + ' flat');
+  if (min)  parts.push('min ₦' + min.toFixed(2));
+  // margin hint for VA
+  if (prefix === 'agr-va' && pct > 0 && pct / 100 < baseFloor) {
+    hint.textContent = 'Rate below your cost floor of ' + (baseFloor*100).toFixed(2) + '%';
+    hint.style.color = 'var(--red)'; return;
+  }
+  // margin hint for payout
+  if (prefix === 'agr-po' && flat > 0 && flat * 100 < payoutFloor) {
+    hint.textContent = 'Flat fee below Paylode cost of ₦' + (payoutFloor/100).toFixed(2);
+    hint.style.color = 'var(--red)'; return;
+  }
+  hint.textContent = 'Charge: ' + parts.join(' + ');
+  hint.style.color = '';
+}
+
+async function saveAggSelfRate(merchantId, merchantName, baseFloor, payoutFloor) {
+  var btn  = document.getElementById('agr-save-btn');
+  var notes = (document.getElementById('agr-notes')||{}).value || '';
+
+  var vaPct   = parseFloat((document.getElementById('agr-va-pct')  ||{}).value) || 0;
+  var vaFlat  = parseFloat((document.getElementById('agr-va-flat') ||{}).value) || 0;
+  var vaMin   = parseFloat((document.getElementById('agr-va-min')  ||{}).value) || 0;
+  var poPct   = parseFloat((document.getElementById('agr-po-pct')  ||{}).value) || 0;
+  var poFlat  = parseFloat((document.getElementById('agr-po-flat') ||{}).value) || 0;
+  var poMin   = parseFloat((document.getElementById('agr-po-min')  ||{}).value) || 0;
+
+  if (vaPct > 0 && vaPct / 100 < baseFloor) {
+    alert('VA rate cannot be below your cost floor of ' + (baseFloor*100).toFixed(2) + '%'); return;
+  }
+  if (poFlat > 0 && poFlat * 100 < payoutFloor) {
+    alert('Payout flat fee cannot be below Paylode cost of ₦' + (payoutFloor/100).toFixed(2)); return;
+  }
+
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  var errors = [];
+
+  // Save VA channel
+  var vaRes = await apiFetch('/aggregators/my/merchants/' + merchantId + '/rates', {
+    method: 'PUT',
+    body: JSON.stringify({ channel: 'VIRTUAL_ACCOUNT', rate: vaPct / 100, flat_fee: Math.round(vaFlat * 100), min_charge: Math.round(vaMin * 100), notes }),
+  });
+  if (!vaRes || !vaRes.status) errors.push('VA: ' + ((vaRes && vaRes.message) || 'failed'));
+
+  // Save PAYOUT channel
+  var poRes = await apiFetch('/aggregators/my/merchants/' + merchantId + '/rates', {
+    method: 'PUT',
+    body: JSON.stringify({ channel: 'PAYOUT', rate: poPct / 100, flat_fee: Math.round(poFlat * 100), min_charge: Math.round(poMin * 100), notes }),
+  });
+  if (!poRes || !poRes.status) errors.push('Payout: ' + ((poRes && poRes.message) || 'failed'));
+
+  if (errors.length) {
+    btn.textContent = 'Save Rates'; btn.disabled = false;
+    alert('Error(s):\n' + errors.join('\n'));
+  } else {
+    document.getElementById('modal').style.display = 'none';
+    toast('Rates set for ' + merchantName, 'success');
+    loadAggRates();
+  }
+}
+
+async function removeAggSelfRate(merchantId, merchantName) {
+  if (!confirm('Reset ' + merchantName + ' to your default split rate?')) return;
+  var res = await apiFetch('/aggregators/my/merchants/' + merchantId + '/rates', { method: 'DELETE' });
+  if (res && res.status) { toast('Reset to default for ' + merchantName, 'success'); loadAggRates(); }
+  else alert('Error: ' + ((res && res.message) || 'Remove failed'));
+}
+
+// ── AGGREGATOR: DAILY EARNINGS BREAKDOWN ──────────────────────────────────────
+async function loadAggEarnings() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var from = new Date(); from.setDate(from.getDate() - 29);
+    var fromStr = from.toISOString().slice(0, 10);
+    var toStr   = new Date().toISOString().slice(0, 10);
+    var res = await apiFetch('/aggregators/my/earnings?from=' + fromStr + '&to=' + toStr + 'T23:59:59');
+    var d = (res && res.data) || {};
+    var rows    = d.data || [];
+    var merch   = d.merchants || [];
+    var total   = d.total_agg_share || 0;
+    var txnCnt  = d.total_txn_count || 0;
+
+    // Summary stats
+    var todayStr = new Date().toISOString().slice(0, 10);
+    var todayShare = rows.filter(function(r){ return r.day === todayStr; }).reduce(function(s,r){ return s+r.agg_share; }, 0);
+    var weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate()-7);
+    var weekStr  = weekAgo.toISOString().slice(0, 10);
+    var weekShare = rows.filter(function(r){ return r.day >= weekStr; }).reduce(function(s,r){ return s+r.agg_share; }, 0);
+
+    // Table rows
+    var tableRows = rows.length ? rows.map(function(r) {
+      return '<tr>' +
+        '<td>' + r.day + '</td>' +
+        '<td style="font-weight:500">' + (r.merchant_name||'—') + '</td>' +
+        '<td>' + r.currency + '</td>' +
+        '<td class="mono text-lime">₦' + (r.agg_share/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</td>' +
+        '<td class="mono">₦' + (r.merchant_fees/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</td>' +
+        '<td class="mono">' + r.txn_count + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--gray-400)">No earnings in this period</td></tr>';
+
+    el.innerHTML =
+      '<div class="page-header"><div class="page-title">My Earnings</div>' +
+        '<div class="page-desc">Your daily margin — the spread between what merchants pay and your cost.</div></div>' +
+      '<div class="stats-grid">' +
+        '<div class="stat-card"><div class="stat-label">Today\'s Earnings</div><div class="stat-value text-lime">₦' + (todayShare/100).toLocaleString(undefined,{minimumFractionDigits:2}) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Last 7 Days</div><div class="stat-value">₦' + (weekShare/100).toLocaleString(undefined,{minimumFractionDigits:2}) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Last 30 Days</div><div class="stat-value">₦' + (total/100).toLocaleString(undefined,{minimumFractionDigits:2}) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Transactions</div><div class="stat-value">' + txnCnt.toLocaleString() + '</div></div>' +
+      '</div>' +
+      '<div class="card"><div class="card-header"><div class="card-title">Daily Breakdown</div>' +
+        '<button class="btn btn-outline btn-sm" onclick="exportAggEarningsCsv()">↓ CSV</button></div>' +
+        '<div class="table-wrap"><table>' +
+          '<thead><tr><th>Date</th><th>Merchant</th><th>Currency</th><th>Your Earnings</th><th>Merchant Fees</th><th>Transactions</th></tr></thead>' +
+          '<tbody id="agg-earnings-rows">' + tableRows + '</tbody>' +
+        '</table></div>' +
+      '</div>';
+
+    window._aggEarningsRows = rows;
+    if (window.lucide) lucide.createIcons();
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load earnings: ' + e.message);
+  }
+}
+
+function exportAggEarningsCsv() {
+  var rows = window._aggEarningsRows || [];
+  if (!rows.length) { alert('No data to export'); return; }
+  var lines = [['Date','Merchant','Currency','Earnings (kobo)','Merchant Fees (kobo)','Transactions'].join(',')];
+  rows.forEach(function(r) {
+    lines.push([r.day, '"'+(r.merchant_name||'').replace(/"/g,'')+'\"', r.currency, r.agg_share, r.merchant_fees, r.txn_count].join(','));
+  });
+  var blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'paylode-earnings-' + new Date().toISOString().slice(0,10) + '.csv'; a.click();
+}
+
+// ── SA: AGGREGATOR PAYOUTS LEDGER ─────────────────────────────────────────────
+async function loadAggPayoutsAdmin() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/aggregators/payouts');
+    var rows = (res && Array.isArray(res.data)) ? res.data : [];
+
+    // Group by aggregator for a cleaner view
+    var tableRows = rows.length ? rows.map(function(r) {
+      var agg = r.aggregator || {};
+      var isPaid = r.status === 'PAID';
+      var shareNaira = Number(r.agg_share_amount) / 100;
+      var month = r.period_month ? new Date(r.period_month).toLocaleDateString('en-NG', {month:'short',year:'numeric'}) : '—';
+      return '<tr>' +
+        '<td style="font-weight:500">' + (agg.companyName||'—') + '</td>' +
+        '<td>' + month + '</td>' +
+        '<td class="mono">' + fmtNaira(r.agg_share_amount) + '</td>' +
+        '<td class="mono" style="font-size:12px;color:var(--gray-400)">' + fmtNaira(r.total_merchant_fees) + '</td>' +
+        '<td style="font-size:12px">' + fmtNum(r.txn_count) + '</td>' +
+        '<td>' + (isPaid
+          ? '<span class="badge badge-green">Paid ' + (r.paid_at ? new Date(r.paid_at).toLocaleDateString('en-NG') : '') + '</span>'
+          : statusBadge('pending')) + '</td>' +
+        '<td style="font-size:12px;color:var(--gray-400)">' + (agg.settlementBank||'—') + ' ' + (agg.settlementAccount||'') + '</td>' +
+        '<td>' + (!isPaid
+          ? '<button class="btn btn-lime btn-sm" onclick="markAggPayoutPaid(\'' + r.id + '\',\'' + (agg.companyName||'').replace(/'/g,'') + '\',' + shareNaira.toFixed(2) + ')">Mark Paid</button>'
+          : '') + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--gray-400)">No aggregator payout records yet — will populate after first T+1 sweep</td></tr>';
+
+    // Summary totals
+    var pendingTotal = rows.filter(function(r){ return r.status!=='PAID'; }).reduce(function(s,r){ return s + Number(r.agg_share_amount); }, 0);
+    var paidTotal    = rows.filter(function(r){ return r.status==='PAID'; }).reduce(function(s,r){ return s + Number(r.agg_share_amount); }, 0);
+
+    el.innerHTML =
+      '<div class="page-header flex-between">' +
+        '<div><div class="page-title">Aggregator Payouts</div>' +
+          '<div class="page-desc">Monthly margin accruals for each aggregator — review and mark paid when disbursed</div></div>' +
+        '<button class="btn btn-outline btn-sm" onclick="exportAggPayoutsCsv()">&#8681; CSV</button>' +
+      '</div>' +
+      '<div class="stats-grid" style="grid-template-columns:1fr 1fr;margin-bottom:20px">' +
+        '<div class="stat-card"><div class="stat-label">Pending Payouts</div><div class="stat-value text-amber">' + fmtNaira(pendingTotal) + '</div><div class="stat-sub">' + rows.filter(function(r){return r.status!=='PAID';}).length + ' period(s)</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Paid Out (All Time)</div><div class="stat-value text-green">' + fmtNaira(paidTotal) + '</div><div class="stat-sub">' + rows.filter(function(r){return r.status==='PAID';}).length + ' period(s)</div></div>' +
+      '</div>' +
+      '<div class="card"><div class="table-wrap"><table>' +
+        '<thead><tr><th>Aggregator</th><th>Period</th><th>Their Share</th><th>Merchant Fees</th><th>Txns</th><th>Status</th><th>Settlement Account</th><th></th></tr></thead>' +
+        '<tbody>' + tableRows + '</tbody>' +
+      '</table></div></div>';
+
+    window._aggPayoutRows = rows;
+  } catch(e) {
+    el.innerHTML = errorBox('Failed to load aggregator payouts: ' + e.message);
+  }
+}
+
+async function markAggPayoutPaid(id, companyName, amountNaira) {
+  if (!confirm('Mark ₦' + amountNaira.toLocaleString('en-NG', {minimumFractionDigits:2}) + ' payout for ' + companyName + ' as PAID?\n\nOnly do this after the bank transfer is confirmed.')) return;
+  var notes = prompt('Reference or note (optional):') || '';
+  var res = await apiFetch('/aggregators/payouts/' + id + '/mark-paid', {
+    method: 'PUT',
+    body: JSON.stringify({ notes }),
+  });
+  if (res && res.status) { toast(companyName + ' payout marked as paid', 'success'); loadAggPayoutsAdmin(); }
+  else alert('Error: ' + ((res && res.message) || 'Update failed'));
+}
+
+function exportAggPayoutsCsv() {
+  var rows = window._aggPayoutRows || [];
+  if (!rows.length) { alert('No data to export'); return; }
+  var h = ['Aggregator','Period','Share (kobo)','Merchant Fees (kobo)','Txns','Status','Paid At','Settlement Bank','Settlement Account'];
+  var csv = '﻿' + [h].concat(rows.map(function(r) {
+    var agg = r.aggregator || {};
+    return [agg.companyName, r.period_month ? new Date(r.period_month).toLocaleDateString('en-NG',{month:'short',year:'numeric'}) : '', r.agg_share_amount, r.total_merchant_fees, r.txn_count, r.status, r.paid_at ? new Date(r.paid_at).toLocaleDateString('en-NG') : '', agg.settlementBank||'', agg.settlementAccount||''];
+  })).map(function(r){ return r.map(function(v){ return '"'+String(v||'').replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
+  _downloadText(csv, 'agg-payouts-' + new Date().toISOString().split('T')[0] + '.csv', 'text/csv');
+}
+
 // ── AGGREGATOR REVENUE ────────────────────────────────────────────────────────
 async function loadAggRevenue() {
   var el = document.getElementById('main-content');
@@ -5786,7 +6666,9 @@ window.navigate = function(page) {
   closeSidebar();
   // Push a browser history entry so the device Back button fires popstate (caught
   // below) instead of unloading the SPA back to the landing page.
-  try { history.pushState({ plPage: page }, ''); } catch (e) {}
+  // Include the page id in the URL hash so a browser refresh returns to this page.
+  var hashVal = (String(page).indexOf('hub::') === 0) ? '' : ('#' + page);
+  try { history.pushState({ plPage: page }, '', hashVal || location.pathname + location.search); } catch (e) {}
 };
 
 // ── Keep the browser/phone Back button INSIDE the dashboard ──────────────────
@@ -5933,6 +6815,7 @@ function loadPageData(page) {
     case 'sa_reconciliation': loadReconciliation(); break;
     case 'sa_collection_wallets': loadCollectionWallets(); break;
     case 'sa_payouts':        loadPayoutsBreakdown(); break;
+    case 'sa_stuck_payouts':  loadStuckPayouts(); break;
     case 'sa_merchant_funding': loadMerchantFunding(); break;
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
@@ -5944,8 +6827,11 @@ function loadPageData(page) {
     case 'merch_profile':       loadMerchProfile(); break;
     case 'sc_plans':            loadSCPlans(); break;
     case 'sc_report':           loadSCReport(); break;
-    case 'agg_transactions':    loadTransactions(); break;
+    case 'agg_transactions':    loadAggTransactions(); break;
     case 'agg_revenue':         loadAggRevenue(); break;
+    case 'agg_rates':           loadAggRates(); break;
+    case 'agg_earnings':        loadAggEarnings(); break;
+    case 'agg_payouts_admin':   loadAggPayoutsAdmin(); break;
     case 'agg_merchants':
       apiFetch('/aggregators/my/merchants').then(function(r) {
         var el = document.getElementById('main-content');
@@ -6083,10 +6969,15 @@ function continueDashboardBoot(user) {
     switcher.style.display = 'none';
   }
 
-  // Navigate to this role's default landing page
-  currentPage = (ROLE_META[currentRole] && ROLE_META[currentRole].defaultPage) || 'overview';
+  // Navigate to this role's default landing page — restore from URL hash on refresh
+  var _hashPage = (location.hash || '').replace(/^#/, '');
+  var _defaultPage = (ROLE_META[currentRole] && ROLE_META[currentRole].defaultPage) || 'overview';
+  currentPage = (_hashPage && _hashPage.indexOf('hub::') === -1 &&
+    !(typeof EXTERNAL_PAGES !== 'undefined' && EXTERNAL_PAGES[_hashPage]))
+    ? _hashPage : _defaultPage;
 
   renderNav();
+  if (typeof renderPage === 'function') renderPage();
   loadPageData(currentPage);
   checkDeadLetters();
 }
@@ -6596,7 +7487,8 @@ async function viewBatch(id) {
 
   const k = v => fmtMajor(Number(v || 0) / 100, 'NGN');
   const balanced = recon?.accounting_check?.balanced;
-  const reconCard = recon ? `
+  // Recon card is SA-only — merchants must not see internal accounting flags
+  const reconCard = (recon && currentRole === 'superadmin') ? `
   <div class="card" style="margin-bottom:16px;border-left:3px solid ${balanced ? 'var(--green)' : 'var(--red)'}">
     <div class="card-header">
       <div class="card-title" style="color:${balanced ? 'var(--green)' : 'var(--red)'}">
@@ -7055,57 +7947,136 @@ async function loadWallets() {
         <button class="btn btn-outline btn-sm" onclick="loadPendingRebalances()">Pending Transfers</button>
       </div>
     </div>
+    <div class="section-gap" id="rail-bal-section">
+      <div class="card">
+        <div class="card-header" style="justify-content:space-between">
+          <div class="card-title">Rail Bank Balances</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="rail-bal-age" style="font-size:11px;color:var(--gray-400)"></span>
+            <button class="btn btn-outline btn-sm" onclick="loadRailBalances(true)">&#x21bb; Refresh</button>
+          </div>
+        </div>
+        <div id="rail-bal-content" style="padding:12px 16px 4px">
+          <div style="color:var(--gray-400);font-size:13px">Loading&#8230;</div>
+        </div>
+      </div>
+    </div>
     ${batchCard}
     <div class="card"><div class="card-header"><div class="card-title">Merchant balances</div></div><div class="table-wrap"><table>
       <thead><tr><th>Merchant</th><th>Balance</th><th>Actions</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div></div>`;
+    loadRailBalances(false);
   } catch(e){ el.innerHTML = errorBox('Failed: '+e.message); }
 }
 
+function fwFmtAmt(input) {
+  var digits = input.value.replace(/[^0-9]/g, '');
+  input.value = digits ? Number(digits).toLocaleString('en-NG') : '';
+}
+
 function fundWallet(merchantId, name) {
-  // A payout ROUTE must be chosen to fund — the rail chosen here is BOTH the merchant's
-  // route (where their payouts disburse) and where this deposit landed. Live rails only.
   const rails = (window.__payoutRails||[]).filter(r => r.payoutEnabled && r.status === 'LIVE');
   const cur = (window.__merchantRoute||{})[merchantId] || '';
   const railOpts = rails.map(r => `<option value="${r.id}"${cur===r.id?' selected':''}>${r.name}</option>`).join('');
+  _showFundForm(merchantId, name, railOpts, {});
+}
+function _showFundForm(merchantId, name, railOpts, pre) {
   showModal(
     `<div class="modal-header"><div class="modal-title">Fund — ${name}</div>
      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
-     <div class="info-box" style="font-size:12px;margin-bottom:12px">Credit <strong>after</strong> you confirm the merchant's deposit landed. Pick the <strong>payout route</strong> — this sets the rail their payouts disburse through and records where the deposit landed. A route is required to fund. Balance is pooled (rail-agnostic).</div>
+     <div class="info-box" style="font-size:12px;margin-bottom:12px">Credit <strong>after</strong> you confirm the merchant's deposit landed. Pick the <strong>payout route</strong> — this sets the rail their payouts disburse through. Balance is pooled (rail-agnostic).</div>
      <div class="form-grid">
        <div class="form-group"><label class="form-label">Payout route (rail) *</label>
          <select class="form-input form-select" id="fw-rail">${railOpts||'<option value="">No live payout rail</option>'}</select></div>
        <div class="form-group"><label class="form-label">Direction</label>
-         <select class="form-input form-select" id="fw-dir"><option value="credit">Credit (add)</option><option value="debit">Debit (remove)</option></select></div>
+         <select class="form-input form-select" id="fw-dir">
+           <option value="credit"${(!pre.dir||pre.dir==='credit')?' selected':''}>Credit (add)</option>
+           <option value="debit"${pre.dir==='debit'?' selected':''}>Debit (remove)</option>
+         </select></div>
      </div>
-     <div class="form-group"><label class="form-label">Amount (₦) *</label><input class="form-input" id="fw-amt" type="number" min="1" placeholder="e.g. 500000"></div>
-     <div class="form-group"><label class="form-label">Reference *</label><input class="form-input" id="fw-ref" placeholder="Bank transfer ref / memo"></div>
-     <div class="form-group"><label class="form-label">Description</label><input class="form-input" id="fw-desc" placeholder="Optional note"></div>
-     <div class="flex-between" style="margin-top:8px">
+     <div class="form-group"><label class="form-label">Amount (₦) *</label>
+       <input class="form-input" id="fw-amt" type="text" inputmode="numeric" placeholder="e.g. 10,000,000"
+         value="${pre.amt||''}" oninput="fwFmtAmt(this)" autocomplete="off"></div>
+     <div class="form-group"><label class="form-label">Reference *</label>
+       <input class="form-input" id="fw-ref" placeholder="Bank transfer ref / memo" value="${pre.ref||''}"></div>
+     <div class="form-group"><label class="form-label">Description</label>
+       <input class="form-input" id="fw-desc" placeholder="Optional note" value="${pre.desc||''}"></div>
+     <div id="fw-msg" style="margin-top:8px"></div>
+     <div class="flex-between" style="position:sticky;bottom:-24px;background:var(--white);padding:12px 0 4px;margin-top:8px;border-top:1px solid var(--gray-100)">
        <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Cancel</button>
-       <button class="btn btn-lime" id="fw-btn" onclick="submitFundWallet('${merchantId}','${name}')">Apply</button></div>
-     <div id="fw-msg" style="margin-top:8px"></div>`);
+       <button class="btn btn-lime" id="fw-btn" onclick="_fwReview('${merchantId}','${name}')">Review ›</button></div>`);
+  if (pre.railId) { var s = document.getElementById('fw-rail'); if (s) s.value = pre.railId; }
 }
-async function submitFundWallet(merchantId, name) {
-  const railId = document.getElementById('fw-rail').value;
-  const dir = document.getElementById('fw-dir').value;
-  const amt = parseFloat(document.getElementById('fw-amt').value);
-  const reference = (document.getElementById('fw-ref').value||'').trim();
-  const description = (document.getElementById('fw-desc').value||'').trim();
-  const msg = document.getElementById('fw-msg');
-  if (!railId) { msg.innerHTML = '<div class="warn-box" style="font-size:12px">Choose a payout route to fund this merchant.</div>'; return; }
-  if (!amt || amt <= 0 || !reference) { msg.innerHTML = '<div class="warn-box" style="font-size:12px">Amount and reference are required.</div>'; return; }
-  const btn = document.getElementById('fw-btn'); btn.disabled = true; btn.textContent = 'Applying...';
-  // route_rail_id = railId → sets/confirms the merchant's route as part of funding.
+function _fwReview(merchantId, name) {
+  var railId  = document.getElementById('fw-rail').value;
+  var dir     = document.getElementById('fw-dir').value;
+  var rawAmt  = (document.getElementById('fw-amt').value||'').replace(/,/g,'').trim();
+  var amt     = parseFloat(rawAmt);
+  var ref     = (document.getElementById('fw-ref').value||'').trim();
+  var desc    = (document.getElementById('fw-desc').value||'').trim();
+  var msg     = document.getElementById('fw-msg');
+  var railSel = document.getElementById('fw-rail');
+  var railName = railSel && railSel.selectedIndex >= 0 ? railSel.options[railSel.selectedIndex].text : railId;
+
+  if (!railId)           { msg.innerHTML = '<div class="warn-box" style="font-size:12px">Choose a payout route.</div>'; return; }
+  if (!amt || amt <= 0)  { msg.innerHTML = '<div class="warn-box" style="font-size:12px">Enter a valid amount.</div>'; return; }
+  if (!ref)              { msg.innerHTML = '<div class="warn-box" style="font-size:12px">Reference is required.</div>'; return; }
+
+  var rails    = (window.__payoutRails||[]).filter(r => r.payoutEnabled && r.status === 'LIVE');
+  var railOpts = rails.map(r => `<option value="${r.id}"${railId===r.id?' selected':''}>${r.name}</option>`).join('');
+  window.__fwPending = { merchantId, name, railId, railName, railOpts, dir, amt, ref, desc };
+
+  var amtFmt   = '₦' + amt.toLocaleString('en-NG', {minimumFractionDigits:2, maximumFractionDigits:2});
+  var dirLabel = dir === 'credit' ? 'Credit (add)' : 'Debit (remove)';
+  var amtColor = dir === 'credit' ? '#166534' : '#991b1b';
+
+  showModal(
+    `<div class="modal-header"><div class="modal-title">Confirm Funding</div>
+     <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
+     <div class="warn-box" style="margin-bottom:16px;font-size:13px">Review carefully — this will update the merchant wallet immediately.</div>
+     <div class="rev-row"><span class="rev-label">Merchant</span><span class="rev-value" style="font-weight:700">${name}</span></div>
+     <div class="rev-row"><span class="rev-label">Direction</span><span class="rev-value">${dirLabel}</span></div>
+     <div class="rev-row"><span class="rev-label" style="font-weight:700">Amount</span>
+       <span class="rev-value" style="font-size:22px;font-weight:900;color:${amtColor}">${amtFmt}</span></div>
+     <div class="rev-row"><span class="rev-label">Rail</span><span class="rev-value">${railName}</span></div>
+     <div class="rev-row"><span class="rev-label">Reference</span><span class="rev-value mono" style="font-size:12px">${ref}</span></div>
+     ${desc ? `<div class="rev-row"><span class="rev-label">Description</span><span class="rev-value" style="font-size:12px">${desc}</span></div>` : ''}
+     <div id="fw-confirm-msg" style="margin-top:8px"></div>
+     <div style="position:sticky;bottom:-24px;background:var(--white);padding:12px 0 4px;margin-top:16px;border-top:1px solid var(--gray-100);display:flex;gap:8px;align-items:center;justify-content:space-between">
+       <button class="btn btn-outline" onclick="_fwBack()">‹ Back</button>
+       <div style="display:flex;gap:8px">
+         <button class="btn btn-outline" onclick="document.getElementById('modal').style.display='none'">Cancel</button>
+         <button class="btn btn-lime" id="fw-confirm-btn" onclick="_fwProceed()">Proceed</button>
+       </div>
+     </div>`);
+}
+function _fwBack() {
+  var p = window.__fwPending || {};
+  _showFundForm(p.merchantId, p.name, p.railOpts || '', {
+    railId: p.railId, dir: p.dir,
+    amt: p.amt ? p.amt.toLocaleString('en-NG') : '',
+    ref: p.ref, desc: p.desc,
+  });
+}
+async function _fwProceed() {
+  var p = window.__fwPending; if (!p) return;
+  var btn = document.getElementById('fw-confirm-btn');
+  var msg = document.getElementById('fw-confirm-msg');
+  btn.disabled = true; btn.textContent = 'Processing…';
   const res = await apiFetch('/payouts/wallet/fund', { method:'POST', body: JSON.stringify({
-    merchant_id: merchantId, rail_id: railId, route_rail_id: railId, direction: dir, amount: Math.round(amt*100), reference, description,
+    merchant_id: p.merchantId, rail_id: p.railId, route_rail_id: p.railId,
+    direction: p.dir, amount: Math.round(p.amt * 100), reference: p.ref, description: p.desc,
   })});
   if (res?.status) {
-    document.getElementById('modal').style.display='none';
-    toast((dir==='debit'?'Debited ':'Credited ')+'₦'+Number(amt).toLocaleString()+' — '+name, 'success');
+    window.__fwPending = null;
+    document.getElementById('modal').style.display = 'none';
+    toast((p.dir==='debit'?'Debited ':'Credited ')+'₦'+Number(p.amt).toLocaleString('en-NG')+' — '+p.name, 'success');
     (document.getElementById('mf-table') ? loadMerchantFunding() : loadWallets());
-  } else { msg.innerHTML = '<div class="warn-box" style="font-size:12px">'+((res&&res.message)||'Failed')+'</div>'; btn.disabled=false; btn.textContent='Apply'; }
+  } else {
+    if (msg) msg.innerHTML = '<div class="warn-box" style="font-size:12px">'+((res&&res.message)||'Failed')+'</div>';
+    btn.disabled = false; btn.textContent = 'Proceed';
+  }
 }
 
 // SA: move a merchant's pre-funded balance between rails (logical move now + a
@@ -7734,6 +8705,7 @@ loadPageData = function(page) {
     case 'cbn_report':           loadCbnReport(); break;
     case 'reports_hub':          loadReportsHub(); break;
     case 'fee_config':           loadFeeConfig(); break;
+    case 'agg_pricing':          loadAggPricing(); break;
     case 'rail_settlement':      loadRailSettlement(); break;
     case 'rails':                loadRails(); break;
     case 'service_providers':    loadServiceProviders(); break;
@@ -8159,7 +9131,27 @@ async function viewOnboardingApp(ref) {
   var docs = (a.documents || []).filter(function(d){ return d.path; }).map(function(d) {
     return '<button class="btn btn-outline btn-sm" style="margin:0 6px 6px 0" onclick="downloadAppDoc(\'' + _escA(a.reference) + '\',\'' + _escA(d.key) + '\')">↓ ' + _escA(d.name || d.key) + '</button>';
   }).join('');
-  var docsHtml = docs ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Documents</div><div>' + docs + '</div>' : '<div class="info-box" style="margin-top:12px;font-size:12px">No document files stored on server.</div>';
+  // aggregator onboarding declares docs as checkboxes in data.documents; show them as a checklist
+  var DOC_LABELS = {
+    doc_cac_cert:'CAC Certificate of Incorporation', doc_cac_memo:'MEMART',
+    doc_cac_co2:'CAC CO2 / Status Report', doc_utility:'Utility Bill (proof of address)',
+    doc_passport:'Passport Photograph', doc_id:'Government-issued ID',
+    doc_bvn:'BVN Slip', doc_padss:'PCI-DSS Certificate', doc_notes:'Additional notes',
+  };
+  var declaredDocs = '';
+  if (data.documents && typeof data.documents === 'object') {
+    var docItems = Object.keys(data.documents).filter(function(k){ return data.documents[k] === '1'; });
+    if (docItems.length) {
+      declaredDocs = '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Declared Documents</div>' +
+        '<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px">' +
+        docItems.map(function(k){ return '<span class="badge badge-green">&#10003; ' + _escA(DOC_LABELS[k] || k.replace(/_/g,' ')) + '</span>'; }).join('') +
+        '</div>' +
+        '<div class="info-box" style="font-size:11px;margin-top:8px">Applicant declared these documents are available. Physical copies must be collected and verified. After approval, use the <strong>Documents</strong> tab on the aggregator profile to upload scanned copies.</div>';
+    }
+  }
+  var docsHtml = docs
+    ? '<div style="font-weight:600;margin:14px 0 6px;font-size:13px">Documents</div><div>' + docs + '</div>' + declaredDocs
+    : (declaredDocs || '<div class="info-box" style="margin-top:12px;font-size:12px">No document files stored on server.</div>');
 
   var notes = (a.screeningNotes || []);
 
@@ -8215,6 +9207,10 @@ async function viewOnboardingApp(ref) {
     section('Individual', data.np_identity) +
     section('Business', data.np_business) +
     section('Entity', data.entity_details) +
+    section('Institution', data.institution) +
+    section('Contact', data.contact) +
+    section('Portfolio', data.portfolio) +
+    section('Signatory', data.signature) +
     _onbTimelineHtml(a) +
     principalsHtml +
     docsHtml +
@@ -8241,7 +9237,7 @@ function rejectChecklistHtml(a) {
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">' +
       docItems.map(function(d){return ck(d,'doc');}).join('') + infoItems.map(function(d){return ck(d,'info');}).join('') +
     '</div>' +
-    '<div style="font-size:11px;color:var(--gray-500);margin-top:6px">Sent to the merchant as their correction checklist; ticked documents are flagged for re-upload.</div>' +
+    '<div style="font-size:11px;color:var(--gray-500);margin-top:6px">Sent to the applicant as their correction checklist; ticked items are flagged for re-submission.</div>' +
   '</div>';
 }
 
