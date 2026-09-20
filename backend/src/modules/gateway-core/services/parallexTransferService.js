@@ -34,11 +34,17 @@ const DEBIT_ACCOUNT = process.env.PARALLEX_TRANSFER_DEBIT_ACCOUNT || '';
 const BANK_CODE     = process.env.PARALLEX_TRANSFER_BANK_CODE || '999015';
 const LOCATION      = process.env.PARALLEX_TRANSFER_LOCATION  || 'Lagos';
 const SUBKEY_HEADER = process.env.PARALLEX_TRANSFER_SUBKEY_HEADER || 'Ocp-Apim-Subscription-Key';
+// Callback URL Parallex will POST to when an outbound NIP transfer settles/fails.
+// Set PARALLEX_TRANSFER_CALLBACK_URL in .env, e.g.:
+//   https://api.paylodeservices.com/api/v1/webhooks/parallex/payout
+const CALLBACK_URL  = process.env.PARALLEX_TRANSFER_CALLBACK_URL || '';
 
 // Response-code classification.
 // '00' = success. Treat any unknown code as in-flight (safer than refunding a
 // transfer that may have settled on Parallex's side).
-const FAIL_CODES    = new Set(['05', '06', '12', '16', '51', '57', '94', '95', '96', '97']);
+// '30' = "NO RECORD" on TransactionQuery — Parallex has no knowledge of the tx;
+//        treated as definitive fail in queryPayoutResult (not in the send path).
+const FAIL_CODES    = new Set(['05', '06', '12', '16', '51', '57', '61', '94', '95', '96', '97']);
 const PENDING_CODES = new Set(['09', '25', '26', '99']);
 
 // CBN 3-digit codes → 6-digit NIP institution codes.
@@ -317,6 +323,7 @@ async function sendPayout(item) {
         }],
         transactionLocation: LOCATION,
         userName: USERNAME,
+        ...(CALLBACK_URL ? { callBackUrl: CALLBACK_URL } : {}),
       },
     });
   }
@@ -346,6 +353,12 @@ async function queryPayoutResult({ orderId, amount, accountNumber, bankCode } = 
     },
   });
   const out = toRailResult(r);
+  // Code 30 "NO RECORD" on a requery means Parallex has zero knowledge of this
+  // transaction — it never processed. Override to definitive fail so the
+  // reconciler closes the leg instead of leaving it in-flight indefinitely.
+  if (codeOf(r) === '30') {
+    return { ok: true, code: '30', reason: msgOf(r) || 'NO RECORD — transaction not found at Parallex', orderStatus: null, raw: r };
+  }
   return {
     ok: true,
     code: out.code,
