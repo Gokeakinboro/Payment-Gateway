@@ -134,8 +134,6 @@ router.post('/initialize', requireApiKey,
         }
       }
 
-      const aggSplitPct = merchant.aggregator ? Number(merchant.aggregator.revenueSplitPct) : 0;
-
       // ── Rate config: per-merchant override → platform product default → legacy ─
       // Scheme-specific override wins → flat product → merchant 'ALL'.
       const merchantRate = await resolveMerchantRate();
@@ -145,7 +143,25 @@ router.post('/initialize', requireApiKey,
           ? { rate: Number(platformRate.rate), flat_fee: Number(platformRate.flatFee), cap: Number(platformRate.cap), min_charge: Number(platformRate.minCharge), fee_model: platformRate.feeModel, vat_rate: Number(platformRate.vatRate) }
           : { rate: Number(merchant.processingRate || 0.015), flat_fee: 0, cap: 0, min_charge: 0 };
 
-      const fees = computeFeesWithConfig(amount, rateConfig, railRate, aggSplitPct);
+      // Aggregator spread: if merchant is under aggregator, use their effective rate and
+      // compute the spread (merchant_rate − aggregator_base_rate) for agg_share calculation.
+      let aggSpread = 0;
+      if (merchant.aggregatorId) {
+        const [agg, aggOv] = await Promise.all([
+          prisma.aggregator.findUnique({ where: { id: merchant.aggregatorId }, select: { revenueSplitPct: true } }),
+          prisma.aggregatorRateConfig.findFirst({
+            where: { aggregatorId: merchant.aggregatorId, merchantId: merchant.id },
+            select: { splitPct: true },
+          }),
+        ]);
+        if (agg) {
+          const aggBaseRate     = Number(agg.revenueSplitPct);
+          const aggMerchantRate = aggOv ? Number(aggOv.splitPct) : rateConfig.rate;
+          if (aggOv) rateConfig = { ...rateConfig, rate: aggMerchantRate };
+          aggSpread = Math.max(0, aggMerchantRate - aggBaseRate);
+        }
+      }
+      const fees = computeFeesWithConfig(amount, rateConfig, railRate, aggSpread);
       const ref  = reference || generateRef(isUSD ? 'TXNUSD' : 'TXN');
 
       // Which rate config actually applied (scheme-specific, flat, or ALL fallback)
@@ -228,10 +244,25 @@ router.post('/:id/confirm', requireApiKey,
       if (!txn) return notFound(res, 'Transaction');
       if (txn.status !== 'PENDING') return fail(res, 'Transaction already processed');
 
-      const merchant    = txn.merchant;
-      const railRate    = 0; // Will be fetched from rail in production
-      const aggSplitPct = merchant.aggregator ? Number(merchant.aggregator.revenueSplitPct) : 0;
-      const fees        = computeFees(Number(txn.amount), Number(merchant.processingRate || 0.015), railRate, aggSplitPct);
+      const merchant = txn.merchant;
+      const railRate = 0; // Will be fetched from rail in production
+      let effRate    = Number(merchant.processingRate || 0.015);
+      let aggSpread  = 0;
+      if (merchant.aggregatorId) {
+        const [agg, aggOv] = await Promise.all([
+          prisma.aggregator.findUnique({ where: { id: merchant.aggregatorId }, select: { revenueSplitPct: true } }),
+          prisma.aggregatorRateConfig.findFirst({
+            where: { aggregatorId: merchant.aggregatorId, merchantId: merchant.id },
+            select: { splitPct: true },
+          }),
+        ]);
+        if (agg) {
+          const aggBaseRate = Number(agg.revenueSplitPct);
+          if (aggOv) effRate = Number(aggOv.splitPct);
+          aggSpread = Math.max(0, effRate - aggBaseRate);
+        }
+      }
+      const fees = computeFees(Number(txn.amount), effRate, railRate, aggSpread);
 
       const updated = await prisma.transaction.update({
         where: { id: txn.id },
@@ -258,7 +289,7 @@ router.post('/:id/confirm', requireApiKey,
 // Works for merchants (their own) and admin (all)
 router.get('/', requireAuth, async (req, res, next) => {
   try {
-    const { page=1, perPage=50, status, from, to, channel, currency } = req.query;
+    const { page=1, perPage=50, status, from, to, channel, currency, merchant, reference, email } = req.query;
     const skip  = (parseInt(page)-1) * parseInt(perPage);
     const where = {};
 
@@ -267,9 +298,17 @@ router.get('/', requireAuth, async (req, res, next) => {
       if (!req.user.merchant) return fail(res, 'No merchant account found');
       where.merchantId = req.user.merchant.id;
     }
-    if (status)   where.status   = status.toUpperCase();
-    if (channel)  where.channel  = channel.toUpperCase();
-    if (currency) where.currency = currency.toUpperCase();
+    if (status)    where.status   = status.toUpperCase();
+    if (channel)   where.channel  = channel.toUpperCase();
+    if (currency)  where.currency = currency.toUpperCase();
+    if (reference) where.reference = { contains: reference.trim(), mode: 'insensitive' };
+    if (email)     where.customerEmail = { contains: email.trim(), mode: 'insensitive' };
+    if (merchant && req.user.role !== 'MERCHANT') {
+      where.merchant = { OR: [
+        { businessName: { contains: merchant.trim(), mode: 'insensitive' } },
+        { merchantCode: { equals:   merchant.trim(), mode: 'insensitive' } },
+      ]};
+    }
     if (from || to) where.createdAt = {};
     if (from) where.createdAt.gte = new Date(from);
     if (to)   where.createdAt.lte = new Date(to + 'T23:59:59Z');

@@ -50,7 +50,10 @@ const MODULES = [
   { name: 'youverify-webhook', basePath: '/api/v1/webhooks/youverify', load: () => require('../routes/youverify-webhook'), enabledEnv: 'MODULE_YOUVERIFY_WEBHOOK_ENABLED', category: 'webhook' },
   { name: 'palmpay-webhook',   basePath: '/api/v1/webhooks/palmpay',   load: () => require('./gateway-core/routes/palmpay-webhook'),   enabledEnv: 'MODULE_PALMPAY_WEBHOOK_ENABLED',   category: 'money' },
   { name: 'parallex-webhook',  basePath: '/api/v1/webhooks/parallex',  load: () => require('./gateway-core/routes/parallex-webhook'),  enabledEnv: 'MODULE_PARALLEX_WEBHOOK_ENABLED', category: 'money' },
-  { name: 'opay-webhook',     basePath: '/api/v1/webhooks/opay',      load: () => require('./gateway-core/routes/opay-webhook'),      enabledEnv: 'MODULE_OPAY_WEBHOOK_ENABLED',     category: 'money' },
+  { name: 'opay-webhook',           basePath: '/api/v1/webhooks/opay',           load: () => require('./gateway-core/routes/opay-webhook'),           enabledEnv: 'MODULE_OPAY_WEBHOOK_ENABLED',           category: 'money' },
+  { name: 'wema-webhook',           basePath: '/api/v1/webhooks/wema',           load: () => require('./gateway-core/routes/wema-webhook'),           enabledEnv: 'MODULE_WEMA_WEBHOOK_ENABLED',           category: 'money' },
+  { name: 'nibss-consent-webhook',   basePath: '/api/v1/webhooks/nibss/consent', load: () => require('./gateway-core/routes/nibss-consent-webhook'),   enabledEnv: 'MODULE_NIBSS_CONSENT_WEBHOOK_ENABLED',  category: 'webhook' },
+  { name: 'nibss-iso20022-webhook',  basePath: '/api/v1/webhooks/nibss',         load: () => require('./gateway-core/routes/nibss-iso20022-webhook'),  enabledEnv: 'MODULE_NIBSS_ISO20022_WEBHOOK_ENABLED', category: 'webhook' },
   { name: 'whatsapp-webhook',   basePath: '/api/v1/webhooks/whatsapp',  load: () => require('../routes/whatsappWebhook'),    enabledEnv: 'MODULE_WHATSAPP_WEBHOOK_ENABLED',   category: 'webhook' },
   { name: 'platform-settings', basePath: '/api/v1/platform/settings',  load: () => require('../routes/platformSettings'),   enabledEnv: 'MODULE_PLATFORM_SETTINGS_ENABLED',  category: 'core'    },
 

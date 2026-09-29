@@ -154,6 +154,7 @@ async function finalizePayinSuccess({ reference, channel = 'BANK_TRANSFER', proc
       merchant_settlement: Number(fees.merchantSettlement),
       fee:                 Number(fees.feePlusVat),
       processor,
+      metadata:            txn.metadata || {},
     }).catch(() => {});
   }
   return { finalized: true, fees };

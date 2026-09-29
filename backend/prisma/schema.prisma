@@ -112,6 +112,8 @@ model Aggregator {
   companyName       String   @map("company_name")
   rcNumber          String?  @map("rc_number")
   revenueSplitPct   Decimal  @map("revenue_split_pct") @db.Decimal(5, 4)  // 0.3000 = 30%
+  payoutFloorKobo   BigInt?  @map("payout_floor_kobo")  // override platform PAYOUT flat_fee; NULL = use platform
+  vaCapKobo         BigInt?  @map("va_cap_kobo")         // override platform VA cap; NULL = use platform
   settlementBank    String?  @map("settlement_bank")
   settlementAccount String?  @map("settlement_account")
   status            String   @default("active")

@@ -69,5 +69,20 @@ module.exports = {
 
     // Rail balance drift check — compare live bank balance vs DB merchant wallet sums; 08:00 & 18:00 WAT
     { name: 'rail-drift-alert', script: 'src/cron/railDriftAlert.js', exec_mode: 'fork', instances: 1, cron_restart: '0 7,17 * * *', autorestart: false, env: { NODE_ENV: 'production' } },
+
+    // NFIU daily compliance reports (LTR + STR) — 00:01 WAT (23:01 UTC)
+    { name: 'nfiu-daily-report', script: 'src/cron/nfiuDailyReport.js', exec_mode: 'fork', instances: 1, cron_restart: '1 23 * * *', autorestart: false, env: { NODE_ENV: 'production' } },
+
+    // PalmPay balance guard — every 30 min; auto-switches merchants back to Parallex when PalmPay < ₦2M
+    { name: 'palmpay-balance-guard', script: 'src/cron/palmpayBalanceGuard.js', exec_mode: 'fork', instances: 1, cron_restart: '*/30 * * * *', autorestart: false, env: { NODE_ENV: 'production' } },
+
+    // Stuck payout escalation — every 60 min; emails digest of items held/>6h needing manual review; read-only, no auto-refunds
+    { name: 'payout-stuck-alert', script: 'src/cron/payoutStuckAlert.js', exec_mode: 'fork', instances: 1, cron_restart: '0 * * * *', autorestart: false, env: { NODE_ENV: 'production' } },
+
+    // Parallex auto-failover — persistent; polls every 60 s; switches all merchants to PalmPay on outage + emails; reverts on recovery
+    { name: 'parallex-failover', script: 'src/cron/parallexFailover.js', exec_mode: 'fork', instances: 1, autorestart: true, env: { NODE_ENV: 'production' } },
+
+    // VPN chain watcher — persistent; checks 176↔DO↔Parallex every 2 min; auto-restarts wg0 on 176 then DO relay if broken; emails diagnosis
+    { name: 'vpn-chain-watcher', script: 'src/cron/vpnChainWatcher.js', exec_mode: 'fork', instances: 1, autorestart: true, env: { NODE_ENV: 'production' } },
   ],
 };
