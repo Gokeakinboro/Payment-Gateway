@@ -6994,7 +6994,7 @@ async function loadPayouts() {
       apiFetch('/payouts/queue'),
     ]);
     const w = wallet?.data || {};
-    const batchList = batches?.data || [];
+    const batchList = batches?.data?.items || batches?.data || [];
     const bankList  = banks?.data  || [];
     const queueList = (queue && queue.data) || [];
     const bankMap   = {};
