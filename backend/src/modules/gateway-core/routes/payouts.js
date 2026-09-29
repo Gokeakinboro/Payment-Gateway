@@ -2436,12 +2436,47 @@ router.post('/admin/refunds/:itemId/approve', requireAuth, requireSuperAdmin, as
     if (!item) return fail(res, 'Item not found or not pending review');
 
     const merchBack = BigInt(item.refund_amount);
-    await prisma.$executeRaw`
-      UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at = NOW()
-      WHERE merchant_id = ${item.merchant_id}::uuid AND rail_id = ${item.rail_id}::uuid`;
-    await prisma.$executeRaw`
-      UPDATE payout_items SET refund_status = 'approved', refund_reviewed_at = NOW(),
-        refund_reviewed_by = ${req.user.email || req.user.id} WHERE id = ${itemId}::uuid`;
+    const reviewedBy = req.user.email || req.user.id;
+    const reference = `REFUND-${itemId.slice(0, 8).toUpperCase()}`;
+
+    // Guarded transaction: the status flip happens FIRST and is checked for affected
+    // rows before any wallet credit runs, so a race (double-click, two admins) can
+    // never credit the same item twice. Mirrors admin.js's approve-refund endpoint,
+    // plus a ledger row — this path previously credited merchant_wallets directly
+    // with no wallet_ledger entry at all, making it invisible to reconciliation.
+    const applied = await prisma.$transaction(async (tx) => {
+      const flipped = await tx.$executeRawUnsafe(
+        `UPDATE payout_items SET refund_status = 'approved', refund_reviewed_at = NOW(),
+           refund_reviewed_by = $1 WHERE id = $2::uuid AND refund_status = 'pending_review'`,
+        reviewedBy, itemId
+      );
+      if (flipped === 0) return false;
+
+      const [before] = await tx.$queryRawUnsafe(
+        `SELECT balance::text AS balance FROM merchant_wallets
+         WHERE merchant_id = $1::uuid AND rail_id = $2::uuid FOR UPDATE`,
+        item.merchant_id, item.rail_id
+      );
+      const beforeBal = before ? BigInt(before.balance) : 0n;
+      const afterBal = beforeBal + merchBack;
+
+      await tx.$executeRawUnsafe(
+        `INSERT INTO merchant_wallets (merchant_id, rail_id, balance, updated_at)
+         VALUES ($1::uuid, $2::uuid, $3, NOW())
+         ON CONFLICT (merchant_id, rail_id) DO UPDATE SET balance = merchant_wallets.balance + $3, updated_at = NOW()`,
+        item.merchant_id, item.rail_id, merchBack.toString()
+      );
+      await tx.$executeRawUnsafe(
+        `INSERT INTO wallet_ledger
+           (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
+         VALUES ($1::uuid, $2::uuid, 'REVERSAL', $3, $4, $5, $6, $7, $8, NOW())`,
+        item.merchant_id, item.rail_id, merchBack.toString(), beforeBal.toString(), afterBal.toString(),
+        reference, 'SA-approved refund — payout failed, confirmed no record', req.user?.id || null
+      );
+      return true;
+    });
+
+    if (!applied) return fail(res, 'Item already reviewed (race) — no change made');
 
     const naira = (Number(item.refund_amount) / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 });
     ok(res, { item_id: itemId, refunded_naira: Number(item.refund_amount) / 100 },
