@@ -7155,6 +7155,7 @@ async function showPayoutUpload() {
       <div id="payout-validation"></div>
     </div>
   </div>`;
+  formArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function addBeneficiaryRow() {
