@@ -9,12 +9,16 @@
 const palmpay          = require('./palmpayService');
 const parallexTransfer = require('./parallexTransferService');
 const opay             = require('./opayService');
+const nibssEasyPay     = require('./nibssEasyPayService');
+const nomba            = require('./nombaService');
 
 function payoutAdapterForName(name) {
   const n = (name || '').toLowerCase();
-  if (/palmpay/.test(n)  && palmpay.isConfigured())              return palmpay;
-  if (/parallex/.test(n) && parallexTransfer.isConfigured())     return parallexTransfer;
-  if (/opay/.test(n)     && opay.isPayoutConfigured())           return opay;
+  if (/palmpay/.test(n)              && palmpay.isConfigured())          return palmpay;
+  if (/parallex/.test(n)             && parallexTransfer.isConfigured()) return parallexTransfer;
+  if (/opay/.test(n)                 && opay.isPayoutConfigured())       return opay;
+  if (/nibss|easypay|nip/.test(n)    && nibssEasyPay.isConfigured())     return nibssEasyPay;
+  if (/nomba/.test(n)                && nomba.isConfigured())            return nomba;
   return null;
 }
 

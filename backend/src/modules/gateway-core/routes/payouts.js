@@ -4,13 +4,15 @@ const crypto  = require('crypto');
 const multer  = require('multer');
 const { body, validationResult } = require('express-validator');
 const { prisma }  = require('../../../utils/db');
-const { requireAuth, requireApiKey, requireSuperAdmin, requireCompliance } = require('../../../middleware/auth');
+const { requireAuth, requireApiKey, requireSuperAdmin, requireAdmin, requireCompliance, requireRole } = require('../../../middleware/auth');
 const { ok, fail, notFound, created, koboToNaira, generateRef } = require('../../../utils/helpers');
 const { logAudit } = require('../../../services/auditService');
 const { notifyRailIncident, recordRailResult, checkRailBalanceAndAlert } = require('../services/railHealth');
 const { BANKS, resolveBank } = require('../../../data/nibssBanks');
 const { syncRailFloat } = require('../services/railFloat');
 const { logger } = require('../../../utils/logger');
+const { requirePayoutPinMiddleware, hasPinSet, setPin } = require('../../../services/payoutPin');
+const { reauthenticate } = require('../../../services/reauth');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -70,7 +72,8 @@ async function resolveRouteRail(tx, merchantId) {
   // Check for active splits first.
   const splits = await tx.$queryRaw`
     SELECT ps.pct, pr.id AS rail_id, pr.name AS rail_name, pr.daily_value_cap,
-           pr.status, pr.payout_enabled
+           pr.status, pr.payout_enabled,
+           pr.stamp_duty_active, pr.stamp_duty_kobo, pr.stamp_duty_threshold_kobo, pr.stamp_duty_passthrough
     FROM merchant_payout_splits ps
     JOIN payment_rails pr ON pr.id = ps.rail_id
     WHERE ps.merchant_id = ${merchantId}::uuid AND ps.is_active = true
@@ -82,6 +85,10 @@ async function resolveRouteRail(tx, merchantId) {
     const total = live.reduce((s, r) => s + Number(r.pct), 0);
     return live.map((s, i) => ({
       rail_id: s.rail_id, rail_name: s.rail_name, daily_value_cap: s.daily_value_cap,
+      stamp_duty_active: !!s.stamp_duty_active,
+      stamp_duty_kobo: Number(s.stamp_duty_kobo || 5000),
+      stamp_duty_threshold_kobo: Number(s.stamp_duty_threshold_kobo || 1000000),
+      stamp_duty_passthrough: !!s.stamp_duty_passthrough,
       pct: i < live.length - 1 ? Math.round(Number(s.pct) * 100 / total) : null, // last gets remainder
     })).map((s, i, arr) => {
       if (s.pct !== null) return s;
@@ -91,11 +98,15 @@ async function resolveRouteRail(tx, merchantId) {
   }
   // Fall back to single-rail (per-merchant override or global default).
   const rows = await tx.$queryRaw`
-    SELECT COALESCE(mr.id, dr.id)                           AS rail_id,
-           COALESCE(mr.name, dr.name)                       AS rail_name,
-           COALESCE(mr.daily_value_cap, dr.daily_value_cap) AS daily_value_cap,
-           COALESCE(mr.status, dr.status)::text             AS status,
-           COALESCE(mr.payout_enabled, dr.payout_enabled)   AS payout_enabled
+    SELECT COALESCE(mr.id, dr.id)                                             AS rail_id,
+           COALESCE(mr.name, dr.name)                                         AS rail_name,
+           COALESCE(mr.daily_value_cap, dr.daily_value_cap)                   AS daily_value_cap,
+           COALESCE(mr.status, dr.status)::text                               AS status,
+           COALESCE(mr.payout_enabled, dr.payout_enabled)                     AS payout_enabled,
+           COALESCE(mr.stamp_duty_active, dr.stamp_duty_active, false)        AS stamp_duty_active,
+           COALESCE(mr.stamp_duty_kobo, dr.stamp_duty_kobo, 5000)             AS stamp_duty_kobo,
+           COALESCE(mr.stamp_duty_threshold_kobo, dr.stamp_duty_threshold_kobo, 1000000) AS stamp_duty_threshold_kobo,
+           COALESCE(mr.stamp_duty_passthrough, dr.stamp_duty_passthrough, false) AS stamp_duty_passthrough
     FROM merchants m
     LEFT JOIN payment_rails mr ON mr.id = m.payout_rail_id
     LEFT JOIN payment_rails dr ON dr.is_default_payout = true
@@ -103,7 +114,13 @@ async function resolveRouteRail(tx, merchantId) {
   const r = rows[0];
   if (!r || !r.rail_id) return [];
   if (r.status !== 'LIVE' || !r.payout_enabled) return [];
-  return [{ rail_id: r.rail_id, rail_name: r.rail_name, daily_value_cap: r.daily_value_cap, pct: 100 }];
+  return [{
+    rail_id: r.rail_id, rail_name: r.rail_name, daily_value_cap: r.daily_value_cap, pct: 100,
+    stamp_duty_active: !!r.stamp_duty_active,
+    stamp_duty_kobo: Number(r.stamp_duty_kobo || 5000),
+    stamp_duty_threshold_kobo: Number(r.stamp_duty_threshold_kobo || 1000000),
+    stamp_duty_passthrough: !!r.stamp_duty_passthrough,
+  }];
 }
 
 // ── Dual-auth middleware: accepts JWT Bearer token OR sk_live_/sk_test_ API key ──
@@ -114,7 +131,9 @@ function requireAuthOrApiKey(req, res, next) {
   // merchants; SUSPENDED/REJECTED accounts are still blocked in the handler.
   req.allowInactiveLivePayout = true;
   if (auth.startsWith('Bearer sk_live_') || auth.startsWith('Bearer sk_test_')) {
-    // API key path — sets req.merchant
+    // API key path — sets req.merchant. Flagged so the dashboard-only PIN gate
+    // (see requirePayoutPin) never applies to SDK/API-key submissions.
+    req.isApiKeyAuth = true;
     requireApiKey(req, res, () => {
       // Normalise to req.user shape so route handler works with both auth types
       if (req.merchant && !req.user) {
@@ -129,6 +148,7 @@ function requireAuthOrApiKey(req, res, next) {
     });
   } else {
     // JWT path — sets req.user
+    req.isApiKeyAuth = false;
     requireAuth(req, res, next);
   }
 }
@@ -139,6 +159,43 @@ const validate = rules => async (req, res, next) => {
   if (!e.isEmpty()) return res.status(400).json({ status:false, message:e.array()[0].msg, error_code:'VALIDATION_ERROR' });
   next();
 };
+
+// ── Payout PIN management (dashboard-only; SDK/API-key merchants never need one) ──
+// GET  /pin/status        — whether a PIN is already set
+// POST /pin/set           — set or reset the PIN; requires a password (+2FA) step-up
+//                            (see services/reauth.js), so this covers "set", "change",
+//                            and "forgot my PIN" with the same endpoint — no separate
+//                            email-token reset flow.
+router.get('/pin/status', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'MERCHANT' || !req.user.merchant?.id) return fail(res, 'Merchant account required');
+    const isSet = await hasPinSet(req.user.merchant.id);
+    return ok(res, { is_set: isSet });
+  } catch (err) { next(err); }
+});
+
+router.post('/pin/set',
+  requireAuth,
+  validate([
+    body('password').isString().notEmpty().withMessage('Current account password is required'),
+    body('pin').isString().matches(/^\d{6}$/).withMessage('PIN must be exactly 6 digits'),
+    body('code').optional().isString(),
+  ]),
+  async (req, res, next) => {
+    try {
+      if (req.user.role !== 'MERCHANT' || !req.user.merchant?.id) return fail(res, 'Merchant account required');
+      // 2FA step-up disabled for now — password alone is the step-up token.
+      const step = await reauthenticate(req.user.id, { password: req.body.password, code: req.body.code, skipTwoFA: true });
+      if (!step.ok) {
+        return res.status(step.code === 'TWOFA_REQUIRED' ? 400 : 401)
+          .json({ status: false, message: step.error, error_code: step.code });
+      }
+      const result = await setPin(req.user.merchant.id, req.body.pin);
+      if (!result.ok) return res.status(400).json({ status: false, message: result.error, error_code: result.code });
+      logAudit(req.user.id, 'PAYOUT_PIN_SET', 'merchant', req.user.merchant.id, {}).catch(() => {});
+      return ok(res, { message: 'Payout PIN set successfully' });
+    } catch (err) { next(err); }
+  });
 
 // ── POST /api/v1/payouts/fund/va — Merchant requests a Parallex VA to pre-fund ──
 // Generates a timed Parallex VA for the exact amount requested. The merchant
@@ -521,9 +578,36 @@ router.get('/banks', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── POST /api/v1/payouts/name-enquiry — live account-name lookup ─────────────
+// Called from the payout form as the merchant finishes typing an account number
+// so they can confirm the beneficiary before submitting. Returns the same
+// session_id the batch dispatch step needs — the frontend echoes it back on
+// /batches so dispatch reuses this lookup instead of running NE again.
+router.post('/name-enquiry',
+  requireAuth,
+  body('account_number').isString().isLength({ min: 10, max: 10 }).matches(/^\d+$/).withMessage('account_number must be 10 digits'),
+  body('bank_code').isString().notEmpty().withMessage('bank_code is required'),
+  async (req, res, next) => {
+    try {
+      const errs = validationResult(req);
+      if (!errs.isEmpty()) return fail(res, errs.array()[0].msg);
+      if (!req.user.merchant?.id) return fail(res, 'No merchant account');
+      const hit = resolveBank(req.body.bank_code);
+      if (!hit) return fail(res, 'Bank not recognised');
+      const plx = (() => {
+        try { return require('../services/parallexTransferService'); } catch (_) { return null; }
+      })();
+      if (!plx || !plx.isConfigured()) return fail(res, 'Name lookup is unavailable right now');
+      const ne = await plx.nameEnquiry(hit.code, req.body.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
+      if (!ne.ok || !ne.accountName) return fail(res, ne.reason || 'Could not resolve an account name for that number/bank', 'NE_FAILED');
+      ok(res, { account_name: ne.accountName, session_id: ne.sessionId, bank_code: hit.code, bank_name: hit.name });
+    } catch (e) { next(e); }
+  }
+);
+
 // ── POST /api/v1/payouts/batches — create payout batch ───────────────────────
 // Accepts EITHER a merchant JWT (dashboard) or sk_live_/sk_test_ API key (SDK)
-router.post('/batches', requireAuthOrApiKey,
+router.post('/batches', requireAuthOrApiKey, requirePayoutPinMiddleware,
   validate([
     body('description').optional().isString(),
     body('scheduled_at').optional().isISO8601(),
@@ -533,6 +617,9 @@ router.post('/batches', requireAuthOrApiKey,
     body('items.*').custom(it => it && (it.bank_code || it.bank_name)).withMessage('Each item needs a bank_code or bank_name'),
     body('items.*.amount').isInt({ min: 1 }).withMessage('amount in kobo required for each item'),
     body('items.*.client_ref').optional({ nullable: true }).isString().withMessage('client_ref must be a string'),
+    body('items.*.account_name').optional({ nullable: true }).isString(),
+    body('items.*.ne_session_id').optional({ nullable: true }).isString(),
+    body('items.*.ne_account_name').optional({ nullable: true }).isString(),
   ]),
   async (req, res, next) => {
     try {
@@ -681,17 +768,44 @@ router.post('/batches', requireAuthOrApiKey,
               { _client: true, _code: 'NO_ROUTE' });
           const primaryRail = routeRails[0]; // highest-pct or sole rail — used for batch row + ledger
 
+          // Assign items to rails by weighted block (needed before balance check to know stamp duty).
+          const railAssignment = (() => {
+            if (routeRails.length === 1) return itemsWithFees.map(() => routeRails[0]);
+            return itemsWithFees.map((_, i) => {
+              const progress = (i + 1) / itemsWithFees.length;
+              let cumPct = 0;
+              for (const rr of routeRails) {
+                cumPct += rr.pct / 100;
+                if (progress <= cumPct + 0.0001) return rr;
+              }
+              return routeRails[routeRails.length - 1];
+            });
+          })();
+
+          // Per-item stamp duty: always accrue on eligible txns (amount >= threshold).
+          // Only debit wallet when the assigned rail has stamp_duty_active = true.
+          const itemsWithStampDuty = itemsWithFees.map((item, idx) => {
+            const ar = railAssignment[idx];
+            const eligible = BigInt(item.amount) >= BigInt(ar.stamp_duty_threshold_kobo);
+            const stamp_duty_kobo     = eligible ? BigInt(ar.stamp_duty_kobo) : 0n;
+            const stamp_duty_deducted = eligible && ar.stamp_duty_active;
+            return { ...item, stamp_duty_kobo, stamp_duty_deducted };
+          });
+          const totalStampDuty    = itemsWithStampDuty.reduce((s, i) => s + (i.stamp_duty_deducted ? i.stamp_duty_kobo : 0n), 0n);
+          const totalDeductionFinal = totalDeduction + totalStampDuty;
+
           // Pooled balance — lock every row we might debit.
+          // Primary rail wallet is debited first; others are fallback only.
           const walletRows = await tx.$queryRaw`
             SELECT id, balance FROM merchant_wallets
             WHERE merchant_id = ${merchantId}::uuid AND balance > 0
-            ORDER BY balance DESC FOR UPDATE`;
+            ORDER BY (rail_id = ${primaryRail.rail_id}::uuid) DESC, balance DESC FOR UPDATE`;
           const pooled = walletRows.reduce((s, r) => s + BigInt(r.balance), 0n);
-          if (pooled < totalDeduction)
+          if (pooled < totalDeductionFinal)
             throw Object.assign(new Error(
               `Insufficient balance. Available ₦${koboToNaira(pooled).toLocaleString('en-NG')}, ` +
-              `required ₦${koboToNaira(totalDeduction).toLocaleString('en-NG')} ` +
-              `(₦${koboToNaira(totalAmount).toLocaleString('en-NG')} payouts + ₦${koboToNaira(totalFee).toLocaleString('en-NG')} fee + ₦${koboToNaira(totalVat).toLocaleString('en-NG')} VAT).`),
+              `required ₦${koboToNaira(totalDeductionFinal).toLocaleString('en-NG')} ` +
+              `(₦${koboToNaira(totalAmount).toLocaleString('en-NG')} payouts + ₦${koboToNaira(totalFee).toLocaleString('en-NG')} fee + ₦${koboToNaira(totalVat).toLocaleString('en-NG')} VAT${totalStampDuty > 0n ? ` + ₦${koboToNaira(totalStampDuty).toLocaleString('en-NG')} stamp duty` : ''}).`),
               { _client: true, _code: 'INSUFFICIENT_BALANCE' });
 
           // Per-rail daily-cap check: each rail must have headroom for its share.
@@ -707,18 +821,18 @@ router.post('/batches', requireAuthOrApiKey,
           // Create the batch (primary rail stored at batch level for display).
           const batch = await tx.$queryRaw`
             INSERT INTO payout_batches
-              (merchant_id, batch_ref, description, total_amount, total_fee, total_vat,
+              (merchant_id, batch_ref, description, total_amount, total_fee, total_vat, total_stamp_duty,
                fee_rate, total_items, status, rail_id, scheduled_at, created_by, created_at, updated_at)
             VALUES
               (${merchantId}::uuid, ${batchRef}, ${description||null},
-               ${totalAmount}, ${totalFee}, ${totalVat}, ${feeRate}::decimal,
+               ${totalAmount}, ${totalFee}, ${totalVat}, ${totalStampDuty}, ${feeRate}::decimal,
                ${items.length}, ${batchStatus}, ${primaryRail.rail_id}::uuid,
                ${scheduledAt}, ${req.user.id}::uuid, NOW(), NOW())
             RETURNING id`;
           batchId = batch[0].id;
 
-          // POOLED debit — draw totalDeduction across the merchant's rows (largest first).
-          let remaining = totalDeduction;
+          // POOLED debit — draw totalDeductionFinal across the merchant's rows (largest first).
+          let remaining = totalDeductionFinal;
           for (const w of walletRows) {
             if (remaining <= 0n) break;
             const take = BigInt(w.balance) < remaining ? BigInt(w.balance) : remaining;
@@ -727,12 +841,12 @@ router.post('/batches', requireAuthOrApiKey,
           }
           if (remaining > 0n) throw Object.assign(new Error('Balance changed during processing — please retry'), { _client: true });
 
-          // Ledger (DEBIT beneficiary / FEE / VAT) against the pooled balance, tagged
-          // with the primary route rail for reporting.
-          const afterBenef = pooled - totalAmount;
-          const afterFee   = afterBenef - totalFee;
-          const afterAll   = afterFee - totalVat;
-          const railLabel  = routeRails.length > 1
+          // Ledger (DEBIT beneficiary / FEE / VAT / STAMP_DUTY) against the pooled balance.
+          const afterBenef     = pooled - totalAmount;
+          const afterFee       = afterBenef - totalFee;
+          const afterVat       = afterFee - totalVat;
+          const afterAll       = afterVat - totalStampDuty;
+          const railLabel      = routeRails.length > 1
             ? routeRails.map(r => `${r.rail_name}(${r.pct}%)`).join('+')
             : primaryRail.rail_name;
           await tx.$executeRaw`
@@ -743,41 +857,56 @@ router.post('/batches', requireAuthOrApiKey,
                ${'Payout via ' + railLabel + ': ' + (description||batchRef)}, ${req.user.id}::uuid, NOW()),
               (${merchantId}::uuid, ${primaryRail.rail_id}::uuid, 'FEE', ${totalFee}, ${afterBenef}, ${afterFee}, ${batchRef},
                ${'Paylode payout service fee (' + (feeRate*100).toFixed(2) + '%)'}, ${req.user.id}::uuid, NOW()),
-              (${merchantId}::uuid, ${primaryRail.rail_id}::uuid, 'VAT', ${totalVat}, ${afterFee}, ${afterAll}, ${batchRef},
+              (${merchantId}::uuid, ${primaryRail.rail_id}::uuid, 'VAT', ${totalVat}, ${afterFee}, ${afterVat}, ${batchRef},
                ${'VAT on payout fee (7.5%)'}, ${req.user.id}::uuid, NOW())`;
+          if (totalStampDuty > 0n) {
+            const sdDesc = primaryRail.stamp_duty_passthrough
+              ? 'Stamp duty — charged by ' + primaryRail.rail_name + ' per transaction'
+              : 'Stamp duty — held for deferred billing by ' + primaryRail.rail_name;
+            await tx.$executeRaw`
+              INSERT INTO wallet_ledger
+                (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
+              VALUES
+                (${merchantId}::uuid, ${primaryRail.rail_id}::uuid, 'STAMP_DUTY', ${totalStampDuty}, ${afterVat}, ${afterAll}, ${batchRef},
+                 ${sdDesc}, ${req.user.id}::uuid, NOW())`;
+            // Credit holding wallet only when bank bills retroactively (not per-txn passthrough).
+            if (!primaryRail.stamp_duty_passthrough) {
+              await tx.$executeRaw`
+                INSERT INTO stamp_duty_wallets (merchant_id, balance, total_collected, created_at, updated_at)
+                VALUES (${merchantId}::uuid, ${totalStampDuty}, ${totalStampDuty}, NOW(), NOW())
+                ON CONFLICT (merchant_id) DO UPDATE
+                  SET balance         = stamp_duty_wallets.balance + EXCLUDED.balance,
+                      total_collected = stamp_duty_wallets.total_collected + EXCLUDED.total_collected,
+                      updated_at      = NOW()`;
+            }
+          }
 
-          // Assign items to rails by weighted block (e.g. 60% → Rail A first, 40% → Rail B).
-          // For a single rail, all items get that rail. dispatchBatch already handles multi-rail.
-          const railAssignment = (() => {
-            if (routeRails.length === 1) return itemsWithFees.map(() => routeRails[0]);
-            let pos = 0;
-            return itemsWithFees.map((_, i) => {
-              const progress = (i + 1) / itemsWithFees.length;
-              let cumPct = 0;
-              for (const rr of routeRails) {
-                cumPct += rr.pct / 100;
-                if (progress <= cumPct + 0.0001) return rr;
-              }
-              return routeRails[routeRails.length - 1];
-            });
-          })();
-
-          // Insert items, each tagged with its assigned rail.
-          for (let idx = 0; idx < itemsWithFees.length; idx++) {
-            const item = itemsWithFees[idx];
+          // Insert items, each tagged with its assigned rail + stamp duty columns.
+          for (let idx = 0; idx < itemsWithStampDuty.length; idx++) {
+            const item = itemsWithStampDuty[idx];
             const assignedRail = railAssignment[idx];
             const bank = await tx.$queryRaw`SELECT bank_name FROM nigerian_banks WHERE bank_code = ${item.bank_code}`;
             const clientRef = (item.client_ref && String(item.client_ref).trim()) ? String(item.client_ref).trim() : null;
+            // Frontend runs a live name-enquiry before submit and echoes the session
+            // back here — store it so dispatch (NE_TTL_MS window) skips a duplicate
+            // Parallex round trip, and use the resolved name if none was typed.
+            const neSessionId   = (item.ne_session_id && String(item.ne_session_id).trim()) ? String(item.ne_session_id).trim() : null;
+            const neAccountName = (item.ne_account_name && String(item.ne_account_name).trim()) ? String(item.ne_account_name).trim() : null;
+            const accountName   = (item.account_name && String(item.account_name).trim()) ? item.account_name : neAccountName;
             await tx.$executeRaw`
               INSERT INTO payout_items
                 (batch_id, merchant_id, account_number, account_name, bank_code, bank_name,
-                 amount, item_fee, item_vat, narration, status, rail_id, scheduled_at, client_ref, created_at)
+                 amount, item_fee, item_vat, stamp_duty_kobo, stamp_duty_deducted,
+                 narration, status, rail_id, scheduled_at, client_ref,
+                 ne_session_id, ne_account_name, ne_fetched_at, created_at)
               VALUES
-                (${batchId}::uuid, ${merchantId}::uuid, ${item.account_number}, ${item.account_name||null},
+                (${batchId}::uuid, ${merchantId}::uuid, ${item.account_number}, ${accountName||null},
                  ${item.bank_code}, ${bank[0]?.bank_name||item.bank_code},
                  ${BigInt(item.amount)}, ${item.fee}, ${item.vat},
+                 ${item.stamp_duty_kobo}, ${item.stamp_duty_deducted},
                  ${(item.narration && String(item.narration).trim()) ? item.narration : defaultNarration},
-                 ${itemStatus}, ${assignedRail.rail_id}::uuid, ${scheduledAt}, ${clientRef}, NOW())`;
+                 ${itemStatus}, ${assignedRail.rail_id}::uuid, ${scheduledAt}, ${clientRef},
+                 ${neSessionId}, ${neAccountName}, ${neSessionId ? new Date() : null}, NOW())`;
           }
 
           walletAfterTotal = afterAll;
@@ -821,7 +950,10 @@ router.post('/batches', requireAuthOrApiKey,
 );
 
 // ── POST /api/v1/payouts/batches/upload — CSV/Excel upload ───────────────────
-router.post('/batches/upload', requireAuth, upload.single('file'), async (req, res, next) => {
+router.post('/batches/upload', requireAuth, upload.single('file'), (req, res, next) => {
+  req.isApiKeyAuth = false; // dashboard-only route (requireAuth, not requireAuthOrApiKey)
+  next();
+}, requirePayoutPinMiddleware, async (req, res, next) => {
   try {
     if (!req.file) return fail(res, 'No file uploaded');
 
@@ -903,39 +1035,56 @@ router.post('/batches/upload', requireAuth, upload.single('file'), async (req, r
 });
 
 // ── GET /api/v1/payouts/batches — list merchant's payout batches ─────────────
+// Supports ?ref= (batch_ref search), ?page= (1-based), ?status= filters.
 router.get('/batches', requireAuth, async (req, res, next) => {
   try {
     const merchantId = req.user.role === 'MERCHANT'
       ? req.user.merchant?.id
       : req.query.merchant_id;
 
-    // Scope to the merchant when one applies (merchants see ONLY their own
-    // batches); parameterised to avoid SQL injection. SA/admin (no merchantId)
-    // see all. (Was: an unused WHERE string -> every merchant saw all batches.)
-    const batches = merchantId
-      ? await prisma.$queryRaw`
-          SELECT pb.*, m.business_name, pr.name as rail_name
-          FROM payout_batches pb
-          JOIN merchants m ON pb.merchant_id = m.id
-          LEFT JOIN payment_rails pr ON pb.rail_id = pr.id
-          WHERE pb.merchant_id = ${merchantId}::uuid
-          ORDER BY pb.created_at DESC LIMIT 50`
-      : await prisma.$queryRaw`
-          SELECT pb.*, m.business_name, pr.name as rail_name
-          FROM payout_batches pb
-          JOIN merchants m ON pb.merchant_id = m.id
-          LEFT JOIN payment_rails pr ON pb.rail_id = pr.id
-          ORDER BY pb.created_at DESC LIMIT 50`;
+    const ref     = (req.query.ref    || '').trim();
+    const status  = (req.query.status || '').trim();
+    const limit   = 50;
+    const page    = Math.max(1, parseInt(req.query.page) || 1);
+    const offset  = (page - 1) * limit;
+    const refLike = ref ? `%${ref.replace(/%/g, '\\%').replace(/_/g, '\\_')}%` : null;
 
+    const where = [];
+    const args  = [];
+    let i = 1;
+    if (merchantId) { where.push(`pb.merchant_id = $${i++}::uuid`); args.push(merchantId); }
+    if (refLike)    { where.push(`pb.batch_ref ILIKE $${i++}`);      args.push(refLike); }
+    if (status)     { where.push(`pb.status = $${i++}`);             args.push(status); }
+    const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+    const [batches, counts] = await Promise.all([
+      prisma.$queryRawUnsafe(
+        `SELECT pb.*, m.business_name, pr.name as rail_name
+         FROM payout_batches pb
+         JOIN merchants m ON pb.merchant_id = m.id
+         LEFT JOIN payment_rails pr ON pb.rail_id = pr.id
+         ${whereClause}
+         ORDER BY pb.created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+        ...args),
+      prisma.$queryRawUnsafe(
+        `SELECT COUNT(*)::int AS total FROM payout_batches pb ${whereClause}`,
+        ...args),
+    ]);
+
+    const total = Number(counts[0]?.total || 0);
+    const pages = Math.max(1, Math.ceil(total / limit));
     const isMerchant = req.user.role === 'MERCHANT';
-    ok(res, batches.map(b => {
-      const out = { ...b, total_amount_naira: koboToNaira(b.total_amount) };
-      if (isMerchant) { // rails are internal — never expose to merchants
-        delete out.rail_id; delete out.rail_name;
-        if (out.status === 'needs_routing') out.status = 'processing';
-      }
-      return out;
-    }));
+    ok(res, {
+      items: batches.map(b => {
+        const out = { ...b, total_amount_naira: koboToNaira(b.total_amount) };
+        if (isMerchant) {
+          delete out.rail_id; delete out.rail_name;
+          if (out.status === 'needs_routing') out.status = 'processing';
+        }
+        return out;
+      }),
+      meta: { page, pages, total, limit },
+    });
   } catch (e) { next(e); }
 });
 
@@ -1251,11 +1400,10 @@ router.post('/batches/:id/retry-failed', requireAuth, async (req, res, next) => 
 // single total (GET /payouts/wallet).
 router.get('/admin/wallets', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
-    // Every ACTIVATED merchant appears here so SA can fund any of them (even a brand-new
-    // merchant with no wallet yet). Deactivated / suspended merchants (isActive=false)
-    // drop off. Wallet balances (per rail) are zero until first funded.
+    // Only fully ACTIVE merchants (kycStatus=ACTIVE, isActive=true). PENDING_KYC,
+    // KYC_IN_REVIEW, and SUSPENDED merchants are excluded from the wallet page.
     const merchants = await prisma.merchant.findMany({
-      where: { isActive: true },
+      where: { isActive: true, kycStatus: 'ACTIVE' },
       select: { id: true, businessName: true, merchantCode: true },
     });
     const wallets = await prisma.merchantWallet.findMany({
@@ -1298,6 +1446,10 @@ router.get('/admin/payout-rails', requireAuth, requireSuperAdmin, async (req, re
       WHERE created_at >= date_trunc('day', NOW()) AND status NOT IN ('failed','reversed')
       GROUP BY rail_id`;
     const usedBy = {}; usedRows.forEach(r => { usedBy[r.rail_id] = BigInt(r.used); });
+    // stamp_duty columns added via raw SQL migration — not in Prisma schema
+    const sdRows = await prisma.$queryRaw`
+      SELECT id, stamp_duty_active, stamp_duty_kobo, stamp_duty_threshold_kobo, stamp_duty_passthrough FROM payment_rails`;
+    const sdBy = {}; sdRows.forEach(r => { sdBy[r.id] = r; });
     ok(res, rails.map(r => ({
       id: r.id, name: r.name, status: r.status, payoutEnabled: r.payoutEnabled,
       float_balance: Number(r.floatBalance), float_naira: koboToNaira(r.floatBalance), float_synced_at: r.floatSyncedAt,
@@ -1307,6 +1459,10 @@ router.get('/admin/payout-rails', requireAuth, requireSuperAdmin, async (req, re
       daily_value_cap_naira: r.dailyValueCap != null ? koboToNaira(r.dailyValueCap) : null,
       used_today: Number(usedBy[r.id] || 0n), used_today_naira: koboToNaira(usedBy[r.id] || 0n),
       tps_limit: r.tpsLimit, sponsor_bank: r.sponsorBank,
+      stamp_duty_active: !!(sdBy[r.id] && sdBy[r.id].stamp_duty_active),
+      stamp_duty_kobo: Number((sdBy[r.id] && sdBy[r.id].stamp_duty_kobo) || 5000),
+      stamp_duty_threshold_kobo: Number((sdBy[r.id] && sdBy[r.id].stamp_duty_threshold_kobo) || 1000000),
+      stamp_duty_passthrough: !!(sdBy[r.id] && sdBy[r.id].stamp_duty_passthrough),
     })));
   } catch (e) { next(e); }
 });
@@ -1491,7 +1647,8 @@ router.post('/admin/rails/:id/sync-float', requireAuth, requireSuperAdmin, async
 // ── PUT /api/v1/payouts/admin/payout-rails/:id — SA toggles payout-enable/status ─
 router.put('/admin/payout-rails/:id', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
-    const { payout_enabled, status, payout_flat_cost, payout_flat_cost_onus, daily_value_cap, tps_limit, sponsor_bank } = req.body;
+    const { payout_enabled, status, payout_flat_cost, payout_flat_cost_onus, daily_value_cap, tps_limit, sponsor_bank,
+            stamp_duty_active, stamp_duty_kobo, stamp_duty_threshold_kobo, stamp_duty_passthrough } = req.body;
     const data = {};
     if (payout_enabled !== undefined) data.payoutEnabled = !!payout_enabled;
     if (status !== undefined)         data.status = status;
@@ -1501,9 +1658,31 @@ router.put('/admin/payout-rails/:id', requireAuth, requireSuperAdmin, async (req
     if (daily_value_cap !== undefined)  data.dailyValueCap  = (daily_value_cap === null || daily_value_cap === '') ? null : BigInt(Math.max(0, Math.round(Number(daily_value_cap))));
     if (tps_limit !== undefined)        data.tpsLimit       = (tps_limit === null || tps_limit === '') ? null : parseInt(tps_limit, 10);
     if (sponsor_bank !== undefined)     data.sponsorBank    = sponsor_bank || null;
-    if (!Object.keys(data).length) return fail(res, 'Nothing to update');
-    const rail = await prisma.paymentRail.update({ where: { id: req.params.id }, data });
-    await logAudit(req.user.id, 'PAYOUT_RAIL_UPDATED', 'payment_rails', rail.id, {}, data, null, req.ip);
+    // stamp_duty fields are outside Prisma schema — update via raw SQL separately
+    const hasStampDutyUpdate = stamp_duty_active !== undefined || stamp_duty_kobo !== undefined || stamp_duty_threshold_kobo !== undefined || stamp_duty_passthrough !== undefined;
+    if (!Object.keys(data).length && !hasStampDutyUpdate) return fail(res, 'Nothing to update');
+    let rail;
+    if (Object.keys(data).length) {
+      rail = await prisma.paymentRail.update({ where: { id: req.params.id }, data });
+    } else {
+      rail = await prisma.paymentRail.findUnique({ where: { id: req.params.id } });
+    }
+    if (hasStampDutyUpdate) {
+      const sdActive      = stamp_duty_active !== undefined ? !!stamp_duty_active : undefined;
+      const sdKobo        = stamp_duty_kobo !== undefined ? Math.max(0, Math.round(Number(stamp_duty_kobo))) : undefined;
+      const sdThreshold   = stamp_duty_threshold_kobo !== undefined ? Math.max(0, Math.round(Number(stamp_duty_threshold_kobo))) : undefined;
+      const sdPassthrough = stamp_duty_passthrough !== undefined ? !!stamp_duty_passthrough : undefined;
+      const sets = [];
+      if (sdActive      !== undefined) sets.push(`stamp_duty_active = ${sdActive}`);
+      if (sdKobo        !== undefined) sets.push(`stamp_duty_kobo = ${sdKobo}`);
+      if (sdThreshold   !== undefined) sets.push(`stamp_duty_threshold_kobo = ${sdThreshold}`);
+      if (sdPassthrough !== undefined) sets.push(`stamp_duty_passthrough = ${sdPassthrough}`);
+      await prisma.$executeRawUnsafe(
+        `UPDATE payment_rails SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $1::uuid`,
+        req.params.id
+      );
+    }
+    await logAudit(req.user.id, 'PAYOUT_RAIL_UPDATED', 'payment_rails', rail.id, {}, { ...data, stamp_duty_active, stamp_duty_kobo, stamp_duty_threshold_kobo }, null, req.ip);
     ok(res, { id: rail.id, name: rail.name, status: rail.status, payoutEnabled: rail.payoutEnabled }, 'Rail updated');
   } catch (e) { next(e); }
 });
@@ -1691,7 +1870,8 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
     const legs = await prisma.$queryRaw`
       SELECT rd.id AS leg_id, rd.rail_id, rd.amount, rd.rail_cost, rd.rail_vat, rd.rail_order_id,
              pi.id AS item_id, pi.account_number, pi.account_name, pi.bank_code, pi.bank_name, pi.narration,
-             pi.item_fee, pi.item_vat, pi.ne_session_id, pi.ne_account_name, pi.ne_fetched_at
+             pi.item_fee, pi.item_vat, pi.stamp_duty_kobo, pi.stamp_duty_deducted,
+             pi.ne_session_id, pi.ne_account_name, pi.ne_fetched_at
       FROM rail_disbursements rd JOIN payout_items pi ON rd.payout_item_id = pi.id
       WHERE rd.batch_id = ${batchId}::uuid AND rd.status = 'pending'`;
     // Beneficiary/reference fields for the merchant payout webhook (batch is loaded above).
@@ -1889,20 +2069,12 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
           return;
         }
         const reason = r.ok ? `Rail returned orderStatus ${os}` : (r.reason || 'failed');
-        const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
+        const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0)
+          + (leg.stamp_duty_deducted ? BigInt(leg.stamp_duty_kobo || 0) : 0n);
         const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
         await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
-        const wUpd = await prisma.$queryRaw`
-          UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW()
-          WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)
-          RETURNING id, rail_id, balance - ${merchBack} AS balance_before, balance AS balance_after`;
-        if (wUpd && wUpd[0]) {
-          const w = wUpd[0];
-          await prisma.$executeRaw`INSERT INTO wallet_ledger (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
-            VALUES (${batch.merchant_id}::uuid, ${w.rail_id}::uuid, 'REVERSAL', ${merchBack}, ${w.balance_before}, ${w.balance_after}, ${leg.rail_order_id}, ${'Payout failed — auto-refunded: ' + String(leg.rail_order_id || '').slice(0, 60)}, NULL, NOW())`;
-        }
         await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
-        await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='approved', refund_reviewed_at=NOW(), refund_reviewed_by='auto', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
+        await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='pending_review', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
         nFail++;
         await recordRailResult(rail, { ok: false, reason, isLowBalance: /insufficient|balance|fund|limit/i.test(String(reason)) },
           { railId: leg.rail_id, railName: rail && rail.name, merchant: batch.merchant_id });
@@ -1910,22 +2082,14 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
       }
     };
 
-    // Mark a leg failed and auto-refund the merchant wallet immediately.
+    // Mark a leg failed — restore rail float, set refund_status=pending_review for SA to review.
     const pendingRefundLeg = async (leg, reason) => {
       const floatBack = BigInt(leg.amount) + BigInt(leg.rail_cost || 0) + BigInt(leg.rail_vat || 0);
-      const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0);
+      const merchBack = BigInt(leg.amount) + BigInt(leg.item_fee || 0) + BigInt(leg.item_vat || 0)
+        + (leg.stamp_duty_deducted ? BigInt(leg.stamp_duty_kobo || 0) : 0n);
       await prisma.$executeRaw`UPDATE payment_rails SET float_balance = float_balance + ${floatBack}, updated_at=NOW() WHERE id=${leg.rail_id}::uuid`;
-      const wUpd = await prisma.$queryRaw`
-        UPDATE merchant_wallets SET balance = balance + ${merchBack}, updated_at=NOW()
-        WHERE id = (SELECT id FROM merchant_wallets WHERE merchant_id=${batch.merchant_id}::uuid ORDER BY (rail_id = ${leg.rail_id}::uuid) DESC, balance DESC LIMIT 1)
-        RETURNING id, rail_id, balance - ${merchBack} AS balance_before, balance AS balance_after`;
-      if (wUpd && wUpd[0]) {
-        const w = wUpd[0];
-        await prisma.$executeRaw`INSERT INTO wallet_ledger (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
-          VALUES (${batch.merchant_id}::uuid, ${w.rail_id}::uuid, 'REVERSAL', ${merchBack}, ${w.balance_before}, ${w.balance_after}, ${leg.rail_order_id}, ${'Payout failed — auto-refunded: ' + String(leg.rail_order_id || '').slice(0, 60)}, NULL, NOW())`;
-      }
       await prisma.$executeRaw`UPDATE rail_disbursements SET status='failed', error_msg=${String(reason).slice(0, 280)}, updated_at=NOW() WHERE id=${leg.leg_id}::uuid`;
-      await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='approved', refund_reviewed_at=NOW(), refund_reviewed_by='auto', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
+      await prisma.$executeRaw`UPDATE payout_items SET status='failed', failure_reason=${String(reason).slice(0, 280)}, refund_status='pending_review', refund_amount=${merchBack} WHERE id=${leg.item_id}::uuid`;
       nFail++;
       firePayoutWebhook(hookLeg(leg), 'payout.failed', { errorMsg: reason });
     };
@@ -2403,7 +2567,7 @@ router.patch('/admin/merchants/:id/payout-settings', requireAuth, requireSuperAd
 });
 
 // ── GET /api/v1/payouts/admin/refunds/pending — SA: list items pending refund review ──
-router.get('/admin/refunds/pending', requireAuth, requireSuperAdmin, async (req, res, next) => {
+router.get('/admin/refunds/pending', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const items = await prisma.$queryRawUnsafe(`
       SELECT pi.id, pi.account_number, pi.account_name, pi.bank_code, pi.amount::text,
@@ -2422,7 +2586,7 @@ router.get('/admin/refunds/pending', requireAuth, requireSuperAdmin, async (req,
 });
 
 // ── POST /api/v1/payouts/admin/refunds/:itemId/approve — SA: approve and execute refund ──
-router.post('/admin/refunds/:itemId/approve', requireAuth, requireSuperAdmin, async (req, res, next) => {
+router.post('/admin/refunds/:itemId/approve', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { itemId } = req.params;
     const [item] = await prisma.$queryRawUnsafe(`
@@ -2485,7 +2649,7 @@ router.post('/admin/refunds/:itemId/approve', requireAuth, requireSuperAdmin, as
 });
 
 // ── POST /api/v1/payouts/admin/refunds/:itemId/reject — SA: reject refund (transfer went through) ──
-router.post('/admin/refunds/:itemId/reject', requireAuth, requireSuperAdmin, async (req, res, next) => {
+router.post('/admin/refunds/:itemId/reject', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { itemId } = req.params;
     const [item] = await prisma.$queryRawUnsafe(
@@ -2607,8 +2771,13 @@ router.get('/logs', requireAuth, async (req, res, next) => {
     const params = [];
     let p = 1;
 
+    // Map UI filter labels → DB status values
+    const STATUS_MAP = { queued: ['pending', 'needs_routing'], success: ['completed'], processing: ['processing'], failed: ['failed'], held: ['held'], reversed: ['reversed'] };
+    const dbStatuses = status ? (STATUS_MAP[status] || [status]) : null;
+
     if (targetMerchantId) { conditions.push(`pi.merchant_id = $${p++}::uuid`); params.push(targetMerchantId); }
-    if (status)           { conditions.push(`pi.status = $${p++}`);            params.push(status); }
+    if (dbStatuses?.length === 1) { conditions.push(`pi.status = $${p++}`);                   params.push(dbStatuses[0]); }
+    if (dbStatuses?.length  >  1) { conditions.push(`pi.status = ANY($${p++}::text[])`);      params.push(dbStatuses); }
     if (from)             { conditions.push(`pi.created_at >= $${p++}`);       params.push(new Date(from)); }
     if (to)               { conditions.push(`pi.created_at <= $${p++}`);       params.push(new Date(to + 'T23:59:59Z')); }
     if (batch_ref)        { conditions.push(`pb.batch_ref ILIKE $${p++}`);     params.push('%' + batch_ref + '%'); }
@@ -2641,6 +2810,7 @@ router.get('/logs', requireAuth, async (req, res, next) => {
     ok(res, {
       data: items.map(i => ({
         ...i,
+        status:          i.status === 'completed' ? 'success' : i.status,
         amount_naira:    koboToNaira(i.amount),
         fee_naira:       koboToNaira(i.item_fee || 0),
         vat_naira:       koboToNaira(i.item_vat || 0),
@@ -3025,11 +3195,13 @@ router.get('/items/by-ref/:clientRef', requireAuthOrApiKey, async (req, res, nex
     }
 
     const isMerchant = req.user.role === 'MERCHANT';
+    // Normalise internal 'completed' → 'success' so external consumers see the documented status.
+    const publicStatus = r.status === 'completed' ? 'success' : r.status;
     ok(res, {
       id:             r.id,
       client_ref:     r.client_ref,
       batch_ref:      r.batch_ref,
-      status:         r.status,
+      status:         publicStatus,
       amount_naira:   koboToNaira(r.amount),
       fee_naira:      koboToNaira(r.item_fee || 0n),
       account_number: r.account_number,
@@ -3058,12 +3230,12 @@ router.get('/admin/stuck', requireAuth, requireSuperAdmin, async (req, res, next
         (pb.created_at AT TIME ZONE 'Africa/Lagos')::text AS created_at,
         m.business_name,
         COUNT(pi.id)::int            AS total_items,
-        SUM(CASE WHEN pi.status IN ('queued','processing') THEN 1 ELSE 0 END)::int AS pending_items,
-        SUM(CASE WHEN pi.status IN ('queued','processing') THEN pi.amount ELSE 0 END)::bigint AS stuck_kobo,
-        SUM(CASE WHEN pi.status IN ('queued','processing') AND EXISTS(
+        SUM(CASE WHEN pi.status IN ('queued','processing','held') THEN 1 ELSE 0 END)::int AS pending_items,
+        SUM(CASE WHEN pi.status IN ('queued','processing','held') THEN pi.amount ELSE 0 END)::bigint AS stuck_kobo,
+        SUM(CASE WHEN pi.status IN ('queued','processing','held') AND EXISTS(
           SELECT 1 FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status IN ('pending','sent')
         ) THEN 1 ELSE 0 END)::int AS sent_to_rail,
-        SUM(CASE WHEN pi.status IN ('queued','processing') AND NOT EXISTS(
+        SUM(CASE WHEN pi.status IN ('queued','processing','held') AND NOT EXISTS(
           SELECT 1 FROM rail_disbursements rd WHERE rd.payout_item_id = pi.id AND rd.status IN ('pending','sent')
         ) THEN 1 ELSE 0 END)::int AS not_sent_to_rail
       FROM payout_batches pb
@@ -3072,7 +3244,7 @@ router.get('/admin/stuck', requireAuth, requireSuperAdmin, async (req, res, next
       WHERE pb.status IN ('processing','pending')
         AND pb.created_at > NOW() - INTERVAL '30 days'
       GROUP BY pb.id, pb.batch_ref, pb.status, pb.merchant_id, pb.created_at, m.business_name
-      HAVING SUM(CASE WHEN pi.status IN ('queued','processing') THEN 1 ELSE 0 END) > 0
+      HAVING SUM(CASE WHEN pi.status IN ('queued','processing','held') THEN 1 ELSE 0 END) > 0
       ORDER BY pb.created_at DESC
     `;
     ok(res, {
@@ -3093,19 +3265,13 @@ router.get('/admin/stuck', requireAuth, requireSuperAdmin, async (req, res, next
   } catch (e) { next(e); }
 });
 
-// ── POST /api/v1/payouts/admin/stuck/:batchId/check — SA: query rail + resolve ─
-// For each stuck item, query the rail and apply a safe resolution:
-//   - Rail confirms settled (orderStatus=2)           → mark success
-//   - NO RECORD (code=30) AND leg >1h old             → reverse (wallet refunded)
-//   - NO RECORD (code=30) AND leg <1h old             → hold (may still process)
-//   - Still in-flight (orderStatus 0/1) or other code → hold, log error
-//   - No rail leg (never dispatched)                  → report pre-dispatch only
-// No money moves without a confirmed NO RECORD + age check. (2026-09-17)
+// ── POST /api/v1/payouts/admin/stuck/:batchId/check — SA: query rail only, NO writes ─
+// Queries the rail for each stuck item and returns raw status. Makes NO DB changes.
+// SA reviews the result then clicks Approve Refund or No Refund to take action.
 router.post('/admin/stuck/:batchId/check', requireAuth, requireSuperAdmin, async (req, res, next) => {
   try {
     const { batchId } = req.params;
     const { payoutAdapterForName } = require('../services/payoutRailAdapter');
-    const { applyPayoutResult, rollupBatch } = require('../services/payoutSettle');
 
     const items = await prisma.$queryRaw`
       SELECT
@@ -3114,38 +3280,33 @@ router.post('/admin/stuck/:batchId/check', requireAuth, requireSuperAdmin, async
         pi.amount,
         pi.account_number,
         pi.bank_code,
+        pi.bank_name,
         rd.id::text                  AS rd_id,
-        rd.status                    AS rd_status,
         rd.rail_order_id,
         rd.sent_at,
-        rd.error_msg,
         pr.name                      AS rail_name
       FROM payout_items pi
       LEFT JOIN rail_disbursements rd
         ON rd.payout_item_id = pi.id AND rd.status IN ('pending','sent')
       LEFT JOIN payment_rails pr ON rd.rail_id = pr.id
       WHERE pi.batch_id = ${batchId}::uuid
-        AND pi.status IN ('queued','processing')
+        AND pi.status IN ('queued','processing','held')
       ORDER BY pi.created_at ASC
     `;
 
     if (!items.length)
-      return ok(res, { message: 'No stuck items found', settled: 0, reversed: 0, held: 0, pre_dispatch: 0, details: [] });
+      return ok(res, { message: 'No stuck items found', details: [] });
 
-    let settled = 0, reversed = 0, held = 0, pre_dispatch = 0;
     const details = [];
-    const ONE_HOUR_MS = 60 * 60 * 1000;
 
     for (const item of items) {
       if (!item.rd_id) {
-        pre_dispatch++;
-        details.push({ item_id: item.item_id, action: 'pre_dispatch', note: 'Not yet sent to rail — use Dispatch button' });
+        details.push({ item_id: item.item_id, rail_status: 'pre_dispatch', label: 'NOT SENT', note: 'Not yet dispatched to rail' });
         continue;
       }
       const adapter = payoutAdapterForName(item.rail_name);
       if (!adapter || !adapter.queryPayoutResult) {
-        held++;
-        details.push({ item_id: item.item_id, action: 'held', note: 'Rail adapter has no query API' });
+        details.push({ item_id: item.item_id, rail_status: 'no_api', label: 'NO QUERY API', note: 'Rail has no status query' });
         continue;
       }
       let r;
@@ -3155,50 +3316,251 @@ router.post('/admin/stuck/:batchId/check', requireAuth, requireSuperAdmin, async
           accountNumber: item.account_number, bankCode: item.bank_code,
         });
       } catch (e) {
-        held++;
-        details.push({ item_id: item.item_id, action: 'held', note: 'Rail query error: ' + String(e.message).slice(0, 80) });
+        details.push({ item_id: item.item_id, rail_status: 'query_error', label: 'QUERY FAILED', note: String(e.message).slice(0, 100) });
         continue;
       }
       if (!r || !r.ok) {
-        held++;
-        details.push({ item_id: item.item_id, action: 'held', note: 'Rail query returned no response' });
+        details.push({ item_id: item.item_id, rail_status: 'query_error', label: 'NO RESPONSE', note: 'Rail returned no response' });
         continue;
       }
-      const legAgeMs = item.sent_at ? Date.now() - new Date(item.sent_at).getTime() : ONE_HOUR_MS + 1;
 
-      if (r.orderStatus === '2') {
-        await applyPayoutResult({
-          orderId: item.rail_order_id,
-          orderNo: (r.raw?.data?.orderNo || r.raw?.Data?.orderNo) || null,
-          sessionId: r.sessionId, orderStatus: '2', errorMsg: null, source: 'sa-check',
-        });
-        settled++;
-        details.push({ item_id: item.item_id, action: 'settled', note: 'NIP confirmed settled at rail' });
+      const ageMin = item.sent_at ? Math.floor((Date.now() - new Date(item.sent_at).getTime()) / 60000) : null;
+      const ageLabel = ageMin != null ? ` (sent ${ageMin}m ago)` : '';
+
+      if (r.orderStatus === '2' || r.orderStatus === '3') {
+        details.push({ item_id: item.item_id, rail_status: 'settled', label: 'SETTLED ✓', note: 'Parallex confirms money sent' + ageLabel });
+      } else if (r.orderStatus === '1') {
+        details.push({ item_id: item.item_id, rail_status: 'pending', label: 'PENDING', note: 'Still in-flight on rail' + ageLabel });
       } else if (r.code === '30') {
-        if (legAgeMs >= ONE_HOUR_MS) {
-          await applyPayoutResult({
-            orderId: item.rail_order_id, orderNo: null, sessionId: null,
-            orderStatus: 'failed', errorMsg: 'No record at rail — confirmed not processed (SA check)',
-            source: 'sa-check',
-          });
-          reversed++;
-          details.push({ item_id: item.item_id, action: 'reversed', note: 'No record at rail, >1h old — wallet refunded' });
-        } else {
-          held++;
-          details.push({ item_id: item.item_id, action: 'held', note: 'No record at rail but <1h old — check again later' });
-        }
+        details.push({ item_id: item.item_id, rail_status: 'no_record', label: 'NO RECORD', note: 'Parallex has no record of this transaction' + ageLabel });
       } else {
-        const note = 'Rail code: ' + (r.code || r.orderStatus || '?') + (r.reason ? ' — ' + String(r.reason).slice(0, 80) : '');
-        held++;
-        details.push({ item_id: item.item_id, action: 'held', note });
+        const note = 'Rail code: ' + (r.code || r.orderStatus || '?') + (r.reason ? ' — ' + String(r.reason).slice(0, 80) : '') + ageLabel;
+        details.push({ item_id: item.item_id, rail_status: 'unknown', label: 'UNKNOWN', note });
       }
     }
 
+    logger.info({ batchId, count: details.length }, 'SA stuck-batch check (read-only)');
+    ok(res, { message: `Queried ${details.length} item(s) — no changes made`, details });
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/payouts/admin/stuck/:batchId/force-approve — SA manual refund ─
+// Credits merchant wallet for each stuck item (processing/held/failed+pending_review).
+// Use when Parallex confirmed NO RECORD and you want to refund to merchant wallet.
+router.post('/admin/stuck/:batchId/force-approve', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { batchId } = req.params;
+    const { rollupBatch } = require('../services/payoutSettle');
+
+    const items = await prisma.$queryRaw`
+      SELECT
+        pi.id::text           AS item_id,
+        pi.amount::bigint     AS amount,
+        pi.merchant_id::text  AS merchant_id,
+        rd.id::text           AS rd_id,
+        rd.rail_id::text      AS rail_id
+      FROM payout_items pi
+      LEFT JOIN rail_disbursements rd ON rd.payout_item_id = pi.id
+      WHERE pi.batch_id = ${batchId}::uuid
+        AND (
+          pi.status IN ('queued','processing','held')
+          OR (pi.status = 'failed' AND pi.refund_status = 'pending_review')
+        )
+    `;
+
+    if (!items.length) return ok(res, { message: 'No processing items found', credited: 0, details: [] });
+
+    let credited = 0;
+    const details = [];
+
+    for (const item of items) {
+      if (!item.rail_id) {
+        await prisma.$executeRawUnsafe(
+          `UPDATE payout_items SET status='failed', failure_reason='SA override — no rail record; approve from Payout Review', refund_status='pending_review' WHERE id=$1::uuid`,
+          item.item_id
+        );
+        details.push({ item_id: item.item_id, action: 'pending_review', note: 'No rail leg — check Payout Review to approve' });
+        continue;
+      }
+
+      const amount     = BigInt(item.amount);
+      const merchantId = item.merchant_id;
+      const railId     = item.rail_id;
+
+      const walletRows = await prisma.$queryRawUnsafe(
+        `SELECT balance::bigint AS balance FROM merchant_wallets WHERE merchant_id=$1::uuid AND rail_id=$2::uuid`,
+        merchantId, railId
+      );
+      const before = walletRows.length ? BigInt(walletRows[0].balance) : 0n;
+      const after  = before + amount;
+
+      await prisma.$transaction([
+        prisma.$executeRawUnsafe(
+          `UPDATE payout_items SET status='failed', refund_status='approved', refund_amount=$1, failure_reason='SA override — stuck processing, manual refund' WHERE id=$2::uuid`,
+          amount, item.item_id
+        ),
+        prisma.$executeRawUnsafe(
+          `INSERT INTO merchant_wallets (merchant_id, rail_id, balance, updated_at)
+           VALUES ($1::uuid, $2::uuid, $3, NOW())
+           ON CONFLICT (merchant_id, rail_id) DO UPDATE SET balance = merchant_wallets.balance + $3, updated_at = NOW()`,
+          merchantId, railId, amount
+        ),
+        prisma.$executeRawUnsafe(
+          `INSERT INTO wallet_ledger
+             (merchant_id, rail_id, entry_type, amount, balance_before, balance_after, reference, description, created_by, created_at)
+           VALUES ($1::uuid, $2::uuid, 'REVERSAL', $3, $4, $5, $6, $7, $8, NOW())`,
+          merchantId, railId, amount, before, after,
+          `REFUND-${item.item_id.slice(0, 8).toUpperCase()}`,
+          'SA override — manual refund for payout stuck in processing',
+          req.user?.id || null
+        ),
+      ]);
+
+      credited++;
+      details.push({ item_id: item.item_id, action: 'credited', note: `₦${(Number(amount) / 100).toFixed(2)} credited to merchant wallet` });
+    }
+
     await rollupBatch(batchId);
-    logger.info({ batchId, settled, reversed, held, pre_dispatch }, 'SA stuck-batch check');
+    logger.info({ batchId, credited }, 'SA force-approve stuck batch');
+    ok(res, { message: `${credited} item(s) refunded to merchant wallet`, credited, details });
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/payouts/admin/stuck/:batchId/force-reject — SA no-refund override ─
+// Marks all stuck items (processing/held/failed+pending_review) as failed/rejected.
+// Use only when Parallex confirms the payout DID reach the recipient.
+router.post('/admin/stuck/:batchId/force-reject', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { batchId } = req.params;
+    const { rollupBatch } = require('../services/payoutSettle');
+
+    const items = await prisma.$queryRaw`
+      SELECT pi.id::text AS item_id
+      FROM payout_items pi
+      WHERE pi.batch_id = ${batchId}::uuid
+        AND (
+          pi.status IN ('queued','processing','held')
+          OR (pi.status = 'failed' AND pi.refund_status = 'pending_review')
+        )
+    `;
+
+    if (!items.length) return ok(res, { message: 'No processing items found', rejected: 0 });
+
+    let rejected = 0;
+    for (const item of items) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE payout_items SET status='failed', refund_status='rejected', failure_reason='SA override — confirmed sent, no refund' WHERE id=$1::uuid`,
+        item.item_id
+      );
+      rejected++;
+    }
+
+    await rollupBatch(batchId);
+    logger.info({ batchId, rejected }, 'SA force-reject stuck batch');
+    ok(res, { message: `${rejected} item(s) marked no-refund. No wallet credit.`, rejected });
+  } catch (e) { next(e); }
+});
+
+// ── STAMP DUTY WALLETS ────────────────────────────────────────────────────────
+// Holding wallets for collected stamp duty. Collections only happen when a rail
+// has stamp_duty_active=true. Until then, payout_items.stamp_duty_kobo accrues
+// as an audit trail but nothing moves into these wallets.
+
+// SA: stamp duty entries — wallet_ledger STAMP_DUTY rows, filterable by rail + date.
+router.get('/admin/stamp-duty-entries', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { rail_id, merchant_id, from, to, limit = '100' } = req.query;
+    const lim = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
+    const fromDt = from ? new Date(from) : null;
+    const toDt   = to   ? new Date(to)   : null;
+    // Build raw query — all conditions optional.
+    const conditions = [`wl.entry_type = 'STAMP_DUTY'`];
+    const params = [];
+    if (rail_id) { params.push(rail_id); conditions.push(`wl.rail_id = $${params.length}::uuid`); }
+    if (merchant_id) { params.push(merchant_id); conditions.push(`wl.merchant_id = $${params.length}::uuid`); }
+    if (fromDt) { params.push(fromDt.toISOString()); conditions.push(`wl.created_at >= $${params.length}`); }
+    if (toDt)   { params.push(toDt.toISOString());   conditions.push(`wl.created_at <= $${params.length}`); }
+    const where = conditions.join(' AND ');
+    params.push(lim);
+    const entries = await prisma.$queryRawUnsafe(`
+      SELECT wl.id, wl.merchant_id, wl.rail_id, wl.amount, wl.reference, wl.description, wl.created_at,
+             m.business_name, pr.name AS rail_name
+      FROM wallet_ledger wl
+      JOIN merchants m ON m.id = wl.merchant_id
+      LEFT JOIN payment_rails pr ON pr.id = wl.rail_id
+      WHERE ${where}
+      ORDER BY wl.created_at DESC
+      LIMIT $${params.length}`, ...params);
+    // Rails list for filter dropdown
+    const rails = await prisma.$queryRaw`
+      SELECT DISTINCT pr.id, pr.name FROM payment_rails pr
+      JOIN wallet_ledger wl ON wl.rail_id = pr.id WHERE wl.entry_type = 'STAMP_DUTY'
+      ORDER BY pr.name`;
+    ok(res, { entries, rails });
+  } catch (e) { next(e); }
+});
+
+// SA: all merchant stamp duty wallets + accrued-but-not-collected totals.
+router.get('/admin/stamp-duty-wallets', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const wallets = await prisma.$queryRaw`
+      SELECT sdw.merchant_id, m.business_name, m.email,
+             sdw.balance, sdw.total_collected, sdw.total_remitted, sdw.updated_at
+      FROM stamp_duty_wallets sdw
+      JOIN merchants m ON m.id = sdw.merchant_id
+      ORDER BY sdw.balance DESC, m.business_name`;
+    ok(res, { wallets });
+  } catch (e) { next(e); }
+});
+
+// SA: record a remittance (Parallex charged our account — draw down merchant's stamp duty wallet).
+router.post('/admin/stamp-duty-wallets/:merchantId/remit', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { merchantId } = req.params;
+    const { amount, description, rail_id } = req.body;
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0)
+      return fail(res, 'amount required (kobo)');
+    const amtKobo = BigInt(Math.round(Number(amount)));
+    const wallet = await prisma.$queryRaw`
+      SELECT balance FROM stamp_duty_wallets WHERE merchant_id = ${merchantId}::uuid`;
+    if (!wallet.length)
+      return fail(res, 'No stamp duty wallet found for this merchant');
+    if (BigInt(wallet[0].balance) < amtKobo)
+      return fail(res, `Insufficient stamp duty balance. Available: ${wallet[0].balance} kobo`);
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        UPDATE stamp_duty_wallets
+          SET balance = balance - ${amtKobo}, total_remitted = total_remitted + ${amtKobo}, updated_at = NOW()
+        WHERE merchant_id = ${merchantId}::uuid`;
+      if (rail_id) {
+        await tx.$executeRaw`
+          INSERT INTO stamp_duty_remittances (merchant_id, rail_id, amount, description, created_by, created_at)
+          VALUES (${merchantId}::uuid, ${rail_id}::uuid, ${amtKobo}, ${description||null}, ${req.user.id}::uuid, NOW())`;
+      } else {
+        await tx.$executeRaw`
+          INSERT INTO stamp_duty_remittances (merchant_id, amount, description, created_by, created_at)
+          VALUES (${merchantId}::uuid, ${amtKobo}, ${description||null}, ${req.user.id}::uuid, NOW())`;
+      }
+    });
+    await logAudit(req.user.id, 'STAMP_DUTY_REMIT', 'stamp_duty_wallets', merchantId, {}, { amount: Number(amtKobo), description }, null, req.ip);
+    ok(res, { merchant_id: merchantId, remitted: Number(amtKobo) }, 'Remittance recorded');
+  } catch (e) { next(e); }
+});
+
+// Merchant: own stamp duty wallet balance + recent collections.
+router.get('/stamp-duty/wallet', requireAuth, async (req, res, next) => {
+  try {
+    const merchantId = req.user.merchantId;
+    const [wallet] = await prisma.$queryRaw`
+      SELECT balance, total_collected, total_remitted, updated_at
+      FROM stamp_duty_wallets WHERE merchant_id = ${merchantId}::uuid`;
+    const remittances = await prisma.$queryRaw`
+      SELECT amount, description, created_at FROM stamp_duty_remittances
+      WHERE merchant_id = ${merchantId}::uuid
+      ORDER BY created_at DESC LIMIT 20`;
     ok(res, {
-      message: `Check complete: ${settled} settled, ${reversed} reversed, ${held} held, ${pre_dispatch} pre-dispatch`,
-      settled, reversed, held, pre_dispatch, details,
+      wallet: wallet || { balance: 0, total_collected: 0, total_remitted: 0, updated_at: null },
+      remittances,
     });
   } catch (e) { next(e); }
 });

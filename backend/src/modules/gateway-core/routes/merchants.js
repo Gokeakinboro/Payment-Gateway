@@ -1212,4 +1212,43 @@ router.get('/whatsapp-billing', requireAuth, requireSuperAdmin, async (req, res,
   } catch (e) { next(e); }
 });
 
+// ── POST /:id/run-kyc — (re)run KYC orchestrator for a merchant ───────────────
+const { runOnboardingChecks } = require('../../../services/kycOrchestrator');
+router.post('/:id/run-kyc', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const suppressMerchantEmail = req.body?.suppressMerchantEmail === true;
+    const sub = await prisma.onboardingSubmission.findFirst({
+      where: { merchantId: id },
+      select: { reference: true },
+      orderBy: { submittedAt: 'desc' },
+    });
+    if (!sub) return fail(res, 'No onboarding submission found for this merchant', 404);
+    setImmediate(() => runOnboardingChecks(sub.reference, { suppressMerchantEmail }).catch((e) => logger.error({ err: e.message, ref: sub.reference }, 'Manual KYC run failed')));
+    ok(res, { reference: sub.reference }, `KYC checks started — summary email will arrive shortly${suppressMerchantEmail ? ' (merchant emails suppressed)' : ''}`);
+  } catch (e) { next(e); }
+});
+
+// ── POST /kyc-batch — run KYC for all PENDING_KYC merchants ──────────────────
+router.post('/kyc-batch', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
+  try {
+    const suppressMerchantEmail = req.body?.suppressMerchantEmail !== false; // default true for batch
+    const subs = await prisma.onboardingSubmission.findMany({
+      where: { merchant: { kycStatus: 'PENDING_KYC' } },
+      select: { reference: true, merchantId: true },
+      orderBy: { submittedAt: 'asc' },
+    });
+    if (!subs.length) return ok(res, { count: 0 }, 'No PENDING_KYC merchants found');
+    setImmediate(async () => {
+      for (const sub of subs) {
+        await runOnboardingChecks(sub.reference, { suppressMerchantEmail }).catch((e) =>
+          logger.error({ err: e.message, ref: sub.reference }, 'Batch KYC run failed')
+        );
+      }
+      logger.info({ count: subs.length, suppressMerchantEmail }, 'KYC batch complete');
+    });
+    ok(res, { count: subs.length, suppressMerchantEmail }, `KYC batch started for ${subs.length} merchants`);
+  } catch (e) { next(e); }
+});
+
 module.exports = router;

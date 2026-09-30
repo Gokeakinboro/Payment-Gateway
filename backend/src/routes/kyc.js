@@ -382,6 +382,117 @@ router.put('/:id/address-check/reject', requireAuth, requireAdminOrCompliance, a
   } catch (e) { next(e); }
 });
 
+// ── Document-update upload ────────────────────────────────────────────────────
+const DOC_UPLOAD_DIR = '/var/www/paylode/uploads/kyc/docs';
+if (!fs.existsSync(DOC_UPLOAD_DIR)) fs.mkdirSync(DOC_UPLOAD_DIR, { recursive: true });
+const docUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, DOC_UPLOAD_DIR),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, 'doc-' + (req.user?.merchant?.id || 'u') + '-' + Date.now() + ext);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!/\.(pdf|jpg|jpeg|png)$/.test(path.extname(file.originalname).toLowerCase()))
+      return cb(new Error('Only PDF, JPG and PNG files are allowed'));
+    cb(null, true);
+  },
+});
+
+// ── GET /api/v1/kyc/my-kyc — merchant: view current docs + pending updates ────
+router.get('/my-kyc', requireAuth, async (req, res, next) => {
+  try {
+    if (!req.user.merchant) return fail(res, 'No merchant account');
+    const merchantId = req.user.merchant.id;
+
+    const [sub, docs, pending, merchant] = await Promise.all([
+      prisma.kycSubmission.findFirst({
+        where: { merchantId },
+        orderBy: { submittedAt: 'desc' },
+        select: {
+          id: true, status: true, tierApplied: true,
+          bvnVerified: true, ninVerified: true, cacVerified: true,
+          bvnCheckStatus: true, ninCheckStatus: true, cacCheckStatus: true,
+          reviewNotes: true, submittedAt: true, approvedAt: true,
+        },
+      }),
+      prisma.$queryRawUnsafe(`
+        SELECT id::text, doc_key, doc_label, status, file_path, kind, notes, updated_at::text
+        FROM kyc_documents WHERE entity_type='merchant' AND entity_id=$1::uuid
+        ORDER BY created_at ASC
+      `, merchantId),
+      prisma.$queryRawUnsafe(`
+        SELECT id::text, doc_key, status, submitted_at::text
+        FROM kyc_document_updates
+        WHERE merchant_id=$1::uuid AND status='pending'
+      `, merchantId),
+      prisma.merchant.findUnique({
+        where: { id: merchantId },
+        select: { businessName: true, merchantCode: true, businessType: true },
+      }),
+    ]);
+
+    const pendingByKey = {};
+    pending.forEach(u => { pendingByKey[u.doc_key] = u; });
+
+    ok(res, {
+      merchant,
+      submission: sub ? {
+        status:       sub.status,
+        tier:         sub.tierApplied,
+        bvn_verified: sub.bvnVerified,
+        nin_verified: sub.ninVerified,
+        cac_verified: sub.cacVerified,
+        checks:       { bvn: sub.bvnCheckStatus, nin: sub.ninCheckStatus, cac: sub.cacCheckStatus },
+        review_notes: sub.reviewNotes,
+        submitted_at: sub.submittedAt,
+        approved_at:  sub.approvedAt,
+      } : null,
+      documents: docs.map(d => ({
+        id:             d.id,
+        doc_key:        d.doc_key,
+        doc_label:      d.doc_label,
+        status:         d.status,
+        file_path:      d.file_path,
+        kind:           d.kind,
+        notes:          d.notes,
+        updated_at:     d.updated_at,
+        pending_update: pendingByKey[d.doc_key] || null,
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/v1/kyc/document-update — merchant submits a doc for SA review ──
+router.post('/document-update', requireAuth, docUpload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.user.merchant) return fail(res, 'No merchant account');
+    const merchantId = req.user.merchant.id;
+    const { doc_key, doc_label, kyc_document_id, merchant_notes } = req.body;
+
+    if (!doc_key)   return fail(res, 'doc_key is required');
+    if (!doc_label) return fail(res, 'doc_label is required');
+
+    const existing = await prisma.$queryRawUnsafe(`
+      SELECT id FROM kyc_document_updates
+      WHERE merchant_id=$1::uuid AND doc_key=$2 AND status='pending'
+    `, merchantId, doc_key);
+    if (existing.length) return fail(res, 'You already have a pending update for this document. Please wait for admin review.');
+
+    const filePath = req.file ? `/uploads/kyc/docs/${req.file.filename}` : null;
+
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO kyc_document_updates
+        (merchant_id, kyc_document_id, doc_key, doc_label, file_path, merchant_notes, status, submitted_at)
+      VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, 'pending', NOW())
+    `, merchantId, kyc_document_id || null, doc_key, doc_label, filePath, merchant_notes || null);
+
+    ok(res, { note: 'Document submitted for review. Admin will approve or request changes.' });
+  } catch (e) { next(e); }
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatSubmission(s) {
   return {

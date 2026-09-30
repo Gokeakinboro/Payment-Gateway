@@ -359,11 +359,14 @@ async function queryPayoutResult({ orderId, amount, accountNumber, bankCode } = 
   if (codeOf(r) === '30') {
     return { ok: true, code: '30', reason: msgOf(r) || 'NO RECORD — transaction not found at Parallex', orderStatus: null, raw: r };
   }
+  const inner = r?.Data || r?.data;
+  const sessionId = (inner?.sessionId) || (inner?.transactionReference) || null;
   return {
     ok: true,
     code: out.code,
     reason: out.reason,
     orderStatus: out.orderStatus,
+    sessionId,
     raw: r,
   };
 }

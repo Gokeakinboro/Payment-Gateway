@@ -19,28 +19,6 @@ var RAIL_COSTS = {
   'GT Bank Direct': { transfer: 0.004, card: 0.012, ussd: 0.007 },
 };
 
-var MERCHANTS = [
-  { id:'MCH001', name:'Shoprite Nigeria',  category:'Retail',     status:'active',    aggregator:'AGG001', rate:1.5, vol:48200000,  txns:3840,  joined:'2024-01-12' },
-  { id:'MCH002', name:'Bolt Nigeria',      category:'Transport',  status:'active',    aggregator:'AGG001', rate:1.2, vol:91000000,  txns:12400, joined:'2024-02-08' },
-  { id:'MCH003', name:'Jumia Foods',       category:'E-commerce', status:'active',    aggregator:'AGG002', rate:1.8, vol:32100000,  txns:6200,  joined:'2024-03-01' },
-  { id:'MCH004', name:'TechHub Lagos',     category:'Tech',       status:'pending',   aggregator:null,     rate:1.5, vol:0,         txns:0,     joined:'2025-05-20' },
-  { id:'MCH005', name:'EduPay School',     category:'Education',  status:'active',    aggregator:'AGG002', rate:1.0, vol:18900000,  txns:1120,  joined:'2024-04-15' },
-  { id:'MCH006', name:'Medplus Pharmacy',  category:'Healthcare', status:'suspended', aggregator:null,     rate:1.5, vol:4500000,   txns:340,   joined:'2024-05-10' },
-];
-
-var AGGREGATORS = [
-  { id:'AGG001', name:'FinConnect Nigeria',  owner:'Adewale Okafor', merchants:2, status:'active', split:30, total_vol:139200000, joined:'2023-11-01' },
-  { id:'AGG002', name:'PayBridge Solutions', owner:'Chioma Eze',     merchants:2, status:'active', split:25, total_vol:51000000,  joined:'2024-01-05' },
-];
-
-var TRANSACTIONS = [
-  { ref:'TXN-20250526-001', merchant:'Bolt Nigeria',     amount:4500,  channel:'Card',     rail:'Interswitch',   status:'success', fee:54,  time:'14:32:01' },
-  { ref:'TXN-20250526-002', merchant:'Shoprite Nigeria', amount:12800, channel:'Transfer', rail:'NIBSS',         status:'success', fee:192, time:'14:31:44' },
-  { ref:'TXN-20250526-003', merchant:'Jumia Foods',      amount:3200,  channel:'USSD',     rail:'GT Bank Direct',status:'failed',  fee:0,   time:'14:30:22' },
-  { ref:'TXN-20250526-004', merchant:'Bolt Nigeria',     amount:7600,  channel:'Card',     rail:'Interswitch',   status:'success', fee:91,  time:'14:29:18' },
-  { ref:'TXN-20250526-005', merchant:'EduPay School',    amount:25000, channel:'Transfer', rail:'NIBSS',         status:'success', fee:250, time:'14:28:55' },
-  { ref:'TXN-20250526-006', merchant:'Shoprite Nigeria', amount:6100,  channel:'Card',     rail:'Paystack',      status:'pending', fee:0,   time:'14:27:31' },
-];
 
 // Shared Developer/SDK nav block — shown to SA, merchants and aggregators (#4).
 // All sdk_* pages are static (renderSdk*); loadPageData no-ops them.
@@ -85,6 +63,8 @@ var NAV = {
       {id:'sa_merchant_funding', icon:'landmark', label:'Merchant Funding & Routing'},
       {id:'compliance',      icon:'scale', label:'KYC Review'      },
       {id:'deferrals',       icon:'file-clock', label:'KYC Docs & Deferrals'},
+      {id:'sa_kyc_updates',  icon:'upload-cloud', label:'KYC Updates'},
+      {id:'sa_stamp_duty',   icon:'piggy-bank',   label:'Stamp Duty Wallets'},
       {id:'compliance_watchlist', icon:'shield-alert', label:'Compliance Watchlist'},
       {id:'compliance_exceptions', icon:'flag', label:'Intl / Mastercard Compliance'},
       {id:'compliance_centre', icon:'shield-check', label:'Compliance Centre'},
@@ -92,6 +72,7 @@ var NAV = {
       {id:'sa_whatsapp',    icon:'message-circle', label:'WhatsApp Billing'},
     ]},
     { section:'Reports', items:[
+      {id:'sa_payout_review',  icon:'alert-circle',      label:'Payout Review'     },
       {id:'sa_stuck_payouts',  icon:'alert-triangle',    label:'Stuck Payouts'     },
       {id:'revenue',           icon:'banknote',          label:'Revenue Report'    },
       {id:'vat_report',        icon:'receipt-text',      label:'VAT Report'        },
@@ -101,7 +82,8 @@ var NAV = {
       {id:'mpgs_activity',     icon:'credit-card',       label:'MPGS Activity'     },
       {id:'partner_revenue',   icon:'handshake',         label:'Partner Revenue'   },
       {id:'user_type_summary', icon:'pie-chart',         label:'Volume by User Type'},
-      {id:'agg_payouts_admin', icon:'hand-coins',        label:'Aggregator Payouts' },
+      {id:'agg_payouts_admin',       icon:'hand-coins',   label:'Aggregator Payouts' },
+      {id:'sa_debit_alert_recon',    icon:'mail-warning', label:'Debit Alert Recon'  },
     ]},
     { section:'System Config', items:[
       {id:'service_providers',   icon:'server', label:'Service Providers'},
@@ -117,6 +99,7 @@ var NAV = {
       {id:'sa_payouts',          icon:'hand-coins',    label:'Payouts'          },
       {id:'invite_tracking',     icon:'mail-check',    label:'Invite Tracking'  },
       {id:'sa_wallet',           icon:'clipboard-check', label:'Wallet Approvals' },
+      {id:'wallet_action_approvals', icon:'shield-check', label:'Wallet Action Approvals' },
       {id:'settings',            icon:'settings', label:'Settings'         },
     ]},
     { section:'Staff CRM', items:[
@@ -128,8 +111,17 @@ var NAV = {
     { section:'Dashboard',  items:[{id:'overview',icon:'layout-dashboard',label:'Dashboard'}]},
     { section:'Management',  items:[{id:'transactions',icon:'arrow-right-left',label:'All Transactions'},{id:'merchants',icon:'store',label:'Merchants'},{id:'aggregators',icon:'building-2',label:'Aggregators'},{id:'partners',icon:'handshake',label:'Partners'},{id:'admin_onboard',icon:'user-plus',label:'Onboard Merchant'}]},
     { section:'Operations',  items:[{id:'settlement',icon:'circle-check',label:'Settlement'},{id:'wallets',icon:'wallet',label:'Merchant Wallets'},{id:'compliance',icon:'scale',label:'KYC Review'},{id:'deferrals',icon:'file-clock',label:'KYC Docs & Deferrals'},{id:'compliance_exceptions',icon:'flag',label:'Intl / Mastercard Compliance'},{id:'compliance_centre',icon:'shield-check',label:'Compliance Centre'},{id:'onboarding_apps',icon:'file-text',label:'Applications'},{id:'revenue',icon:'banknote',label:'Revenue (Read-Only)'}]},
-    { section:'System',      items:[{id:'users',icon:'users',label:'Invite Users'},{id:'activity_log',icon:'history',label:'Activity Log'},{id:'invite_tracking',icon:'mail-check',label:'Invite Tracking'}]},
+    { section:'System',      items:[{id:'users',icon:'users',label:'Invite Users'},{id:'activity_log',icon:'history',label:'Activity Log'},{id:'invite_tracking',icon:'mail-check',label:'Invite Tracking'},{id:'wallet_action_approvals',icon:'clipboard-check',label:'Wallet Action Approvals'}]},
     { section:'Developer',   items:DEV_SDK_ITEMS },
+  ],
+  operations: [
+    { section:'Dashboard',    items:[{id:'transactions',icon:'arrow-right-left',label:'Transactions'}]},
+    { section:'Wallets',      items:[
+      {id:'ops_wallet_lookup',  icon:'search',            label:'Wallet Lookup'      },
+      {id:'ops_wallet_request', icon:'send-horizontal',   label:'Request Credit / Move'},
+      {id:'ops_wallet_mine',    icon:'history',           label:'My Requests'        },
+    ]},
+    { section:'Refunds',      items:[{id:'ops_refunds',icon:'rotate-ccw',label:'Recommend Refund'}]},
   ],
   aggregator: [
     { section:'Dashboard',  items:[{id:'agg_overview',icon:'layout-dashboard',label:'Dashboard'}]},
@@ -149,7 +141,7 @@ var NAV = {
     { section:'Integration',  items:[{id:'merch_apikeys',icon:'key-round',label:'API Keys'},{id:'merch_webhooks',icon:'webhook',label:'Webhooks'}]},
     { section:'Operations',   items:[{id:'merch_notifications',icon:'bell',label:'Notifications'}]},
     { section:'Developer',    items:DEV_SDK_ITEMS },
-    { section:'Account',      items:[{id:'merch_profile',icon:'circle-user',label:'Business Profile'}]},
+    { section:'Account',      items:[{id:'merch_profile',icon:'circle-user',label:'Business Profile'},{id:'merch_my_kyc',icon:'shield',label:'My KYC'},{id:'merch_stamp_duty',icon:'piggy-bank',label:'Stamp Duty'}]},
   ],
   developer: [
     { section:'SDK',       items:[
@@ -170,8 +162,9 @@ var ROLE_META = {
   admin:       { label:'Admin',       name:'Paylode Admin',      title:'Admin Dashboard',       defaultPage:'overview'       },
   compliance:  { label:'Compliance',  name:'Compliance',         title:'Compliance Dashboard',  defaultPage:'compliance'     },
   audit:       { label:'Audit',       name:'Audit',              title:'Audit Dashboard',       defaultPage:'transactions'   },
-  aggregator:  { label:'Aggregator',  name:'FinConnect Nigeria', title:'Aggregator Dashboard',  defaultPage:'agg_overview'   },
-  merchant:    { label:'Merchant',    name:'Bolt Nigeria',       title:'Merchant Dashboard',    defaultPage:'merch_overview' },
+  aggregator:  { label:'Aggregator',  name:'Aggregator',         title:'Aggregator Dashboard',  defaultPage:'agg_overview'   },
+  operations:  { label:'Operations',  name:'Operations',         title:'Operations Dashboard',  defaultPage:'transactions'   },
+  merchant:    { label:'Merchant',    name:'Merchant',           title:'Merchant Dashboard',    defaultPage:'merch_overview' },
   developer:   { label:'Developer',   name:'API / SDK Docs',     title:'Developer SDK',         defaultPage:'sdk_start'      },
 };
 // Compliance & Audit use the SA nav superset, reduced by their view permissions
@@ -226,6 +219,7 @@ var PERM_ROLE_DEFAULTS = {
     .concat(_grant(['reports'],true)),
   MERCHANT: _grant(['dashboard','transactions','settlements','reports'],false).concat(_grant(['webhooks'],true)),
   AGGREGATOR: _grant(['dashboard','transactions','settlements','merchants','reports'],false).concat(_grant(['onboarding'],true)),
+  OPERATIONS: _grant(['dashboard','transactions','payouts','wallets'],false),
 };
 
 // nav item id → view perm required to see it (staff/SA nav only; SA bypasses).
@@ -238,8 +232,12 @@ var NAV_PERM = {
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
   activity_log:'view_audit_log', sa_connections:'view_audit_log', sa_reconciliation:'view_settlements', merch_reconciliation:'view_settlements',
   sa_collection_wallets:'view_settlements', sa_payouts:'view_payouts',
-  sa_stuck_payouts:'view_payouts',
+  sa_payout_review:'view_payouts', sa_stuck_payouts:'view_payouts',
+  sa_debit_alert_recon:'view_payouts',
   sa_merchant_funding:'view_wallets',
+  wallet_action_approvals:'view_wallets',
+  ops_wallet_lookup:'view_wallets', ops_wallet_request:'view_wallets', ops_wallet_mine:'view_wallets',
+  ops_refunds:'view_payouts',
 };
 // Does the logged-in user hold this permission? (SUPER_ADMIN bypasses everything.)
 // Self-healing: a user whose stored permissions predate the view_/edit_ vocab
@@ -470,87 +468,15 @@ function renderPage() {
 }
 
 function renderSuperOverview() {
-  var txRows = TRANSACTIONS.slice(0,4).map(function(t) {
-    return '<tr><td>' + t.merchant.split(' ')[0] + '</td><td class="mono">&#8358;' + t.amount.toLocaleString() +
-           '</td><td><span class="tag">' + t.channel + '</span></td><td>' + statusBadge(t.status) + '</td></tr>';
-  }).join('');
-  var channelData = [['Card Payments','58','var(--blue)'],['Bank Transfer','29','var(--lime)'],['USSD','13','var(--amber)']];
-  var channelHtml = channelData.map(function(row) {
-    return '<div style="margin-bottom:12px"><div class="flex-between" style="margin-bottom:4px">' +
-           '<span style="font-size:12px;color:var(--gray-600)">' + row[0] + '</span>' +
-           '<span style="font-size:12px;font-weight:600">' + row[1] + '%</span></div>' +
-           '<div class="progress-bar"><div class="progress-fill" style="width:' + row[1] + '%;background:' + row[2] + '"></div></div></div>';
-  }).join('');
-  var railHtml = [['Interswitch','&#8358;980M','52%'],['NIBSS','&#8358;720M','38%'],['GT Bank','&#8358;180M','10%']].map(function(row) {
-    return '<div class="rev-row"><span class="rev-label" style="font-size:12px">' + row[0] + '</span>' +
-           '<div class="flex" style="gap:6px"><span class="rev-value" style="font-size:12px">' + row[1] + '</span>' +
-           '<span class="badge badge-gray">' + row[2] + '</span></div></div>';
-  }).join('');
-  return '<div class="page-header"><div class="page-title">Platform Overview</div>' +
-    '<div class="page-desc">Real-time metrics across all merchants, aggregators, and payment rails</div></div>' +
-    '<div class="stats-grid">' +
-    '<div class="stat-card"><div class="stat-label"><span class="dot" style="background:var(--lime)"></span>Total Volume (MTD)</div><div class="stat-value">&#8358;3.18B</div><div class="stat-sub"><span class="stat-change up">&#8593; 18.4%</span> vs last month</div></div>' +
-    '<div class="stat-card"><div class="stat-label"><span class="dot" style="background:var(--blue)"></span>Gross Revenue</div><div class="stat-value">&#8358;47.8M</div><div class="stat-sub"><span class="stat-change up">&#8593; 12.1%</span> vs last month</div></div>' +
-    '<div class="stat-card"><div class="stat-label"><span class="dot" style="background:var(--purple)"></span>Active Merchants</div><div class="stat-value">42</div><div class="stat-sub">3 pending approval</div></div>' +
-    '<div class="stat-card"><div class="stat-label"><span class="dot" style="background:var(--amber)"></span>Aggregators</div><div class="stat-value">8</div><div class="stat-sub">2 onboarding</div></div>' +
-    '</div><div class="grid-2">' +
-    '<div class="card"><div class="card-header"><div><div class="card-title">Revenue Breakdown (Today)</div><div class="card-subtitle">Gross &#8594; Rail Cost &#8594; Paylode Margin &#8594; Partner Share</div></div></div>' +
-    '<div class="rev-row"><span class="rev-label">Gross Collections</span><span class="rev-value">&#8358;1,842,400</span></div>' +
-    '<div class="rev-row"><span class="rev-label">Rail Costs (avg 0.8%)</span><span class="rev-value text-red">&#8722; &#8358;148,680</span></div>' +
-    '<div class="rev-row"><span class="rev-label">Net After Rails</span><span class="rev-value">&#8358;1,693,720</span></div>' +
-    '<div class="rev-row"><span class="rev-label">Paylode Margin</span><span class="rev-value text-lime">&#8358;1,185,604</span></div>' +
-    '<div class="rev-row"><span class="rev-label">Aggregator Payouts</span><span class="rev-value" style="color:var(--purple)">&#8722; &#8358;508,116</span></div>' +
-    '<div class="rev-net"><span style="font-weight:700;font-size:13px;color:#166534">Net Paylode Revenue</span><span style="font-weight:800;font-size:18px;color:#166534">&#8358;677,488</span></div></div>' +
-    '<div class="card"><div class="card-header"><div class="card-title">Recent Transactions</div><button class="btn btn-outline btn-sm" onclick="navigate(\'transactions\')">View All</button></div>' +
-    '<div class="table-wrap"><table><thead><tr><th>Merchant</th><th>Amount</th><th>Channel</th><th>Status</th></tr></thead><tbody>' + txRows + '</tbody></table></div></div></div>' +
-    '<div class="section-gap"><div class="grid-3">' +
-    '<div class="card"><div class="card-header"><div class="card-title">Channel Split</div></div>' + channelHtml + '</div>' +
-    '<div class="card"><div class="card-header"><div class="card-title">Top Rail by Volume</div></div>' + railHtml + '</div>' +
-    '<div class="card"><div class="card-header"><div class="card-title">Pending Actions</div></div>' +
-    '<div style="display:flex;flex-direction:column;gap:8px">' +
-    '<div class="warn-box" style="font-size:12px">&#9888; 3 merchant KYC documents awaiting review</div>' +
-    '<div class="info-box" style="font-size:12px">&#8505; 1 new aggregator application received</div>' +
-    '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 12px;font-size:12px;color:#166534">&#10003; Settlement batch for Tue 20-May sent</div>' +
-    '</div></div></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderTransactions() {
-  var rows = TRANSACTIONS.map(function(t) {
-    return '<tr><td class="mono" style="font-size:11px">' + t.ref + '</td><td>' + t.merchant + '</td>' +
-           '<td class="mono">&#8358;' + t.amount.toLocaleString() + '</td><td class="mono text-lime">&#8358;' + t.fee + '</td>' +
-           '<td><span class="tag">' + t.channel + '</span></td><td><span class="tag">' + t.rail + '</span></td>' +
-           '<td>' + statusBadge(t.status) + '</td><td style="color:var(--gray-400);font-size:12px">' + t.time + '</td></tr>';
-  }).join('');
-  return '<div class="page-header flex-between"><div><div class="page-title">All Transactions</div>' +
-    '<div class="page-desc">Live transaction feed across all merchants and rails</div></div>' +
-    '<button class="btn btn-outline btn-sm">&#8681; Export CSV</button></div>' +
-    '<div class="stats-grid">' +
-    '<div class="stat-card"><div class="stat-label"><span class="dot" style="background:var(--green)"></span>Successful</div><div class="stat-value">23,481</div><div class="stat-sub">&#8358;2.8B volume</div></div>' +
-    '<div class="stat-card"><div class="stat-label"><span class="dot" style="background:var(--red)"></span>Failed</div><div class="stat-value">342</div><div class="stat-sub">1.4% failure rate</div></div>' +
-    '<div class="stat-card"><div class="stat-label"><span class="dot" style="background:var(--amber)"></span>Pending</div><div class="stat-value">18</div><div class="stat-sub">Awaiting confirmation</div></div>' +
-    '<div class="stat-card"><div class="stat-label"><span class="dot" style="background:var(--purple)"></span>Reversed</div><div class="stat-value">29</div><div class="stat-sub">&#8358;3.4M reversed</div></div></div>' +
-    '<div class="card"><div class="table-wrap"><table>' +
-    '<thead><tr><th>Reference</th><th>Merchant</th><th>Amount</th><th>Fee</th><th>Channel</th><th>Rail</th><th>Status</th><th>Time</th></tr></thead>' +
-    '<tbody>' + rows + '</tbody></table></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderMerchants() {
-  var rows = MERCHANTS.map(function(m) {
-    var aggBadge = m.aggregator ? '<span class="badge badge-purple">' + m.aggregator + '</span>' : '<span class="badge badge-gray">Direct</span>';
-    return '<tr><td class="mono" style="font-size:11px">' + m.id + '</td><td><strong>' + m.name + '</strong></td>' +
-           '<td><span class="tag">' + m.category + '</span></td><td>' + aggBadge + '</td>' +
-           '<td><span class="badge badge-lime">' + m.rate + '%</span></td>' +
-           '<td class="mono">&#8358;' + (m.vol/1000000).toFixed(1) + 'M</td>' +
-           '<td>' + statusBadge(m.status) + '</td>' +
-           '<td><button class="btn btn-outline btn-sm" onclick="viewMerchant(\'' + m.id + '\')">View</button>&nbsp;' +
-           '<button class="btn btn-outline btn-sm" onclick="showMerchantRateModal(\'' + m.id + '\')">&#9881; Rate</button></td></tr>';
-  }).join('');
-  return '<div class="page-header flex-between"><div><div class="page-title">Merchant Management</div>' +
-    '<div class="page-desc">Manage all merchants, rates, and account status</div></div>' +
-    '<button class="btn btn-lime" onclick="showAddMerchantModal()">+ Add Merchant</button></div>' +
-    '<div class="card"><div class="table-wrap"><table>' +
-    '<thead><tr><th>ID</th><th>Merchant</th><th>Category</th><th>Aggregator</th><th>Rate</th><th>Vol (MTD)</th><th>Status</th><th>Actions</th></tr></thead>' +
-    '<tbody>' + rows + '</tbody></table></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderPartners() {
@@ -561,25 +487,7 @@ function renderPartners() {
 }
 
 function renderAggregators() {
-  var cards = AGGREGATORS.map(function(a) {
-    return '<div class="card" style="margin-bottom:16px">' +
-      '<div class="flex-between" style="margin-bottom:16px"><div><div style="font-weight:700;font-size:15px">' + a.name + '</div>' +
-      '<div style="font-size:12px;color:var(--gray-400)">Owner: ' + a.owner + ' &middot; ID: ' + a.id + ' &middot; Joined: ' + a.joined + '</div></div>' +
-      '<div class="flex" style="gap:8px">' + statusBadge(a.status) + '<button class="btn btn-outline btn-sm" onclick="showEditAggModal(\'' + a.id + '\')">&#9998; Edit Split</button></div></div>' +
-      '<div class="grid-3">' +
-      '<div class="stat-card card-sm"><div class="stat-label">Revenue Split</div><div class="stat-value" style="font-size:20px">' + a.split + '%</div><div class="stat-sub">of net after rails</div></div>' +
-      '<div class="stat-card card-sm"><div class="stat-label">Active Merchants</div><div class="stat-value" style="font-size:20px">' + a.merchants + '</div><div class="stat-sub">under this aggregator</div></div>' +
-      '<div class="stat-card card-sm"><div class="stat-label">MTD Volume</div><div class="stat-value" style="font-size:20px">&#8358;' + (a.total_vol/1000000).toFixed(0) + 'M</div><div class="stat-sub">across all merchants</div></div></div>' +
-      '<div class="divider"></div>' +
-      '<div class="rev-row"><span class="rev-label">Estimated Gross Revenue (MTD)</span><span class="rev-value">&#8358;' + (a.total_vol*0.015/1000000).toFixed(2) + 'M</span></div>' +
-      '<div class="rev-row"><span class="rev-label">Rail Cost Deduction (est. 0.8%)</span><span class="rev-value text-red">&#8722; &#8358;' + (a.total_vol*0.008/1000000).toFixed(2) + 'M</span></div>' +
-      '<div class="rev-row"><span class="rev-label">Net Revenue After Rails</span><span class="rev-value">&#8358;' + (a.total_vol*0.007/1000000).toFixed(2) + 'M</span></div>' +
-      '<div class="rev-net"><span style="font-weight:600;font-size:13px;color:#166534">Aggregator Payout (' + a.split + '%)</span>' +
-      '<span style="font-weight:800;font-size:16px;color:#166534">&#8358;' + (a.total_vol*0.007*a.split/100/1000000).toFixed(3) + 'M</span></div></div>';
-  }).join('');
-  return '<div class="page-header flex-between"><div><div class="page-title">Aggregator Management</div>' +
-    '<div class="page-desc">Manage aggregator partnerships and revenue sharing</div></div>' +
-    '<button class="btn btn-lime" onclick="showAddAggModal()">+ Add Aggregator</button></div>' + cards;
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function editRateTier(name, rate, desc) {
@@ -652,22 +560,7 @@ function renderRailCosts() {
 }
 
 function renderSettlement() {
-  var rows = MERCHANTS.filter(function(m){ return m.status==='active'; }).map(function(m) {
-    return '<tr><td>' + m.name + '</td><td class="mono">&#8358;' + (m.vol/30/1000).toFixed(0) + 'K</td>' +
-           '<td class="mono text-red">&#8358;' + (m.vol/30*m.rate/100/1000).toFixed(1) + 'K</td>' +
-           '<td class="mono">&#8358;' + (m.vol/30*(1-m.rate/100)/1000).toFixed(0) + 'K</td>' +
-           '<td><span class="tag">GTB ****4421</span></td><td><span class="badge badge-amber">Pending</span></td></tr>';
-  }).join('');
-  return '<div class="page-header"><div class="page-title">Settlement Management</div>' +
-    '<div class="page-desc">Track and manage merchant settlements and aggregator payouts</div></div>' +
-    '<div class="stats-grid">' +
-    '<div class="stat-card"><div class="stat-label">Pending Settlement</div><div class="stat-value">&#8358;284M</div><div class="stat-sub">14 merchant batches</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Settled Today</div><div class="stat-value">&#8358;91M</div><div class="stat-sub">8 batches processed</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Agg. Payout Due</div><div class="stat-value">&#8358;8.4M</div><div class="stat-sub">Next: 28 May 2025</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Float Balance</div><div class="stat-value">&#8358;1.2B</div><div class="stat-sub">CBN escrow account</div></div></div>' +
-    '<div class="card"><div class="card-header"><div class="card-title">Settlement Queue</div><button class="btn btn-lime btn-sm">Process All Pending</button></div>' +
-    '<div class="table-wrap"><table><thead><tr><th>Merchant</th><th>Settlement Amt</th><th>Fees Deducted</th><th>Net to Merchant</th><th>Bank</th><th>Status</th></tr></thead>' +
-    '<tbody>' + rows + '</tbody></table></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 // ── Compliance Centre (tabbed) ────────────────────────────────────────────
@@ -1049,42 +942,11 @@ function renderSettings() {
 }
 
 function renderAggOverview() {
-  var merch = MERCHANTS.filter(function(m){ return m.aggregator==='AGG001'; }).map(function(m) {
-    return '<div class="flex-between" style="padding:10px 0;border-bottom:1px solid var(--gray-100)">' +
-           '<div><div style="font-weight:600;font-size:13px">' + m.name + '</div>' +
-           '<div style="font-size:11px;color:var(--gray-400)">' + m.category + ' &middot; Rate: ' + m.rate + '%</div></div>' +
-           '<div class="flex" style="gap:6px">' + statusBadge(m.status) +
-           '<span class="mono" style="font-size:12px">&#8358;' + (m.vol/1000000).toFixed(1) + 'M</span></div></div>';
-  }).join('');
-  return '<div class="page-header"><div class="page-title">Aggregator Dashboard</div>' +
-    '<div class="page-desc">FinConnect Nigeria &mdash; Your merchant portfolio performance</div></div>' +
-    '<div class="stats-grid">' +
-    '<div class="stat-card"><div class="stat-label">Active Merchants</div><div class="stat-value">2</div></div>' +
-    '<div class="stat-card"><div class="stat-label">MTD Volume</div><div class="stat-value">&#8358;139M</div><div class="stat-sub"><span class="stat-change up">&#8593; 22%</span></div></div>' +
-    '<div class="stat-card"><div class="stat-label">Gross Revenue</div><div class="stat-value">&#8358;1.98M</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Your Payout (30%)</div><div class="stat-value" style="color:var(--lime-dark)">&#8358;415K</div><div class="stat-sub">Due 28 May 2025</div></div></div>' +
-    '<div class="grid-2">' +
-    '<div class="card"><div class="card-header"><div class="card-title">Revenue Share Breakdown</div></div>' +
-    '<div class="rev-row"><span class="rev-label">Total Merchant Fees Collected</span><span class="rev-value">&#8358;1,984,000</span></div>' +
-    '<div class="rev-row"><span class="rev-label">Paylode Rail Deduction</span><span class="rev-value text-red">&#8722; &#8358;389,760</span></div>' +
-    '<div class="rev-row"><span class="rev-label">Net Revenue Pool</span><span class="rev-value">&#8358;1,594,240</span></div>' +
-    '<div class="rev-net"><span style="font-weight:700;font-size:13px;color:#166534">Your Share (30%)</span><span style="font-weight:800;font-size:18px;color:#166534">&#8358;478,272</span></div></div>' +
-    '<div class="card"><div class="card-header"><div class="card-title">My Merchants</div>' +
-    '<button class="btn btn-lime btn-sm" onclick="navigate(\'agg_onboard\')">+ Onboard New</button></div>' + merch + '</div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderAggMerchants() {
-  var rows = MERCHANTS.filter(function(m){ return m.aggregator==='AGG001'; }).map(function(m) {
-    return '<tr><td><strong>' + m.name + '</strong><div class="mono" style="font-size:10px;color:var(--gray-400)">' + m.id + '</div></td>' +
-           '<td><span class="tag">' + m.category + '</span></td><td><span class="badge badge-lime">' + m.rate + '%</span></td>' +
-           '<td class="mono">&#8358;' + (m.vol/1000000).toFixed(1) + 'M</td><td class="mono">' + m.txns.toLocaleString() + '</td>' +
-           '<td>' + statusBadge(m.status) + '</td></tr>';
-  }).join('');
-  return '<div class="page-header flex-between"><div><div class="page-title">My Merchant Portfolio</div></div>' +
-    '<button class="btn btn-lime" onclick="navigate(\'agg_onboard\')">+ Onboard Merchant</button></div>' +
-    '<div class="card"><div class="table-wrap"><table>' +
-    '<thead><tr><th>Merchant</th><th>Category</th><th>Rate</th><th>MTD Volume</th><th>Transactions</th><th>Status</th></tr></thead>' +
-    '<tbody>' + rows + '</tbody></table></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderAggOnboard() {
@@ -1140,49 +1002,11 @@ function renderAggEarnings() {
     '<div class="card" style="text-align:center;padding:40px;color:#999">Loading…</div>';
 }
 function renderAggTransactions() {
-  var rows = TRANSACTIONS.filter(function(t){ return ['Bolt Nigeria','Shoprite Nigeria'].indexOf(t.merchant)>-1; }).map(function(t) {
-    return '<tr><td class="mono" style="font-size:11px">' + t.ref + '</td><td>' + t.merchant + '</td>' +
-           '<td class="mono">&#8358;' + t.amount.toLocaleString() + '</td><td class="mono text-lime">&#8358;' + (t.fee*0.3).toFixed(0) + '</td>' +
-           '<td><span class="tag">' + t.channel + '</span></td><td>' + statusBadge(t.status) + '</td>' +
-           '<td style="font-size:12px;color:var(--gray-400)">' + t.time + '</td></tr>';
-  }).join('');
-  return '<div class="page-header"><div class="page-title">Portfolio Transactions</div></div>' +
-    '<div class="card"><div class="table-wrap"><table>' +
-    '<thead><tr><th>Reference</th><th>Merchant</th><th>Amount</th><th>Your Fee Share</th><th>Channel</th><th>Status</th><th>Time</th></tr></thead>' +
-    '<tbody>' + rows + '</tbody></table></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderMerchOverview() {
-  var txRows = TRANSACTIONS.filter(function(t){ return t.merchant==='Bolt Nigeria'; }).map(function(t) {
-    return '<tr><td class="mono" style="font-size:11px">' + t.ref.slice(-8) + '</td>' +
-           '<td class="mono">&#8358;' + t.amount.toLocaleString() + '</td>' +
-           '<td><span class="tag">' + t.channel + '</span></td><td>' + statusBadge(t.status) + '</td></tr>';
-  }).join('');
-  setTimeout(initMerchCharts, 0);
-  return '<div class="page-header"><div class="page-title">Merchant Dashboard</div>' +
-    '<div class="page-desc">Bolt Nigeria &mdash; Payment performance overview</div></div>' +
-    '<div class="stats-grid">' +
-    '<div class="stat-card"><div class="stat-label">Today\'s Volume</div><div class="stat-value">&#8358;12.1M</div><div class="stat-sub"><span class="stat-change up">&#8593; 8.2%</span> vs yesterday</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Success Rate</div><div class="stat-value">98.6%</div><div class="stat-sub"><span class="stat-change up">&#8593; 0.3%</span> vs last week</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Settled Today</div><div class="stat-value">&#8358;11.8M</div><div class="stat-sub">T+1 settlement</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Processing Rate</div><div class="stat-value text-lime">1.2%</div><div class="stat-sub">Growth tier rate</div></div></div>' +
-    '<div class="section-gap"><div class="grid-2">' +
-    '<div class="card"><div class="card-header"><div><div class="card-title">Daily Volume (7 Days)</div><div class="card-subtitle">Transaction volume in &#8358;M</div></div></div>' +
-    '<div style="position:relative;height:200px"><canvas id="merch-vol-chart"></canvas></div></div>' +
-    '<div class="card"><div class="card-header"><div><div class="card-title">Payment Channels</div><div class="card-subtitle">Today\'s split by method</div></div></div>' +
-    '<div style="position:relative;height:200px"><canvas id="merch-channel-chart"></canvas></div></div>' +
-    '</div></div>' +
-    '<div class="section-gap"><div class="grid-2">' +
-    '<div class="card"><div class="card-header"><div class="card-title">Recent Transactions</div>' +
-    '<button class="btn btn-outline btn-sm" onclick="navigate(\'merch_transactions\')">View All</button></div>' +
-    '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Amount</th><th>Channel</th><th>Status</th></tr></thead>' +
-    '<tbody>' + txRows + '</tbody></table></div></div>' +
-    '<div class="card"><div class="card-header"><div class="card-title">Fee Breakdown (Today)</div></div>' +
-    '<div class="rev-row"><span class="rev-label">Total Collections</span><span class="rev-value">&#8358;12,100,000</span></div>' +
-    '<div class="rev-row"><span class="rev-label">Processing Fees (1.2%)</span><span class="rev-value text-red">&#8358;145,200</span></div>' +
-    '<div class="rev-net"><span style="font-weight:700;font-size:13px;color:#166534">Your Net Settlement</span><span style="font-weight:800;font-size:18px;color:#166534">&#8358;11,954,800</span></div>' +
-    '<div class="divider"></div><div style="font-size:12px;color:var(--gray-400)">Settlement disbursed by 9AM next business day to GTBank ****1234</div>' +
-    '</div></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function initMerchCharts() {
@@ -1240,18 +1064,7 @@ function initMerchCharts() {
 }
 
 function renderMerchTransactions() {
-  var rows = TRANSACTIONS.filter(function(t){ return t.merchant==='Bolt Nigeria'; }).map(function(t) {
-    return '<tr><td class="mono" style="font-size:11px">' + t.ref + '</td>' +
-           '<td class="mono">&#8358;' + t.amount.toLocaleString() + '</td><td class="mono text-red">&#8358;' + t.fee + '</td>' +
-           '<td class="mono">&#8358;' + (t.amount-t.fee).toLocaleString() + '</td>' +
-           '<td><span class="tag">' + t.channel + '</span></td><td>' + statusBadge(t.status) + '</td>' +
-           '<td style="font-size:12px;color:var(--gray-400)">' + t.time + '</td></tr>';
-  }).join('');
-  return '<div class="page-header flex-between"><div><div class="page-title">Transactions</div></div>' +
-    '<button class="btn btn-outline btn-sm">&#8681; Export</button></div>' +
-    '<div class="card"><div class="table-wrap"><table>' +
-    '<thead><tr><th>Reference</th><th>Amount</th><th>Fee</th><th>Net</th><th>Channel</th><th>Status</th><th>Time</th></tr></thead>' +
-    '<tbody>' + rows + '</tbody></table></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderMerchSettlements() {
@@ -1292,12 +1105,7 @@ function renderMerchApiKeys() {
 }
 
 function renderMerchWebhooks() {
-  return '<div class="page-header"><div class="page-title">Webhooks</div></div>' +
-    '<div class="card" style="margin-bottom:16px"><div class="card-header"><div class="card-title">Active Webhooks</div>' +
-    '<button class="btn btn-lime btn-sm">+ Add Endpoint</button></div>' +
-    '<div class="rev-row"><div><div style="font-weight:600;font-size:13px">https://api.boltnigeria.com/paylode/webhook</div>' +
-    '<div style="font-size:11px;color:var(--gray-400)">Events: payment.success &middot; payment.failed &middot; refund.processed</div></div>' +
-    '<div class="flex" style="gap:6px"><span class="badge badge-green">Active</span><button class="btn btn-outline btn-sm">Test</button></div></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderMerchNotifications() {
@@ -1541,17 +1349,7 @@ async function saveSaWaPricing(merchantId, price, tier) {
 }
 
 function renderMerchProfile() {
-  var biz = [['Business Name','Bolt Nigeria Ltd'],['Category','Transport &amp; Ride-hailing'],['RC Number','RC 1240881'],
-    ['CBN Merchant ID','MCH002'],['Processing Rate','1.2% (Growth Tier)'],['Account Manager','Taiwo Adeyemi']].map(function(r) {
-    return '<div class="rev-row"><span class="rev-label">' + r[0] + '</span><span class="rev-value" style="font-size:12px">' + r[1] + '</span></div>';
-  }).join('');
-  var settle = [['Bank','Guaranty Trust Bank (GTB)'],['Account Name','Bolt Operations Nigeria Ltd'],
-    ['Account Number','0123456789'],['Settlement Cycle','T+1 Business Day'],['Auto-settle','Enabled']].map(function(r) {
-    return '<div class="rev-row"><span class="rev-label">' + r[0] + '</span><span class="rev-value" style="font-size:12px">' + r[1] + '</span></div>';
-  }).join('');
-  return '<div class="page-header"><div class="page-title">Business Profile</div></div><div class="grid-2">' +
-    '<div class="card"><div class="card-header"><div class="card-title">Business Information</div><button class="btn btn-outline btn-sm">&#9998; Edit</button></div>' + biz + '</div>' +
-    '<div class="card"><div class="card-header"><div class="card-title">Settlement Account</div><button class="btn btn-outline btn-sm">&#9998; Change</button></div>' + settle + '</div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderSdkStart() {
@@ -1566,10 +1364,52 @@ function renderSdkStart() {
     return '<button class="tab-btn ' + (tab===l?'active':'') + '" onclick="setSdkTab(\'' + l + '\')">' +
            ({js:'JavaScript',node:'Node.js',python:'Python',php:'PHP'})[l] + '</button>';
   }).join('');
+  var reqParams = [
+    ['email',        'string',  'Yes', 'Customer\'s email address'],
+    ['amount',       'integer', 'Yes', 'Amount in kobo (₦1 = 100 kobo). For USD, in cents ($1 = 100 cents)'],
+    ['currency',     'string',  'No',  'NGN (default) or USD for international card payments'],
+    ['reference',    'string',  'No',  'Unique transaction reference. Auto-generated if omitted'],
+    ['callback_url', 'string',  'No',  'URL to redirect customer to after payment completes'],
+    ['channels',     'array',   'No',  'Payment methods to show: card, bank_transfer. Defaults to card'],
+    ['metadata',     'object',  'No',  'Any custom key-value data — returned in webhook and verify response'],
+  ];
+  var resFields = [
+    ['status',                  'true on success, false on error'],
+    ['data.authorization_url',  'Redirect the customer to this URL to open the payment page'],
+    ['data.reference',          'Transaction reference — save this and use it to verify payment'],
+    ['data.access_code',        'Short-lived token for the Paylode JS popup (inline mode)'],
+  ];
+  var paramRows = reqParams.map(function(r) {
+    return '<tr><td class="mono" style="font-size:12px">' + r[0] + '</td><td style="font-size:12px;color:var(--gray-500)">' + r[1] + '</td>' +
+      '<td><span class="badge ' + (r[2]==='Yes'?'badge-red':'badge-gray') + '" style="font-size:10px">' + r[2] + '</span></td>' +
+      '<td style="font-size:12px">' + r[3] + '</td></tr>';
+  }).join('');
+  var resRows = resFields.map(function(r) {
+    return '<tr><td class="mono" style="font-size:12px">' + r[0] + '</td><td style="font-size:12px">' + r[1] + '</td></tr>';
+  }).join('');
   return '<div class="page-header"><div class="page-title">Quick Start Guide</div>' +
     '<div class="page-desc">Integrate Paylode payments in minutes</div></div>' +
-    '<div class="card"><div class="tab-nav">' + tabBtns + '</div>' +
-    '<div class="code-block">' + samples[tab] + '</div></div>';
+    '<div class="card" style="margin-bottom:12px"><div class="tab-nav">' + tabBtns + '</div>' +
+    '<div class="code-block">' + samples[tab] + '</div></div>' +
+    '<div class="card" style="margin-bottom:12px"><div class="card-header">' +
+    '<div><div class="card-title"><span class="badge badge-green" style="margin-right:8px">POST</span>/api/v1/transaction/initialize</div>' +
+    '<div class="card-subtitle">Initialize a payment transaction — returns a checkout URL to redirect your customer to</div></div>' +
+    '<span class="badge badge-amber">Secret Key required</span></div>' +
+    '<div style="font-size:12px;font-weight:600;color:var(--gray-600);margin:12px 0 6px">Request Parameters</div>' +
+    '<div class="table-wrap"><table><thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>' +
+    '<tbody>' + paramRows + '</tbody></table></div>' +
+    '<div style="font-size:12px;font-weight:600;color:var(--gray-600);margin:16px 0 6px">Response Fields</div>' +
+    '<div class="table-wrap"><table><thead><tr><th>Field</th><th>Description</th></tr></thead>' +
+    '<tbody>' + resRows + '</tbody></table></div>' +
+    '<div class="code-block" style="margin-top:12px"><span class="comment">// Success response (201)</span>\n{\n  <span class="str">"status"</span>: <span class="kw">true</span>,\n  <span class="str">"data"</span>: {\n    <span class="str">"authorization_url"</span>: <span class="str">"https://checkout.paylodeservices.com/pay/abc123"</span>,\n    <span class="str">"reference"</span>: <span class="str">"TXN-1718200000000"</span>,\n    <span class="str">"access_code"</span>: <span class="str">"abc123"</span>\n  }\n}</div></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">Authentication</div></div>' +
+    '<div class="info-box" style="font-size:12px">Pass your <strong>Secret Key</strong> in the Authorization header for all server-side API calls:<br>' +
+    '<span class="mono" style="font-size:12px">Authorization: Bearer sk_live_your_secret_key</span><br><br>' +
+    'Your <strong>Public Key</strong> (<span class="mono">pk_live_...</span>) is used only in the browser-side JS popup. Never expose your Secret Key in frontend code.</div>' +
+    '<div class="rev-row" style="margin-top:12px"><span class="rev-label">Base URL</span><span class="rev-value mono">https://api.paylodeservices.com</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Content-Type</span><span class="rev-value mono">application/json</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Amounts</span><span class="rev-value">Always in kobo over the API (₦1 = 100)</span></div>' +
+    '</div>';
 }
 
 function renderSdkPayments() {
@@ -1793,36 +1633,6 @@ function renderSdkTestCards() {
     '<tbody>' + rows + '</tbody></table></div></div>';
 }
 
-function showMerchantRateModal(id) {
-  var m = MERCHANTS.filter(function(x){ return x.id===id; })[0];
-  var agg = m.aggregator ? AGGREGATORS.filter(function(a){ return a.id===m.aggregator; })[0] : null;
-  showModal('<div class="modal-header"><div class="modal-title">Configure Rate &mdash; ' + m.name + '</div>' +
-    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
-    '<div class="info-box" style="margin-bottom:16px;font-size:12px">Current rate: <strong>' + m.rate + '%</strong></div>' +
-    '<div class="form-group"><label class="form-label">Processing Rate (%)</label>' +
-    '<input class="form-input" type="number" value="' + m.rate + '" step="0.1" min="0.1" max="5"></div>' +
-    '<div class="form-group"><label class="form-label">Aggregator Split Override (%)</label>' +
-    '<input class="form-input" type="number" value="' + (agg?agg.split:0) + '" ' + (!m.aggregator?'disabled':'') + '>' +
-    (!m.aggregator ? '<div class="form-hint">No aggregator &mdash; all net goes to Paylode</div>' : '') + '</div>' +
-    '<div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" rows="2" placeholder="Reason for custom rate..."></textarea></div>' +
-    '<div class="flex-between"><button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
-    '<button class="btn btn-lime" onclick="alert(\'Rate updated!\');document.getElementById(\'modal\').style.display=\'none\'">Save Rate Config</button></div>');
-}
-
-function showAddMerchantModal() {
-  var opts = AGGREGATORS.map(function(a){ return '<option value="' + a.id + '">' + a.name + '</option>'; }).join('');
-  showModal('<div class="modal-header"><div class="modal-title">Add New Merchant</div>' +
-    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
-    '<div class="form-group"><label class="form-label">Business Name</label><input class="form-input" placeholder="e.g. Konga Nigeria"></div>' +
-    '<div class="form-grid"><div class="form-group"><label class="form-label">Category</label>' +
-    '<select class="form-input form-select"><option>Retail</option><option>E-commerce</option><option>Transport</option><option>Education</option><option>Healthcare</option></select></div>' +
-    '<div class="form-group"><label class="form-label">Processing Rate (%)</label><input class="form-input" type="number" value="1.5" step="0.1"></div></div>' +
-    '<div class="form-group"><label class="form-label">Assign to Aggregator</label>' +
-    '<select class="form-input form-select"><option value="">None (Direct Merchant)</option>' + opts + '</select></div>' +
-    '<div class="form-group"><label class="form-label">Contact Email</label><input class="form-input" type="email" placeholder="cto@merchant.com"></div>' +
-    '<div class="flex-between" style="margin-top:8px"><button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
-    '<button class="btn btn-lime" onclick="alert(\'Merchant created!\');document.getElementById(\'modal\').style.display=\'none\'">Create &amp; Send Invite</button></div>');
-}
 
 function showAddAggModal() {
   showModal('<div class="modal-header"><div class="modal-title">Add New Aggregator</div>' +
@@ -1836,16 +1646,6 @@ function showAddAggModal() {
     '<button class="btn btn-lime" onclick="alert(\'Aggregator created!\');document.getElementById(\'modal\').style.display=\'none\'">Create Aggregator</button></div>');
 }
 
-function showEditAggModal(id) {
-  var a = AGGREGATORS.filter(function(x){ return x.id===id; })[0];
-  showModal('<div class="modal-header"><div class="modal-title">Edit Revenue Split &mdash; ' + a.name + '</div>' +
-    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
-    '<div class="form-group"><label class="form-label">Revenue Split (%)</label><input class="form-input" type="number" value="' + a.split + '" min="5" max="60"></div>' +
-    '<div class="form-group"><label class="form-label">Effective Date</label><input class="form-input" type="date" value="2025-06-01"></div>' +
-    '<div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" rows="2"></textarea></div>' +
-    '<div class="flex-between"><button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
-    '<button class="btn btn-lime" onclick="alert(\'Split updated!\');document.getElementById(\'modal\').style.display=\'none\'">Save Changes</button></div>');
-}
 
 function showEditRailModal(rail) {
   var c = RAIL_COSTS[rail];
@@ -2302,7 +2102,7 @@ async function deleteUser(userId, email) {
     var u = JSON.parse(sessionStorage.getItem('paylode_user') || 'null');
     if (!u || !u.role) return;
     var map = { SUPER_ADMIN:'superadmin', ADMIN:'admin', COMPLIANCE_OFFICER:'compliance',
-                AUDIT:'audit', AGGREGATOR:'aggregator', MERCHANT:'merchant' };
+                AUDIT:'audit', AGGREGATOR:'aggregator', MERCHANT:'merchant', OPERATIONS:'operations' };
     var mapped = map[(u.role || '').toUpperCase()];
     if (mapped && ROLE_META[mapped]) { currentRole = mapped; currentPage = ROLE_META[mapped].defaultPage; }
   } catch (e) {}

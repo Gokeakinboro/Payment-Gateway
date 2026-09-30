@@ -82,10 +82,25 @@ async function saveReport({ submissionRef, merchantId, checkType, result, subjec
 
 // ── email merchant about failures ─────────────────────────────────────────────
 
+// Strip provider-internal error details before surfacing to merchants.
+// The raw notes are retained in the DB for SA/compliance review.
+function merchantSafeNote(matchNotes) {
+  if (!matchNotes) return null;
+  const s = String(matchNotes);
+  // gRPC-style codes, subscription/permission errors, network noise
+  if (/PERMISSION_DENIED|UNAUTHENTICATED|UNAVAILABLE|subscription|subscribe|quota|api.?key|bearer/i.test(s)) return null;
+  if (/^\d+\s+[A-Z_]{3,}:/i.test(s)) return null; // e.g. "7 PERMISSION_DENIED: ..."
+  if (/network|api.?error|timeout|ECONNREFUSED|socket/i.test(s)) return null;
+  // Keep merchant-actionable notes
+  return s;
+}
+
 async function emailMerchantFailures(contactEmail, businessName, submissionRef, failedChecks, completenessIssues) {
   if (!contactEmail) return;
-  const failLines = failedChecks.map((c) =>
-    `<li><strong>${checkLabel(c.checkType)}</strong>${c.subjectName ? ` (${c.subjectName})` : ''}${c.matchNotes ? ` — ${c.matchNotes}` : ''}</li>`).join('');
+  const failLines = failedChecks.map((c) => {
+    const note = merchantSafeNote(c.matchNotes);
+    return `<li><strong>${checkLabel(c.checkType)}</strong>${c.subjectName ? ` (${c.subjectName})` : ''}${note ? ` — ${note}` : ''}</li>`;
+  }).join('');
   const completeLines = completenessIssues.map((i) => `<li>${i}</li>`).join('');
   const html = `
     <div style="font-family:system-ui,Arial,sans-serif;max-width:600px;color:#1a1a1a">
@@ -310,8 +325,17 @@ async function runCheck(submissionRef, merchantId, checkType, yvCall, subjectId,
     requestPayload  = { id: subjectId };
 
     if (!yvResult.success) {
-      result = 'FAIL';
-      matchNotes = yvResult.message || 'Verification failed — not found or not verified';
+      const msg = String(yvResult.message || '');
+      // Infrastructure gap (our subscription/permission) → ERROR, not FAIL.
+      // FAIL means the applicant's data is bad; ERROR means our system couldn't run the check.
+      // Keeping these separate prevents merchant failure emails going out for our own config issues.
+      if (/PERMISSION_DENIED|UNAUTHENTICATED|UNAVAILABLE|subscription|subscribe|quota|api.?key|bearer|\d+\s+[A-Z_]{3,}:/i.test(msg)) {
+        result = 'ERROR';
+        matchNotes = 'Check not available — provider subscription required';
+      } else {
+        result = 'FAIL';
+        matchNotes = msg || 'Verification failed — not found or not verified';
+      }
     } else {
       result = 'PASS';
       const d = yvResult.raw?.data || {};
@@ -330,7 +354,7 @@ async function runCheck(submissionRef, merchantId, checkType, yvCall, subjectId,
 
 // ── main entry point ──────────────────────────────────────────────────────────
 
-async function runOnboardingChecks(reference) {
+async function runOnboardingChecks(reference, { suppressMerchantEmail = false } = {}) {
   if (!process.env.YOUVERIFY_API_KEY) {
     logger.info({ reference }, 'YouVerify not configured — skipping KYC checks');
     return;
@@ -495,7 +519,7 @@ async function runOnboardingChecks(reference) {
 
   // ── 8. Notify merchant only if there are failures ────────────────────────────
   const failedChecks = allReports.filter((r) => r && r.result === 'FAIL' && r.checkType !== 'COMPLETENESS');
-  if (failedChecks.length || completenessIssues.length) {
+  if (!suppressMerchantEmail && (failedChecks.length || completenessIssues.length)) {
     await emailMerchantFailures(sub.contactEmail, businessName, reference, failedChecks, completenessIssues);
   }
 

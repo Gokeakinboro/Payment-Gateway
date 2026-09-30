@@ -1346,48 +1346,36 @@ function renderPortfolio() {
 // ── Step: Documents ────────────────────────────────────────────────────────────
 function renderDocuments() {
   return `<div class="card">
-  <div class="card-title">Document Checklist</div>
-  <div class="card-sub">Confirm which documents you will provide. You can upload them now or submit them separately via email to <strong>compliance@paylodeservices.com</strong>.</div>
-  <div class="check-group">
-    <label class="check-item">
-      <input type="checkbox" name="doc_id" value="1">
-      <span><strong>ID Card</strong> — Valid driver's licence, international passport, or voter's card (not expired)</span>
+  <div class="card-title">Registration Documents</div>
+  <div class="card-sub">Upload clear photos or PDFs of each document (max 5 MB each). These are required for KYC/KYB compliance review before your account is approved.</div>
+  <div class="doc-list">
+    ${uploadWidget('doc_cac_cert','Certificate of Incorporation','cert_incorp',true,'CAC-issued certificate of incorporation')}
+    ${uploadWidget('doc_cac_memo','Memorandum &amp; Articles of Association (MEMART)','memart',true,'Required for Limited Liability Companies')}
+    ${uploadWidget('doc_status_report','CAC Status Report','status_report',false,'Preferred. If unavailable, tick the box below and upload Form CO2 &amp; CO7 instead.')}
+    <label class="check-item" style="margin:8px 0">
+      <input type="checkbox" name="status_report_na" onchange="toggleAggCoDocs(this.checked)">
+      <span>Status Report not available — I will provide Form CO2 &amp; CO7 instead</span>
     </label>
-    <label class="check-item">
-      <input type="checkbox" name="doc_utility" value="1">
-      <span><strong>Utility Bill</strong> — Waste disposal, PHCN, water corp, or LG bill (not older than 3 months)</span>
-    </label>
-    <label class="check-item">
-      <input type="checkbox" name="doc_cac_cert" value="1">
-      <span><strong>Certificate of Incorporation</strong> — CAC-issued certificate</span>
-    </label>
-    <label class="check-item">
-      <input type="checkbox" name="doc_cac_memo" value="1">
-      <span><strong>Memorandum & Articles of Association</strong> — For Limited Liability Companies</span>
-    </label>
-    <label class="check-item">
-      <input type="checkbox" name="doc_cac_co2" value="1">
-      <span><strong>Form CO2 — Particulars of Directors</strong> — For Limited Liability Companies</span>
-    </label>
-    <label class="check-item">
-      <input type="checkbox" name="doc_passport" value="1">
-      <span><strong>Passport Photograph</strong> — Recent passport-sized photo of principal officer</span>
-    </label>
-    <label class="check-item">
-      <input type="checkbox" name="doc_bvn" value="1">
-      <span><strong>BVN Verification Consent</strong> — Authorise Paylode to verify your BVN</span>
-    </label>
-    <label class="check-item">
-      <input type="checkbox" name="doc_padss" value="1">
-      <span><strong>PA-DSS Certificate</strong> — If applicable (Payment Application Data Security Standard)</span>
-    </label>
+    <div id="agg-co-docs" style="display:none">
+      ${uploadWidget('doc_cac_co2','Form CO2 — Particulars of Directors','form_co2',false,'')}
+    </div>
+    ${uploadWidget('doc_utility','Proof of Business Address','proof_address',true,'Utility bill or bank statement dated within the last 3 months')}
+    ${uploadWidget('doc_id','Government-Issued ID (Principal Officer)','id_document',true,'Valid driver\'s licence, international passport, or voter\'s card (not expired)')}
+    ${uploadWidget('doc_passport','Passport Photograph','passport_photo',true,'Recent passport-sized photo of the principal officer')}
+    ${uploadWidget('doc_bvn','BVN Verification Consent','bvn_consent',false,'Signed authorisation for Paylode to verify your BVN')}
+    ${uploadWidget('doc_padss','PA-DSS Certificate (if applicable)','padss_cert',false,'Payment Application Data Security Standard certificate')}
   </div>
   <div class="section-divider"></div>
   <div class="field">
-    <label>Additional Notes or Documents</label>
+    <label>Additional Notes</label>
     <textarea name="doc_notes" placeholder="Any additional information about your documents or special circumstances..."></textarea>
   </div>
 </div>`;
+}
+
+function toggleAggCoDocs(checked) {
+  var e = document.getElementById('agg-co-docs');
+  if (e) e.style.display = checked ? 'block' : 'none';
 }
 
 // ── Step: Terms & Conditions ────────────────────────────────────────────────────
@@ -1828,6 +1816,23 @@ function validateStep(stepId) {
     }
   }
 
+  if (stepId === 'documents' && formType === 'aggregator') {
+    const requiredUploads = [
+      ['doc_cac_cert',  'Certificate of Incorporation'],
+      ['doc_cac_memo',  'Memorandum & Articles of Association'],
+      ['doc_utility',   'Proof of Business Address'],
+      ['doc_id',        'Government-Issued ID'],
+      ['doc_passport',  'Passport Photograph'],
+    ];
+    for (const [key, label] of requiredUploads) {
+      if (!uploads[key]) { showAlert('Please upload: ' + label); return false; }
+    }
+    const statusRptNa = document.querySelector('[name="status_report_na"]')?.checked;
+    if (!uploads['doc_status_report'] && !statusRptNa) {
+      showAlert('Upload the CAC Status Report (or tick the box to provide CO2 instead).'); return false;
+    }
+  }
+
   hideAlert(); return true;
 }
 
@@ -2069,6 +2074,19 @@ function renderEditBanner(app) {
 // uploads/principals state (not the DOM), so it cannot be bypassed by resuming a
 // draft whose file blobs were dropped, or by jumping to the last step.
 function finalValidateDocs() {
+  if (formType === 'aggregator') {
+    var aggRequired = [
+      ['doc_cac_cert', 'Certificate of Incorporation'],
+      ['doc_cac_memo', 'Memorandum & Articles of Association'],
+      ['doc_utility',  'Proof of Business Address'],
+      ['doc_id',       'Government-Issued ID'],
+      ['doc_passport', 'Passport Photograph'],
+    ];
+    for (var ai = 0; ai < aggRequired.length; ai++) {
+      if (!uploads[aggRequired[ai][0]]) { showAlert('A required document is missing: ' + aggRequired[ai][1] + '. Please attach it before submitting.'); return false; }
+    }
+    return true;
+  }
   if (formType !== 'merchant') return true;
   if (applicantType === 'natural') {
     if (!uploads['np_id_doc'])        { showAlert('Please attach your government-issued ID before submitting.'); return false; }
