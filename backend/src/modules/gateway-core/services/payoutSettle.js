@@ -121,6 +121,16 @@ async function applyPayoutResult({ orderId, orderNo, sessionId, orderStatus, err
       whatsapp.notifyMerchantPayoutSummary(leg.batch_id).catch(() => {});
     }
   } else if (status === 'failed') {
+    if (source === 'poller') {
+      // SAFETY: the backstop poller only GUESSES failure from a by-reference requery,
+      // which can false-negative (e.g. NO RECORD before the rail's own ledger catches
+      // up). It must never move real money on its own — only the rail's authoritative
+      // webhook may trigger a refund. Flag for manual review instead.
+      // See kiv-bucknostar-drift memory — this exact path caused unauthorized wallet credits.
+      logger.warn({ orderId, source, merchant: leg.merchant_id, errorMsg },
+        'payout poller detected failure — NOT auto-refunding, held for manual review');
+      return { matched: true, status: 'needs_review' };
+    }
     // Guarded transition → refund EXACTLY ONCE, only from an in-flight state.
     const flipped = await prisma.$queryRaw`
       UPDATE rail_disbursements SET status='failed', settled_at=NOW(), updated_at=NOW()
@@ -161,7 +171,7 @@ async function applyPayoutResult({ orderId, orderNo, sessionId, orderStatus, err
 // non-NO-RECORD pending status (e.g. code 91 "Beneficiary Bank not available") after
 // this long, the leg is force-closed as failed and the merchant wallet refunded.
 // This prevents legs from polling indefinitely when a destination bank is down.
-async function reconcileSentPayouts({ olderThanMs = 120000, hardFailAfterMs = 4 * 60 * 60 * 1000, limit = 100 } = {}) {
+async function reconcileSentPayouts({ olderThanMs = 120000, hardFailAfterMs = 12 * 60 * 60 * 1000, limit = 100 } = {}) {
   const { payoutAdapterForName } = require('./payoutRailAdapter');
   const cutoff = new Date(Date.now() - olderThanMs);
   const legs = await prisma.$queryRaw`
@@ -199,7 +209,8 @@ async function reconcileSentPayouts({ olderThanMs = 120000, hardFailAfterMs = 4 
 
     checked++;
     const out = await applyPayoutResult({
-      orderId: leg.rail_order_id, orderNo: r.raw && r.raw.data && r.raw.data.orderNo,
+      orderId: leg.rail_order_id,
+      orderNo: (r.raw?.data?.orderNo || r.raw?.Data?.orderNo) || r.sessionId || null,
       sessionId: r.sessionId, orderStatus: r.orderStatus, errorMsg: r.reason, source: 'poller',
     });
     if (out.status === 'success') settled++;

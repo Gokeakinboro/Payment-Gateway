@@ -32,8 +32,8 @@ function generateRef(prefix = 'TXN') {
  * Compute all fee fields for a transaction (legacy — simple % only).
  * All amounts in kobo (BigInt).
  */
-function computeFees(amount, merchantRate, railRate, aggSplitPct) {
-  return computeFeesWithConfig(amount, { rate: merchantRate }, railRate, aggSplitPct);
+function computeFees(amount, merchantRate, railRate, aggSpread) {
+  return computeFeesWithConfig(amount, { rate: merchantRate }, railRate, aggSpread);
 }
 
 /**
@@ -77,8 +77,8 @@ function computeProductFee(amount, rateConfig) {
  * Compute all fee fields for a transaction (legacy — simple % only).
  * All amounts in kobo (BigInt).
  */
-function computeFees(amount, merchantRate, railRate, aggSplitPct) {
-  return computeFeesWithConfig(amount, { rate: merchantRate }, railRate, aggSplitPct);
+function computeFees(amount, merchantRate, railRate, aggSpread) {
+  return computeFeesWithConfig(amount, { rate: merchantRate }, railRate, aggSpread);
 }
 
 /**
@@ -86,16 +86,18 @@ function computeFees(amount, merchantRate, railRate, aggSplitPct) {
  * @param {BigInt|number} amount     Transaction amount in kobo
  * @param {object}        rateConfig { rate, flat_fee, cap, min_charge, fee_model, vat_rate }
  * @param {number}        railRate   e.g. 0.0150 for 1.5%
- * @param {number}        aggSplitPct e.g. 0.30 for 30%
+ * @param {number}        aggSpread  Spread = merchant_rate − aggregator_base_rate.
+ *                                   Zero for non-aggregator merchants.
  */
-function computeFeesWithConfig(amount, rateConfig, railRate, aggSplitPct) {
+function computeFeesWithConfig(amount, rateConfig, railRate, aggSpread = 0) {
   const amtBig          = BigInt(amount);
   const { fee: merchantFee } = computeProductFee(amount, rateConfig);
 
   const railCost      = amtBig * BigInt(Math.round((railRate || 0) * 1_000_000)) / 1_000_000n;
   const netRevenue    = merchantFee - railCost;
-  const aggShare      = netRevenue > 0n
-    ? netRevenue * BigInt(Math.round((aggSplitPct || 0) * 1_000_000)) / 1_000_000n
+  // aggShare = principal × spread (merchant_rate − aggregator_base_rate)
+  const aggShare      = aggSpread > 0
+    ? amtBig * BigInt(Math.round(aggSpread * 1_000_000)) / 1_000_000n
     : 0n;
   const paylodeMargin = netRevenue - aggShare;
   return { merchantFee, railCost, netRevenue, aggShare, paylodeMargin };

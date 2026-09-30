@@ -4,6 +4,8 @@
    public → POST /api/v1/assistant/public-chat (no auth; sign-up help)
 */
 (function () {
+  if (sessionStorage.getItem('pla_hidden')) return;
+
   var CFG = window.PAYLODE_ASSISTANT || { mode: 'public' };
   var AUTHED = CFG.mode === 'authed';
   var ENDPOINT = '/api/v1/assistant/' + (AUTHED ? 'chat' : 'public-chat');
@@ -14,9 +16,10 @@
   var busy = false;
 
   var css = '' +
-  '#pla-btn{position:fixed;right:20px;bottom:20px;z-index:2147483000;width:56px;height:56px;border-radius:50%;background:#1a2744;color:#fff;border:none;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;font-size:24px;transition:transform .15s,background .15s}' +
-  '#pla-btn:hover{background:#253360;transform:translateY(-2px)}' +
-  '#pla-panel{position:fixed;right:20px;bottom:88px;z-index:2147483000;width:370px;max-width:calc(100vw - 32px);height:520px;max-height:calc(100vh - 120px);background:#fff;border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.35);display:none;flex-direction:column;overflow:hidden;font-family:\'DM Sans\',system-ui,-apple-system,Segoe UI,Arial,sans-serif}' +
+  '#pla-btn{position:fixed;right:20px;bottom:20px;z-index:900;width:56px;height:56px;border-radius:50%;background:#1a2744;color:#fff;border:none;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;font-size:24px;transition:transform .15s,background .15s;transform:translateZ(0);-webkit-transform:translateZ(0)}' +
+  '#pla-btn:hover{background:#253360;transform:translateY(-2px) translateZ(0)}' +
+  '#pla-dismiss{position:fixed;right:10px;bottom:64px;z-index:901;width:20px;height:20px;border-radius:50%;border:2px solid #fff;background:#475569;color:#fff;font-size:13px;font-weight:700;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.35);transform:translateZ(0)}' +
+  '#pla-panel{position:fixed;right:20px;bottom:88px;z-index:901;width:370px;max-width:calc(100vw - 32px);height:520px;max-height:calc(100vh - 120px);background:#fff;border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.35);display:none;flex-direction:column;overflow:hidden;font-family:\'DM Sans\',system-ui,-apple-system,Segoe UI,Arial,sans-serif;transform:translateZ(0)}' +
   '#pla-panel.open{display:flex}' +
   '#pla-head{background:#1a2744;color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}' +
   '#pla-head .d{width:32px;height:32px;border-radius:8px;background:#7dc534;color:#1a2744;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}' +
@@ -54,7 +57,15 @@
     foot.appendChild(input); foot.appendChild(send); panel.appendChild(foot);
     panel.appendChild(el('div', { class: 'pla-foot-note' }, 'AI assistant · may be imperfect · portal help only'));
 
-    document.body.appendChild(btn); document.body.appendChild(panel);
+    var dismiss = el('button', { id: 'pla-dismiss', title: 'Hide assistant', 'aria-label': 'Hide assistant' }, '&times;');
+    dismiss.addEventListener('click', function (e) {
+      e.stopPropagation();
+      btn.style.display = 'none';
+      panel.style.display = 'none';
+      dismiss.style.display = 'none';
+      sessionStorage.setItem('pla_hidden', '1');
+    });
+    document.body.appendChild(btn); document.body.appendChild(panel); document.body.appendChild(dismiss);
 
     function open() { panel.classList.add('open'); if (!history.length) addMsg('a', GREETING); input.focus(); }
     function close() { panel.classList.remove('open'); }

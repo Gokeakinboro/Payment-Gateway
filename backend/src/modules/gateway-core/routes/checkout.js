@@ -362,6 +362,7 @@ router.post('/:reference/charge/card', async (req, res, next) => {
           reference: txn.reference, status: 'SUCCESS', channel: 'CARD', sandbox: true,
           principal: Number(txn.amount), charge_amount: Number(fees.chargeAmount),
           merchant_settlement: Number(fees.merchantSettlement), fee: Number(fees.feePlusVat),
+          metadata: txn.metadata || {},
         }).catch(() => {});
       }
 
@@ -483,6 +484,7 @@ router.post('/:reference/charge/card', async (req, res, next) => {
           fee:                 Number(fees.feePlusVat),
           processor:           proc.name,
           purchased_code:      iswResp.purchasedCode,
+          metadata:            txn.metadata || {},
         }).catch(() => {});
       }
 
@@ -577,6 +579,7 @@ router.post('/:reference/charge/card/otp', async (req, res, next) => {
         dispatchWebhook(txn.merchant.id, 'payment.success', {
           reference: txn.reference, status: 'SUCCESS', channel: 'CARD',
           principal: Number(txn.amount), processor: otpProc.name,
+          metadata:  txn.metadata || {},
         }).catch(() => {});
       }
 
@@ -633,6 +636,7 @@ router.post('/:reference/confirm', async (req, res, next) => {
           reference: txn.reference, status: 'SUCCESS', channel, sandbox: true,
           principal: Number(txn.amount), charge_amount: Number(fees.chargeAmount),
           merchant_settlement: Number(fees.merchantSettlement), fee: Number(fees.feePlusVat),
+          metadata: txn.metadata || {},
         }).catch(() => {});
       }
       sendCustomerReceipt(txn.reference);
