@@ -37,7 +37,7 @@ function verifyTOTP(secret, token, window = 1) {
 
 // Returns { ok:true } on success, else { ok:false, error, code }.
 //   code TWOFA_REQUIRED → caller has 2FA on but sent no code (prompt for it).
-async function reauthenticate(userId, { password, code } = {}) {
+async function reauthenticate(userId, { password, code, skipTwoFA } = {}) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { passwordHash: true, totpEnabled: true, totpSecret: true },
@@ -45,7 +45,7 @@ async function reauthenticate(userId, { password, code } = {}) {
   if (!user) return { ok: false, error: 'User not found', code: 'NO_USER' };
   if (!password || !await bcrypt.compare(password, user.passwordHash))
     return { ok: false, error: 'Password is incorrect', code: 'BAD_PASSWORD' };
-  if (user.totpEnabled && user.totpSecret) {
+  if (!skipTwoFA && user.totpEnabled && user.totpSecret) {
     if (!code) return { ok: false, error: '2FA code required', code: 'TWOFA_REQUIRED' };
     if (!verifyTOTP(user.totpSecret, code)) return { ok: false, error: 'Invalid 2FA code', code: 'BAD_TWOFA' };
   }

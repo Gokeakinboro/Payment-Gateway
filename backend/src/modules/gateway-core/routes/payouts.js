@@ -4,13 +4,15 @@ const crypto  = require('crypto');
 const multer  = require('multer');
 const { body, validationResult } = require('express-validator');
 const { prisma }  = require('../../../utils/db');
-const { requireAuth, requireApiKey, requireSuperAdmin, requireCompliance } = require('../../../middleware/auth');
+const { requireAuth, requireApiKey, requireSuperAdmin, requireAdmin, requireCompliance, requireRole } = require('../../../middleware/auth');
 const { ok, fail, notFound, created, koboToNaira, generateRef } = require('../../../utils/helpers');
 const { logAudit } = require('../../../services/auditService');
 const { notifyRailIncident, recordRailResult, checkRailBalanceAndAlert } = require('../services/railHealth');
 const { BANKS, resolveBank } = require('../../../data/nibssBanks');
 const { syncRailFloat } = require('../services/railFloat');
 const { logger } = require('../../../utils/logger');
+const { requirePayoutPinMiddleware, hasPinSet, setPin } = require('../../../services/payoutPin');
+const { reauthenticate } = require('../../../services/reauth');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -129,7 +131,9 @@ function requireAuthOrApiKey(req, res, next) {
   // merchants; SUSPENDED/REJECTED accounts are still blocked in the handler.
   req.allowInactiveLivePayout = true;
   if (auth.startsWith('Bearer sk_live_') || auth.startsWith('Bearer sk_test_')) {
-    // API key path — sets req.merchant
+    // API key path — sets req.merchant. Flagged so the dashboard-only PIN gate
+    // (see requirePayoutPin) never applies to SDK/API-key submissions.
+    req.isApiKeyAuth = true;
     requireApiKey(req, res, () => {
       // Normalise to req.user shape so route handler works with both auth types
       if (req.merchant && !req.user) {
@@ -144,6 +148,7 @@ function requireAuthOrApiKey(req, res, next) {
     });
   } else {
     // JWT path — sets req.user
+    req.isApiKeyAuth = false;
     requireAuth(req, res, next);
   }
 }
@@ -154,6 +159,43 @@ const validate = rules => async (req, res, next) => {
   if (!e.isEmpty()) return res.status(400).json({ status:false, message:e.array()[0].msg, error_code:'VALIDATION_ERROR' });
   next();
 };
+
+// ── Payout PIN management (dashboard-only; SDK/API-key merchants never need one) ──
+// GET  /pin/status        — whether a PIN is already set
+// POST /pin/set           — set or reset the PIN; requires a password (+2FA) step-up
+//                            (see services/reauth.js), so this covers "set", "change",
+//                            and "forgot my PIN" with the same endpoint — no separate
+//                            email-token reset flow.
+router.get('/pin/status', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'MERCHANT' || !req.user.merchant?.id) return fail(res, 'Merchant account required');
+    const isSet = await hasPinSet(req.user.merchant.id);
+    return ok(res, { is_set: isSet });
+  } catch (err) { next(err); }
+});
+
+router.post('/pin/set',
+  requireAuth,
+  validate([
+    body('password').isString().notEmpty().withMessage('Current account password is required'),
+    body('pin').isString().matches(/^\d{6}$/).withMessage('PIN must be exactly 6 digits'),
+    body('code').optional().isString(),
+  ]),
+  async (req, res, next) => {
+    try {
+      if (req.user.role !== 'MERCHANT' || !req.user.merchant?.id) return fail(res, 'Merchant account required');
+      // 2FA step-up disabled for now — password alone is the step-up token.
+      const step = await reauthenticate(req.user.id, { password: req.body.password, code: req.body.code, skipTwoFA: true });
+      if (!step.ok) {
+        return res.status(step.code === 'TWOFA_REQUIRED' ? 400 : 401)
+          .json({ status: false, message: step.error, error_code: step.code });
+      }
+      const result = await setPin(req.user.merchant.id, req.body.pin);
+      if (!result.ok) return res.status(400).json({ status: false, message: result.error, error_code: result.code });
+      logAudit(req.user.id, 'PAYOUT_PIN_SET', 'merchant', req.user.merchant.id, {}).catch(() => {});
+      return ok(res, { message: 'Payout PIN set successfully' });
+    } catch (err) { next(err); }
+  });
 
 // ── POST /api/v1/payouts/fund/va — Merchant requests a Parallex VA to pre-fund ──
 // Generates a timed Parallex VA for the exact amount requested. The merchant
@@ -536,9 +578,36 @@ router.get('/banks', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── POST /api/v1/payouts/name-enquiry — live account-name lookup ─────────────
+// Called from the payout form as the merchant finishes typing an account number
+// so they can confirm the beneficiary before submitting. Returns the same
+// session_id the batch dispatch step needs — the frontend echoes it back on
+// /batches so dispatch reuses this lookup instead of running NE again.
+router.post('/name-enquiry',
+  requireAuth,
+  body('account_number').isString().isLength({ min: 10, max: 10 }).matches(/^\d+$/).withMessage('account_number must be 10 digits'),
+  body('bank_code').isString().notEmpty().withMessage('bank_code is required'),
+  async (req, res, next) => {
+    try {
+      const errs = validationResult(req);
+      if (!errs.isEmpty()) return fail(res, errs.array()[0].msg);
+      if (!req.user.merchant?.id) return fail(res, 'No merchant account');
+      const hit = resolveBank(req.body.bank_code);
+      if (!hit) return fail(res, 'Bank not recognised');
+      const plx = (() => {
+        try { return require('../services/parallexTransferService'); } catch (_) { return null; }
+      })();
+      if (!plx || !plx.isConfigured()) return fail(res, 'Name lookup is unavailable right now');
+      const ne = await plx.nameEnquiry(hit.code, req.body.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
+      if (!ne.ok || !ne.accountName) return fail(res, ne.reason || 'Could not resolve an account name for that number/bank', 'NE_FAILED');
+      ok(res, { account_name: ne.accountName, session_id: ne.sessionId, bank_code: hit.code, bank_name: hit.name });
+    } catch (e) { next(e); }
+  }
+);
+
 // ── POST /api/v1/payouts/batches — create payout batch ───────────────────────
 // Accepts EITHER a merchant JWT (dashboard) or sk_live_/sk_test_ API key (SDK)
-router.post('/batches', requireAuthOrApiKey,
+router.post('/batches', requireAuthOrApiKey, requirePayoutPinMiddleware,
   validate([
     body('description').optional().isString(),
     body('scheduled_at').optional().isISO8601(),
@@ -548,6 +617,9 @@ router.post('/batches', requireAuthOrApiKey,
     body('items.*').custom(it => it && (it.bank_code || it.bank_name)).withMessage('Each item needs a bank_code or bank_name'),
     body('items.*.amount').isInt({ min: 1 }).withMessage('amount in kobo required for each item'),
     body('items.*.client_ref').optional({ nullable: true }).isString().withMessage('client_ref must be a string'),
+    body('items.*.account_name').optional({ nullable: true }).isString(),
+    body('items.*.ne_session_id').optional({ nullable: true }).isString(),
+    body('items.*.ne_account_name').optional({ nullable: true }).isString(),
   ]),
   async (req, res, next) => {
     try {
@@ -815,18 +887,26 @@ router.post('/batches', requireAuthOrApiKey,
             const assignedRail = railAssignment[idx];
             const bank = await tx.$queryRaw`SELECT bank_name FROM nigerian_banks WHERE bank_code = ${item.bank_code}`;
             const clientRef = (item.client_ref && String(item.client_ref).trim()) ? String(item.client_ref).trim() : null;
+            // Frontend runs a live name-enquiry before submit and echoes the session
+            // back here — store it so dispatch (NE_TTL_MS window) skips a duplicate
+            // Parallex round trip, and use the resolved name if none was typed.
+            const neSessionId   = (item.ne_session_id && String(item.ne_session_id).trim()) ? String(item.ne_session_id).trim() : null;
+            const neAccountName = (item.ne_account_name && String(item.ne_account_name).trim()) ? String(item.ne_account_name).trim() : null;
+            const accountName   = (item.account_name && String(item.account_name).trim()) ? item.account_name : neAccountName;
             await tx.$executeRaw`
               INSERT INTO payout_items
                 (batch_id, merchant_id, account_number, account_name, bank_code, bank_name,
                  amount, item_fee, item_vat, stamp_duty_kobo, stamp_duty_deducted,
-                 narration, status, rail_id, scheduled_at, client_ref, created_at)
+                 narration, status, rail_id, scheduled_at, client_ref,
+                 ne_session_id, ne_account_name, ne_fetched_at, created_at)
               VALUES
-                (${batchId}::uuid, ${merchantId}::uuid, ${item.account_number}, ${item.account_name||null},
+                (${batchId}::uuid, ${merchantId}::uuid, ${item.account_number}, ${accountName||null},
                  ${item.bank_code}, ${bank[0]?.bank_name||item.bank_code},
                  ${BigInt(item.amount)}, ${item.fee}, ${item.vat},
                  ${item.stamp_duty_kobo}, ${item.stamp_duty_deducted},
                  ${(item.narration && String(item.narration).trim()) ? item.narration : defaultNarration},
-                 ${itemStatus}, ${assignedRail.rail_id}::uuid, ${scheduledAt}, ${clientRef}, NOW())`;
+                 ${itemStatus}, ${assignedRail.rail_id}::uuid, ${scheduledAt}, ${clientRef},
+                 ${neSessionId}, ${neAccountName}, ${neSessionId ? new Date() : null}, NOW())`;
           }
 
           walletAfterTotal = afterAll;
@@ -870,7 +950,10 @@ router.post('/batches', requireAuthOrApiKey,
 );
 
 // ── POST /api/v1/payouts/batches/upload — CSV/Excel upload ───────────────────
-router.post('/batches/upload', requireAuth, upload.single('file'), async (req, res, next) => {
+router.post('/batches/upload', requireAuth, upload.single('file'), (req, res, next) => {
+  req.isApiKeyAuth = false; // dashboard-only route (requireAuth, not requireAuthOrApiKey)
+  next();
+}, requirePayoutPinMiddleware, async (req, res, next) => {
   try {
     if (!req.file) return fail(res, 'No file uploaded');
 
@@ -2484,7 +2567,7 @@ router.patch('/admin/merchants/:id/payout-settings', requireAuth, requireSuperAd
 });
 
 // ── GET /api/v1/payouts/admin/refunds/pending — SA: list items pending refund review ──
-router.get('/admin/refunds/pending', requireAuth, requireSuperAdmin, async (req, res, next) => {
+router.get('/admin/refunds/pending', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const items = await prisma.$queryRawUnsafe(`
       SELECT pi.id, pi.account_number, pi.account_name, pi.bank_code, pi.amount::text,
@@ -2503,7 +2586,7 @@ router.get('/admin/refunds/pending', requireAuth, requireSuperAdmin, async (req,
 });
 
 // ── POST /api/v1/payouts/admin/refunds/:itemId/approve — SA: approve and execute refund ──
-router.post('/admin/refunds/:itemId/approve', requireAuth, requireSuperAdmin, async (req, res, next) => {
+router.post('/admin/refunds/:itemId/approve', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { itemId } = req.params;
     const [item] = await prisma.$queryRawUnsafe(`
@@ -2566,7 +2649,7 @@ router.post('/admin/refunds/:itemId/approve', requireAuth, requireSuperAdmin, as
 });
 
 // ── POST /api/v1/payouts/admin/refunds/:itemId/reject — SA: reject refund (transfer went through) ──
-router.post('/admin/refunds/:itemId/reject', requireAuth, requireSuperAdmin, async (req, res, next) => {
+router.post('/admin/refunds/:itemId/reject', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { itemId } = req.params;
     const [item] = await prisma.$queryRawUnsafe(

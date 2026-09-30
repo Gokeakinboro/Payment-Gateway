@@ -1,8 +1,10 @@
 'use strict';
 const router = require('express').Router();
 const { prisma } = require('../utils/db');
-const { requireAuth, requireSuperAdmin, requireRole, requirePermission } = require('../middleware/auth');
+const { requireAuth, requireSuperAdmin, requireAdmin, requireRole, requirePermission } = require('../middleware/auth');
 const { ok, koboToNaira } = require('../utils/helpers');
+const { logAudit } = require('../services/auditService');
+const { notifyApprovers } = require('../services/approvalNotify');
 
 // Activity-log actor classification.
 const STAFF_ROLES    = ['SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER', 'AUDIT'];
@@ -176,7 +178,7 @@ router.get('/audit-log', requireAuth, requirePermission('view_audit_log'), async
 });
 
 // GET /admin/payout-review — items needing SA attention (held or failed/pending_review)
-router.get('/payout-review', requireAuth, requireSuperAdmin, async (req, res, next) => {
+router.get('/payout-review', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const [rows, watchRows] = await Promise.all([
       prisma.$queryRaw`
@@ -242,7 +244,7 @@ router.get('/payout-review', requireAuth, requireSuperAdmin, async (req, res, ne
 const PARALLEX_RAIL_ID = '8fbc8c22-daba-4fcb-98ee-33ce7d8ffc74';
 
 // POST /admin/payout-review/:itemId/requery — live re-query Parallex for a single item
-router.post('/payout-review/:itemId/requery', requireAuth, requireSuperAdmin, async (req, res, next) => {
+router.post('/payout-review/:itemId/requery', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { itemId } = req.params;
 
@@ -305,7 +307,7 @@ router.post('/payout-review/:itemId/requery', requireAuth, requireSuperAdmin, as
 });
 
 // POST /admin/payout-review/:itemId/approve-refund — credit merchant wallet for confirmed failed payout
-router.post('/payout-review/:itemId/approve-refund', requireAuth, requireSuperAdmin, async (req, res, next) => {
+router.post('/payout-review/:itemId/approve-refund', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { itemId } = req.params;
 
@@ -364,7 +366,7 @@ router.post('/payout-review/:itemId/approve-refund', requireAuth, requireSuperAd
 });
 
 // POST /admin/payout-review/:itemId/reject-refund — mark as no-refund (money actually went through)
-router.post('/payout-review/:itemId/reject-refund', requireAuth, requireSuperAdmin, async (req, res, next) => {
+router.post('/payout-review/:itemId/reject-refund', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { itemId } = req.params;
 
@@ -388,6 +390,74 @@ router.post('/payout-review/:itemId/reject-refund', requireAuth, requireSuperAdm
     ok(res, { note: 'Marked rejected — no wallet credit. Item closed.' });
   } catch(e) { next(e); }
 });
+
+// GET /admin/payout-review/recommendable — OPERATIONS: failed items NOT yet flagged
+// for refund review (refund_status IS NULL) — these are the ones OPERATIONS can act
+// on via recommend-refund below. Items already 'pending_review' are SA/ADMIN's queue
+// (GET /payout-review above) — OPERATIONS has no further action on those.
+router.get('/payout-review/recommendable', requireAuth, requireRole('OPERATIONS'), async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRaw`
+      SELECT pi.id::text, pi.amount::bigint, pi.failure_reason AS "failureReason",
+             pi.created_at AS "createdAt",
+             pi.account_number AS "accountNumber", pi.account_name AS "accountName",
+             pi.bank_name AS "bankName",
+             m.business_name AS "businessName", m.merchant_code AS "merchantCode"
+      FROM payout_items pi
+      JOIN payout_batches pb ON pb.id = pi.batch_id
+      JOIN merchants m ON m.id = pi.merchant_id
+      WHERE pi.status = 'failed' AND pi.refund_status IS NULL AND pi.failure_reason IS NOT NULL
+      ORDER BY pi.created_at DESC
+      LIMIT 200`;
+    ok(res, rows.map(r => ({ ...r, amount: Number(r.amount) / 100 })));
+  } catch (e) { next(e); }
+});
+
+// POST /admin/payout-review/:itemId/recommend-refund — OPERATIONS flags a failed item
+// for refund review (maker). Only for items the automatic watchdog/dispatch-failure
+// path hasn't already flagged (refund_status IS NULL) — those are already in the
+// queue above. Nothing is credited here; SUPER_ADMIN/ADMIN still approve or reject
+// via the two routes above before any wallet is touched.
+router.post('/payout-review/:itemId/recommend-refund', requireAuth, requireRole('OPERATIONS'),
+  async (req, res, next) => {
+    try {
+      const { itemId } = req.params;
+      const { note } = req.body || {};
+
+      const rows = await prisma.$queryRawUnsafe(`
+        SELECT pi.id::text, pi.status, pi.refund_status AS "refundStatus", pi.amount::bigint AS amount,
+               m.business_name AS "businessName"
+        FROM payout_items pi
+        JOIN payout_batches pb ON pb.id = pi.batch_id
+        JOIN merchants m ON m.id = pb.merchant_id
+        WHERE pi.id = $1::uuid`, itemId);
+      if (!rows.length) return res.status(404).json({ ok: false, error: 'Item not found' });
+      const item = rows[0];
+
+      if (item.status !== 'failed' || item.refundStatus !== null) {
+        return res.status(400).json({ ok: false, error: `Cannot recommend: item is ${item.status}/${item.refundStatus || 'not yet flagged'} — it's either not failed or already in the refund queue.` });
+      }
+
+      await prisma.$executeRawUnsafe(
+        `UPDATE payout_items
+            SET refund_status = 'pending_review', refund_amount = $1,
+                refund_recommended_by = $2, refund_recommended_at = NOW(), updated_at = NOW()
+          WHERE id = $3::uuid`,
+        item.amount, req.user.id, itemId,
+      );
+
+      await logAudit(req.user.id, 'REFUND_RECOMMENDED', 'payout_items', itemId,
+        {}, { note: note || null }, `Operations recommended a refund review for ₦${(Number(item.amount) / 100).toLocaleString('en-NG')} — ${item.businessName}`);
+
+      notifyApprovers({
+        subject: `Pending approval: refund recommendation — ${item.businessName}`,
+        summaryHtml: `Operations staff recommended reviewing a failed payout item of <b>₦${(Number(item.amount) / 100).toLocaleString('en-NG')}</b> for <b>${item.businessName}</b> for a possible refund.${note ? `<br>Note: ${note}` : ''}`,
+        actionUrl: `${process.env.DASHBOARD_URL || 'https://paylodeservices.com/dashboard.html'}#sa_payout_review`,
+      });
+
+      ok(res, { item_id: itemId, refund_status: 'pending_review' }, 'Recommended for refund review — awaiting SUPER_ADMIN/ADMIN approval.');
+    } catch (e) { next(e); }
+  });
 
 // ── GET /admin/kyc-updates — pending + recent KYC document update requests ────
 router.get('/kyc-updates', requireAuth, requireSuperAdmin, async (req, res, next) => {
