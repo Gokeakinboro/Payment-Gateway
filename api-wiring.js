@@ -638,8 +638,9 @@ async function viewMerchant(id) {
     '<div class="flex-between">' +
       '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Close</button>' +
       '<div class="flex" style="gap:8px;flex-wrap:wrap;justify-content:flex-end">' +
-        (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')<i data-lucide="file-text" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> KYC Documents</button>' : '') +
+        (canReview ? '<button class="btn btn-outline" onclick="openDocsModal(\'merchant\',\'' + id + '\',\'' + nameEsc + '\')"><i data-lucide="file-text" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> KYC Documents</button>' : '') +
         (canReview ? '<button class="btn btn-outline" onclick="openKycReports(\'' + id + '\',\'' + nameEsc + '\')"><i data-lucide="clipboard-list" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> KYC Reports</button>' : '') +
+        (canReview ? '<button class="btn btn-outline" id="run-kyc-btn-' + id + '" onclick="runMerchantKyc(\'' + id + '\',\'' + nameEsc + '\')"><i data-lucide="shield-check" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Run KYC</button>' : '') +
         (isSA ? '<button class="btn btn-outline" onclick="toggleLivenessExemption(\'' + id + '\',' + (m.notificationSettings && m.notificationSettings.liveness_exempted ? 'false' : 'true') + ')" title="Toggle liveness check exemption for this merchant<i data-lucide="camera" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> ' + (m.notificationSettings && m.notificationSettings.liveness_exempted ? 'Reinstate Liveness' : 'Exempt from Liveness') + '</button>' : '') +
         (isSA && !(m.notificationSettings && m.notificationSettings.settlement_name_override) ? '<button class="btn btn-outline" style="color:#dc2626;border-color:#fca5a5" onclick="grantSettlementNameOverride(\'' + id + '\')" title="Grant settlement name mismatch override — case by case only<i data-lucide="alert-triangle" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Settlement Name Override</button>' : '') +
         (isSA && m.notificationSettings && m.notificationSettings.settlement_name_override ? '<span style="font-size:12px;color:#16a34a;padding:6px 10px;border:1px solid #86efac;border-radius:6px">&#9989; Settlement Name Override Active</span>' : '') +
@@ -2517,6 +2518,127 @@ async function loadPayoutsBreakdown() {
   } catch(e) { host.innerHTML = errorBox('Failed to load payouts: ' + e.message); }
 }
 
+// ── SA: PAYOUT REVIEW — held + failed/pending_review items needing SA action ──
+async function requeryPayoutItem(itemId, btn) {
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    var r = await apiFetch('/admin/payout-review/' + itemId + '/requery', { method: 'POST' });
+    var row = btn.closest('tr');
+    var note = r.note || '';
+    btn.textContent = r.changed ? '✓ Updated' : 'Re-query';
+    btn.disabled = false;
+    if (row) {
+      var noteCell = row.querySelector('.requery-note');
+      if (noteCell) {
+        noteCell.textContent = note;
+        noteCell.style.color = r.changed ? (r.status === 'success' ? '#16a34a' : '#dc2626') : '#6b7280';
+      }
+      if (r.changed) { row.style.opacity = '0.5'; setTimeout(function() { loadPayoutReview(); }, 1500); }
+    }
+  } catch(e) {
+    btn.textContent = 'Re-query';
+    btn.disabled = false;
+    alert('Re-query failed: ' + e.message);
+  }
+}
+
+async function approvePayoutRefund(itemId, btn) {
+  if (!confirm('Credit merchant wallet for this failed payout?')) return;
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    var r = await apiFetch('/admin/payout-review/' + itemId + '/approve-refund', { method: 'POST' });
+    btn.closest('tr').style.opacity = '0.4';
+    setTimeout(function() { loadPayoutReview(); }, 1200);
+  } catch(e) { btn.disabled = false; btn.textContent = 'Approve'; alert('Failed: ' + e.message); }
+}
+
+async function rejectPayoutRefund(itemId, btn) {
+  if (!confirm('Reject refund? This means money WAS sent — no wallet credit will be applied.')) return;
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    var r = await apiFetch('/admin/payout-review/' + itemId + '/reject-refund', { method: 'POST' });
+    btn.closest('tr').style.opacity = '0.4';
+    setTimeout(function() { loadPayoutReview(); }, 1200);
+  } catch(e) { btn.disabled = false; btn.textContent = 'Reject'; alert('Failed: ' + e.message); }
+}
+
+async function loadPayoutReview() {
+  var host = document.getElementById('main-content'); if (!host) return;
+  host.innerHTML = loading();
+  try {
+    var d = await apiFetch('/admin/payout-review');
+    var items      = d.items      || [];
+    var watchItems = d.watchItems || [];
+
+    var fmt = function(n) { return '₦' + Number(n).toLocaleString('en-NG', {minimumFractionDigits:2}); };
+    var fmtDate = function(s) { return s ? new Date(s).toLocaleString('en-NG', {dateStyle:'medium',timeStyle:'short'}) : '—'; };
+
+    var heldItems   = items.filter(function(i) { return i.status === 'held'; });
+    var failedItems = items.filter(function(i) { return i.status === 'failed' && i.refundStatus === 'pending_review'; });
+
+    var buildTable = function(list, cols) {
+      if (!list.length) return '<p style="color:var(--gray-400);padding:12px 0">None</p>';
+      var rows = list.map(function(i) {
+        var statusBadge = i.status === 'held'
+          ? '<span class="badge badge-warning">held</span>'
+          : i.refundStatus === 'approved'
+            ? '<span class="badge badge-warning">refunded</span>'
+            : '<span class="badge badge-error">failed</span>';
+        var extraCol = cols === 'watch'
+          ? '<td style="font-size:11px;color:#92400e">Wallet already credited — monitoring Parallex</td>'
+          : '<td style="font-size:11px;color:var(--gray-500);max-width:200px;word-break:break-word">' + (i.failureReason || '—').slice(0, 100) + '</td>';
+        return '<tr>' +
+          '<td>' + (i.merchantCode || '—') + '</td>' +
+          '<td>' + (i.businessName || '—') + '</td>' +
+          '<td style="font-variant-numeric:tabular-nums">' + fmt(i.amount) + '</td>' +
+          '<td>' + (i.bankName || i.bankCode || '—') + ' · ' + (i.accountNumber || '—') + '</td>' +
+          '<td>' + (i.accountName || '—') + '</td>' +
+          '<td>' + (i.railName || '—') + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          extraCol +
+          '<td style="font-size:11px">' + fmtDate(i.createdAt) + '</td>' +
+          '<td style="white-space:nowrap"><span class="requery-note" style="font-size:11px;display:block;margin-bottom:3px"></span>' +
+            '<button class="btn btn-outline btn-xs" onclick="requeryPayoutItem(\'' + i.id + '\',this)" style="margin-right:4px">Re-query</button>' +
+            (i.status === 'failed' && (i.refundStatus === 'pending_review' || i.refundStatus === null)
+              ? '<button class="btn btn-success btn-xs" onclick="approvePayoutRefund(\'' + i.id + '\',this)" style="margin-right:4px">Approve</button>' +
+                '<button class="btn btn-danger btn-xs" onclick="rejectPayoutRefund(\'' + i.id + '\',this)">Reject</button>'
+              : '') +
+            '</td>' +
+          '</tr>';
+      }).join('');
+      return '<div class="table-wrap"><table>' +
+        '<thead><tr><th>Code</th><th>Merchant</th><th>Amount</th><th>Bank/Account</th><th>Acct Name</th><th>Rail</th><th>Status</th><th>Note</th><th>Created</th><th></th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table></div>';
+    };
+
+    var allClear = items.length === 0 && watchItems.length === 0;
+
+    host.innerHTML =
+      '<div class="page-header"><div class="page-title">Payout Review</div>' +
+      '<div class="page-desc">Items the watchdog could not auto-resolve. Use <strong>Re-query</strong> to check live Parallex status and auto-update.</div>' +
+      '</div>' +
+      '<div style="margin-bottom:10px"><button class="btn btn-outline btn-sm" onclick="loadPayoutReview()">&#8635; Refresh</button></div>' +
+      (allClear
+        ? '<div class="card" style="padding:40px;text-align:center;color:var(--gray-400)">No items pending review ✓</div>'
+        : '') +
+      (heldItems.length ? '<div class="card" style="margin-bottom:16px;border-left:3px solid #f59e0b">' +
+          '<div style="font-weight:600;margin-bottom:4px;color:#b45309">Held — Parallex Status Ambiguous</div>' +
+          '<p style="font-size:12px;color:var(--gray-500);margin-bottom:8px">VPN was down or query threw when watchdog ran. Re-query each item to get current status.</p>' +
+          buildTable(heldItems, 'normal') + '</div>' : '') +
+      (failedItems.length ? '<div class="card" style="margin-bottom:16px;border-left:3px solid #ef4444">' +
+          '<div style="font-weight:600;margin-bottom:4px;color:#b91c1c">Failed — Refund Pending SA Approval</div>' +
+          '<p style="font-size:12px;color:var(--gray-500);margin-bottom:8px">Parallex confirmed NO RECORD. Rail float restored. Approve refund before crediting merchant wallet.</p>' +
+          buildTable(failedItems, 'normal') + '</div>' : '') +
+      (watchItems.length ? '<div class="card" style="border-left:3px solid #92400e">' +
+          '<div style="font-weight:600;margin-bottom:4px;color:#92400e">Watch List — Wallet Already Refunded, Parallex Unconfirmed</div>' +
+          '<p style="font-size:12px;color:var(--gray-500);margin-bottom:8px">These were refunded to the merchant wallet before the watchdog fix. Parallex status was unknown at refund time. Re-query each to confirm Parallex\'s final answer — if settled, money was double-spent.</p>' +
+          buildTable(watchItems, 'watch') + '</div>' : '');
+  } catch(e) {
+    host.innerHTML = errorCard(e.message || 'Failed to load payout review');
+  }
+}
+
 // ── SA: STUCK PAYOUTS — NIP status check + safe resolution per batch ─────────
 async function loadStuckPayouts() {
   var host = document.getElementById('main-content'); if (!host) return;
@@ -2530,35 +2652,43 @@ async function loadStuckPayouts() {
       var ageH  = Math.floor(ageMs / 3600000);
       var ageM  = Math.floor((ageMs % 3600000) / 60000);
       var ageLabel = ageH > 0 ? ageH + 'h ' + ageM + 'm' : ageM + 'm';
+      var dt = new Date(b.created_at);
+      var dtLabel = dt.toLocaleDateString('en-NG', {day:'2-digit',month:'short'}) + ' ' +
+                    dt.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit',hour12:false});
       var railNote = b.sent_to_rail > 0
         ? (b.not_sent_to_rail > 0 ? b.sent_to_rail + ' on rail, ' + b.not_sent_to_rail + ' pre-dispatch' : b.sent_to_rail + ' on rail')
         : b.not_sent_to_rail + ' not yet dispatched';
       return '<tr>' +
         '<td class="mono" style="font-size:10px">' + (b.batch_ref||'—') + '</td>' +
         '<td style="font-size:12px;font-weight:500">' + (b.business_name||'—') + '</td>' +
+        '<td style="font-size:11px;color:var(--gray-400)">' + dtLabel + '</td>' +
         '<td style="text-align:center;color:#d97706">' + b.pending_items + '/' + b.total_items + '</td>' +
         '<td class="mono" style="text-align:right;font-weight:700;color:#d97706">' + money(b.stuck_naira) + '</td>' +
         '<td style="font-size:11px;color:var(--gray-400)">' + ageLabel + '</td>' +
-        '<td style="font-size:11px;color:var(--gray-400)">' + railNote + '</td>' +
+        '<td id="rail-state-' + b.id + '" style="font-size:11px;color:var(--gray-400)">' + railNote + '</td>' +
         '<td>' +
-          '<button class="btn btn-outline btn-sm" id="chk-btn-' + b.id + '" onclick="checkStuckBatch(\'' + b.id + '\',\'' + (b.batch_ref||'').replace(/'/g,'') + '\')">' +
-            'Check &amp; Resolve</button>' +
-          (b.not_sent_to_rail > 0
-            ? ' <button class="btn btn-lime btn-sm" onclick="releaseBatch(\'' + b.id + '\')">Dispatch</button>'
-            : '') +
+          '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+            '<button class="btn btn-outline btn-sm" id="chk-btn-' + b.id + '" onclick="checkStuckBatch(\'' + b.id + '\',\'' + (b.batch_ref||'').replace(/'/g,'') + '\')" style="min-width:90px">' +
+              'Check Rail</button>' +
+            (b.not_sent_to_rail > 0
+              ? '<button class="btn btn-lime btn-sm" onclick="releaseBatch(\'' + b.id + '\')" style="min-width:90px">Dispatch</button>'
+              : '') +
+            '<button class="btn btn-outline btn-sm" style="min-width:110px;border-color:#16a34a;color:#16a34a" onclick="forceApproveStuck(\'' + b.id + '\',\'' + (b.batch_ref||'').replace(/'/g,'') + '\')">Refund to Wallet</button>' +
+            '<button class="btn btn-outline btn-sm" style="min-width:90px;border-color:#dc2626;color:#dc2626" onclick="forceRejectStuck(\'' + b.id + '\',\'' + (b.batch_ref||'').replace(/'/g,'') + '\')">No Refund</button>' +
+          '</div>' +
         '</td>' +
       '</tr>';
     }).join('');
     host.innerHTML =
       '<div class="page-header">' +
         '<div class="page-title">Stuck Payouts</div>' +
-        '<div class="page-desc">Batches with items stuck in processing state. Check &amp; Resolve queries the rail and closes each item safely — reversal only happens when NO RECORD is confirmed after &gt;1h.</div>' +
+        '<div class="page-desc">Batches with items stuck in processing state. Check Rail queries Parallex and reports the status — no changes are made. Use Approve Refund or No Refund to take action.</div>' +
       '</div>' +
       '<div style="margin-bottom:10px"><button class="btn btn-outline btn-sm" onclick="loadStuckPayouts()">&#8635; Refresh</button></div>' +
       (batches.length === 0
         ? '<div class="card" style="padding:40px;text-align:center;color:var(--gray-400)">No stuck batches ✓</div>'
         : '<div class="card"><div class="table-wrap"><table>' +
-            '<thead><tr><th>Batch</th><th>Merchant</th><th>Pending/Total</th><th class="right">Stuck Amount</th><th>Age</th><th>Rail state</th><th>Action</th></tr></thead>' +
+            '<thead><tr><th>Batch</th><th>Merchant</th><th>Date/Time</th><th>Pending/Total</th><th class="right">Stuck Amount</th><th>Age</th><th>Rail state</th><th>Action</th></tr></thead>' +
             '<tbody>' + rows + '</tbody>' +
           '</table></div></div>') +
       '<div id="stuck-result" style="margin-top:14px"></div>';
@@ -2566,41 +2696,76 @@ async function loadStuckPayouts() {
 }
 async function checkStuckBatch(batchId, batchRef) {
   var btn = document.getElementById('chk-btn-' + batchId);
-  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
-  var resultBox = document.getElementById('stuck-result');
-  if (resultBox) resultBox.innerHTML = '<div style="color:var(--gray-400);font-size:13px;padding:8px 0">Querying rail — this may take a few seconds…</div>';
+  var stateCell = document.getElementById('rail-state-' + batchId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Querying…'; }
+  if (stateCell) stateCell.innerHTML = '<span style="color:var(--gray-400);font-style:italic">checking…</span>';
   try {
     var res = await apiFetch('/payouts/admin/stuck/' + batchId + '/check', { method: 'POST' });
+    if (btn) { btn.disabled = false; btn.textContent = 'Check Rail'; }
     if (!res || res.success === false) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Check & Resolve'; }
-      if (resultBox) resultBox.innerHTML = errorBox((res && res.message) || 'Check failed');
+      if (stateCell) stateCell.textContent = 'query failed';
       return;
     }
     var d = res.data || {};
-    var parts = [];
-    if ((d.settled    || 0) > 0) parts.push('<span style="color:#16a34a;font-weight:600">✓ ' + d.settled    + ' settled</span>');
-    if ((d.reversed   || 0) > 0) parts.push('<span style="color:#d97706;font-weight:600">↩ ' + d.reversed   + ' reversed (wallet refunded)</span>');
-    if ((d.held       || 0) > 0) parts.push('<span style="color:var(--gray-400)">⏸ ' + d.held       + ' held (still processing)</span>');
-    if ((d.pre_dispatch||0) > 0) parts.push('<span style="color:var(--gray-400)">◻ ' + d.pre_dispatch + ' pre-dispatch (use Dispatch)</span>');
-    var detailRows = (d.details || []).map(function(det){
-      var color = det.action==='settled' ? '#16a34a' : det.action==='reversed' ? '#d97706' : 'var(--gray-400)';
-      return '<tr><td class="mono" style="font-size:10px">' + (det.item_id||'').slice(0,8) + '…</td>' +
-             '<td style="font-size:12px;font-weight:600;color:' + color + '">' + (det.action||'') + '</td>' +
-             '<td style="font-size:11px;color:var(--gray-400)">' + (det.note||'') + '</td></tr>';
-    }).join('');
-    if (resultBox) resultBox.innerHTML =
-      '<div class="card" style="margin-top:4px">' +
-        '<div style="font-weight:600;margin-bottom:8px">' + (batchRef||'Batch') + ' — ' + (res.message||'') + '</div>' +
-        '<div style="margin-bottom:12px;font-size:13px">' + (parts.join(' &nbsp;·&nbsp; ') || 'No changes') + '</div>' +
-        (detailRows
-          ? '<div class="table-wrap"><table><thead><tr><th>Item</th><th>Action</th><th>Note</th></tr></thead><tbody>' + detailRows + '</tbody></table></div>'
-          : '') +
-      '</div>';
-    if ((d.settled || 0) > 0 || (d.reversed || 0) > 0) setTimeout(loadStuckPayouts, 1500);
-    else if (btn) { btn.disabled = false; btn.textContent = 'Check & Resolve'; }
+    var details = d.details || [];
+    var statusColor = { settled:'#16a34a', pending:'#d97706', no_record:'#dc2626', query_error:'#6b7280', pre_dispatch:'#6b7280', no_api:'#6b7280', unknown:'#6b7280' };
+    // Update rail state cell with result from each item
+    if (stateCell) {
+      if (!details.length) {
+        stateCell.textContent = 'no items';
+      } else {
+        stateCell.innerHTML = details.map(function(det) {
+          var col = statusColor[det.rail_status] || '#6b7280';
+          return '<div style="font-weight:700;color:' + col + ';font-size:12px">' + (det.label||det.rail_status) + '</div>' +
+                 '<div style="font-size:10px;color:var(--gray-400);margin-top:2px">' + (det.note||'') + '</div>';
+        }).join('<hr style="margin:4px 0;opacity:0.2">');
+      }
+    }
   } catch(e) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Check & Resolve'; }
-    if (resultBox) resultBox.innerHTML = errorBox('Check failed: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Check Rail'; }
+    if (stateCell) stateCell.textContent = 'query error';
+  }
+}
+
+async function forceApproveStuck(batchId, batchRef) {
+  if (!confirm('REFUND TO WALLET — batch ' + batchRef + '?\n\nThis credits the merchant wallet for all stuck items in this batch.\nOnly do this after Check Rail confirms Parallex has NO RECORD (code 30).\nIf Parallex later settles, the merchant will have been double-credited.')) return;
+  var resultBox = document.getElementById('stuck-result');
+  if (resultBox) resultBox.innerHTML = '<div style="color:var(--gray-400);font-size:13px;padding:8px 0">Processing refund…</div>';
+  try {
+    var res = await apiFetch('/payouts/admin/stuck/' + batchId + '/force-approve', { method: 'POST' });
+    if (!res || res.success === false) {
+      if (resultBox) resultBox.innerHTML = errorBox((res && res.message) || 'Force approve failed');
+      return;
+    }
+    var d = res.data || {};
+    if (resultBox) resultBox.innerHTML =
+      '<div class="card" style="margin-top:4px;border-left:3px solid #16a34a">' +
+        '<div style="font-weight:600;color:#16a34a;margin-bottom:6px">✓ Refunded to wallet — ' + (batchRef||'Batch') + '</div>' +
+        '<div style="font-size:13px">' + (res.message || '') + '</div>' +
+      '</div>';
+    setTimeout(loadStuckPayouts, 1500);
+  } catch(e) {
+    if (resultBox) resultBox.innerHTML = errorBox('Force approve failed: ' + e.message);
+  }
+}
+async function forceRejectStuck(batchId, batchRef) {
+  if (!confirm('MARK NO REFUND for batch ' + batchRef + '?\n\nThis closes the item as failed with no wallet credit — use only when you confirm the payout DID reach the recipient.')) return;
+  var resultBox = document.getElementById('stuck-result');
+  if (resultBox) resultBox.innerHTML = '<div style="color:var(--gray-400);font-size:13px;padding:8px 0">Processing…</div>';
+  try {
+    var res = await apiFetch('/payouts/admin/stuck/' + batchId + '/force-reject', { method: 'POST' });
+    if (!res || res.success === false) {
+      if (resultBox) resultBox.innerHTML = errorBox((res && res.message) || 'Force reject failed');
+      return;
+    }
+    if (resultBox) resultBox.innerHTML =
+      '<div class="card" style="margin-top:4px;border-left:3px solid #dc2626">' +
+        '<div style="font-weight:600;color:#dc2626;margin-bottom:6px">✗ Marked no-refund — ' + (batchRef||'Batch') + '</div>' +
+        '<div style="font-size:13px">' + (res.message || '') + '</div>' +
+      '</div>';
+    setTimeout(loadStuckPayouts, 1500);
+  } catch(e) {
+    if (resultBox) resultBox.innerHTML = errorBox('Force reject failed: ' + e.message);
   }
 }
 
@@ -2885,6 +3050,539 @@ async function refreshMerchStatement() {
   } catch(e) {
     preview.innerHTML = errorBox('Failed to load statement: ' + e.message);
   }
+}
+
+// ── MERCHANT MY KYC ───────────────────────────────────────────────────────────
+async function loadMyKyc() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var r = await apiFetch('/kyc/my-kyc');
+    if (!r || !r.data) { el.innerHTML = errorBox('Could not load KYC data'); return; }
+    var d = r.data;
+    var docs = d.documents || [];
+    var sub  = d.submission;
+
+    var statusColor = { outstanding:'#d97706', deferred:'#d97706', submitted:'#2563eb', verified:'#16a34a', rejected:'#dc2626' };
+
+    var subBanner = '';
+    if (sub) {
+      var subColor = sub.status === 'approved' ? '#16a34a' : sub.status === 'rejected' ? '#dc2626' : '#d97706';
+      subBanner = '<div style="background:var(--surface-2);border-radius:8px;padding:14px 18px;margin-bottom:18px;display:flex;gap:24px;flex-wrap:wrap;font-size:13px">' +
+        '<span><b>KYC Submission:</b> <span style="color:' + subColor + ';font-weight:600">' + sub.status.toUpperCase() + '</span></span>' +
+        '<span><b>Tier:</b> ' + (sub.tier || '—') + '</span>' +
+        '<span><b>BVN:</b> ' + (sub.bvn_verified ? '<span style="color:#16a34a">✓ Verified</span>' : '<span style="color:#d97706">' + (sub.checks && sub.checks.bvn || '—') + '</span>') + '</span>' +
+        '<span><b>NIN:</b> ' + (sub.nin_verified ? '<span style="color:#16a34a">✓ Verified</span>' : '<span style="color:#d97706">' + (sub.checks && sub.checks.nin || '—') + '</span>') + '</span>' +
+        '</div>';
+    }
+
+    var rows = docs.map(function(doc) {
+      var sc = statusColor[doc.status] || '#6b7280';
+      var fileLink = doc.file_path
+        ? '<a href="' + doc.file_path + '" target="_blank" style="color:var(--primary);font-size:12px">View file</a>'
+        : '<span style="color:var(--gray-400);font-size:12px">No file</span>';
+      var action = '';
+      if (doc.pending_update) {
+        action = '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-size:12px">Pending approval</span>';
+      } else {
+        action = '<button class="btn btn-sm" style="font-size:12px;padding:4px 10px" onclick="showKycUploadForm(\'' + doc.doc_key + '\',\'' + encodeURIComponent(doc.doc_label) + '\',\'' + (doc.id||'') + '\')">Update</button>';
+      }
+      return '<tr>' +
+        '<td style="font-size:13px">' + doc.doc_label + '</td>' +
+        '<td><span style="color:' + sc + ';font-weight:600;font-size:12px">' + doc.status + '</span></td>' +
+        '<td>' + fileLink + '</td>' +
+        '<td>' + action + '</td>' +
+        '</tr>' +
+        '<tr id="kyc-upload-row-' + doc.doc_key + '" style="display:none"><td colspan="4" style="padding:0 12px 12px"></td></tr>';
+    }).join('');
+
+    el.innerHTML =
+      '<div class="page-header">' +
+        '<div class="page-title">My KYC Documents</div>' +
+        '<div class="page-desc">' + (d.merchant ? d.merchant.businessName + ' · ' + d.merchant.merchantCode : '') + '</div>' +
+      '</div>' +
+      subBanner +
+      '<div class="card" style="padding:0">' +
+        '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">' +
+          '<b style="font-size:14px">Documents (' + docs.length + ')</b>' +
+          '<button class="btn btn-sm btn-lime" onclick="showKycUploadForm(\'__new__\',\'\',' + '\'\')">+ Add New Document</button>' +
+        '</div>' +
+        '<div class="table-wrap"><table>' +
+          '<thead><tr><th>Document</th><th>Status</th><th>File</th><th>Action</th></tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table></div>' +
+        '<div id="kyc-upload-row-__new__" style="display:none;padding:16px 20px;border-top:1px solid var(--border)"></div>' +
+      '</div>';
+  } catch(e) { el.innerHTML = errorBox('Failed to load KYC: ' + e.message); }
+}
+
+function showKycUploadForm(docKey, docLabelEnc, kycDocId) {
+  var label = decodeURIComponent(docLabelEnc);
+  var rowId = 'kyc-upload-row-' + docKey;
+  var cell = document.getElementById(rowId);
+  if (!cell) return;
+  // Toggle
+  if (cell.style.display !== 'none' && cell.getAttribute('data-open') === '1') {
+    cell.style.display = 'none'; cell.setAttribute('data-open','0'); return;
+  }
+  var isNew = docKey === '__new__';
+  var innerHtml =
+    '<div style="background:var(--surface-2);border-radius:8px;padding:14px 16px;margin:' + (isNew ? '0' : '4px 0') + '">' +
+      '<b style="font-size:13px">' + (isNew ? 'Add New Document' : 'Update: ' + label) + '</b>' +
+      (isNew ? '<div style="margin-top:8px"><label style="font-size:12px;display:block;margin-bottom:4px">Document Name *</label><input id="kdu-new-label" type="text" class="form-input" style="max-width:320px" placeholder="e.g. Utility Bill 2026"></div>' : '') +
+      '<div style="margin-top:8px"><label style="font-size:12px;display:block;margin-bottom:4px">File (PDF, JPG, PNG · max 10MB)</label><input id="kdu-file-' + docKey + '" type="file" accept=".pdf,.jpg,.jpeg,.png"></div>' +
+      '<div style="margin-top:8px"><label style="font-size:12px;display:block;margin-bottom:4px">Notes (optional)</label><input id="kdu-notes-' + docKey + '" type="text" class="form-input" style="max-width:400px" placeholder="Any notes for admin review"></div>' +
+      '<div style="margin-top:12px;display:flex;gap:8px">' +
+        '<button class="btn btn-lime btn-sm" onclick="submitKycDocUpdate(\'' + docKey + '\',\'' + encodeURIComponent(label) + '\',\'' + kycDocId + '\')">Submit for Review</button>' +
+        '<button class="btn btn-sm" onclick="document.getElementById(\'' + rowId + '\').style.display=\'none\'">Cancel</button>' +
+      '</div>' +
+    '</div>';
+
+  // For td cells (update rows), set innerHTML of the TD; for div (new doc), set directly
+  var target = cell.tagName === 'TR' ? cell.querySelector('td') : cell;
+  if (target) target.innerHTML = innerHtml;
+  cell.style.display = '';
+  cell.setAttribute('data-open','1');
+}
+
+async function submitKycDocUpdate(docKey, docLabelEnc, kycDocId) {
+  var label = decodeURIComponent(docLabelEnc);
+  var isNew = docKey === '__new__';
+  var finalLabel = isNew ? (document.getElementById('kdu-new-label') && document.getElementById('kdu-new-label').value.trim()) : label;
+  if (!finalLabel) { alert('Please enter a document name.'); return; }
+
+  var fileInput = document.getElementById('kdu-file-' + docKey);
+  var notes     = document.getElementById('kdu-notes-' + docKey);
+  var noteVal   = notes ? notes.value.trim() : '';
+
+  var fd = new FormData();
+  fd.append('doc_key',    isNew ? ('new_' + Date.now()) : docKey);
+  fd.append('doc_label',  finalLabel);
+  if (kycDocId) fd.append('kyc_document_id', kycDocId);
+  if (noteVal)  fd.append('merchant_notes',  noteVal);
+  if (fileInput && fileInput.files.length) fd.append('file', fileInput.files[0]);
+
+  var BASE = (typeof API_BASE !== 'undefined' ? API_BASE : '/api/v1');
+  var token = localStorage.getItem('paylode_token') || sessionStorage.getItem('paylode_token') || '';
+  try {
+    var resp = await fetch(BASE + '/kyc/document-update', { method:'POST', headers:{ Authorization:'Bearer '+token }, body:fd });
+    var json = await resp.json();
+    if (json.data || json.status !== false) {
+      alert('Submitted! Admin will review your document update.');
+      loadMyKyc();
+    } else {
+      alert('Error: ' + (json.message || json.error || 'Unknown error'));
+    }
+  } catch(e) { alert('Upload failed: ' + e.message); }
+}
+
+// ── SA: STAMP DUTY WALLETS ────────────────────────────────────────────────────
+async function loadStampDutyWallets() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = '<div style="padding:24px;color:var(--gray-500)">Loading stamp duty wallets…</div>';
+  var res = await apiFetch('/payouts/admin/stamp-duty-wallets');
+  var wallets = (res && res.data && res.data.wallets) || [];
+
+  var walletsHtml = wallets.length
+    ? wallets.map(function(r) {
+        var balance   = Number(r.balance || 0);
+        var collected = Number(r.total_collected || 0);
+        var remitted  = Number(r.total_remitted || 0);
+        return '<tr style="border-bottom:1px solid var(--gray-100)">' +
+          '<td style="padding:8px"><strong>' + (r.business_name||'—') + '</strong><div style="font-size:11px;color:var(--gray-400)">' + (r.email||'') + '</div></td>' +
+          '<td style="padding:8px;font-weight:600;color:' + (collected>0?'var(--green)':'var(--gray-400)') + '">' + fmtNaira(collected) + '</td>' +
+          '<td style="padding:8px;font-weight:700;color:' + (balance>0?'var(--brand)':'var(--gray-400)') + '">' + fmtNaira(balance) + '</td>' +
+          '<td style="padding:8px;font-size:12px;color:var(--gray-500)">' + fmtNaira(remitted) + '</td>' +
+          '<td style="padding:8px"><button class="btn btn-lime btn-sm" onclick="showRemitModal(\'' + r.merchant_id + '\',\'' + (r.business_name||'').replace(/'/g,"\\'") + '\',' + balance + ')">Remit</button></td>' +
+        '</tr>';
+      }).join('')
+    : '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--gray-400)">No holding wallets yet — collections start when a rail is switched to collecting (deferred) mode</td></tr>';
+
+  el.innerHTML =
+    '<div style="padding:24px">' +
+    '<div style="font-size:20px;font-weight:700;margin-bottom:4px">Stamp Duty Wallets</div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:16px">These wallets hold stamp duty collected from merchants on <strong>deferred-billing rails</strong> (rails that will invoice us retroactively rather than deducting per transaction). Collections start from the day a rail is switched on — no back-calculation. Per-transaction rails do not appear here.</div>' +
+    '<div class="table-wrap" style="margin-bottom:24px"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)">' +
+    '<th style="text-align:left;padding:8px">Merchant</th>' +
+    '<th style="text-align:left;padding:8px">Total collected</th>' +
+    '<th style="text-align:left;padding:8px">Balance (held)</th>' +
+    '<th style="text-align:left;padding:8px">Remitted</th>' +
+    '<th></th></tr></thead>' +
+    '<tbody>' + walletsHtml + '</tbody></table></div>' +
+    '<div style="font-weight:600;font-size:15px;margin-bottom:10px">Entry history</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">' +
+    '<select id="sd-filter-rail" class="form-input" style="width:auto;min-width:140px" onchange="loadSdEntries()"><option value="">All banks</option></select>' +
+    '<input id="sd-filter-from" class="form-input" type="date" style="width:auto" onchange="loadSdEntries()">' +
+    '<input id="sd-filter-to" class="form-input" type="date" style="width:auto" onchange="loadSdEntries()">' +
+    '</div>' +
+    '<div id="sd-entries-wrap"><div style="color:var(--gray-400);font-size:13px">Select filters above to load entries</div></div>' +
+    '</div>';
+  // Pre-load rails for filter dropdown and show recent entries
+  loadSdEntries();
+}
+
+async function loadSdEntries() {
+  var railId = (document.getElementById('sd-filter-rail') || {}).value || '';
+  var from   = (document.getElementById('sd-filter-from') || {}).value || '';
+  var to     = (document.getElementById('sd-filter-to')   || {}).value || '';
+  var params = [];
+  if (railId) params.push('rail_id=' + encodeURIComponent(railId));
+  if (from)   params.push('from=' + encodeURIComponent(from));
+  if (to)     params.push('to=' + encodeURIComponent(to + 'T23:59:59'));
+  var url = '/payouts/admin/stamp-duty-entries' + (params.length ? '?' + params.join('&') : '');
+  var res = await apiFetch(url);
+  var entries = (res && res.data && res.data.entries) || [];
+  var rails   = (res && res.data && res.data.rails)   || [];
+
+  // Populate rail dropdown (first call only — after that it already has options)
+  var sel = document.getElementById('sd-filter-rail');
+  if (sel && sel.options.length <= 1 && rails.length) {
+    rails.forEach(function(r) {
+      var opt = document.createElement('option');
+      opt.value = r.id; opt.textContent = r.name;
+      sel.appendChild(opt);
+    });
+    if (railId) sel.value = railId;
+  }
+
+  var wrap = document.getElementById('sd-entries-wrap');
+  if (!wrap) return;
+  if (!entries.length) { wrap.innerHTML = '<div style="color:var(--gray-400);font-size:13px;padding:12px 0">No entries for this filter</div>'; return; }
+  wrap.innerHTML =
+    '<div class="table-wrap"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)">' +
+    '<th style="text-align:left;padding:8px">Merchant</th><th style="text-align:left;padding:8px">Bank / Rail</th>' +
+    '<th style="text-align:left;padding:8px">Amount</th><th style="text-align:left;padding:8px">Reference</th>' +
+    '<th style="text-align:left;padding:8px">Date</th></tr></thead><tbody>' +
+    entries.map(function(e) {
+      return '<tr style="border-bottom:1px solid var(--gray-100)">' +
+        '<td style="padding:8px;font-size:13px">' + (e.business_name||'—') + '</td>' +
+        '<td style="padding:8px;font-size:13px">' + (e.rail_name||'—') + '</td>' +
+        '<td style="padding:8px;font-weight:600">' + fmtNaira(Number(e.amount)) + '</td>' +
+        '<td style="padding:8px;font-size:12px;color:var(--gray-500)">' + (e.reference||'—') + '</td>' +
+        '<td style="padding:8px;font-size:11px;color:var(--gray-400)">' + new Date(e.created_at).toLocaleString() + '</td>' +
+      '</tr>';
+    }).join('') +
+    '</tbody></table></div>';
+}
+
+function showRemitModal(merchantId, name, balanceKobo) {
+  showModal(
+    '<div class="modal-header"><div class="modal-title">Record Remittance — ' + name + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="font-size:12px;margin-bottom:12px">Record this when Parallex has actually debited our account for stamp duty. Available balance: <strong>' + fmtNaira(balanceKobo) + '</strong>.</div>' +
+    '<div class="form-group"><label class="form-label">Amount remitted (₦)</label><input class="form-input" id="remit-amount" type="number" min="0" step="0.01" placeholder="e.g. 500"></div>' +
+    '<div class="form-group"><label class="form-label">Description / reference (optional)</label><input class="form-input" id="remit-desc" placeholder="e.g. Parallex statement Nov 2026"></div>' +
+    '<div class="flex-between" style="margin-top:12px">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-lime" id="remit-btn" onclick="submitRemit(\'' + merchantId + '\')">Record Remittance</button></div>' +
+    '<div id="remit-msg" style="margin-top:8px"></div>');
+}
+
+async function submitRemit(merchantId) {
+  var amtNaira = parseFloat(document.getElementById('remit-amount').value || '0');
+  if (!amtNaira || amtNaira <= 0) { document.getElementById('remit-msg').innerHTML = '<div class="warn-box" style="font-size:12px">Enter a valid amount</div>'; return; }
+  var desc = document.getElementById('remit-desc').value.trim();
+  var btn = document.getElementById('remit-btn'); btn.disabled = true; btn.textContent = 'Saving…';
+  var res = await apiFetch('/payouts/admin/stamp-duty-wallets/' + merchantId + '/remit', {
+    method: 'POST',
+    body: JSON.stringify({ amount: Math.round(amtNaira * 100), description: desc || null })
+  });
+  if (res && res.status) {
+    document.getElementById('modal').style.display = 'none';
+    toast('Remittance recorded', 'success');
+    loadStampDutyWallets();
+  } else {
+    document.getElementById('remit-msg').innerHTML = '<div class="warn-box" style="font-size:12px">' + ((res&&res.message)||'Failed') + '</div>';
+    btn.disabled = false; btn.textContent = 'Record Remittance';
+  }
+}
+
+// ── MERCHANT: STAMP DUTY WALLET ───────────────────────────────────────────────
+async function loadMerchStampDuty() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = '<div style="padding:24px;color:var(--gray-500)">Loading…</div>';
+  var res = await apiFetch('/payouts/stamp-duty/wallet');
+  var w = (res && res.data && res.data.wallet) || {};
+  var remits = (res && res.data && res.data.remittances) || [];
+
+  var collecting = Number(w.total_collected || 0) > 0;
+  var remitRows = remits.length
+    ? remits.map(function(r) {
+        return '<tr style="border-bottom:1px solid var(--gray-100)">' +
+          '<td style="padding:8px;font-weight:600">' + fmtNaira(Number(r.amount)) + '</td>' +
+          '<td style="padding:8px;font-size:12px;color:var(--gray-500)">' + (r.description||'—') + '</td>' +
+          '<td style="padding:8px;font-size:11px;color:var(--gray-400)">' + new Date(r.created_at).toLocaleString() + '</td>' +
+        '</tr>';
+      }).join('')
+    : '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--gray-400)">No remittances yet</td></tr>';
+
+  el.innerHTML =
+    '<div style="padding:24px">' +
+    '<div style="font-size:20px;font-weight:700;margin-bottom:16px">Stamp Duty</div>' +
+    (collecting
+      ? '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:24px">' +
+        '<div class="stat-card"><div class="stat-label">Collected to date</div><div class="stat-value">' + fmtNaira(Number(w.total_collected||0)) + '</div></div>' +
+        '<div class="stat-card" style="border-color:var(--brand)"><div class="stat-label">Held in wallet</div><div class="stat-value" style="color:var(--brand)">' + fmtNaira(Number(w.balance||0)) + '</div><div style="font-size:11px;color:var(--gray-400)">awaiting remittance</div></div>' +
+        '<div class="stat-card"><div class="stat-label">Total remitted</div><div class="stat-value">' + fmtNaira(Number(w.total_remitted||0)) + '</div></div>' +
+        '</div>' +
+        '<div class="info-box" style="font-size:12px;margin-bottom:16px">₦50 per payout of ₦10,000 or more is collected and held here. Paylode remits to the payment rail when they invoice us.</div>'
+      : '<div class="info-box" style="font-size:12px;margin-bottom:24px">Stamp duty collection has not started yet. When it begins, ₦50 will be collected per payout of ₦10,000 or more and held here.</div>') +
+    (collecting
+      ? '<div style="font-weight:600;font-size:14px;margin-bottom:8px">Remittance history</div>' +
+        '<div class="table-wrap"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)"><th style="text-align:left;padding:8px">Amount</th><th style="text-align:left;padding:8px">Reference</th><th style="text-align:left;padding:8px">Date</th></tr></thead><tbody>' + remitRows + '</tbody></table></div>'
+      : '') +
+    '</div>';
+}
+
+// ── SA: KYC DOCUMENT UPDATES ──────────────────────────────────────────────────
+async function loadKycUpdates() {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  el.innerHTML = loading();
+  try {
+    var r = await apiFetch('/admin/kyc-updates');
+    if (!r || !r.data) { el.innerHTML = errorBox('Could not load KYC updates'); return; }
+    var pending = r.data.pending || [];
+    var recent  = r.data.recent  || [];
+
+    var pendingRows = pending.map(function(u) {
+      var dt = new Date(u.submitted_at);
+      var dtStr = dt.toLocaleDateString('en-NG',{day:'2-digit',month:'short',year:'numeric'}) + ' ' +
+                  dt.toLocaleTimeString('en-NG',{hour:'2-digit',minute:'2-digit',hour12:false});
+      var fileLink = u.file_path
+        ? '<a href="' + u.file_path + '" target="_blank" style="color:var(--primary);font-size:12px">View file</a>'
+        : '<span style="color:var(--gray-400);font-size:12px">No file</span>';
+      var curFile = u.current_file_path
+        ? ' <a href="' + u.current_file_path + '" target="_blank" style="font-size:11px;color:#6b7280">(current)</a>'
+        : '';
+      return '<tr>' +
+        '<td style="font-size:13px"><b>' + u.business_name + '</b><br><span style="color:#6b7280;font-size:11px">' + u.merchant_code + '</span></td>' +
+        '<td style="font-size:13px">' + u.doc_label + '<br><span style="color:#6b7280;font-size:11px">' + u.doc_key + '</span></td>' +
+        '<td style="font-size:12px">' + dtStr + '</td>' +
+        '<td>' + fileLink + curFile + '</td>' +
+        '<td style="font-size:12px;color:#6b7280;max-width:180px">' + (u.merchant_notes || '—') + '</td>' +
+        '<td>' +
+          '<div id="kyc-upd-actions-' + u.id + '" style="display:flex;gap:6px;flex-direction:column">' +
+            '<div style="display:flex;gap:6px">' +
+              '<button class="btn btn-sm" style="background:#16a34a;color:#fff;font-size:12px" onclick="approveKycUpdate(\'' + u.id + '\')">Approve</button>' +
+              '<button class="btn btn-sm" style="background:#dc2626;color:#fff;font-size:12px" onclick="rejectKycUpdate(\'' + u.id + '\')">Reject</button>' +
+            '</div>' +
+            '<input id="kyc-upd-note-' + u.id + '" type="text" class="form-input" style="font-size:12px;padding:4px 8px" placeholder="Admin note (optional)">' +
+          '</div>' +
+        '</td>' +
+        '</tr>';
+    }).join('');
+
+    var recentRows = recent.map(function(u) {
+      var dt = u.reviewed_at ? new Date(u.reviewed_at) : null;
+      var dtStr = dt ? dt.toLocaleDateString('en-NG',{day:'2-digit',month:'short'}) + ' ' + dt.toLocaleTimeString('en-NG',{hour:'2-digit',minute:'2-digit',hour12:false}) : '—';
+      var sc = u.status === 'approved' ? '#16a34a' : '#dc2626';
+      var fileLink = u.file_path ? '<a href="' + u.file_path + '" target="_blank" style="color:var(--primary);font-size:12px">New file</a>' : '—';
+      var prevLink = u.previous_file_path ? ' | <a href="' + u.previous_file_path + '" target="_blank" style="font-size:11px;color:#6b7280">Old file</a>' : '';
+      return '<tr>' +
+        '<td style="font-size:13px">' + u.business_name + '</td>' +
+        '<td style="font-size:13px">' + u.doc_label + '</td>' +
+        '<td><span style="color:' + sc + ';font-weight:600;font-size:12px">' + u.status + '</span></td>' +
+        '<td style="font-size:12px">' + dtStr + '</td>' +
+        '<td>' + fileLink + prevLink + '</td>' +
+        '<td style="font-size:12px;color:#6b7280">' + (u.admin_notes || '—') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    el.innerHTML =
+      '<div class="page-header">' +
+        '<div class="page-title">KYC Updates</div>' +
+        '<div class="page-desc">Merchant document update requests pending admin review</div>' +
+      '</div>' +
+      '<div class="card" style="padding:0;margin-bottom:24px">' +
+        '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+          '<b style="font-size:14px">Pending (' + pending.length + ')</b>' +
+        '</div>' +
+        (pending.length ? '<div class="table-wrap"><table>' +
+          '<thead><tr><th>Merchant</th><th>Document</th><th>Submitted</th><th>File</th><th>Notes</th><th>Action</th></tr></thead>' +
+          '<tbody>' + pendingRows + '</tbody>' +
+        '</table></div>' : '<div style="padding:24px;text-align:center;color:var(--gray-400)">No pending updates</div>') +
+      '</div>' +
+      '<div class="card" style="padding:0">' +
+        '<div style="padding:14px 20px;border-bottom:1px solid var(--border)">' +
+          '<b style="font-size:14px">Recent decisions</b>' +
+        '</div>' +
+        (recent.length ? '<div class="table-wrap"><table>' +
+          '<thead><tr><th>Merchant</th><th>Document</th><th>Decision</th><th>Reviewed</th><th>Files</th><th>Admin Notes</th></tr></thead>' +
+          '<tbody>' + recentRows + '</tbody>' +
+        '</table></div>' : '<div style="padding:24px;text-align:center;color:var(--gray-400)">No history yet</div>') +
+      '</div>';
+  } catch(e) { el.innerHTML = errorBox('Failed to load KYC updates: ' + e.message); }
+}
+
+async function approveKycUpdate(id) {
+  var noteInput = document.getElementById('kyc-upd-note-' + id);
+  var note = noteInput ? noteInput.value.trim() : '';
+  try {
+    var r = await apiFetch('/admin/kyc-updates/' + id + '/approve', { method:'POST', body:{ admin_notes: note || undefined } });
+    if (r && (r.data || r.ok !== false)) {
+      document.getElementById('kyc-upd-actions-' + id).innerHTML = '<span style="color:#16a34a;font-weight:600;font-size:12px">✓ Approved</span>';
+      setTimeout(function() { loadKycUpdates(); }, 800);
+    } else {
+      alert('Error: ' + ((r && (r.error || r.message)) || 'Unknown'));
+    }
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function rejectKycUpdate(id) {
+  var noteInput = document.getElementById('kyc-upd-note-' + id);
+  var note = noteInput ? noteInput.value.trim() : '';
+  if (!note && !confirm('Reject without a note?')) return;
+  try {
+    var r = await apiFetch('/admin/kyc-updates/' + id + '/reject', { method:'POST', body:{ admin_notes: note || undefined } });
+    if (r && (r.data || r.ok !== false)) {
+      document.getElementById('kyc-upd-actions-' + id).innerHTML = '<span style="color:#dc2626;font-weight:600;font-size:12px">✗ Rejected</span>';
+      setTimeout(function() { loadKycUpdates(); }, 800);
+    } else {
+      alert('Error: ' + ((r && (r.error || r.message)) || 'Unknown'));
+    }
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── SA: DEBIT ALERT RECONCILIATION ────────────────────────────────────────────
+// Matches Parallex "Transaction Alert" debit emails vs our rail_disbursements.
+var _darFrom = '', _darTo = '';
+async function loadDebitAlertRecon(triggerSync) {
+  var el = document.getElementById('main-content');
+  if (!el) return;
+  if (!_darFrom) {
+    var now = new Date();
+    _darTo   = now.toISOString().split('T')[0];
+    var wk   = new Date(now - 7 * 86400_000);
+    _darFrom = wk.toISOString().split('T')[0];
+  }
+  el.innerHTML = loading();
+  try {
+    var qs = '?from=' + _darFrom + '&to=' + _darTo + (triggerSync ? '&trigger_sync=1' : '');
+    var r  = await apiFetch('/reports/debit-alert-recon' + qs);
+    if (!r || !r.data) { el.innerHTML = errorBox('Could not load debit alert recon'); return; }
+    var d  = r.data;
+    var sm = d.summary || {};
+
+    // ── summary chips ─────────────────────────────────────────────────────────
+    function chip(label, value, color) {
+      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;text-align:center;min-width:120px">' +
+        '<div style="font-size:22px;font-weight:700;color:' + color + '">' + value + '</div>' +
+        '<div style="font-size:11px;color:var(--gray-500);margin-top:2px">' + label + '</div>' +
+      '</div>';
+    }
+
+    // ── table row builders ────────────────────────────────────────────────────
+    function alertRow(a) {
+      var dt = a.alert_at ? new Date(a.alert_at).toLocaleString('en-NG',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false}) : '—';
+      return '<tr>' +
+        '<td style="font-size:12px;color:#dc2626;font-weight:600">' + fmtNaira(a.amount_naira * 100) + '</td>' +
+        '<td style="font-size:12px">' + (a.beneficiary || '—') + '</td>' +
+        '<td style="font-size:12px;max-width:180px;word-break:break-word">' + (a.description || '—') + '</td>' +
+        '<td style="font-size:12px;font-family:monospace">' + (a.tx_reference || '—') + '</td>' +
+        '<td style="font-size:12px">' + dt + '</td>' +
+        '<td style="font-size:12px">' + (a.balance_after != null ? '₦' + Number(a.balance_after).toLocaleString() : '—') + '</td>' +
+        '<td style="font-size:11px;color:#6b7280">' + (a.match_note || '—') + '</td>' +
+      '</tr>';
+    }
+    function payoutRow(p) {
+      var dt = p.dispatched_at ? new Date(p.dispatched_at).toLocaleString('en-NG',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false}) : '—';
+      return '<tr>' +
+        '<td style="font-size:12px">' + fmtNaira(p.amount_naira * 100) + '</td>' +
+        '<td style="font-size:12px">' + (p.merchant || '—') + '</td>' +
+        '<td style="font-size:12px">' + (p.account_name || '—') + '<br><span style="font-size:11px;color:#6b7280">' + (p.account_number || '') + '</span></td>' +
+        '<td style="font-size:12px;font-family:monospace">' + (p.batch_ref || '—') + '</td>' +
+        '<td><span class="badge badge-gray" style="font-size:10px">' + (p.status || '') + '</span></td>' +
+        '<td style="font-size:12px">' + dt + '</td>' +
+      '</tr>';
+    }
+    function matchedRow(m) {
+      var dt = m.alert_at ? new Date(m.alert_at).toLocaleString('en-NG',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false}) : '—';
+      return '<tr>' +
+        '<td style="font-size:12px">' + fmtNaira(m.amount_naira * 100) + '</td>' +
+        '<td style="font-size:12px">' + (m.beneficiary || '—') + '</td>' +
+        '<td style="font-size:12px;font-family:monospace;font-size:11px">' + (m.rd_id || '—') + '</td>' +
+        '<td style="font-size:12px">' + dt + '</td>' +
+        '<td style="font-size:11px;color:#6b7280">' + (m.match_note || 'Auto-matched') + '</td>' +
+      '</tr>';
+    }
+
+    var unmAlerts  = d.unmatched_alerts  || [];
+    var unmPayouts = d.unmatched_payouts || [];
+    var matched    = d.matched           || [];
+
+    el.innerHTML =
+      '<div class="page-header">' +
+        '<div class="page-title">Debit Alert Recon</div>' +
+        '<div class="page-desc">Match Parallex debit alert emails vs our rail disbursements. Unmatched alerts need investigation.</div>' +
+      '</div>' +
+
+      // Date range + sync controls
+      '<div class="card" style="padding:16px;margin-bottom:20px">' +
+        '<div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px">' +
+          '<div><label class="form-label" style="font-size:11px">From</label>' +
+            '<input type="date" id="dar-from" class="form-input" value="' + _darFrom + '" style="width:140px"></div>' +
+          '<div><label class="form-label" style="font-size:11px">To</label>' +
+            '<input type="date" id="dar-to" class="form-input" value="' + _darTo + '" style="width:140px"></div>' +
+          '<button class="btn btn-outline btn-sm" onclick="_darFrom=document.getElementById(\'dar-from\').value;_darTo=document.getElementById(\'dar-to\').value;loadDebitAlertRecon()">Apply</button>' +
+          '<button class="btn btn-sm" style="background:#f59e0b;color:#fff" onclick="loadDebitAlertRecon(true)" title="Pull latest emails from Zoho IMAP now">&#8635; Sync Emails</button>' +
+        '</div>' +
+      '</div>' +
+
+      // Summary
+      '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:24px">' +
+        chip('Total alerts',    sm.total_alerts    || 0, 'var(--primary)') +
+        chip('Matched',         sm.matched         || 0, '#16a34a') +
+        chip('⚠ Unmatched alerts',  sm.unmatched_alerts  || 0, sm.unmatched_alerts  ? '#dc2626' : 'var(--gray-500)') +
+        chip('Payouts w/o alert',   sm.unmatched_payouts || 0, sm.unmatched_payouts ? '#f59e0b' : 'var(--gray-500)') +
+        chip('Alert vol (₦)', ((sm.total_alert_volume  || 0)).toLocaleString('en-NG',{maximumFractionDigits:0}), 'var(--primary)') +
+        chip('Payout vol (₦)',((sm.total_payout_volume || 0)).toLocaleString('en-NG',{maximumFractionDigits:0}), 'var(--primary)') +
+      '</div>' +
+
+      // Unmatched alerts — top priority
+      '<div class="card" style="padding:0;margin-bottom:20px;border:1px solid #fca5a5">' +
+        '<div style="padding:12px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">' +
+          '<b style="font-size:14px;color:#dc2626">⚠ Unmatched Alerts (' + unmAlerts.length + ')</b>' +
+          '<span style="font-size:11px;color:#6b7280">Debits in Parallex\'s email with no matching payout — needs investigation</span>' +
+        '</div>' +
+        (unmAlerts.length
+          ? '<div class="table-wrap"><table>' +
+              '<thead><tr><th>Amount</th><th>Beneficiary</th><th>Description</th><th>Tx Ref</th><th>Alert At</th><th>Balance After</th><th>Notes</th></tr></thead>' +
+              '<tbody>' + unmAlerts.map(alertRow).join('') + '</tbody>' +
+            '</table></div>'
+          : '<div style="padding:24px;text-align:center;color:#16a34a;font-size:13px">✓ All alerts matched</div>') +
+      '</div>' +
+
+      // Unmatched payouts
+      '<div class="card" style="padding:0;margin-bottom:20px">' +
+        '<div style="padding:12px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">' +
+          '<b style="font-size:14px">Payouts without alert (' + unmPayouts.length + ')</b>' +
+          '<span style="font-size:11px;color:#6b7280">Alert may be delayed or missed — check inbox</span>' +
+        '</div>' +
+        (unmPayouts.length
+          ? '<div class="table-wrap"><table>' +
+              '<thead><tr><th>Amount</th><th>Merchant</th><th>Account</th><th>Batch Ref</th><th>Status</th><th>Dispatched</th></tr></thead>' +
+              '<tbody>' + unmPayouts.map(payoutRow).join('') + '</tbody>' +
+            '</table></div>'
+          : '<div style="padding:24px;text-align:center;color:#16a34a;font-size:13px">✓ All payouts have matching alerts</div>') +
+      '</div>' +
+
+      // Matched pairs (collapsed by default if large)
+      '<div class="card" style="padding:0">' +
+        '<div style="padding:12px 18px;border-bottom:1px solid var(--border)">' +
+          '<b style="font-size:14px">Matched pairs (' + matched.length + ')</b>' +
+        '</div>' +
+        (matched.length
+          ? '<div class="table-wrap"><table>' +
+              '<thead><tr><th>Amount</th><th>Beneficiary</th><th>Disbursement ID</th><th>Alert At</th><th>Match Note</th></tr></thead>' +
+              '<tbody>' + matched.map(matchedRow).join('') + '</tbody>' +
+            '</table></div>'
+          : '<div style="padding:24px;text-align:center;color:var(--gray-400)">No matched pairs in range</div>') +
+      '</div>';
+  } catch(e) { el.innerHTML = errorBox('Failed to load debit alert recon: ' + e.message); }
 }
 
 // ── MERCHANT OVERVIEW (merchant role) ─────────────────────────────────────────
@@ -6830,8 +7528,19 @@ function loadPageData(page) {
     case 'sa_reconciliation': loadReconciliation(); break;
     case 'sa_collection_wallets': loadCollectionWallets(); break;
     case 'sa_payouts':        loadPayoutsBreakdown(); break;
+    case 'sa_payout_review':  loadPayoutReview(); break;
     case 'sa_stuck_payouts':  loadStuckPayouts(); break;
     case 'sa_merchant_funding': loadMerchantFunding(); break;
+    case 'sa_kyc_updates':       loadKycUpdates(); break;
+    case 'sa_stamp_duty':        loadStampDutyWallets(); break;
+    case 'sa_debit_alert_recon': loadDebitAlertRecon(); break;
+    case 'wallet_action_approvals': loadWalletActionApprovals(); break;
+    case 'ops_wallet_lookup':  loadOpsWalletLookup(); break;
+    case 'ops_wallet_request': loadOpsWalletRequest(); break;
+    case 'ops_wallet_mine':    loadOpsWalletMine(); break;
+    case 'ops_refunds':        loadOpsRefunds(); break;
+    case 'merch_my_kyc':      loadMyKyc(); break;
+    case 'merch_stamp_duty':  loadMerchStampDuty(); break;
     case 'merch_overview':      loadMerchantOverview(); break;
     case 'merch_transactions':  loadTransactions(); break;
     case 'merch_settlements':   loadMerchSettlements(); break;
@@ -6878,6 +7587,228 @@ function loadPageData(page) {
       break;
     default:
       break; // renderPage() already rendered the content; don't overwrite.
+  }
+}
+
+// ── Wallet action status badge (pending/approved/rejected — maker-checker) ───
+function waStatusBadge(s) {
+  var map = { pending: 'badge-amber', approved: 'badge-green', rejected: 'badge-red' };
+  return '<span class="badge ' + (map[s] || 'badge-gray') + '">' + (s || '—') + '</span>';
+}
+
+// ── OPERATIONS: Wallet Lookup (read-only) ─────────────────────────────────────
+async function loadOpsWalletLookup() {
+  var el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/merchants');
+    var merchants = (res && res.data) || [];
+    el.innerHTML =
+      '<div class="page-header"><div class="page-title">Wallet Lookup</div>' +
+      '<div class="page-desc">Read-only per-rail balance lookup for any merchant. No fund controls here.</div></div>' +
+      '<div class="card" style="padding:20px;max-width:640px">' +
+      '<div class="form-group"><label class="form-label">Merchant</label>' +
+      '<input class="form-input" id="ops-wl-filter" placeholder="Type to filter by business name or code..." onkeyup="filterOpsMerchantList()">' +
+      '<select class="form-input" id="ops-wl-merchant" style="margin-top:8px" size="8">' +
+      merchants.map(function (m) { return '<option value="' + m.id + '">' + m.businessName + ' (' + m.merchantCode + ')</option>'; }).join('') +
+      '</select></div>' +
+      '<button class="btn btn-primary" onclick="runOpsWalletLookup()">Look Up Balances</button>' +
+      '</div><div id="ops-wl-result" style="margin-top:20px"></div>';
+  } catch (e) { el.innerHTML = errorBox('Failed to load merchants: ' + e.message); }
+}
+function filterOpsMerchantList() {
+  var q = (document.getElementById('ops-wl-filter').value || '').toLowerCase();
+  var sel = document.getElementById('ops-wl-merchant');
+  Array.prototype.forEach.call(sel.options, function (opt) { opt.hidden = !!q && opt.textContent.toLowerCase().indexOf(q) === -1; });
+}
+async function runOpsWalletLookup() {
+  var merchantId = document.getElementById('ops-wl-merchant').value;
+  var out = document.getElementById('ops-wl-result');
+  if (!merchantId) { alert('Select a merchant first'); return; }
+  out.innerHTML = loading();
+  var res = await apiFetch('/wallet-actions/wallet/' + merchantId);
+  if (!res || !res.status) { out.innerHTML = errorBox((res && res.message) || 'Lookup failed'); return; }
+  var d = res.data;
+  out.innerHTML =
+    '<div class="card" style="padding:20px">' +
+    '<div style="font-weight:600;margin-bottom:4px">' + d.merchant.name + ' <span style="color:var(--gray-400);font-weight:400">(' + d.merchant.code + ')</span></div>' +
+    '<div style="font-size:13px;color:var(--gray-500);margin-bottom:12px">Total across all rails: <strong>₦' + Number(d.total_naira).toLocaleString('en-NG') + '</strong></div>' +
+    '<div class="table-wrap"><table style="width:100%"><thead><tr><th>Rail</th><th style="text-align:right">Balance</th></tr></thead><tbody>' +
+    (d.rails.length ? d.rails.map(function (r) {
+      return '<tr><td>' + r.rail_name + '</td><td style="text-align:right" class="mono">₦' + Number(r.balance_naira).toLocaleString('en-NG') + '</td></tr>';
+    }).join('') : '<tr><td colspan="2" style="text-align:center;color:var(--gray-400)">No wallet rows for this merchant yet</td></tr>') +
+    '</tbody></table></div></div>';
+}
+
+// ── OPERATIONS: Request Credit / Move (maker) ─────────────────────────────────
+async function loadOpsWalletRequest() {
+  var el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  try {
+    var mRes = await apiFetch('/merchants');
+    var rRes = await apiFetch('/rails');
+    var merchants = (mRes && mRes.data) || [];
+    var rails = (rRes && rRes.data) || [];
+    var merchOpts = merchants.map(function (m) { return '<option value="' + m.id + '">' + m.businessName + ' (' + m.merchantCode + ')</option>'; }).join('');
+    var railOpts = rails.map(function (r) { return '<option value="' + r.id + '">' + r.name + '</option>'; }).join('');
+    el.innerHTML =
+      '<div class="page-header"><div class="page-title">Request Credit / Move</div>' +
+      '<div class="page-desc">Submitted requests go to SUPER_ADMIN / ADMIN for approval — nothing is credited until approved.</div></div>' +
+      '<div class="card" style="padding:20px;max-width:640px">' +
+      '<div class="form-group"><label class="form-label">Request Type</label>' +
+      '<select class="form-input" id="owr-type" onchange="document.getElementById(\'owr-dest-group\').style.display = this.value===\'MOVE\' ? \'\' : \'none\'">' +
+      '<option value="CREDIT">Credit a merchant wallet</option><option value="MOVE">Move between two merchants</option>' +
+      '</select></div>' +
+      '<div class="form-group"><label class="form-label">Merchant</label><select class="form-input" id="owr-merchant">' + merchOpts + '</select></div>' +
+      '<div class="form-group" id="owr-dest-group" style="display:none"><label class="form-label">Destination Merchant</label><select class="form-input" id="owr-dest-merchant">' + merchOpts + '</select></div>' +
+      '<div class="form-group"><label class="form-label">Rail</label><select class="form-input" id="owr-rail">' + railOpts + '</select></div>' +
+      '<div class="form-group"><label class="form-label">Amount (₦)</label><input class="form-input" id="owr-amount" type="number" min="1" placeholder="e.g. 50000"></div>' +
+      '<div class="form-group"><label class="form-label">Reference (optional)</label><input class="form-input" id="owr-reference" placeholder="internal reference"></div>' +
+      '<div class="form-group"><label class="form-label">Note (why this request)</label><textarea class="form-input" id="owr-note" rows="3" placeholder="Explain the reason — SA/ADMIN will see this"></textarea></div>' +
+      '<div id="owr-alert"></div>' +
+      '<button class="btn btn-primary" id="owr-submit" onclick="submitOpsWalletRequest()">Submit for Approval</button>' +
+      '</div>';
+  } catch (e) { el.innerHTML = errorBox('Failed to load form: ' + e.message); }
+}
+async function submitOpsWalletRequest() {
+  var type = document.getElementById('owr-type').value;
+  var merchantId = document.getElementById('owr-merchant').value;
+  var destMerchantId = document.getElementById('owr-dest-merchant').value;
+  var railId = document.getElementById('owr-rail').value;
+  var amountNaira = parseFloat(document.getElementById('owr-amount').value);
+  var reference = document.getElementById('owr-reference').value.trim();
+  var note = document.getElementById('owr-note').value.trim();
+  var alertEl = document.getElementById('owr-alert');
+  if (!amountNaira || amountNaira <= 0) { alertEl.innerHTML = errorBox('Enter a valid amount'); return; }
+  if (type === 'MOVE' && destMerchantId === merchantId) { alertEl.innerHTML = errorBox('Source and destination merchant must differ'); return; }
+  var body = { type: type, merchant_id: merchantId, rail_id: railId, amount: Math.round(amountNaira * 100) };
+  if (reference) body.reference = reference;
+  if (note) body.note = note;
+  if (type === 'MOVE') body.dest_merchant_id = destMerchantId;
+  var btn = document.getElementById('owr-submit');
+  var label = btn.textContent; btn.textContent = 'Submitting...'; btn.disabled = true;
+  var res = await apiFetch('/wallet-actions', { method: 'POST', body: JSON.stringify(body) });
+  btn.textContent = label; btn.disabled = false;
+  if (res && res.status) {
+    alertEl.innerHTML = '<div class="info-box" style="margin-top:12px;font-size:13px;background:#f0fdf4;border-color:#bbf7d0;color:#166534">&#10003; Request submitted — awaiting SUPER_ADMIN/ADMIN approval.</div>';
+    document.getElementById('owr-amount').value = '';
+    document.getElementById('owr-note').value = '';
+    document.getElementById('owr-reference').value = '';
+  } else {
+    alertEl.innerHTML = errorBox((res && res.message) || 'Failed to submit request');
+  }
+}
+
+// ── OPERATIONS: My Requests (own submission history) ─────────────────────────
+async function loadOpsWalletMine() {
+  var el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/wallet-actions/mine');
+    var rows = (res && res.data) || [];
+    el.innerHTML =
+      '<div class="page-header"><div class="page-title">My Requests</div>' +
+      '<div class="page-desc">' + rows.length + ' request' + (rows.length !== 1 ? 's' : '') + ' submitted by you</div></div>' +
+      '<div class="card"><div class="table-wrap"><table style="width:100%">' +
+      '<thead><tr><th>Type</th><th>Merchant</th><th>Rail</th><th style="text-align:right">Amount</th><th>Status</th><th>Requested</th><th>Decision Note</th></tr></thead><tbody>' +
+      (rows.length ? rows.map(function (r) {
+        return '<tr><td>' + r.type + '</td>' +
+          '<td>' + r.merchant_name + (r.dest_merchant_name ? ' → ' + r.dest_merchant_name : '') + '</td>' +
+          '<td>' + (r.rail_name || '—') + '</td>' +
+          '<td style="text-align:right" class="mono">₦' + Number(r.amount_naira).toLocaleString('en-NG') + '</td>' +
+          '<td>' + waStatusBadge(r.status) + '</td>' +
+          '<td>' + new Date(r.requested_at).toLocaleString() + '</td>' +
+          '<td style="font-size:12px;color:var(--gray-500)">' + (r.decision_note || '—') + '</td></tr>';
+      }).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:20px">No requests yet</td></tr>') +
+      '</tbody></table></div></div>';
+  } catch (e) { el.innerHTML = errorBox('Failed to load your requests: ' + e.message); }
+}
+
+// ── OPERATIONS: Recommend Refund (maker) ──────────────────────────────────────
+async function loadOpsRefunds() {
+  var el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/admin/payout-review/recommendable');
+    var rows = (res && res.data) || [];
+    el.innerHTML =
+      '<div class="page-header"><div class="page-title">Recommend Refund</div>' +
+      '<div class="page-desc">' + rows.length + ' failed payout item' + (rows.length !== 1 ? 's' : '') + ' not yet flagged for review. Recommending sends it to SUPER_ADMIN/ADMIN for approval — nothing is credited here.</div></div>' +
+      '<div class="card"><div class="table-wrap"><table style="width:100%">' +
+      '<thead><tr><th>Merchant</th><th>Beneficiary</th><th style="text-align:right">Amount</th><th>Failure Reason</th><th>Date</th><th>Action</th></tr></thead><tbody>' +
+      (rows.length ? rows.map(function (r) {
+        return '<tr id="ops-refund-row-' + r.id + '">' +
+          '<td>' + r.businessName + ' <span style="color:var(--gray-400);font-size:11px">(' + r.merchantCode + ')</span></td>' +
+          '<td>' + (r.accountName || '—') + '<br><span style="font-size:11px;color:var(--gray-500)">' + (r.bankName || '') + ' · ' + (r.accountNumber || '') + '</span></td>' +
+          '<td style="text-align:right" class="mono">₦' + Number(r.amount).toLocaleString('en-NG') + '</td>' +
+          '<td style="font-size:12px;color:var(--gray-500)">' + (r.failureReason || '—') + '</td>' +
+          '<td>' + new Date(r.createdAt).toLocaleString() + '</td>' +
+          '<td><button class="btn btn-outline btn-sm" onclick="recommendRefund(\'' + r.id + '\')">Recommend Refund</button></td></tr>';
+      }).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:20px">Nothing to review right now</td></tr>') +
+      '</tbody></table></div></div>';
+  } catch (e) { el.innerHTML = errorBox('Failed to load items: ' + e.message); }
+}
+async function recommendRefund(itemId) {
+  var note = prompt('Optional note for SUPER_ADMIN/ADMIN (why this looks like a genuine failed payout):');
+  if (note === null) return;
+  var res = await apiFetch('/admin/payout-review/' + itemId + '/recommend-refund', { method: 'POST', body: JSON.stringify({ note: note }) });
+  if (res && res.status) {
+    if (typeof toast === 'function') toast('Recommended — awaiting SUPER_ADMIN/ADMIN approval.', 'success');
+    var row = document.getElementById('ops-refund-row-' + itemId);
+    if (row) row.remove();
+  } else {
+    alert('Error: ' + ((res && res.message) || 'Failed to recommend'));
+  }
+}
+
+// ── SUPER_ADMIN/ADMIN: Wallet Action Approvals (checker) ──────────────────────
+async function loadWalletActionApprovals() {
+  var el = document.getElementById('main-content');
+  el.innerHTML = loading();
+  try {
+    var res = await apiFetch('/wallet-actions/pending');
+    var rows = (res && res.data) || [];
+    el.innerHTML =
+      '<div class="page-header"><div class="page-title">Wallet Action Approvals</div>' +
+      '<div class="page-desc">' + rows.length + ' pending request' + (rows.length !== 1 ? 's' : '') + ' from Operations — approving executes the credit/move immediately.</div></div>' +
+      '<div class="card"><div class="table-wrap"><table style="width:100%">' +
+      '<thead><tr><th>Type</th><th>Merchant</th><th>Rail</th><th style="text-align:right">Amount</th><th>Requested By</th><th>Note</th><th>Requested</th><th>Action</th></tr></thead><tbody>' +
+      (rows.length ? rows.map(function (r) {
+        return '<tr id="waa-row-' + r.id + '">' +
+          '<td>' + r.type + '</td>' +
+          '<td>' + r.merchant.name + (r.dest_merchant ? ' → ' + r.dest_merchant.name : '') + '</td>' +
+          '<td>' + (r.rail_name || '—') + '</td>' +
+          '<td style="text-align:right" class="mono">₦' + Number(r.amount_naira).toLocaleString('en-NG') + '</td>' +
+          '<td style="font-size:12px">' + r.requested_by.name + '<br><span style="color:var(--gray-500)">' + r.requested_by.email + '</span></td>' +
+          '<td style="font-size:12px;color:var(--gray-500)">' + (r.note || '—') + '</td>' +
+          '<td>' + new Date(r.requested_at).toLocaleString() + '</td>' +
+          '<td><button class="btn btn-lime btn-sm" onclick="approveWalletAction(\'' + r.id + '\')">Approve</button>&nbsp;' +
+          '<button class="btn btn-outline btn-sm" onclick="rejectWalletAction(\'' + r.id + '\')">Reject</button></td></tr>';
+      }).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:20px">No pending wallet action requests</td></tr>') +
+      '</tbody></table></div></div>';
+  } catch (e) { el.innerHTML = errorBox('Failed to load approvals: ' + e.message); }
+}
+async function approveWalletAction(id) {
+  if (!confirm('Approve this request? This will move real money immediately.')) return;
+  var res = await apiFetch('/wallet-actions/' + id + '/approve', { method: 'POST' });
+  if (res && res.status) {
+    if (typeof toast === 'function') toast('Approved and executed.', 'success');
+    var row = document.getElementById('waa-row-' + id);
+    if (row) row.remove();
+  } else {
+    alert('Error: ' + ((res && res.message) || 'Approval failed'));
+  }
+}
+async function rejectWalletAction(id) {
+  var note = prompt('Optional reason for rejecting this request:');
+  if (note === null) return;
+  var res = await apiFetch('/wallet-actions/' + id + '/reject', { method: 'POST', body: JSON.stringify({ decision_note: note }) });
+  if (res && res.status) {
+    if (typeof toast === 'function') toast('Request rejected.', 'success');
+    var row = document.getElementById('waa-row-' + id);
+    if (row) row.remove();
+  } else {
+    alert('Error: ' + ((res && res.message) || 'Reject failed'));
   }
 }
 
@@ -6998,18 +7929,24 @@ function continueDashboardBoot(user) {
 }
 
 // ── PAYOUTS DASHBOARD ─────────────────────────────────────────────────────────
-async function loadPayouts() {
+if (!window._poB) window._poB = { ref: '', page: 1 };
+async function loadPayouts(keepFilters) {
+  if (!keepFilters) window._poB = { ref: '', page: 1 };
   const el = document.getElementById('main-content');
   el.innerHTML = loading();
   try {
-    const [wallet, batches, banks, queue] = await Promise.all([
+    const f = window._poB;
+    const batchQs = '/payouts/batches?page=' + f.page + (f.ref ? '&ref=' + encodeURIComponent(f.ref) : '');
+    const [wallet, batchesRes, banks, queue] = await Promise.all([
       apiFetch('/payouts/wallet'),
-      apiFetch('/payouts/batches'),
+      apiFetch(batchQs),
       apiFetch('/payouts/banks'),
       apiFetch('/payouts/queue'),
     ]);
     const w = wallet?.data || {};
-    const batchList = batches?.data || [];
+    const batchPayload = batchesRes?.data || {};
+    const batchList = batchPayload.items || batchesRes?.data || [];
+    const batchMeta = batchPayload.meta || { page: 1, pages: 1, total: batchList.length };
     const bankList  = banks?.data  || [];
     const queueList = (queue && queue.data) || [];
     const bankMap   = {};
@@ -7071,7 +8008,12 @@ async function loadPayouts() {
     ${queueCard}
 
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><div class="card-title">Payout Batches</div></div>
+      <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div class="card-title">Payout Batches <span style="font-size:12px;font-weight:400;color:var(--gray-400)">${batchMeta.total} total</span></div>
+        <input class="form-input" style="width:220px;font-size:13px" placeholder="Search by batch reference…"
+          value="${window._poB.ref||''}"
+          oninput="window._poB.ref=this.value;window._poB.page=1;clearTimeout(window._poBT);window._poBT=setTimeout(()=>loadPayouts(true),400)">
+      </div>
       <div class="table-wrap"><table>
         <thead><tr><th>Reference</th><th>Description</th><th>Total Amount</th><th>Items</th><th>Status</th><th>Scheduled</th><th>Actions</th></tr></thead>
         <tbody>
@@ -7086,9 +8028,16 @@ async function loadPayouts() {
               <button class="btn btn-outline btn-sm" onclick="viewBatch('${b.id}')">View</button>
               ${b.failed_items>0?`<button class="btn btn-outline btn-sm" onclick="retryBatch('${b.id}')">Retry Failed</button>`:''}
             </td>
-          </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gray-400)">No payout batches yet</td></tr>'}
+          </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gray-400)">No payout batches found</td></tr>'}
         </tbody>
       </table></div>
+      ${batchMeta.pages > 1 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-top:1px solid var(--gray-200)">
+        <div style="font-size:12px;color:var(--gray-400)">Page ${batchMeta.page} of ${batchMeta.pages}</div>
+        <div style="display:flex;gap:6px">
+          ${batchMeta.page>1?`<button class="btn btn-outline btn-sm" onclick="window._poB.page=${batchMeta.page-1};loadPayouts(true)">← Previous</button>`:''}
+          ${batchMeta.page<batchMeta.pages?`<button class="btn btn-outline btn-sm" onclick="window._poB.page=${batchMeta.page+1};loadPayouts(true)">Next →</button>`:''}
+        </div>
+      </div>` : ''}
     </div>
 
     <div id="payout-form-area"></div>`;
@@ -7140,16 +8089,12 @@ async function showPayoutUpload() {
         <div class="form-group"><label class="form-label">Schedule (leave blank for instant)</label><input class="form-input" type="datetime-local" id="payout-schedule"></div>
       </div>
       <div id="beneficiary-rows">
-        <div class="form-grid beneficiary-row" style="margin-bottom:8px;align-items:end">
-          <div class="form-group" style="margin:0"><label class="form-label">Account Number</label><input class="form-input ben-acct" placeholder="10 digits" maxlength="10"></div>
-          <div class="form-group" style="margin:0"><label class="form-label">Bank</label>
-            ${buildBankSearchWidget('ben-bank')}</div>
-          <div class="form-group" style="margin:0"><label class="form-label">Amount (₦)</label><input class="form-input ben-amount" type="number" placeholder="e.g. 5000"></div>
-          <div class="form-group" style="margin:0"><label class="form-label">Narration</label><input class="form-input ben-narration" placeholder="Defaults to 'Payment from ...'"></div>
-        </div>
+        ${beneficiaryRowHtml()}
       </div>
       <div class="flex" style="gap:8px;margin-top:8px">
         <button class="btn btn-outline btn-sm" onclick="addBeneficiaryRow()">+ Add Row</button>
+      </div>
+      <div class="flex" style="margin-top:12px">
         <button class="btn btn-primary" onclick="submitManualPayout()">Submit Payout Batch</button>
       </div>
     </div>
@@ -7170,15 +8115,30 @@ async function showPayoutUpload() {
       <div id="payout-validation"></div>
     </div>
   </div>`;
+  formArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// One beneficiary row: account/bank/amount/narration inputs + a live name-enquiry
+// result line underneath, filled in by runRowNameEnquiry() once both an account
+// number and a bank are present.
+function beneficiaryRowHtml() {
+  return `<div class="beneficiary-row" style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+    <div class="form-grid" style="align-items:end">
+      <div class="form-group" style="margin:0"><label class="form-label">Account Number</label>
+        <input class="form-input ben-acct" placeholder="10 digits" maxlength="10" inputmode="numeric"
+               oninput="this.value=this.value.replace(/\\D/g,'').slice(0,10); queueRowNameEnquiry(this)"></div>
+      <div class="form-group" style="margin:0"><label class="form-label">Bank</label>
+        ${buildBankSearchWidget('ben-bank')}</div>
+      <div class="form-group" style="margin:0"><label class="form-label">Amount (₦)</label><input class="form-input ben-amount" type="number" placeholder="e.g. 5000"></div>
+      <div class="form-group" style="margin:0"><label class="form-label">Narration</label><input class="form-input ben-narration" placeholder="Defaults to 'Payment from ...'"></div>
+    </div>
+    <div class="ben-ne-result" style="font-size:12px;margin-top:6px;min-height:16px"></div>
+  </div>`;
 }
 
 function addBeneficiaryRow() {
   const container = document.getElementById('beneficiary-rows');
-  const first = container.querySelector('.beneficiary-row');
-  const clone = first.cloneNode(true);
-  clone.querySelectorAll('input').forEach(i => i.value = '');
-  clone.querySelectorAll('.bank-search-drop').forEach(d => { d.innerHTML = ''; d.style.display = 'none'; });
-  container.appendChild(clone);
+  container.insertAdjacentHTML('beforeend', beneficiaryRowHtml());
 }
 
 // ── Bank search typeahead widget ──────────────────────────────────────────────
@@ -7248,9 +8208,11 @@ function filterBankSearch(inp) {
 
 function selectBankItem(item) {
   var wrap = item.closest('.bank-search-wrap');
+  var hidden = wrap.querySelector('input[type="hidden"]');
   wrap.querySelector('.bank-search-input').value = item.dataset.name;
-  wrap.querySelector('input[type="hidden"]').value = item.dataset.code;
+  hidden.value = item.dataset.code;
   wrap.querySelector('.bank-search-drop').style.display = 'none';
+  if (wrap.closest('.beneficiary-row')) queueRowNameEnquiry(hidden);
 }
 
 function closeBankSearch(inp) {
@@ -7284,26 +8246,111 @@ function bankSearchKey(e, inp) {
   }
 }
 
+// ── Live name enquiry on a beneficiary row ────────────────────────────────────
+// Fires once a row has both a 10-digit account number and a selected bank.
+// Debounced per-row so fast typing doesn't fire one request per keystroke.
+function queueRowNameEnquiry(el) {
+  var row = el.closest('.beneficiary-row');
+  if (!row) return;
+  clearTimeout(row._neTimer);
+  row._neTimer = setTimeout(function () { runRowNameEnquiry(row); }, 350);
+}
+
+async function runRowNameEnquiry(row) {
+  var acctEl = row.querySelector('.ben-acct');
+  var bankEl = row.querySelector('.ben-bank');
+  var resultEl = row.querySelector('.ben-ne-result');
+  var acct = (acctEl.value || '').trim();
+  var bankCode = (bankEl.value || '').trim();
+  delete row.dataset.neName; delete row.dataset.neSession; delete row.dataset.neAcct; delete row.dataset.neBank;
+  if (!/^\d{10}$/.test(acct) || !bankCode) { resultEl.innerHTML = ''; return; }
+  resultEl.innerHTML = '<span style="color:var(--gray-400)">Checking account name&hellip;</span>';
+  var res = await apiFetch('/payouts/name-enquiry', { method: 'POST', body: JSON.stringify({ account_number: acct, bank_code: bankCode }) });
+  // Bail if the row was removed, or the fields moved on while this was in flight.
+  if (!row.isConnected || acctEl.value.trim() !== acct || bankEl.value.trim() !== bankCode) return;
+  if (res && res.status && res.data && res.data.account_name) {
+    row.dataset.neName = res.data.account_name;
+    row.dataset.neSession = res.data.session_id || '';
+    row.dataset.neAcct = acct;
+    row.dataset.neBank = bankCode;
+    resultEl.innerHTML = '<span style="color:#16a34a;font-weight:600">&#10003; ' + res.data.account_name + '</span>';
+  } else {
+    resultEl.innerHTML = '<span style="color:#dc2626">&#10005; ' + ((res && res.message) || 'Could not verify this account') + '</span>';
+  }
+}
+
+// ── Express approval modal — the transaction PIN gate shown right before a
+// payout batch is actually sent. Callers pass onConfirm(pin) -> {ok, message}.
+function showTransactionPinModal(opts) {
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">' + (opts.title || 'Confirm Payout') + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:13px">' + (opts.subtitle || (opts.summary || '') + ' Enter your transaction PIN to complete this transaction.') + '</div>' +
+    '<div class="form-group"><label class="form-label">Transaction PIN</label>' +
+    '<input class="form-input" id="txn-pin-input" type="password" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="6-digit PIN"></div>' +
+    '<div id="txn-pin-alert"></div>' +
+    '<div class="flex-between">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-primary" id="txn-pin-submit">Confirm &amp; Pay</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+  var pinInput = document.getElementById('txn-pin-input');
+  pinInput.focus();
+  pinInput.onkeydown = function (e) { if (e.key === 'Enter') document.getElementById('txn-pin-submit').click(); };
+  document.getElementById('txn-pin-submit').onclick = async function () {
+    var pin = (pinInput.value || '').trim();
+    var alertEl = document.getElementById('txn-pin-alert');
+    if (!/^\d{6}$/.test(pin)) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Enter your 6-digit PIN</div>'; return; }
+    var btn = document.getElementById('txn-pin-submit');
+    var label = btn.textContent; btn.textContent = 'Processing...'; btn.disabled = true;
+    var result = await opts.onConfirm(pin);
+    btn.textContent = label; btn.disabled = false;
+    if (result && result.ok) {
+      document.getElementById('modal').style.display = 'none';
+    } else {
+      var msg = (result && result.message) || 'Failed';
+      var extra = (result && result.code === 'PIN_NOT_SET')
+        ? ' <a href="#" onclick="document.getElementById(\'modal\').style.display=\'none\'; navigate(\'payout_settings\'); return false;">Set your PIN in Payout Settings</a>'
+        : '';
+      alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + msg + extra + '</div>';
+    }
+  };
+}
+
 async function submitManualPayout() {
   const rows = document.querySelectorAll('.beneficiary-row');
   const items = [];
+  const unverified = [];
   for (const row of rows) {
     const acct = row.querySelector('.ben-acct').value.trim();
     const bank = row.querySelector('.ben-bank').value;
     const amt  = parseFloat(row.querySelector('.ben-amount').value);
     const nar  = row.querySelector('.ben-narration').value;
     if (!acct || !bank || !amt) continue;
-    items.push({ account_number: acct, bank_code: bank, amount: Math.round(amt*100), narration: nar });
+    const verified = row.dataset.neAcct === acct && row.dataset.neBank === bank && row.dataset.neName;
+    if (!verified) { unverified.push(acct); continue; }
+    items.push({
+      account_number: acct, bank_code: bank, amount: Math.round(amt*100), narration: nar,
+      account_name: row.dataset.neName, ne_session_id: row.dataset.neSession, ne_account_name: row.dataset.neName,
+    });
   }
-  if (!items.length) { alert('Add at least one beneficiary'); return; }
+  if (!items.length) { alert('Add at least one beneficiary with a verified account name.'); return; }
+  if (unverified.length) { alert('Wait for the account name check to finish (or fix the account/bank) for: ' + unverified.join(', ')); return; }
   const desc     = document.getElementById('payout-desc').value;
   const schedule = document.getElementById('payout-schedule').value;
-  const res = await apiFetch('/payouts/batches', {
-    method: 'POST',
-    body: JSON.stringify({ description: desc, scheduled_at: schedule||undefined, items }),
+  const total = items.reduce((s, i) => s + i.amount, 0) / 100;
+  showTransactionPinModal({
+    title: 'Confirm Payout Batch',
+    summary: items.length + ' beneficiar' + (items.length === 1 ? 'y' : 'ies') + ', total ₦' + total.toLocaleString('en-NG') + '.',
+    onConfirm: async function (pin) {
+      const res = await apiFetch('/payouts/batches', {
+        method: 'POST',
+        body: JSON.stringify({ description: desc, scheduled_at: schedule||undefined, items, payout_pin: pin }),
+      });
+      if (res && res.status) { loadPayouts(); return { ok: true }; }
+      return { ok: false, message: res && res.message, code: res && res.error_code };
+    },
   });
-  if (res?.status) { alert(`Payout batch created!\n${res.data.total_items} beneficiaries\n${res.data.total_amount}`); loadPayouts(); }
-  else alert('Error: ' + (res?.message||'Failed'));
 }
 
 // Download the official payout template (.xlsx) — Bank Name / Account Number /
@@ -7464,7 +8511,7 @@ function runPayoutValidation(rawRows) {
       }).join('') + '</tbody></table></div>' +
       (items.length > 200 ? '<div style="font-size:11px;color:var(--gray-400);margin-top:4px">Showing first 200 of ' + items.length + ' rows.</div>' : '');
     html += '<div class="form-grid" style="grid-template-columns:1fr;gap:8px;margin:10px 0 8px"><input class="form-input" id="upload-desc" placeholder="Batch description (optional)"></div>' +
-      '<button class="btn btn-primary" onclick="submitValidatedPayout()">Confirm &amp; Submit ' + items.length + ' Payouts</button>';
+      '<div style="margin-top:12px"><button class="btn btn-primary" onclick="submitValidatedPayout()">Confirm &amp; Submit ' + items.length + ' Payouts</button></div>';
   }
   out.innerHTML = html;
 }
@@ -7473,9 +8520,16 @@ async function submitValidatedPayout() {
   var items = window._payoutValidItems || [];
   if (!items.length) { alert('No validated rows to submit.'); return; }
   var desc = (document.getElementById('upload-desc') || {}).value || '';
-  var res = await apiFetch('/payouts/batches', { method: 'POST', body: JSON.stringify({ description: desc, items: items }) });
-  if (res && res.status) { alert('Payout received — ' + res.data.total_items + ' beneficiaries.'); loadPayouts(); }
-  else alert('Error: ' + ((res && res.message) || 'Failed'));
+  var total = items.reduce(function (s, i) { return s + i.amount; }, 0) / 100;
+  showTransactionPinModal({
+    title: 'Confirm Payout Batch',
+    summary: items.length + ' beneficiar' + (items.length === 1 ? 'y' : 'ies') + ', total ₦' + total.toLocaleString('en-NG') + '.',
+    onConfirm: async function (pin) {
+      var res = await apiFetch('/payouts/batches', { method: 'POST', body: JSON.stringify({ description: desc, items: items, payout_pin: pin }) });
+      if (res && res.status) { loadPayouts(); return { ok: true }; }
+      return { ok: false, message: res && res.message, code: res && res.error_code };
+    },
+  });
 }
 
 async function viewBatch(id) {
@@ -7636,11 +8690,13 @@ async function loadPayoutSettings() {
   try {
     const res = await apiFetch('/payouts/settings');
     const mins = res?.data?.recall_window_minutes ?? 0;
+    const pinRes = await apiFetch('/payouts/pin/status');
+    const pinSet = !!(pinRes && pinRes.data && pinRes.data.is_set);
     el.innerHTML = `
       <div style="max-width:540px;margin:32px auto">
         <h2 style="margin-bottom:4px">Payout Settings</h2>
         <p style="color:var(--gray-500);margin-bottom:24px">Configure how batches are handled when they are created.</p>
-        <div class="card" style="padding:24px">
+        <div class="card" style="padding:24px;margin-bottom:20px">
           <label style="display:block;font-weight:600;margin-bottom:8px">Recall Window</label>
           <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px">
             When enabled, new batches enter a review period before dispatch. During this window you can remove recipients or cancel the batch.
@@ -7655,8 +8711,59 @@ async function loadPayoutSettings() {
           <br>
           <button class="btn btn-primary" onclick="savePayoutSettings()">Save Changes</button>
         </div>
+        <div class="card" style="padding:24px">
+          <label style="display:block;font-weight:600;margin-bottom:8px">Payout Approval PIN</label>
+          <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px">
+            A 6-digit PIN required to submit any payout batch from this dashboard. It does not apply to API/SDK-submitted payouts.
+          </p>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="badge ${pinSet ? 'badge-green' : 'badge-amber'}">${pinSet ? 'PIN is set' : 'No PIN set'}</span>
+            <button class="btn btn-outline" onclick="showPayoutPinModal(${pinSet})">${pinSet ? 'Change PIN' : 'Set PIN'}</button>
+          </div>
+        </div>
       </div>`;
   } catch(e) { el.innerHTML = errorBox('Failed to load settings: ' + e.message); }
+}
+
+// ── Payout PIN: set / change modal (password step-up only — no 2FA for now) ──
+function showPayoutPinModal(isChange) {
+  document.getElementById('modal-inner').innerHTML =
+    '<div class="modal-header"><div class="modal-title">' + (isChange ? 'Change Payout PIN' : 'Set Payout PIN') + '</div>' +
+    '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="info-box" style="margin-bottom:16px;font-size:12px">For your security, confirm your account password to ' + (isChange ? 'change' : 'set') + ' your payout PIN.</div>' +
+    '<div class="form-group"><label class="form-label">Account Password</label>' +
+    '<input class="form-input" id="pp-pin-pw" type="password" placeholder="Your account password"></div>' +
+    '<div class="form-group"><label class="form-label">New 6-digit PIN</label>' +
+    '<input class="form-input" id="pp-pin-new" inputmode="numeric" maxlength="6" placeholder="••••••"></div>' +
+    '<div class="form-group"><label class="form-label">Confirm PIN</label>' +
+    '<input class="form-input" id="pp-pin-confirm" inputmode="numeric" maxlength="6" placeholder="••••••"></div>' +
+    '<div id="pp-pin-alert"></div>' +
+    '<div class="flex-between">' +
+    '<button class="btn btn-outline" onclick="document.getElementById(\'modal\').style.display=\'none\'">Cancel</button>' +
+    '<button class="btn btn-primary" id="pp-pin-submit" onclick="submitPayoutPin()">' + (isChange ? 'Change PIN' : 'Set PIN') + '</button>' +
+    '</div>';
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function submitPayoutPin() {
+  const pw = (document.getElementById('pp-pin-pw').value || '').trim();
+  const pin = (document.getElementById('pp-pin-new').value || '').trim();
+  const confirm = (document.getElementById('pp-pin-confirm').value || '').trim();
+  const alertEl = document.getElementById('pp-pin-alert');
+  if (!pw) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">Password is required</div>'; return; }
+  if (!/^\d{6}$/.test(pin)) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">PIN must be exactly 6 digits</div>'; return; }
+  if (pin !== confirm) { alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">PINs do not match</div>'; return; }
+  const btn = document.getElementById('pp-pin-submit');
+  const label = btn.textContent; btn.textContent = 'Saving...'; btn.disabled = true;
+  const res = await apiFetch('/payouts/pin/set', { method: 'POST', body: JSON.stringify({ password: pw, pin: pin }) });
+  btn.textContent = label; btn.disabled = false;
+  if (res && res.status) {
+    document.getElementById('modal').style.display = 'none';
+    if (typeof toast === 'function') toast('Payout PIN saved.', 'success');
+    loadPayoutSettings();
+    return;
+  }
+  alertEl.innerHTML = '<div class="warn-box" style="margin-bottom:12px">' + ((res && res.message) || 'Failed to save PIN') + '</div>';
 }
 
 async function savePayoutSettings() {
@@ -7937,22 +9044,9 @@ async function loadWallets() {
     </div>`;
 
     window.__merchantRails = {};
-    const rows = wallets.length ? wallets.map(w => {
-      window.__merchantRails[w.merchant_id] = w.rails || [];
-      const nm = (w.business_name||'').replace(/'/g,'');
-      const railBits = (w.rails||[]).length
-        ? (w.rails||[]).map(r => `${r.rail_name}: <strong>${fmtNaira(r.balance)}</strong>`).join(' · ')
-        : '<span style="color:var(--gray-400)">no rail funded</span>';
-      return `<tr>
-        <td style="font-weight:500">${w.business_name}<div class="mono" style="font-size:11px;color:var(--gray-400)">${w.merchant_code||''}</div></td>
-        <td style="font-weight:600;color:${w.total>0?'var(--green)':'var(--gray-400)'}">${fmtNaira(w.total)}<div style="font-size:10px;color:var(--gray-400);font-weight:400">${railBits}</div></td>
-        <td style="white-space:nowrap"><button class="btn btn-lime btn-sm" onclick="fundWallet('${w.merchant_id}','${nm}')">Credit / Debit</button>
-        <button class="btn btn-outline btn-sm" onclick="rebalanceWallet('${w.merchant_id}','${nm}')">Rebalance</button>
-        <button class="btn btn-outline btn-sm" onclick="viewLedger('${w.merchant_id}')">Ledger</button>
-        <button class="btn btn-outline btn-sm" onclick="merchantRails('${w.merchant_id}','${nm}')">Rail Floats &amp; Status</button>
-        <button class="btn btn-outline btn-sm" onclick="merchantPending('${w.merchant_id}','${nm}')">Pending Transfers</button></td>
-      </tr>`;
-    }).join('') : '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--gray-400)">No merchant balances yet</td></tr>';
+    window.__walletData = wallets;
+    wallets.forEach(w => { window.__merchantRails[w.merchant_id] = w.rails || []; });
+    const rows = wallets.length ? wallets.map(_walletRow).join('') : '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--gray-400)">No active merchants yet</td></tr>';
 
     el.innerHTML = `
     <div class="page-header flex-between">
@@ -7977,12 +9071,47 @@ async function loadWallets() {
       </div>
     </div>
     ${batchCard}
-    <div class="card"><div class="card-header"><div class="card-title">Merchant balances</div></div><div class="table-wrap"><table>
-      <thead><tr><th>Merchant</th><th>Balance</th><th>Actions</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div></div>`;
+    <div class="card">
+      <div class="card-header flex-between">
+        <div class="card-title">Merchant balances <span style="font-size:11px;font-weight:400;color:var(--gray-400)">(${wallets.length} active)</span></div>
+        <input id="wallet-search" type="search" class="input" placeholder="Search merchant…" oninput="filterWallets()" style="width:220px;font-size:13px;padding:5px 10px;border-radius:6px;border:1px solid var(--gray-200)">
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Merchant</th><th>Balance</th><th>Actions</th></tr></thead>
+        <tbody id="wallet-tbody">${rows}</tbody>
+      </table></div>
+    </div>`;
     loadRailBalances(false);
   } catch(e){ el.innerHTML = errorBox('Failed: '+e.message); }
+}
+
+function _walletRow(w) {
+  const nm = (w.business_name||'').replace(/'/g,'');
+  const railBits = (w.rails||[]).length
+    ? (w.rails||[]).map(r => `${r.rail_name}: <strong>${fmtNaira(r.balance)}</strong>`).join(' · ')
+    : '<span style="color:var(--gray-400)">no rail funded</span>';
+  return `<tr>
+    <td style="font-weight:500">${w.business_name}<div class="mono" style="font-size:11px;color:var(--gray-400)">${w.merchant_code||''}</div></td>
+    <td style="font-weight:600;color:${w.total>0?'var(--green)':'var(--gray-400)'}">${fmtNaira(w.total)}<div style="font-size:10px;color:var(--gray-400);font-weight:400">${railBits}</div></td>
+    <td style="white-space:nowrap"><button class="btn btn-lime btn-sm" onclick="fundWallet('${w.merchant_id}','${nm}')">Credit / Debit</button>
+    <button class="btn btn-outline btn-sm" onclick="rebalanceWallet('${w.merchant_id}','${nm}')">Rebalance</button>
+    <button class="btn btn-outline btn-sm" onclick="viewLedger('${w.merchant_id}')">Ledger</button>
+    <button class="btn btn-outline btn-sm" onclick="merchantRails('${w.merchant_id}','${nm}')">Rail Floats &amp; Status</button>
+    <button class="btn btn-outline btn-sm" onclick="merchantPending('${w.merchant_id}','${nm}')">Pending Transfers</button></td>
+  </tr>`;
+}
+function filterWallets() {
+  const q = (document.getElementById('wallet-search').value||'').toLowerCase().trim();
+  const data = window.__walletData || [];
+  const filtered = q ? data.filter(w =>
+    (w.business_name||'').toLowerCase().includes(q) ||
+    (w.merchant_code||'').toLowerCase().includes(q)
+  ) : data;
+  const tbody = document.getElementById('wallet-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = filtered.length
+    ? filtered.map(_walletRow).join('')
+    : '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--gray-400)">No merchants match</td></tr>';
 }
 
 function fwFmtAmt(input) {
@@ -8214,6 +9343,7 @@ async function managePayoutRails() {
     <td style="padding:8px;font-weight:600;color:${r.float_balance>0?'var(--green)':'var(--gray-400)'}">${fmtNaira(r.float_balance||0)}<div style="font-size:10px;color:var(--gray-400);font-weight:400">${r.float_synced_at?('synced '+new Date(r.float_synced_at).toLocaleString()):'never synced'}</div></td>
     <td style="padding:8px">${r.payout_flat_cost?fmtNaira(r.payout_flat_cost):'<span style="color:var(--gray-400)">—</span>'}<div style="font-size:10px;color:var(--gray-400)">other-bank / transfer</div>${r.payout_flat_cost_onus?('<div style="font-size:11px">'+fmtNaira(r.payout_flat_cost_onus)+'<span style="font-size:10px;color:var(--gray-400)"> on-us</span></div>'):''}</td>
     <td style="padding:8px;font-size:12px">${r.daily_value_cap!=null?(fmtNaira(r.used_today||0)+' / '+fmtNaira(r.daily_value_cap)):'<span style="color:var(--gray-400)">no cap</span>'}${r.tps_limit?'<div style="font-size:10px;color:var(--gray-400)">'+r.tps_limit+' TPS</div>':''}</td>
+    <td style="padding:8px;font-size:12px">${r.stamp_duty_active?(r.stamp_duty_passthrough?'<span class="badge badge-blue">per-txn</span>':'<span class="badge badge-green">deferred</span>'):'<span class="badge badge-gray">off</span>'}<div style="font-size:10px;color:var(--gray-400)">${fmtNaira(r.stamp_duty_kobo||5000)} &ge;${fmtNaira(r.stamp_duty_threshold_kobo||1000000)}</div></td>
     <td style="padding:8px"><span class="badge ${r.status==='LIVE'?'badge-green':'badge-gray'}">${r.status}</span> ${r.payoutEnabled?'<span class="badge badge-green">on</span>':'<span class="badge badge-gray">off</span>'}</td>
     <td style="padding:8px;white-space:nowrap">
       <button class="btn btn-lime btn-sm" onclick="editRailConfig('${r.id}')">Config</button>
@@ -8224,10 +9354,10 @@ async function managePayoutRails() {
   showModal(
     `<div class="modal-header"><div class="modal-title">Rail Floats, Cost &amp; Caps</div>
      <button class="modal-close" onclick="document.getElementById('modal').style.display='none'">&#10005;</button></div>
-     <div class="info-box" style="font-size:12px;margin-bottom:12px"><strong>Float</strong> = OUR balance with each rail (auto-polled; &#8635; to refresh). <strong>Cost</strong> = our flat charge per transfer. <strong>Cap</strong> = max value/day to protect the sponsor bank. All internal — never shown to merchants.</div>
+     <div class="info-box" style="font-size:12px;margin-bottom:12px"><strong>Float</strong> = OUR balance with each rail (auto-polled; &#8635; to refresh). <strong>Cost</strong> = our flat charge per transfer. <strong>Cap</strong> = max value/day to protect the sponsor bank. <strong>Stamp duty</strong>: <em>collecting</em> = deduct from merchant wallet; <em>accruing</em> = record only (rail not charging yet). All internal — never shown to merchants.</div>
      <div class="table-wrap"><table style="width:100%;border-collapse:collapse"><thead><tr style="border-bottom:2px solid var(--gray-200)">
-       <th style="text-align:left;padding:8px">Rail / Sponsor</th><th style="text-align:left;padding:8px">Our Float</th><th style="text-align:left;padding:8px">Cost/txn</th><th style="text-align:left;padding:8px">Today / Daily cap</th><th style="text-align:left;padding:8px">State</th><th></th></tr></thead>
-       <tbody>${rows||'<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--gray-400)">No rails configured</td></tr>'}</tbody></table></div>`,'lg');
+       <th style="text-align:left;padding:8px">Rail / Sponsor</th><th style="text-align:left;padding:8px">Our Float</th><th style="text-align:left;padding:8px">Cost/txn</th><th style="text-align:left;padding:8px">Today / Daily cap</th><th style="text-align:left;padding:8px">Stamp duty</th><th style="text-align:left;padding:8px">State</th><th></th></tr></thead>
+       <tbody>${rows||'<tr><td colspan="7" style="padding:16px;text-align:center;color:var(--gray-400)">No rails configured</td></tr>'}</tbody></table></div>`,'lg');
 }
 // SA: edit a rail's payout config (cost / daily cap / TPS / sponsor bank)
 function editRailConfig(id) {
@@ -8242,6 +9372,26 @@ function editRailConfig(id) {
      </div>
      <div class="form-group"><label class="form-label">Daily value cap (₦, blank = none)</label><input class="form-input" id="rc-cap" type="number" min="0" value="${r.daily_value_cap!=null?(r.daily_value_cap/100):''}" placeholder="e.g. 50000000"></div>
      <div class="form-group"><label class="form-label">TPS limit (sends/sec, blank = none)</label><input class="form-input" id="rc-tps" type="number" min="0" value="${r.tps_limit!=null?r.tps_limit:''}" placeholder="from the bank/switch"></div>
+     <div style="border-top:1px solid var(--gray-200);margin:12px 0 8px;padding-top:12px">
+       <div style="font-weight:600;font-size:13px;margin-bottom:8px">Stamp Duty</div>
+       <div class="info-box" style="font-size:12px;margin-bottom:10px"><strong>Accruing</strong> = record on every eligible txn but don't charge merchant (rail not billing yet — builds retroactive reconciliation trail).<br><strong>Collecting</strong> = deduct from merchant wallet and send a STAMP_DUTY ledger entry.</div>
+       <div class="form-grid">
+         <div class="form-group"><label class="form-label">Stamp duty mode</label>
+           <select class="form-input" id="rc-sd-active">
+             <option value="0"${!r.stamp_duty_active?' selected':''}>Accruing only — do not collect</option>
+             <option value="1"${r.stamp_duty_active?' selected':''}>Collecting from merchant wallet</option>
+           </select></div>
+         <div class="form-group"><label class="form-label">Stamp duty amount (₦)</label><input class="form-input" id="rc-sd-kobo" type="number" min="0" step="0.01" value="${((r.stamp_duty_kobo||5000)/100).toFixed(2)}"></div>
+       </div>
+       <div class="form-group"><label class="form-label">Minimum txn amount to charge (₦)</label><input class="form-input" id="rc-sd-threshold" type="number" min="0" value="${((r.stamp_duty_threshold_kobo||1000000)/100).toFixed(2)}" placeholder="e.g. 10000"></div>
+       <div class="form-group" style="margin-top:8px"><label class="form-label">Billing method</label>
+         <select class="form-input" id="rc-sd-passthrough">
+           <option value="0"${!r.stamp_duty_passthrough?' selected':''}>Deferred / retroactive — park in holding wallet</option>
+           <option value="1"${r.stamp_duty_passthrough?' selected':''}>Per-transaction — bank charges directly (no holding wallet)</option>
+         </select>
+         <div style="font-size:11px;color:var(--gray-400);margin-top:4px">Deferred: money is held until the rail invoices us in bulk. Per-transaction: bank already deducts on each transfer — nothing to hold.</div>
+       </div>
+     </div>
      <div class="flex-between" style="margin-top:8px">
        <button class="btn btn-outline" onclick="managePayoutRails()">Back</button>
        <button class="btn btn-lime" id="rc-btn" onclick="saveRailConfig('${id}')">Save Config</button></div>
@@ -8253,12 +9403,19 @@ async function saveRailConfig(id) {
   const cap  = document.getElementById('rc-cap').value;
   const tps  = document.getElementById('rc-tps').value;
   const sponsor = document.getElementById('rc-sponsor').value.trim();
+  const sdActive    = document.getElementById('rc-sd-active').value;
+  const sdKobo      = document.getElementById('rc-sd-kobo').value;
+  const sdThreshold = document.getElementById('rc-sd-threshold').value;
   const body = {
-    payout_flat_cost:      cost === ''     ? 0 : Math.round(parseFloat(cost) * 100),
-    payout_flat_cost_onus: costOnus === '' ? 0 : Math.round(parseFloat(costOnus) * 100),
-    daily_value_cap:  cap === '' ? null : Math.round(parseFloat(cap) * 100),
-    tps_limit:        tps === '' ? null : parseInt(tps, 10),
-    sponsor_bank:     sponsor || null,
+    payout_flat_cost:           cost === ''     ? 0 : Math.round(parseFloat(cost) * 100),
+    payout_flat_cost_onus:      costOnus === '' ? 0 : Math.round(parseFloat(costOnus) * 100),
+    daily_value_cap:            cap === '' ? null : Math.round(parseFloat(cap) * 100),
+    tps_limit:                  tps === '' ? null : parseInt(tps, 10),
+    sponsor_bank:               sponsor || null,
+    stamp_duty_active:          sdActive === '1',
+    stamp_duty_kobo:            sdKobo === '' ? 5000 : Math.round(parseFloat(sdKobo) * 100),
+    stamp_duty_threshold_kobo:  sdThreshold === '' ? 1000000 : Math.round(parseFloat(sdThreshold) * 100),
+    stamp_duty_passthrough:     document.getElementById('rc-sd-passthrough').value === '1',
   };
   const btn = document.getElementById('rc-btn'); btn.disabled = true; btn.textContent = 'Saving...';
   const res = await apiFetch('/payouts/admin/payout-rails/'+id, { method:'PUT', body: JSON.stringify(body) });
@@ -8757,9 +9914,6 @@ loadPageData = function(page) {
       break;
     case 'merch_notifications': loadMerchNotifSettings(); break;
     case 'sa_whatsapp':         loadSaWhatsappPage(); break;
-    case 'merch_webhooks':
-    case 'merch_profile':
-      break;
     default: _origLoadPageData(page);
   }
 };
@@ -9335,6 +10489,18 @@ async function loadDeferrals() {
 }
 
 // ── KYC Verification Reports modal ──────────────────────────────────────────
+async function runMerchantKyc(merchantId, merchantName) {
+  var btn = document.getElementById('run-kyc-btn-' + merchantId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+  var res = await apiFetch('/merchants/' + merchantId + '/run-kyc', { method: 'POST' });
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="shield-check" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i> Run KYC'; }
+  if (res && res.status) {
+    alert('KYC checks started for ' + merchantName + '. A summary email will arrive at compliance shortly.');
+  } else {
+    alert('Failed to start KYC checks: ' + ((res && res.message) || 'Unknown error'));
+  }
+}
+
 async function openKycReports(merchantId, merchantName) {
   var modal = document.getElementById('modal');
   var inner = document.getElementById('modal-inner');
@@ -9345,13 +10511,17 @@ async function openKycReports(merchantId, merchantName) {
   var reports = (res && res.data) ? res.data : [];
   var resultColour = { PASS:'#16a34a', FAIL:'#dc2626', PENDING:'#d97706', ERROR:'#6b7280', SKIPPED:'#9ca3af' };
   var checkLabel = { BVN:'BVN Verification', NIN:'NIN Verification', CAC:'CAC/RC Verification', PEP:'PEP Screening', SANCTIONS:'Sanctions Screening', ADVERSE_MEDIA:'Adverse Media', COMPLETENESS:'Form Completeness', WATCHLIST:'Watchlist' };
+  var _infraErrPat = /PERMISSION_DENIED|UNAUTHENTICATED|UNAVAILABLE|subscription|subscribe|quota|api.?key|bearer|\d+\s+[A-Z_]{3,}:/i;
   var rows = reports.map(function(r) {
     var col = resultColour[r.result] || '#6b7280';
+    var rawNote = r.matchNotes || '';
+    // Strip raw provider error codes from both ERROR and FAIL notes — replace with a clean label
+    var displayNote = _infraErrPat.test(rawNote) ? 'Provider subscription not active for this check type' : rawNote;
     return '<tr style="border-bottom:1px solid #f1f5f9">' +
       '<td style="padding:10px 8px;font-size:13px">' + (checkLabel[r.checkType] || r.checkType) + '</td>' +
       '<td style="padding:10px 8px;font-size:12px;color:#666">' + _escA(r.subjectName || r.subjectId || '—') + '</td>' +
       '<td style="padding:10px 8px"><span style="background:' + col + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">' + r.result + '</span></td>' +
-      '<td style="padding:10px 8px;font-size:12px;color:#b45309">' + _escA(r.matchNotes || '') + '</td>' +
+      '<td style="padding:10px 8px;font-size:12px;color:#b45309">' + _escA(displayNote) + '</td>' +
       '<td style="padding:10px 8px;font-size:11px;color:#999">' + new Date(r.createdAt).toLocaleString('en-NG') + '</td>' +
     '</tr>';
   }).join('') || '<tr><td colspan="5" style="padding:24px;text-align:center;color:#999">No verification reports found for this merchant.</td></tr>';

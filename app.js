@@ -63,6 +63,8 @@ var NAV = {
       {id:'sa_merchant_funding', icon:'landmark', label:'Merchant Funding & Routing'},
       {id:'compliance',      icon:'scale', label:'KYC Review'      },
       {id:'deferrals',       icon:'file-clock', label:'KYC Docs & Deferrals'},
+      {id:'sa_kyc_updates',  icon:'upload-cloud', label:'KYC Updates'},
+      {id:'sa_stamp_duty',   icon:'piggy-bank',   label:'Stamp Duty Wallets'},
       {id:'compliance_watchlist', icon:'shield-alert', label:'Compliance Watchlist'},
       {id:'compliance_exceptions', icon:'flag', label:'Intl / Mastercard Compliance'},
       {id:'compliance_centre', icon:'shield-check', label:'Compliance Centre'},
@@ -70,6 +72,7 @@ var NAV = {
       {id:'sa_whatsapp',    icon:'message-circle', label:'WhatsApp Billing'},
     ]},
     { section:'Reports', items:[
+      {id:'sa_payout_review',  icon:'alert-circle',      label:'Payout Review'     },
       {id:'sa_stuck_payouts',  icon:'alert-triangle',    label:'Stuck Payouts'     },
       {id:'revenue',           icon:'banknote',          label:'Revenue Report'    },
       {id:'vat_report',        icon:'receipt-text',      label:'VAT Report'        },
@@ -79,7 +82,8 @@ var NAV = {
       {id:'mpgs_activity',     icon:'credit-card',       label:'MPGS Activity'     },
       {id:'partner_revenue',   icon:'handshake',         label:'Partner Revenue'   },
       {id:'user_type_summary', icon:'pie-chart',         label:'Volume by User Type'},
-      {id:'agg_payouts_admin', icon:'hand-coins',        label:'Aggregator Payouts' },
+      {id:'agg_payouts_admin',       icon:'hand-coins',   label:'Aggregator Payouts' },
+      {id:'sa_debit_alert_recon',    icon:'mail-warning', label:'Debit Alert Recon'  },
     ]},
     { section:'System Config', items:[
       {id:'service_providers',   icon:'server', label:'Service Providers'},
@@ -95,6 +99,7 @@ var NAV = {
       {id:'sa_payouts',          icon:'hand-coins',    label:'Payouts'          },
       {id:'invite_tracking',     icon:'mail-check',    label:'Invite Tracking'  },
       {id:'sa_wallet',           icon:'clipboard-check', label:'Wallet Approvals' },
+      {id:'wallet_action_approvals', icon:'shield-check', label:'Wallet Action Approvals' },
       {id:'settings',            icon:'settings', label:'Settings'         },
     ]},
     { section:'Staff CRM', items:[
@@ -106,8 +111,17 @@ var NAV = {
     { section:'Dashboard',  items:[{id:'overview',icon:'layout-dashboard',label:'Dashboard'}]},
     { section:'Management',  items:[{id:'transactions',icon:'arrow-right-left',label:'All Transactions'},{id:'merchants',icon:'store',label:'Merchants'},{id:'aggregators',icon:'building-2',label:'Aggregators'},{id:'partners',icon:'handshake',label:'Partners'},{id:'admin_onboard',icon:'user-plus',label:'Onboard Merchant'}]},
     { section:'Operations',  items:[{id:'settlement',icon:'circle-check',label:'Settlement'},{id:'wallets',icon:'wallet',label:'Merchant Wallets'},{id:'compliance',icon:'scale',label:'KYC Review'},{id:'deferrals',icon:'file-clock',label:'KYC Docs & Deferrals'},{id:'compliance_exceptions',icon:'flag',label:'Intl / Mastercard Compliance'},{id:'compliance_centre',icon:'shield-check',label:'Compliance Centre'},{id:'onboarding_apps',icon:'file-text',label:'Applications'},{id:'revenue',icon:'banknote',label:'Revenue (Read-Only)'}]},
-    { section:'System',      items:[{id:'users',icon:'users',label:'Invite Users'},{id:'activity_log',icon:'history',label:'Activity Log'},{id:'invite_tracking',icon:'mail-check',label:'Invite Tracking'}]},
+    { section:'System',      items:[{id:'users',icon:'users',label:'Invite Users'},{id:'activity_log',icon:'history',label:'Activity Log'},{id:'invite_tracking',icon:'mail-check',label:'Invite Tracking'},{id:'wallet_action_approvals',icon:'clipboard-check',label:'Wallet Action Approvals'}]},
     { section:'Developer',   items:DEV_SDK_ITEMS },
+  ],
+  operations: [
+    { section:'Dashboard',    items:[{id:'transactions',icon:'arrow-right-left',label:'Transactions'}]},
+    { section:'Wallets',      items:[
+      {id:'ops_wallet_lookup',  icon:'search',            label:'Wallet Lookup'      },
+      {id:'ops_wallet_request', icon:'send-horizontal',   label:'Request Credit / Move'},
+      {id:'ops_wallet_mine',    icon:'history',           label:'My Requests'        },
+    ]},
+    { section:'Refunds',      items:[{id:'ops_refunds',icon:'rotate-ccw',label:'Recommend Refund'}]},
   ],
   aggregator: [
     { section:'Dashboard',  items:[{id:'agg_overview',icon:'layout-dashboard',label:'Dashboard'}]},
@@ -127,7 +141,7 @@ var NAV = {
     { section:'Integration',  items:[{id:'merch_apikeys',icon:'key-round',label:'API Keys'},{id:'merch_webhooks',icon:'webhook',label:'Webhooks'}]},
     { section:'Operations',   items:[{id:'merch_notifications',icon:'bell',label:'Notifications'}]},
     { section:'Developer',    items:DEV_SDK_ITEMS },
-    { section:'Account',      items:[{id:'merch_profile',icon:'circle-user',label:'Business Profile'}]},
+    { section:'Account',      items:[{id:'merch_profile',icon:'circle-user',label:'Business Profile'},{id:'merch_my_kyc',icon:'shield',label:'My KYC'},{id:'merch_stamp_duty',icon:'piggy-bank',label:'Stamp Duty'}]},
   ],
   developer: [
     { section:'SDK',       items:[
@@ -148,8 +162,9 @@ var ROLE_META = {
   admin:       { label:'Admin',       name:'Paylode Admin',      title:'Admin Dashboard',       defaultPage:'overview'       },
   compliance:  { label:'Compliance',  name:'Compliance',         title:'Compliance Dashboard',  defaultPage:'compliance'     },
   audit:       { label:'Audit',       name:'Audit',              title:'Audit Dashboard',       defaultPage:'transactions'   },
-  aggregator:  { label:'Aggregator',  name:'FinConnect Nigeria', title:'Aggregator Dashboard',  defaultPage:'agg_overview'   },
-  merchant:    { label:'Merchant',    name:'Bolt Nigeria',       title:'Merchant Dashboard',    defaultPage:'merch_overview' },
+  aggregator:  { label:'Aggregator',  name:'Aggregator',         title:'Aggregator Dashboard',  defaultPage:'agg_overview'   },
+  operations:  { label:'Operations',  name:'Operations',         title:'Operations Dashboard',  defaultPage:'transactions'   },
+  merchant:    { label:'Merchant',    name:'Merchant',           title:'Merchant Dashboard',    defaultPage:'merch_overview' },
   developer:   { label:'Developer',   name:'API / SDK Docs',     title:'Developer SDK',         defaultPage:'sdk_start'      },
 };
 // Compliance & Audit use the SA nav superset, reduced by their view permissions
@@ -204,6 +219,7 @@ var PERM_ROLE_DEFAULTS = {
     .concat(_grant(['reports'],true)),
   MERCHANT: _grant(['dashboard','transactions','settlements','reports'],false).concat(_grant(['webhooks'],true)),
   AGGREGATOR: _grant(['dashboard','transactions','settlements','merchants','reports'],false).concat(_grant(['onboarding'],true)),
+  OPERATIONS: _grant(['dashboard','transactions','payouts','wallets'],false),
 };
 
 // nav item id → view perm required to see it (staff/SA nav only; SA bypasses).
@@ -216,8 +232,12 @@ var NAV_PERM = {
   settle_verification:'edit_settlements', email_tpl:'view_email_tpl', settings:'view_settings',
   activity_log:'view_audit_log', sa_connections:'view_audit_log', sa_reconciliation:'view_settlements', merch_reconciliation:'view_settlements',
   sa_collection_wallets:'view_settlements', sa_payouts:'view_payouts',
-  sa_stuck_payouts:'view_payouts',
+  sa_payout_review:'view_payouts', sa_stuck_payouts:'view_payouts',
+  sa_debit_alert_recon:'view_payouts',
   sa_merchant_funding:'view_wallets',
+  wallet_action_approvals:'view_wallets',
+  ops_wallet_lookup:'view_wallets', ops_wallet_request:'view_wallets', ops_wallet_mine:'view_wallets',
+  ops_refunds:'view_payouts',
 };
 // Does the logged-in user hold this permission? (SUPER_ADMIN bypasses everything.)
 // Self-healing: a user whose stored permissions predate the view_/edit_ vocab
@@ -986,32 +1006,7 @@ function renderAggTransactions() {
 }
 
 function renderMerchOverview() {
-  var txRows = '';
-  setTimeout(initMerchCharts, 0);
-  return '<div class="page-header"><div class="page-title">Merchant Dashboard</div>' +
-    '<div class="page-desc">Bolt Nigeria &mdash; Payment performance overview</div></div>' +
-    '<div class="stats-grid">' +
-    '<div class="stat-card"><div class="stat-label">Today\'s Volume</div><div class="stat-value">&#8358;12.1M</div><div class="stat-sub"><span class="stat-change up">&#8593; 8.2%</span> vs yesterday</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Success Rate</div><div class="stat-value">98.6%</div><div class="stat-sub"><span class="stat-change up">&#8593; 0.3%</span> vs last week</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Settled Today</div><div class="stat-value">&#8358;11.8M</div><div class="stat-sub">T+1 settlement</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Processing Rate</div><div class="stat-value text-lime">1.2%</div><div class="stat-sub">Growth tier rate</div></div></div>' +
-    '<div class="section-gap"><div class="grid-2">' +
-    '<div class="card"><div class="card-header"><div><div class="card-title">Daily Volume (7 Days)</div><div class="card-subtitle">Transaction volume in &#8358;M</div></div></div>' +
-    '<div style="position:relative;height:200px"><canvas id="merch-vol-chart"></canvas></div></div>' +
-    '<div class="card"><div class="card-header"><div><div class="card-title">Payment Channels</div><div class="card-subtitle">Today\'s split by method</div></div></div>' +
-    '<div style="position:relative;height:200px"><canvas id="merch-channel-chart"></canvas></div></div>' +
-    '</div></div>' +
-    '<div class="section-gap"><div class="grid-2">' +
-    '<div class="card"><div class="card-header"><div class="card-title">Recent Transactions</div>' +
-    '<button class="btn btn-outline btn-sm" onclick="navigate(\'merch_transactions\')">View All</button></div>' +
-    '<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Amount</th><th>Channel</th><th>Status</th></tr></thead>' +
-    '<tbody>' + txRows + '</tbody></table></div></div>' +
-    '<div class="card"><div class="card-header"><div class="card-title">Fee Breakdown (Today)</div></div>' +
-    '<div class="rev-row"><span class="rev-label">Total Collections</span><span class="rev-value">&#8358;12,100,000</span></div>' +
-    '<div class="rev-row"><span class="rev-label">Processing Fees (1.2%)</span><span class="rev-value text-red">&#8358;145,200</span></div>' +
-    '<div class="rev-net"><span style="font-weight:700;font-size:13px;color:#166534">Your Net Settlement</span><span style="font-weight:800;font-size:18px;color:#166534">&#8358;11,954,800</span></div>' +
-    '<div class="divider"></div><div style="font-size:12px;color:var(--gray-400)">Settlement disbursed by 9AM next business day to GTBank ****1234</div>' +
-    '</div></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function initMerchCharts() {
@@ -1110,12 +1105,7 @@ function renderMerchApiKeys() {
 }
 
 function renderMerchWebhooks() {
-  return '<div class="page-header"><div class="page-title">Webhooks</div></div>' +
-    '<div class="card" style="margin-bottom:16px"><div class="card-header"><div class="card-title">Active Webhooks</div>' +
-    '<button class="btn btn-lime btn-sm">+ Add Endpoint</button></div>' +
-    '<div class="rev-row"><div><div style="font-weight:600;font-size:13px">https://api.boltnigeria.com/paylode/webhook</div>' +
-    '<div style="font-size:11px;color:var(--gray-400)">Events: payment.success &middot; payment.failed &middot; refund.processed</div></div>' +
-    '<div class="flex" style="gap:6px"><span class="badge badge-green">Active</span><button class="btn btn-outline btn-sm">Test</button></div></div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderMerchNotifications() {
@@ -1359,17 +1349,7 @@ async function saveSaWaPricing(merchantId, price, tier) {
 }
 
 function renderMerchProfile() {
-  var biz = [['Business Name','Bolt Nigeria Ltd'],['Category','Transport &amp; Ride-hailing'],['RC Number','RC 1240881'],
-    ['CBN Merchant ID','MCH002'],['Processing Rate','1.2% (Growth Tier)'],['Account Manager','Taiwo Adeyemi']].map(function(r) {
-    return '<div class="rev-row"><span class="rev-label">' + r[0] + '</span><span class="rev-value" style="font-size:12px">' + r[1] + '</span></div>';
-  }).join('');
-  var settle = [['Bank','Guaranty Trust Bank (GTB)'],['Account Name','Bolt Operations Nigeria Ltd'],
-    ['Account Number','0123456789'],['Settlement Cycle','T+1 Business Day'],['Auto-settle','Enabled']].map(function(r) {
-    return '<div class="rev-row"><span class="rev-label">' + r[0] + '</span><span class="rev-value" style="font-size:12px">' + r[1] + '</span></div>';
-  }).join('');
-  return '<div class="page-header"><div class="page-title">Business Profile</div></div><div class="grid-2">' +
-    '<div class="card"><div class="card-header"><div class="card-title">Business Information</div><button class="btn btn-outline btn-sm">&#9998; Edit</button></div>' + biz + '</div>' +
-    '<div class="card"><div class="card-header"><div class="card-title">Settlement Account</div><button class="btn btn-outline btn-sm">&#9998; Change</button></div>' + settle + '</div></div>';
+  return '<div style="padding:40px;text-align:center;color:#94a3b8">Loading…</div>';
 }
 
 function renderSdkStart() {
@@ -1384,10 +1364,52 @@ function renderSdkStart() {
     return '<button class="tab-btn ' + (tab===l?'active':'') + '" onclick="setSdkTab(\'' + l + '\')">' +
            ({js:'JavaScript',node:'Node.js',python:'Python',php:'PHP'})[l] + '</button>';
   }).join('');
+  var reqParams = [
+    ['email',        'string',  'Yes', 'Customer\'s email address'],
+    ['amount',       'integer', 'Yes', 'Amount in kobo (₦1 = 100 kobo). For USD, in cents ($1 = 100 cents)'],
+    ['currency',     'string',  'No',  'NGN (default) or USD for international card payments'],
+    ['reference',    'string',  'No',  'Unique transaction reference. Auto-generated if omitted'],
+    ['callback_url', 'string',  'No',  'URL to redirect customer to after payment completes'],
+    ['channels',     'array',   'No',  'Payment methods to show: card, bank_transfer. Defaults to card'],
+    ['metadata',     'object',  'No',  'Any custom key-value data — returned in webhook and verify response'],
+  ];
+  var resFields = [
+    ['status',                  'true on success, false on error'],
+    ['data.authorization_url',  'Redirect the customer to this URL to open the payment page'],
+    ['data.reference',          'Transaction reference — save this and use it to verify payment'],
+    ['data.access_code',        'Short-lived token for the Paylode JS popup (inline mode)'],
+  ];
+  var paramRows = reqParams.map(function(r) {
+    return '<tr><td class="mono" style="font-size:12px">' + r[0] + '</td><td style="font-size:12px;color:var(--gray-500)">' + r[1] + '</td>' +
+      '<td><span class="badge ' + (r[2]==='Yes'?'badge-red':'badge-gray') + '" style="font-size:10px">' + r[2] + '</span></td>' +
+      '<td style="font-size:12px">' + r[3] + '</td></tr>';
+  }).join('');
+  var resRows = resFields.map(function(r) {
+    return '<tr><td class="mono" style="font-size:12px">' + r[0] + '</td><td style="font-size:12px">' + r[1] + '</td></tr>';
+  }).join('');
   return '<div class="page-header"><div class="page-title">Quick Start Guide</div>' +
     '<div class="page-desc">Integrate Paylode payments in minutes</div></div>' +
-    '<div class="card"><div class="tab-nav">' + tabBtns + '</div>' +
-    '<div class="code-block">' + samples[tab] + '</div></div>';
+    '<div class="card" style="margin-bottom:12px"><div class="tab-nav">' + tabBtns + '</div>' +
+    '<div class="code-block">' + samples[tab] + '</div></div>' +
+    '<div class="card" style="margin-bottom:12px"><div class="card-header">' +
+    '<div><div class="card-title"><span class="badge badge-green" style="margin-right:8px">POST</span>/api/v1/transaction/initialize</div>' +
+    '<div class="card-subtitle">Initialize a payment transaction — returns a checkout URL to redirect your customer to</div></div>' +
+    '<span class="badge badge-amber">Secret Key required</span></div>' +
+    '<div style="font-size:12px;font-weight:600;color:var(--gray-600);margin:12px 0 6px">Request Parameters</div>' +
+    '<div class="table-wrap"><table><thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>' +
+    '<tbody>' + paramRows + '</tbody></table></div>' +
+    '<div style="font-size:12px;font-weight:600;color:var(--gray-600);margin:16px 0 6px">Response Fields</div>' +
+    '<div class="table-wrap"><table><thead><tr><th>Field</th><th>Description</th></tr></thead>' +
+    '<tbody>' + resRows + '</tbody></table></div>' +
+    '<div class="code-block" style="margin-top:12px"><span class="comment">// Success response (201)</span>\n{\n  <span class="str">"status"</span>: <span class="kw">true</span>,\n  <span class="str">"data"</span>: {\n    <span class="str">"authorization_url"</span>: <span class="str">"https://checkout.paylodeservices.com/pay/abc123"</span>,\n    <span class="str">"reference"</span>: <span class="str">"TXN-1718200000000"</span>,\n    <span class="str">"access_code"</span>: <span class="str">"abc123"</span>\n  }\n}</div></div>' +
+    '<div class="card"><div class="card-header"><div class="card-title">Authentication</div></div>' +
+    '<div class="info-box" style="font-size:12px">Pass your <strong>Secret Key</strong> in the Authorization header for all server-side API calls:<br>' +
+    '<span class="mono" style="font-size:12px">Authorization: Bearer sk_live_your_secret_key</span><br><br>' +
+    'Your <strong>Public Key</strong> (<span class="mono">pk_live_...</span>) is used only in the browser-side JS popup. Never expose your Secret Key in frontend code.</div>' +
+    '<div class="rev-row" style="margin-top:12px"><span class="rev-label">Base URL</span><span class="rev-value mono">https://api.paylodeservices.com</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Content-Type</span><span class="rev-value mono">application/json</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Amounts</span><span class="rev-value">Always in kobo over the API (₦1 = 100)</span></div>' +
+    '</div>';
 }
 
 function renderSdkPayments() {
@@ -2080,7 +2102,7 @@ async function deleteUser(userId, email) {
     var u = JSON.parse(sessionStorage.getItem('paylode_user') || 'null');
     if (!u || !u.role) return;
     var map = { SUPER_ADMIN:'superadmin', ADMIN:'admin', COMPLIANCE_OFFICER:'compliance',
-                AUDIT:'audit', AGGREGATOR:'aggregator', MERCHANT:'merchant' };
+                AUDIT:'audit', AGGREGATOR:'aggregator', MERCHANT:'merchant', OPERATIONS:'operations' };
     var mapped = map[(u.role || '').toUpperCase()];
     if (mapped && ROLE_META[mapped]) { currentRole = mapped; currentPage = ROLE_META[mapped].defaultPage; }
   } catch (e) {}

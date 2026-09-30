@@ -70,6 +70,7 @@ enum UserRole {
   AUDIT
   AGGREGATOR
   MERCHANT
+  OPERATIONS
 }
 
 enum PayoutStatus {

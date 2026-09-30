@@ -98,6 +98,12 @@ const ROLE_DEFAULTS = {
     grant(['dashboard', 'transactions', 'settlements', 'merchants', 'reports'], false),
     grant(['onboarding'], true),
   ),
+
+  // Operations: read-only on transactions/payouts/wallets — they QUERY, but can
+  // never credit/move a wallet or approve a refund directly. Those actions go
+  // through the dedicated wallet-action-request flow (maker), which SUPER_ADMIN/
+  // ADMIN must approve (checker) before any money actually moves.
+  OPERATIONS: grant(['dashboard', 'transactions', 'payouts', 'wallets'], false),
 };
 
 function defaultsForRole(role) {
