@@ -228,10 +228,15 @@ async function getException(id) {
 }
 
 // Recompute merchant compliance_status + (de)activate based on remaining exceptions.
-async function reconcileMerchant(merchantId) {
+async function reconcileMerchant(merchantId, actorId = null, notes = null) {
   const status = await compliance.rollupComplianceStatus(merchantId);
   if (status === 'blocked') {
+    const before = await prisma.merchant.findUnique({ where: { id: merchantId }, select: { isActive: true, kycStatus: true } });
     await prisma.merchant.update({ where: { id: merchantId }, data: { isActive: false, kycStatus: 'SUSPENDED' } });
+    await logAudit(actorId, 'MERCHANT_SUSPENDED', 'merchants', merchantId,
+      { isActive: before?.isActive, kycStatus: before?.kycStatus },
+      { isActive: false, kycStatus: 'SUSPENDED' },
+      notes || 'Suspended by compliance exception rollup');
   }
   return status;
 }
@@ -275,7 +280,7 @@ router.post('/exceptions/:id/defer', requireAuth, requireSuperAdmin, async (req,
       UPDATE compliance_exceptions SET status='deferred', deferred_until=${expiresAt},
              deferred_by=${req.user.id}::uuid, reason=${reason || null}, updated_at=now()
       WHERE id=${req.params.id}::uuid`;
-    if (ex.entity_type === 'merchant') await reconcileMerchant(ex.entity_id);
+    if (ex.entity_type === 'merchant') await reconcileMerchant(ex.entity_id, req.user.id, `Compliance exception ${ex.rule_code} deferred by ${req.user.id}`);
     await logAudit(req.user.id, ex.deferrable ? 'COMPLIANCE_EXCEPTION_DEFERRED' : 'COMPLIANCE_EXCEPTION_FORCE_OVERRIDE',
       'compliance_exceptions', req.params.id, {}, { rule_code: ex.rule_code, duration_months, expires_at: expiresAt, reason, force: !!force });
     ok(res, await getException(req.params.id), `Exception deferred until ${expiresAt.toDateString()}.`);
@@ -292,7 +297,7 @@ router.post('/exceptions/:id/clear', requireAuth, requireSuperAdmin, async (req,
       UPDATE compliance_exceptions SET status='cleared', deferred_until=NULL,
              deferred_by=${req.user.id}::uuid, reason=${reason || null}, updated_at=now()
       WHERE id=${req.params.id}::uuid`;
-    if (ex.entity_type === 'merchant') await reconcileMerchant(ex.entity_id);
+    if (ex.entity_type === 'merchant') await reconcileMerchant(ex.entity_id, req.user.id, `Compliance exception ${ex.rule_code} cleared by ${req.user.id}`);
     await logAudit(req.user.id, 'COMPLIANCE_EXCEPTION_CLEARED', 'compliance_exceptions', req.params.id, {}, { rule_code: ex.rule_code, reason });
     ok(res, await getException(req.params.id), 'Exception cleared.');
   } catch (e) { next(e); }
@@ -308,7 +313,7 @@ router.post('/exceptions/:id/block', requireAuth, requireSuperAdmin, async (req,
       UPDATE compliance_exceptions SET status='blocked', deferred_until=NULL,
              deferred_by=${req.user.id}::uuid, reason=${reason || null}, updated_at=now()
       WHERE id=${req.params.id}::uuid`;
-    if (ex.entity_type === 'merchant') await reconcileMerchant(ex.entity_id);
+    if (ex.entity_type === 'merchant') await reconcileMerchant(ex.entity_id, req.user.id, `Compliance exception ${ex.rule_code} blocked by ${req.user.id}`);
     await logAudit(req.user.id, 'COMPLIANCE_EXCEPTION_BLOCKED', 'compliance_exceptions', req.params.id, {}, { rule_code: ex.rule_code, reason });
     ok(res, await getException(req.params.id), 'Exception confirmed — merchant blocked.');
   } catch (e) { next(e); }

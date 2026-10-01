@@ -32,6 +32,7 @@ const { prisma } = require('../utils/db');
 const { logger } = require('../utils/logger');
 const { sendEmail } = require('./emailService');
 const yv = require('./youverifyService');
+const { verifyBankAccount } = require('./bankVerification');
 
 const REPORT_EMAIL  = process.env.KYC_REPORT_EMAIL || process.env.COMPLIANCE_EMAIL || 'compliance@paylodeservices.com';
 const APP_URL       = process.env.APP_URL || 'https://paylodeservices.com';
@@ -240,13 +241,40 @@ function matchSettlementName(submittedName, verifiedName) {
 
 async function runSettlementNameCheck(submissionRef, merchantId, sub, eidReports) {
   // Get settlement account name from form data
-  const settlementAccountName = (sub.data?.np_business?.account_name || '').trim();
+  const biz = sub.data?.np_business || {};
+  const settlementAccountName = (biz.account_name || '').trim();
   if (!settlementAccountName) {
     return saveReport({
       submissionRef, merchantId, checkType: 'SETTLEMENT_NAME', result: 'SKIPPED',
       provider: 'internal', matchNotes: 'No settlement account name provided',
     });
   }
+
+  // Ground truth first: a live name-enquiry against the bank/NIP network returns
+  // the REAL account-holder name, which is more trustworthy than the self-reported
+  // account_name on the form. Match that true name against the applicant's declared
+  // business/applicant name (what the user signed up as) — a mismatch doesn't block
+  // onboarding, it just flags the application for manual compliance review (the
+  // existing SETTLEMENT_NAME FAIL gate on /me/activate already does this).
+  if (biz.bank_name && biz.account_number) {
+    try {
+      const ne = await verifyBankAccount(biz.bank_name, biz.account_number);
+      if (ne.queried && ne.found && ne.accountName) {
+        const match = matchSettlementName(sub.businessName, ne.accountName);
+        return saveReport({
+          submissionRef, merchantId, checkType: 'SETTLEMENT_NAME',
+          result: match.pass ? 'PASS' : 'FAIL', provider: ne.provider,
+          subjectName: ne.accountName,
+          matchNotes: `Live bank name-enquiry (${ne.provider}): ${match.reason}`,
+        });
+      }
+    } catch (e) {
+      logger.error({ err: e.message, submissionRef }, 'runSettlementNameCheck: live name-enquiry failed');
+    }
+  }
+
+  // Live NE unavailable (no rail configured, or every rail errored) — fall back to
+  // the legacy comparison of the self-reported settlement name against BVN/CAC.
 
   // For natural persons — match against BVN/NIN returned name
   if (sub.applicantType === 'natural') {
@@ -526,4 +554,4 @@ async function runOnboardingChecks(reference, { suppressMerchantEmail = false } 
   logger.info({ reference, total: allReports.length, failed: failedChecks.length }, 'KYC orchestrator complete');
 }
 
-module.exports = { runOnboardingChecks };
+module.exports = { runOnboardingChecks, matchSettlementName };

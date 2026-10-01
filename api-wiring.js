@@ -659,6 +659,7 @@ async function viewMerchant(id) {
     '</div>';
 
   var tabs = [{ id:'overview', label:'Overview' }, { id:'rates', label:'Rate Config' }, { id:'outlets', label:'Outlets' }, { id:'notifications', label:'Notifications' }];
+  if (canManage) tabs.push({ id:'audit', label:'Audit' });
   var tabNav = '<div class="tab-nav">' + tabs.map(function(t) {
     return '<button class="tab-btn' + (t.id === 'overview' ? ' active' : '') + '" onclick="switchMerchantTab(\'' + t.id + '\',\'' + id + '\')">' + t.label + '</button>';
   }).join('') + '</div>';
@@ -682,6 +683,7 @@ function switchMerchantTab(tab, merchantId) {
   if (tab === 'rates')          loadMerchantRates(merchantId);
   if (tab === 'outlets')        loadMerchantOutlets(merchantId);
   if (tab === 'notifications')  openMerchantNotifSettings(merchantId);
+  if (tab === 'audit')          loadMerchantAuditTrail(merchantId);
 }
 
 // ── MERCHANT APPLICATION FORM (SA / Compliance) ───────────────────────────────
@@ -2098,6 +2100,54 @@ function viewActivityDetail(i) {
     '<div class="divider"></div>' +
     '<div style="font-weight:600;font-size:12px;margin-bottom:4px">Before</div>' + fmt(r.before) +
     '<div style="font-weight:600;font-size:12px;margin:10px 0 4px">After</div>' + fmt(r.after)
+  );
+}
+
+// ── MERCHANT AUDIT TRAIL — per-merchant history from audit_log ───────────────
+async function loadMerchantAuditTrail(merchantId) {
+  var container = document.getElementById('merchant-tab-content');
+  if (!container) return;
+  container.innerHTML = loading();
+  try {
+    var res = await apiFetch('/audit-log?entityId=' + merchantId + '&perPage=100');
+    var rows = (res && res.data && res.data.rows) || [];
+    var body = rows.length ? rows.map(function(r, i) {
+      var actor = r.actor ? _escA(r.actor.email) : '<span style="color:var(--gray-400)">system</span>';
+      var hasDetail = r.beforeState || r.afterState || r.notes;
+      return '<tr>' +
+        '<td style="font-size:12px;white-space:nowrap">' + new Date(r.createdAt).toLocaleString('en-NG') + '</td>' +
+        '<td style="font-size:12px">' + actor + '</td>' +
+        '<td><span class="tag">' + _escA(r.action) + '</span></td>' +
+        '<td style="font-size:12px">' + _escA(r.notes || '—') + '</td>' +
+        '<td>' + (hasDetail ? '<button class="btn btn-outline btn-sm" onclick="viewMerchantAuditDetail(' + i + ')">Detail</button>' : '<span style="color:var(--gray-400)">—</span>') + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:20px">No audit events found for this merchant</td></tr>';
+    window._merchantAuditRows = rows;
+    container.innerHTML =
+      '<div style="font-size:12px;color:var(--gray-400);margin-bottom:10px">All tracked changes to this merchant — oldest events may predate the audit log (introduced 2026-10-01).</div>' +
+      '<div class="table-wrap"><table>' +
+        '<thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Notes</th><th></th></tr></thead>' +
+        '<tbody>' + body + '</tbody>' +
+      '</table></div>';
+  } catch (e) {
+    container.innerHTML = errorBox('Could not load audit trail: ' + (e && e.message ? e.message : e));
+  }
+}
+
+function viewMerchantAuditDetail(i) {
+  var r = (window._merchantAuditRows || [])[i];
+  if (!r) return;
+  var fmt = function(o) { try { return o ? '<pre style="white-space:pre-wrap;font-size:11px;background:var(--gray-50);padding:10px;border-radius:8px;overflow:auto;max-height:200px">' + _escA(JSON.stringify(o, null, 2)) + '</pre>' : '<span style="color:var(--gray-400)">—</span>'; } catch(e){ return '—'; } };
+  showModal(
+    '<div class="modal-header"><div class="modal-title">' + _escA(r.action) + '</div>' +
+      '<button class="modal-close" onclick="document.getElementById(\'modal\').style.display=\'none\'">&#10005;</button></div>' +
+    '<div class="rev-row"><span class="rev-label">When</span><span class="rev-value">' + new Date(r.createdAt).toLocaleString('en-NG') + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">Actor</span><span class="rev-value">' + (r.actor ? _escA(r.actor.email + ' (' + r.actor.role + ')') : 'System (automated)') + '</span></div>' +
+    '<div class="rev-row"><span class="rev-label">IP</span><span class="rev-value mono">' + _escA(r.ipAddress || '—') + '</span></div>' +
+    (r.notes ? '<div class="rev-row"><span class="rev-label">Notes</span><span class="rev-value">' + _escA(r.notes) + '</span></div>' : '') +
+    '<div class="divider"></div>' +
+    '<div style="font-weight:600;font-size:12px;margin-bottom:4px">Before</div>' + fmt(r.beforeState) +
+    '<div style="font-weight:600;font-size:12px;margin:10px 0 4px">After</div>' + fmt(r.afterState)
   );
 }
 
@@ -8150,15 +8200,16 @@ function _injectBankCSS() {
   if (document.getElementById('_bsw-css')) return;
   var s = document.createElement('style'); s.id = '_bsw-css';
   s.textContent = [
-    '.bank-search-wrap{position:relative}',
+    '.bank-search-wrap{position:relative;isolation:isolate}',
     '.bank-search-drop{position:absolute;top:calc(100% + 2px);left:0;right:0;max-height:220px;overflow-y:auto;',
-    'background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:300;',
+    'background:var(--surface,var(--white,#fff));border:1px solid var(--border,var(--gray-200,#e2e8f0));border-radius:6px;z-index:300;',
     'box-shadow:0 6px 16px rgba(0,0,0,.14);display:none}',
     '.bank-search-item{padding:8px 12px;cursor:pointer;font-size:13px;line-height:1.4;',
-    'border-bottom:1px solid var(--border)}',
+    'background:var(--surface,var(--white,#fff));',
+    'border-bottom:1px solid var(--border,var(--gray-200,#e2e8f0))}',
     '.bank-search-item:last-child{border-bottom:none}',
-    '.bank-search-item:hover,.bank-search-item.bsi-on{background:var(--primary-50,#eff6ff);color:var(--primary)}',
-    '.bank-search-more{padding:5px 12px;font-size:11px;color:var(--gray-400);border-top:1px solid var(--border)}',
+    '.bank-search-item:hover,.bank-search-item.bsi-on{background:var(--primary-50,#eff6ff);color:var(--primary,var(--navy,#1a2744))}',
+    '.bank-search-more{padding:5px 12px;font-size:11px;color:var(--gray-400,#94a3b8);border-top:1px solid var(--border,var(--gray-200,#e2e8f0));background:var(--surface,var(--white,#fff))}',
   ].join('');
   document.head.appendChild(s);
 }

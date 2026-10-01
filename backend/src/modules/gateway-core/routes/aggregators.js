@@ -8,6 +8,23 @@ const { logAudit } = require('../../../services/auditService');
 const { sendEmail, getEmailContent } = require('../../../services/emailService');
 const { logger } = require('../../../utils/logger');
 const { hasPermission } = require('../../../config/permissions');
+const { verifyBankAccount } = require('../../../services/bankVerification');
+const { matchSettlementName } = require('../../../services/kycOrchestrator');
+
+// Live name-enquiry on a settlement bank/account pair. Returns a fail() message
+// string to block on an unresolvable bank or a definitive "no such account"; a
+// rail outage never blocks. On success, the true account-holder name is returned
+// so the caller can audit-log a mismatch against the aggregator's company name
+// without blocking (Aggregator has no notes/flags column for a hard gate).
+async function checkAggregatorSettlement(bankNameOrCode, accountNumber) {
+  const ne = await verifyBankAccount(bankNameOrCode, accountNumber);
+  if (!ne.bankResolved) return { blockMessage: `Could not recognize bank "${bankNameOrCode}" — please select a valid bank.` };
+  if (ne.queried && !ne.found && ne.definitive) {
+    return { blockMessage: `Could not verify account ${accountNumber} at ${ne.bank.name}. Please check the account number and bank.` };
+  }
+  if (ne.queried && ne.found) return { accountName: ne.accountName, provider: ne.provider };
+  return {}; // not queried (no rail configured) — allow through
+}
 
 // #8: only viewers with view_merchant_contact (SUPER_ADMIN default) see contact PII.
 function redactAggContact(a, viewer) {
@@ -56,6 +73,12 @@ aggRouter.post('/', requireAuth, requireSuperAdmin, async (req,res,next) => {
     const tempPassword = Math.random().toString(36).slice(2,12) + Math.random().toString(36).slice(2,6).toUpperCase() + '!';
     const nameParts = (contact_name || company_name).trim().split(' ');
 
+    let settlementCheck = {};
+    if (settlement_bank && settlement_account) {
+      settlementCheck = await checkAggregatorSettlement(settlement_bank, settlement_account);
+      if (settlementCheck.blockMessage) return fail(res, settlementCheck.blockMessage, 'BANK_ACCOUNT_UNVERIFIABLE');
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({ data: {
         email: lower, passwordHash: await bcrypt.hash(tempPassword, 12),
@@ -81,6 +104,16 @@ aggRouter.post('/', requireAuth, requireSuperAdmin, async (req,res,next) => {
 
     await logAudit(req.user.id, 'AGGREGATOR_CREATED', 'aggregators', result.agg.id, null,
       { company_name, email: lower, split_pct: split }, null, req.ip);
+
+    if (settlementCheck.accountName) {
+      const match = matchSettlementName(company_name, settlementCheck.accountName);
+      if (!match.pass) {
+        await logAudit(req.user.id, 'AGGREGATOR_SETTLEMENT_NAME_MISMATCH', 'aggregators', result.agg.id, null,
+          { company_name, verified_account_name: settlementCheck.accountName, provider: settlementCheck.provider, reason: match.reason },
+          'Settlement account name does not match company name — flagged for compliance review', req.ip);
+      }
+    }
+
     ok(res, { aggregator_id: result.agg.id, company_name, email: lower, revenue_split_pct: split, temp_password: tempPassword },
       'Aggregator created and emailed a temporary password.');
   } catch(e){ next(e); }
@@ -122,8 +155,32 @@ aggRouter.put('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => 
       data.vaCapKobo = va_cap_kobo === null ? null : BigInt(Math.max(0, Math.round(Number(va_cap_kobo))));
 
     if (!Object.keys(data).length) return fail(res, 'Nothing to update');
+
+    // Only re-verify when the settlement bank/account actually changed, against
+    // the resulting effective pair (fall back to the existing value for whichever
+    // of the two fields wasn't touched in this edit).
+    let settlementCheck = {};
+    if (settlement_bank !== undefined || settlement_account !== undefined) {
+      const effBank    = data.settlementBank    !== undefined ? data.settlementBank    : agg.settlementBank;
+      const effAccount = data.settlementAccount !== undefined ? data.settlementAccount : agg.settlementAccount;
+      if (effBank && effAccount) {
+        settlementCheck = await checkAggregatorSettlement(effBank, effAccount);
+        if (settlementCheck.blockMessage) return fail(res, settlementCheck.blockMessage, 'BANK_ACCOUNT_UNVERIFIABLE');
+      }
+    }
+
     const updated = await prisma.aggregator.update({ where: { id: req.params.id }, data });
     await logAudit(req.user.id, 'AGGREGATOR_UPDATED', 'aggregators', updated.id, null, data, null, req.ip);
+
+    if (settlementCheck.accountName) {
+      const match = matchSettlementName(data.companyName || updated.companyName, settlementCheck.accountName);
+      if (!match.pass) {
+        await logAudit(req.user.id, 'AGGREGATOR_SETTLEMENT_NAME_MISMATCH', 'aggregators', updated.id, null,
+          { company_name: data.companyName || updated.companyName, verified_account_name: settlementCheck.accountName, provider: settlementCheck.provider, reason: match.reason },
+          'Settlement account name does not match company name — flagged for compliance review', req.ip);
+      }
+    }
+
     ok(res, {
       aggregator_id:      updated.id,
       company_name:       updated.companyName,
@@ -131,6 +188,65 @@ aggRouter.put('/:id', requireAuth, requireSuperAdmin, async (req, res, next) => 
       payout_floor_kobo:  updated.payoutFloorKobo != null ? Number(updated.payoutFloorKobo) : null,
       va_cap_kobo:        updated.vaCapKobo        != null ? Number(updated.vaCapKobo)        : null,
     }, 'Aggregator updated');
+  } catch (e) { next(e); }
+});
+
+// ── Aggregator self-service: view own rate config ────────────────────────────
+aggRouter.get('/my/rates', requireAuth, requireAggregator, async (req, res, next) => {
+  try {
+    const agg = req.user.aggregator;
+    if (!agg) return fail(res, 'No aggregator account');
+
+    const [overrides, payoutPlatform, vaPlatform, fullAgg] = await Promise.all([
+      prisma.aggregatorRateConfig.findMany({
+        where: { aggregatorId: agg.id },
+        include: { merchant: { select: { id: true, businessName: true, merchantCode: true } } },
+        orderBy: [{ merchantId: 'asc' }, { channel: 'asc' }],
+      }),
+      prisma.platformRateConfig.findFirst({ where: { channel: 'PAYOUT' } }),
+      prisma.platformRateConfig.findFirst({ where: { channel: 'VIRTUAL_ACCOUNT' } }),
+      prisma.aggregator.findUnique({ where: { id: agg.id }, select: { revenueSplitPct: true, payoutFloorKobo: true, vaCapKobo: true } }),
+    ]);
+
+    const rawBasePct = Number(fullAgg?.revenueSplitPct ?? agg.revenueSplitPct);
+
+    // Per-aggregator floor/cap overrides; fall back to platform defaults
+    const platformPayoutFloor = payoutPlatform ? Number(payoutPlatform.flatFee) : 0;
+    const platformVaCap       = vaPlatform     ? Number(vaPlatform.cap)         : 0;
+    const platformVaRate      = vaPlatform     ? Number(vaPlatform.rate)        : 0;
+    const basePct        = rawBasePct > 0 ? rawBasePct : platformVaRate;
+    const payoutBaseCost = fullAgg?.payoutFloorKobo != null ? Number(fullAgg.payoutFloorKobo) : platformPayoutFloor;
+    const vaCap          = fullAgg?.vaCapKobo        != null ? Number(fullAgg.vaCapKobo)        : platformVaCap;
+    const vaMinCharge    = vaPlatform ? Number(vaPlatform.minCharge) : 0;
+
+    // Group overrides by merchant for convenience
+    const overrideMap = {};
+    overrides.forEach(o => {
+      if (!overrideMap[o.merchantId]) overrideMap[o.merchantId] = { merchant: o.merchant };
+      overrideMap[o.merchantId][o.channel] = {
+        rate:        Number(o.rate),
+        flat_fee:    Number(o.flatFee    || 0),
+        min_charge:  Number(o.minCharge  || 0),
+        max_charge:  Number(o.maxCharge  || 0),
+        notes:       o.notes,
+        created_at:  o.createdAt,
+      };
+    });
+
+    ok(res, {
+      base_rate:         basePct,
+      default_split_pct: basePct,           // backward compat
+      platform_va_rate:  platformVaRate,    // raw platform default (0 = not set)
+      payout_base_cost:  payoutBaseCost,    // Paylode's payout flat fee (kobo) — floor
+      va_min_charge:     vaMinCharge,       // platform VA min charge (kobo) — info only
+      va_cap:            vaCap,             // SA cap on VA (kobo) — read-only for agg
+      overrides: Object.entries(overrideMap).map(([merchantId, data]) => ({
+        merchant_id: merchantId,
+        merchant:    data.merchant,
+        va:          data['VIRTUAL_ACCOUNT'] || null,
+        payout:      data['PAYOUT'] || null,
+      })),
+    });
   } catch (e) { next(e); }
 });
 
@@ -223,18 +339,6 @@ aggRouter.delete('/:id/rates/:merchantId', requireAuth, requireSuperAdmin, async
 
 // ── Aggregator self-service ───────────────────────────────────────────────────
 
-// ── GET /api/v1/aggregators/:id/merchants — super admin views an aggregator's merchants ──
-aggRouter.get('/:id/merchants', requireAuth, requireSuperAdmin, async (req,res,next) => {
-  try {
-    const merchants = await prisma.merchant.findMany({
-      where: { aggregatorId: req.params.id, isOutlet: false },
-      orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { outlets: true } } },
-    });
-    ok(res, merchants);
-  } catch(e){ next(e); }
-});
-
 aggRouter.get('/my/merchants', requireAuth, requireAggregator, async (req,res,next) => {
   try {
     const agg = req.user.aggregator;
@@ -246,6 +350,18 @@ aggRouter.get('/my/merchants', requireAuth, requireAggregator, async (req,res,ne
     });
     ok(res, merchants);
   } catch(e){next(e);}
+});
+
+// ── GET /api/v1/aggregators/:id/merchants — super admin views an aggregator's merchants ──
+aggRouter.get('/:id/merchants', requireAuth, requireSuperAdmin, async (req,res,next) => {
+  try {
+    const merchants = await prisma.merchant.findMany({
+      where: { aggregatorId: req.params.id, isOutlet: false },
+      orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { outlets: true } } },
+    });
+    ok(res, merchants);
+  } catch(e){ next(e); }
 });
 
 aggRouter.get('/my/revenue', requireAuth, requireAggregator, async (req,res,next) => {
@@ -345,65 +461,6 @@ aggRouter.put('/payouts/:id/mark-paid', requireAuth, requireSuperAdmin, async (r
     await logAudit(req.user.id, 'AGG_PAYOUT_MARKED_PAID', 'agg_payouts', payout.id,
       { status: 'PENDING' }, { status: 'PAID', paid_at: updated.paidAt }, req.body.notes || null, req.ip);
     ok(res, { id: payout.id, status: 'PAID', paid_at: updated.paidAt }, 'Payout marked as paid');
-  } catch (e) { next(e); }
-});
-
-// ── Aggregator self-service: view own rate config ────────────────────────────
-aggRouter.get('/my/rates', requireAuth, requireAggregator, async (req, res, next) => {
-  try {
-    const agg = req.user.aggregator;
-    if (!agg) return fail(res, 'No aggregator account');
-
-    const [overrides, payoutPlatform, vaPlatform, fullAgg] = await Promise.all([
-      prisma.aggregatorRateConfig.findMany({
-        where: { aggregatorId: agg.id },
-        include: { merchant: { select: { id: true, businessName: true, merchantCode: true } } },
-        orderBy: [{ merchantId: 'asc' }, { channel: 'asc' }],
-      }),
-      prisma.platformRateConfig.findFirst({ where: { channel: 'PAYOUT' } }),
-      prisma.platformRateConfig.findFirst({ where: { channel: 'VIRTUAL_ACCOUNT' } }),
-      prisma.aggregator.findUnique({ where: { id: agg.id }, select: { revenueSplitPct: true, payoutFloorKobo: true, vaCapKobo: true } }),
-    ]);
-
-    const rawBasePct = Number(fullAgg?.revenueSplitPct ?? agg.revenueSplitPct);
-
-    // Per-aggregator floor/cap overrides; fall back to platform defaults
-    const platformPayoutFloor = payoutPlatform ? Number(payoutPlatform.flatFee) : 0;
-    const platformVaCap       = vaPlatform     ? Number(vaPlatform.cap)         : 0;
-    const platformVaRate      = vaPlatform     ? Number(vaPlatform.rate)        : 0;
-    const basePct        = rawBasePct > 0 ? rawBasePct : platformVaRate;
-    const payoutBaseCost = fullAgg?.payoutFloorKobo != null ? Number(fullAgg.payoutFloorKobo) : platformPayoutFloor;
-    const vaCap          = fullAgg?.vaCapKobo        != null ? Number(fullAgg.vaCapKobo)        : platformVaCap;
-    const vaMinCharge    = vaPlatform ? Number(vaPlatform.minCharge) : 0;
-
-    // Group overrides by merchant for convenience
-    const overrideMap = {};
-    overrides.forEach(o => {
-      if (!overrideMap[o.merchantId]) overrideMap[o.merchantId] = { merchant: o.merchant };
-      overrideMap[o.merchantId][o.channel] = {
-        rate:        Number(o.rate),
-        flat_fee:    Number(o.flatFee    || 0),
-        min_charge:  Number(o.minCharge  || 0),
-        max_charge:  Number(o.maxCharge  || 0),
-        notes:       o.notes,
-        created_at:  o.createdAt,
-      };
-    });
-
-    ok(res, {
-      base_rate:         basePct,
-      default_split_pct: basePct,           // backward compat
-      platform_va_rate:  platformVaRate,    // raw platform default (0 = not set)
-      payout_base_cost:  payoutBaseCost,    // Paylode's payout flat fee (kobo) — floor
-      va_min_charge:     vaMinCharge,       // platform VA min charge (kobo) — info only
-      va_cap:            vaCap,             // SA cap on VA (kobo) — read-only for agg
-      overrides: Object.entries(overrideMap).map(([merchantId, data]) => ({
-        merchant_id: merchantId,
-        merchant:    data.merchant,
-        va:          data['VIRTUAL_ACCOUNT'] || null,
-        payout:      data['PAYOUT'] || null,
-      })),
-    });
   } catch (e) { next(e); }
 });
 

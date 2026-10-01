@@ -1,6 +1,7 @@
 'use strict';
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+const fs = require('fs');
 const execFileAsync = promisify(execFile);
 // ─────────────────────────────────────────────────────────────────────────────
 //  Parallex Bank — Third Party Transfer (TPT) payout client.
@@ -79,6 +80,21 @@ const msgOf  = (r) => (r && (r.responseMessage || r.responseDescription || r.Res
 
 function isConfigured() {
   return !!(USERNAME && PASSWORD && SUBKEY && DEBIT_ACCOUNT);
+}
+
+// ── Failover flag ─────────────────────────────────────────────────────────────
+// parallex-monitor (backend/src/cron/parallexFailover.js) writes this file the
+// instant it confirms Parallex down/up. Reading it here lets NE/send skip the
+// ~15-30s curl timeout entirely while an outage is already confirmed, instead
+// of every caller re-discovering the outage one slow request at a time.
+const FAILOVER_FLAG_PATH = process.env.PARALLEX_FAILOVER_FLAG_PATH || '/tmp/parallex_failover.json';
+let _failoverCache = { down: false, checkedAt: 0 };
+function isFailoverActive() {
+  if (Date.now() - _failoverCache.checkedAt < 3000) return _failoverCache.down;
+  let down = false;
+  try { down = !!JSON.parse(fs.readFileSync(FAILOVER_FLAG_PATH, 'utf8')).down; } catch (_) {}
+  _failoverCache = { down, checkedAt: Date.now() };
+  return down;
 }
 
 // ── Base headers (every request including /Login) ────────────────────────────
@@ -213,6 +229,9 @@ async function resolveBankName(nipCode) {
 // ── Name enquiry ─────────────────────────────────────────────────────────────
 // Returns requestId as sessionId — required by InterbankTransfer (min 30 chars).
 async function nameEnquiry(bankCode, accountNumber) {
+  if (isFailoverActive()) {
+    return { ok: false, accountName: null, sessionId: null, kycLevel: null, reason: 'Parallex failover active — skipped', raw: null };
+  }
   const r = await call('GET', '/api/ThirdPartyTransfer/NameEnquiry', {
     query: { accountNumber, bankCode: toNipCode(bankCode) || BANK_CODE },
     maxTime: 15,
@@ -245,6 +264,9 @@ function toRailResult(r) {
 // ── Payout (main rail contract method) ───────────────────────────────────────
 // item = { orderId, amount(kobo), bank_code, account_number, account_name, narration }
 async function sendPayout(item) {
+  if (isFailoverActive()) {
+    return { ok: false, code: 'FAILOVER', reason: 'Parallex failover active — rail skipped', orderStatus: null };
+  }
   const beneficiaryBankCode = String(item.bank_code || '').trim();
   const amountNaira = nairaFromKobo(item.amount);
   const isIntra = !beneficiaryBankCode || beneficiaryBankCode === BANK_CODE;

@@ -1,6 +1,7 @@
 'use strict';
 const { prisma } = require('../utils/db');
 const { logger } = require('../utils/logger');
+const { logAudit } = require('./auditService');
 
 // This service is loaded by every PM2 cluster worker (6×), so the hourly sweep
 // would otherwise run 6 times concurrently and race on the same rows / suspend
@@ -20,8 +21,12 @@ async function expireOverdueDeferrals(db, now) {
     await db.$executeRaw`
       UPDATE document_deferrals SET status='expired'
       WHERE entity_type=${d.entity_type} AND entity_id=${d.entity_id}::uuid AND status='active' AND expires_at <= ${now}`;
-    if (d.entity_type === 'merchant')        await db.merchant.update({ where:{ id:d.entity_id }, data:{ isActive:false, kycStatus:'SUSPENDED' } });
-    else if (d.entity_type === 'aggregator') await db.aggregator.update({ where:{ id:d.entity_id }, data:{ status:'suspended' } });
+    if (d.entity_type === 'merchant') {
+      await db.merchant.update({ where:{ id:d.entity_id }, data:{ isActive:false, kycStatus:'SUSPENDED' } });
+      logAudit(null, 'MERCHANT_SUSPENDED', 'merchants', d.entity_id, { isActive:true }, { isActive:false, kycStatus:'SUSPENDED' }, 'Document deferral expired — auto-suspended by cron');
+    } else if (d.entity_type === 'aggregator') {
+      await db.aggregator.update({ where:{ id:d.entity_id }, data:{ status:'suspended' } });
+    }
     logger.warn({ entity_type:d.entity_type, entity_id:d.entity_id }, 'Document deferral expired — account suspended');
   }
   return expired.length;
@@ -38,8 +43,12 @@ async function expireOverdueDocuments(db, now) {
     UPDATE kyc_documents SET status='overdue', updated_at=now()
     WHERE status='deferred' AND deferred_until IS NOT NULL AND deferred_until <= ${now}`;
   for (const d of overdue) {
-    if (d.entity_type === 'merchant')        await db.merchant.update({ where:{ id:d.entity_id }, data:{ isActive:false, kycStatus:'SUSPENDED' } });
-    else if (d.entity_type === 'aggregator') await db.aggregator.update({ where:{ id:d.entity_id }, data:{ status:'suspended' } });
+    if (d.entity_type === 'merchant') {
+      await db.merchant.update({ where:{ id:d.entity_id }, data:{ isActive:false, kycStatus:'SUSPENDED' } });
+      logAudit(null, 'MERCHANT_SUSPENDED', 'merchants', d.entity_id, { isActive:true }, { isActive:false, kycStatus:'SUSPENDED' }, 'KYC document overdue — auto-suspended by cron');
+    } else if (d.entity_type === 'aggregator') {
+      await db.aggregator.update({ where:{ id:d.entity_id }, data:{ status:'suspended' } });
+    }
     logger.warn({ entity_type:d.entity_type, entity_id:d.entity_id }, 'KYC document deferral overdue — account suspended');
   }
   return overdue.length;
@@ -67,6 +76,7 @@ async function expireComplianceDeferrals(db, now) {
     await db.$executeRaw`UPDATE merchants SET compliance_status=${status} WHERE id=${d.entity_id}::uuid`;
     if (row.blocking > 0) {
       await db.merchant.update({ where:{ id:d.entity_id }, data:{ isActive:false, kycStatus:'SUSPENDED' } });
+      logAudit(null, 'MERCHANT_SUSPENDED', 'merchants', d.entity_id, { isActive:true }, { isActive:false, kycStatus:'SUSPENDED' }, 'Compliance deferral expired with open BLOCKING exception — auto-suspended by cron');
       logger.warn({ entity_id:d.entity_id }, 'Compliance deferral expired with open BLOCKING — merchant suspended');
     }
   }

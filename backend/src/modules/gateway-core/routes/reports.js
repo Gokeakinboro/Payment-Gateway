@@ -102,14 +102,22 @@ router.get('/cbn', requireAuth, requireCompliance, async (req, res, next) => {
     const periodEndDay = isCurrent ? now.getUTCDate() : new Date(endFull.getTime() - 1).getUTCDate();
     const period = `01-${String(periodEndDay).padStart(2, '0')}/${mm}/${yyyy}`;
 
-    const agg = await prisma.$queryRaw`
-      SELECT COUNT(*)::int AS volume, COALESCE(SUM(amount),0) AS value_kobo
-      FROM transactions
-      WHERE status = 'SUCCESS' AND is_sandbox = false
-        AND paid_at >= ${start} AND paid_at < ${end}
-    `;
-    const webVolume = agg[0] ? agg[0].volume : 0;
-    const webValue  = agg[0] ? Number(agg[0].value_kobo) / 100 : 0;
+    const [collectionsAgg, payoutsAgg] = await Promise.all([
+      prisma.$queryRaw`
+        SELECT COUNT(*)::int AS volume, COALESCE(SUM(amount),0) AS value_kobo
+        FROM transactions
+        WHERE status = 'SUCCESS' AND is_sandbox = false
+          AND paid_at >= ${start} AND paid_at < ${end}
+      `,
+      prisma.$queryRaw`
+        SELECT COUNT(*)::int AS volume, COALESCE(SUM(amount),0) AS value_kobo
+        FROM payout_items
+        WHERE status = 'success'
+          AND processed_at >= ${start} AND processed_at < ${end}
+      `,
+    ]);
+    const webVolume = (collectionsAgg[0] ? collectionsAgg[0].volume : 0) + (payoutsAgg[0] ? payoutsAgg[0].volume : 0);
+    const webValue  = (collectionsAgg[0] ? Number(collectionsAgg[0].value_kobo) / 100 : 0) + (payoutsAgg[0] ? Number(payoutsAgg[0].value_kobo) / 100 : 0);
 
     const channels = [
       { code: 'CHNL001', channel: 'ATM',         volume: 0,         value: 0,        period },
