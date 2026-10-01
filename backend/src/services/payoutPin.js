@@ -1,7 +1,13 @@
 'use strict';
-// 6-digit PIN gate on merchant-dashboard-initiated payouts (JWT sessions only —
-// API-key/SDK submissions never require it, see req.isApiKeyAuth in
-// modules/gateway-core/routes/payouts.js requireAuthOrApiKey).
+// 6-digit PIN gate on merchant-dashboard-initiated payouts ONLY. Never applies
+// to payouts submitted via the API — that includes sk_live_/sk_test_ API-key
+// calls (req.isApiKeyAuth, see requireAuthOrApiKey) AND JWT-authenticated
+// programmatic callers that log in and post directly (e.g. a merchant's own
+// server hitting /payouts/batches with a Java/Python/etc HTTP client) rather
+// than a browser hitting our dashboard. A same-origin Referer/Origin check
+// distinguishes the two — see isDashboardOrigin(). Found 2026-09-30 when this
+// gate broke a live automated payout integration that authenticates via JWT
+// but is not our dashboard; must never regress.
 //
 // Setting/changing/resetting the PIN all require a fresh password (+2FA, if
 // enabled) step-up via services/reauth.js — there's no separate email-token
@@ -91,11 +97,29 @@ async function verifyPin(merchantId, pin) {
   return { ok: false, code: 'WRONG_PIN', error: 'Incorrect PIN', attemptsRemaining: MAX_ATTEMPTS - attempts };
 }
 
-// Express middleware: PIN-gates a merchant-dashboard (JWT) payout submission.
-// Skipped for API-key/SDK calls (req.isApiKeyAuth) and for non-merchant callers.
+// Our own dashboard's browser origins — the ONLY origins the PIN gate applies to.
+const DASHBOARD_HOSTS = ['paylodeservices.com', 'www.paylodeservices.com', 'billspay.net', 'www.billspay.net'];
+
+// True only when the request's Origin/Referer is our dashboard's browser host.
+// A missing Origin/Referer (the norm for server-to-server / SDK / script
+// callers) is NOT the dashboard, so it returns false and the PIN is skipped.
+function isDashboardOrigin(req) {
+  const src = req.headers.origin || req.headers.referer || '';
+  if (!src) return false;
+  try {
+    const host = new URL(src).hostname;
+    return DASHBOARD_HOSTS.includes(host) || host === 'localhost' || host === '127.0.0.1';
+  } catch (_) { return false; }
+}
+
+// Express middleware: PIN-gates a merchant-dashboard (browser) payout submission.
+// Skipped for API-key/SDK calls (req.isApiKeyAuth), for non-merchant callers,
+// and for any JWT-authenticated request that isn't actually from our dashboard
+// (e.g. a merchant's own server logging in and posting programmatically).
 async function requirePayoutPinMiddleware(req, res, next) {
   try {
     if (req.isApiKeyAuth) return next();
+    if (!isDashboardOrigin(req)) return next();
     if (!req.user || req.user.role !== 'MERCHANT') return next();
     const merchantId = req.user.merchant?.id;
     if (!merchantId) return next();

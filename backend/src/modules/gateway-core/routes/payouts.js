@@ -597,10 +597,25 @@ router.post('/name-enquiry',
       const plx = (() => {
         try { return require('../services/parallexTransferService'); } catch (_) { return null; }
       })();
-      if (!plx || !plx.isConfigured()) return fail(res, 'Name lookup is unavailable right now');
-      const ne = await plx.nameEnquiry(hit.code, req.body.account_number).catch(() => ({ ok: false, reason: 'NE threw' }));
-      if (!ne.ok || !ne.accountName) return fail(res, ne.reason || 'Could not resolve an account name for that number/bank', 'NE_FAILED');
-      ok(res, { account_name: ne.accountName, session_id: ne.sessionId, bank_code: hit.code, bank_name: hit.name });
+      const palmpay = require('../services/palmpayService');
+
+      const ne = (plx && plx.isConfigured())
+        ? await plx.nameEnquiry(hit.code, req.body.account_number).catch(() => ({ ok: false, reason: 'NE threw' }))
+        : { ok: false, reason: 'Parallex not configured' };
+
+      if (ne.ok && ne.accountName) {
+        return ok(res, { account_name: ne.accountName, session_id: ne.sessionId, bank_code: hit.code, bank_name: hit.name, provider: 'parallex' });
+      }
+
+      // Parallex unavailable/failed over — fall back to any other rail that responds.
+      if (palmpay.isConfigured()) {
+        const palmNe = await palmpay.nameEnquiry(hit.code, req.body.account_number).catch(() => ({ ok: false }));
+        if (palmNe.ok && palmNe.accountName) {
+          return ok(res, { account_name: palmNe.accountName, session_id: null, bank_code: hit.code, bank_name: hit.name, provider: 'palmpay' });
+        }
+      }
+
+      return fail(res, ne.reason || 'Could not resolve an account name for that number/bank', 'NE_FAILED');
     } catch (e) { next(e); }
   }
 );
@@ -659,7 +674,13 @@ router.post('/batches', requireAuthOrApiKey, requirePayoutPinMiddleware,
 
       const { description, scheduled_at, items } = req.body;
 
-      const defaultNarration = null; // Narration comes from the merchant; never auto-generated.
+      const defaultNarration = merchant.businessName;
+
+      // Merchants may not use "Paylode" in narrations — it misrepresents the sender.
+      // SA / staff can override this via the admin dispatch path.
+      const paylodeNarration = (items || []).find(it => /paylode/i.test((it.narration || '').trim()));
+      if (paylodeNarration)
+        return fail(res, 'Narration cannot contain "Paylode" — use your business name or a recipient-facing reference.', 'INVALID_NARRATION');
 
       // ── Lookup payout fee rate (platform default or per-merchant override) ─────
       // Payout pricing is tiered by destination: PAYOUT_ONUS for on-us (PalmPay)
@@ -960,7 +981,8 @@ router.post('/batches/upload', requireAuth, upload.single('file'), (req, res, ne
     const merchantId = req.user.merchant?.id;
     if (!merchantId) return fail(res, 'No merchant account');
 
-    const defaultNarration = null; // Narration comes from the merchant; never auto-generated.
+    const merchantForNarration = await prisma.merchant.findUnique({ where: { id: merchantId }, select: { businessName: true } });
+    const defaultNarration = merchantForNarration?.businessName || null;
 
     const ext = req.file.originalname.split('.').pop().toLowerCase();
     let rows = [];
@@ -1003,6 +1025,7 @@ router.post('/batches/upload', requireAuth, upload.single('file'), (req, res, ne
       if (acct.length !== 10) { errors.push(`Row ${lineNum}: account_number must be 10 digits`); continue; }
       if (!bank)               { errors.push(`Row ${lineNum}: bank_code is required`); continue; }
       if (isNaN(amtRaw) || amtRaw <= 0) { errors.push(`Row ${lineNum}: invalid amount`); continue; }
+      if (/paylode/i.test(narration)) { errors.push(`Row ${lineNum}: narration cannot contain "Paylode" — use your business name or a recipient-facing reference`); continue; }
 
       items.push({
         account_number: acct,

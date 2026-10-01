@@ -13,10 +13,20 @@
  */
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const { execFile }    = require('child_process');
+const fs              = require('fs');
 const { PrismaClient } = require('@prisma/client');
 const { sendEmail }   = require('../services/emailService');
 
 const prisma = new PrismaClient();
+
+// Cheap cross-process signal other services (parallexTransferService.js) read
+// to skip straight to PalmPay instead of waiting out a curl timeout per call.
+const FAILOVER_FLAG_PATH = process.env.PARALLEX_FAILOVER_FLAG_PATH || '/tmp/parallex_failover.json';
+function writeFailoverFlag(railPattern, down) {
+  try {
+    fs.writeFileSync(FAILOVER_FLAG_PATH, JSON.stringify({ rail: railPattern, down, updatedAt: new Date().toISOString() }));
+  } catch (e) { console.error('[failover] could not write flag file:', e.message); }
+}
 
 const POLL_MS      = 5 * 60_000;    // how often to check
 const CONFIRM_DOWN = 2;             // consecutive failures before acting
@@ -180,6 +190,7 @@ async function tick() {
 
       if (s.fails === CONFIRM_DOWN && !s.down) {
         s.down = true;
+        writeFailoverFlag(m.railPattern, true);
         const alt = await bestAlternativeRail(s.railId);
         const switched = alt ? await doFailover(s.railId, alt) : 0;
 
@@ -217,6 +228,7 @@ async function tick() {
           const reverted = await doRevert(s.railId);
           s.down = false;
           s.successes = 0;
+          writeFailoverFlag(m.railPattern, false);
 
           console.log(`${label} Reverted ${reverted} merchant(s) back to ${m.railPattern}`);
 
@@ -256,7 +268,10 @@ async function boot() {
     if (Number(active[0].n) > 0) {
       s.down = true;
       s.fails = CONFIRM_DOWN; // already triggered
+      writeFailoverFlag(m.railPattern, true);
       console.log(`[failover:${m.railPattern}] Resumed: ${active[0].n} merchant(s) still on failover from previous outage`);
+    } else {
+      writeFailoverFlag(m.railPattern, false);
     }
   }
 }

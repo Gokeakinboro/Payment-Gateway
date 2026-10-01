@@ -60,6 +60,7 @@ const MODULES = [
   { name: 'platform-settings', basePath: '/api/v1/platform/settings',  load: () => require('../routes/platformSettings'),   enabledEnv: 'MODULE_PLATFORM_SETTINGS_ENABLED',  category: 'core'    },
 
   // ── More core ────────────────────────────────────────────────────────────
+  { name: 'audit-log',     basePath: '/api/v1/audit-log',      load: () => require('./gateway-core/routes/auditLog'),     enabledEnv: 'MODULE_AUDIT_LOG_ENABLED',     category: 'core' },
   { name: 'deferrals',     basePath: '/api/v1/deferrals',      load: () => require('./gateway-core/routes/deferrals'),    enabledEnv: 'MODULE_DEFERRALS_ENABLED',     category: 'core' },
   { name: 'documents',     basePath: '/api/v1/documents',      load: () => require('../routes/documents'),    enabledEnv: 'MODULE_DOCUMENTS_ENABLED',     category: 'core' },
   { name: 'support',       basePath: '/api/v1/support',        load: () => require('../routes/support'),      enabledEnv: 'MODULE_SUPPORT_ENABLED',       category: 'core' },

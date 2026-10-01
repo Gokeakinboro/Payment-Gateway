@@ -152,19 +152,28 @@ router.get('/mine', requireAuth, requireOperations, async (req, res, next) => {
 });
 
 // ── POST /:id/approve — SUPER_ADMIN/ADMIN executes the request (checker) ────
+// The status flip to 'approved' is claimed atomically (UPDATE ... WHERE
+// status='pending') INSIDE the same transaction as the wallet mutation, so two
+// concurrent approve calls on the same request can never both pass — Postgres
+// row-locks the request row on the first UPDATE and the second sees 0 rows
+// affected. Previously the pending-check was a plain SELECT before the
+// transaction, which raced: two concurrent requests could both read
+// status='pending' before either wrote, double-crediting the wallet.
 router.post('/:id/approve', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const rows = await prisma.$queryRawUnsafe(
-      `SELECT id, type, merchant_id, dest_merchant_id, rail_id, amount, reference, status
-         FROM wallet_action_requests WHERE id = $1::uuid`, req.params.id);
-    const request = rows[0];
-    if (!request) return notFound(res, 'Wallet action request');
-    if (request.status !== 'pending') return fail(res, `Request already ${request.status}`);
-
-    const amt = BigInt(request.amount);
-    const reference = request.reference || `WACT-${String(request.id).slice(0, 8).toUpperCase()}`;
-
     const result = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.$queryRawUnsafe(
+        `UPDATE wallet_action_requests
+            SET status='approved', decided_by=$1::uuid, decided_at=NOW(), updated_at=NOW()
+          WHERE id=$2::uuid AND status='pending'
+          RETURNING id, type, merchant_id, dest_merchant_id, rail_id, amount, reference`,
+        req.user.id, req.params.id);
+      const request = claimed[0];
+      if (!request) throw Object.assign(new Error('NOT_PENDING'), { _notPending: true });
+
+      const amt = BigInt(request.amount);
+      const reference = request.reference || `WACT-${String(request.id).slice(0, 8).toUpperCase()}`;
+
       async function creditRail(merchantId, delta, entryType, description) {
         let w = await tx.merchantWallet.findFirst({ where: { merchantId, railId: request.rail_id } });
         const before = w ? w.balance : 0n;
@@ -184,24 +193,26 @@ router.post('/:id/approve', requireAuth, requireAdmin, async (req, res, next) =>
 
       if (request.type === 'CREDIT') {
         const after = await creditRail(request.merchant_id, amt, 'CREDIT', `Wallet action approval — ${reference}`);
-        return { merchant_new_balance: after };
+        return { id: request.id, type: request.type, reference, amt, merchant_new_balance: after };
       }
 
       // MOVE: debit source, credit destination — same rail, one transaction.
       const sourceAfter = await creditRail(request.merchant_id, -amt, 'DEBIT', `Wallet move (approved) — to ${request.dest_merchant_id} — ${reference}`);
       const destAfter = await creditRail(request.dest_merchant_id, amt, 'CREDIT', `Wallet move (approved) — from ${request.merchant_id} — ${reference}`);
-      return { merchant_new_balance: sourceAfter, dest_merchant_new_balance: destAfter };
+      return { id: request.id, type: request.type, reference, amt, merchant_new_balance: sourceAfter, dest_merchant_new_balance: destAfter };
     });
 
-    await prisma.$executeRawUnsafe(
-      `UPDATE wallet_action_requests SET status='approved', decided_by=$1::uuid, decided_at=NOW(), updated_at=NOW() WHERE id=$2::uuid`,
-      req.user.id, request.id);
+    const { id, type, reference, amt, ...balances } = result;
+    await logAudit(req.user.id, 'WALLET_ACTION_APPROVED', 'wallet_action_requests', id,
+      {}, balances, `Approved ${type} of ₦${koboToNaira(amt).toLocaleString()} — Ref: ${reference}`);
 
-    await logAudit(req.user.id, 'WALLET_ACTION_APPROVED', 'wallet_action_requests', request.id,
-      {}, result, `Approved ${request.type} of ₦${koboToNaira(amt).toLocaleString()} — Ref: ${reference}`);
-
-    return ok(res, { id: request.id, status: 'approved', ...result }, 'Wallet action approved and executed');
+    return ok(res, { id, status: 'approved', ...balances }, 'Wallet action approved and executed');
   } catch (e) {
+    if (e && e._notPending) {
+      const rows = await prisma.$queryRawUnsafe(`SELECT status FROM wallet_action_requests WHERE id = $1::uuid`, req.params.id);
+      if (!rows[0]) return notFound(res, 'Wallet action request');
+      return fail(res, `Request already ${rows[0].status}`);
+    }
     if (e && e._client) return fail(res, e.message);
     next(e);
   }
@@ -213,16 +224,17 @@ router.post('/:id/reject', requireAuth, requireAdmin,
   async (req, res, next) => {
     try {
       const rows = await prisma.$queryRawUnsafe(
-        `SELECT id, status FROM wallet_action_requests WHERE id = $1::uuid`, req.params.id);
-      const request = rows[0];
-      if (!request) return notFound(res, 'Wallet action request');
-      if (request.status !== 'pending') return fail(res, `Request already ${request.status}`);
-
-      await prisma.$executeRawUnsafe(
         `UPDATE wallet_action_requests
             SET status='rejected', decided_by=$1::uuid, decided_at=NOW(), decision_note=$2, updated_at=NOW()
-          WHERE id=$3::uuid`,
-        req.user.id, req.body.decision_note || null, request.id);
+          WHERE id=$3::uuid AND status='pending'
+          RETURNING id`,
+        req.user.id, req.body.decision_note || null, req.params.id);
+      const request = rows[0];
+      if (!request) {
+        const existing = await prisma.$queryRawUnsafe(`SELECT status FROM wallet_action_requests WHERE id = $1::uuid`, req.params.id);
+        if (!existing[0]) return notFound(res, 'Wallet action request');
+        return fail(res, `Request already ${existing[0].status}`);
+      }
 
       await logAudit(req.user.id, 'WALLET_ACTION_REJECTED', 'wallet_action_requests', request.id,
         {}, { decision_note: req.body.decision_note || null }, 'Wallet action request rejected');
