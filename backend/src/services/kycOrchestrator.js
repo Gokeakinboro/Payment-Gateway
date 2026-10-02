@@ -32,6 +32,7 @@ const { prisma } = require('../utils/db');
 const { logger } = require('../utils/logger');
 const { sendEmail } = require('./emailService');
 const yv = require('./youverifyService');
+const dojah = require('./dojahKycService');
 const { verifyBankAccount } = require('./bankVerification');
 
 const REPORT_EMAIL  = process.env.KYC_REPORT_EMAIL || process.env.COMPLIANCE_EMAIL || 'compliance@paylodeservices.com';
@@ -52,7 +53,7 @@ function resultBadge(r) {
 function checkLabel(t) {
   return { BVN:'BVN Verification', NIN:'NIN Verification', CAC:'CAC/RC Verification',
     PEP:'PEP Screening', SANCTIONS:'Sanctions Screening', ADVERSE_MEDIA:'Adverse Media Screening',
-    COMPLETENESS:'Form Completeness' }[t] || t;
+    COMPLETENESS:'Form Completeness', AML_DOJAH:'AML/PEP Screening (Dojah)' }[t] || t;
 }
 
 // ── save a report row ─────────────────────────────────────────────────────────
@@ -341,6 +342,36 @@ function checkCompleteness(sub) {
   return issues;
 }
 
+// When DOJAH_PRIMARY=true, Dojah handles all eID + AML checks and YouVerify is skipped.
+// Flip the env var on 176 to cut over; unset it to revert. No code change needed.
+const DOJAH_PRIMARY = process.env.DOJAH_PRIMARY === 'true';
+
+// ── fire one Dojah eID check + save ──────────────────────────────────────────
+
+async function runDojahCheck(submissionRef, merchantId, checkType, dojahCall, subjectId, subjectName) {
+  let result = 'PENDING', providerRef = null, responsePayload = null, matchNotes = null;
+  try {
+    const r = await dojahCall();
+    providerRef     = r.requestId;
+    responsePayload = r.raw;
+    if (!r.success) {
+      result     = 'FAIL';
+      matchNotes = r.message || 'Verification failed — not found or not verified';
+    } else {
+      result = 'PASS';
+      const d = r.data || {};
+      const returnedName = [d.firstName, d.middleName, d.lastName].filter(Boolean).join(' ').trim();
+      if (returnedName) matchNotes = `Returned name: ${returnedName}`;
+    }
+  } catch (e) {
+    result     = 'ERROR';
+    matchNotes = e.message || 'Network or API error';
+    logger.warn({ err: e.message, checkType, subjectId }, 'Dojah check error');
+  }
+  return saveReport({ submissionRef, merchantId, checkType, result, subjectId, subjectName,
+    provider: 'dojah', providerRef, requestPayload: { id: subjectId }, responsePayload, matchNotes });
+}
+
 // ── fire one YouVerify check + save (no per-check email) ─────────────────────
 
 async function runCheck(submissionRef, merchantId, checkType, yvCall, subjectId, subjectName) {
@@ -383,7 +414,17 @@ async function runCheck(submissionRef, merchantId, checkType, yvCall, subjectId,
 // ── main entry point ──────────────────────────────────────────────────────────
 
 async function runOnboardingChecks(reference, { suppressMerchantEmail = false } = {}) {
-  if (!process.env.YOUVERIFY_API_KEY) {
+  const yvReady     = !!process.env.YOUVERIFY_API_KEY;
+  const dojahReady  = dojah.isConfigured();
+
+  if (!yvReady && !dojahReady) {
+    logger.info({ reference }, 'No KYC provider configured — skipping KYC checks');
+    return;
+  }
+  if (DOJAH_PRIMARY && !dojahReady) {
+    logger.warn({ reference }, 'DOJAH_PRIMARY=true but Dojah not configured — falling back to YouVerify');
+  }
+  if (!DOJAH_PRIMARY && !yvReady) {
     logger.info({ reference }, 'YouVerify not configured — skipping KYC checks');
     return;
   }
@@ -432,18 +473,31 @@ async function runOnboardingChecks(reference, { suppressMerchantEmail = false } 
   }
 
   // ── 3. eID checks (BVN / NIN / CAC) ─────────────────────────────────────────
+  // DOJAH_PRIMARY=true → Dojah handles all eID checks; YouVerify skipped.
+  // DOJAH_PRIMARY unset  → YouVerify (current default).
   if (sub.formType === 'merchant' && sub.applicantType === 'natural') {
     const np = data.np_identity || {};
     const name = fullName(np) || sub.businessName;
     allNames.push(name);
 
-    if (np.bvn && /^\d{11}$/.test(np.bvn)) {
-      const r = await runCheck(reference, merchantId, 'BVN', () => yv.verifyBvn(np.bvn), np.bvn, name);
-      if (r) allReports.push(r);
-    }
-    if (np.nin && /^\d{11}$/.test(np.nin)) {
-      const r = await runCheck(reference, merchantId, 'NIN', () => yv.verifyNin(np.nin), np.nin, name);
-      if (r) allReports.push(r);
+    if (DOJAH_PRIMARY && dojahReady) {
+      if (np.bvn && /^\d{11}$/.test(np.bvn)) {
+        const r = await runDojahCheck(reference, merchantId, 'BVN', () => dojah.verifyBvn(np.bvn), np.bvn, name);
+        if (r) allReports.push(r);
+      }
+      if (np.nin && /^\d{11}$/.test(np.nin)) {
+        const r = await runDojahCheck(reference, merchantId, 'NIN', () => dojah.verifyNin(np.nin), np.nin, name);
+        if (r) allReports.push(r);
+      }
+    } else {
+      if (np.bvn && /^\d{11}$/.test(np.bvn)) {
+        const r = await runCheck(reference, merchantId, 'BVN', () => yv.verifyBvn(np.bvn), np.bvn, name);
+        if (r) allReports.push(r);
+      }
+      if (np.nin && /^\d{11}$/.test(np.nin)) {
+        const r = await runCheck(reference, merchantId, 'NIN', () => yv.verifyNin(np.nin), np.nin, name);
+        if (r) allReports.push(r);
+      }
     }
 
   } else if (sub.formType === 'merchant' && sub.applicantType === 'entity') {
@@ -451,21 +505,42 @@ async function runOnboardingChecks(reference, { suppressMerchantEmail = false } 
     allNames.push(sub.businessName);
 
     const rcNum = ent.rc_number || sub.regNumber;
-    if (rcNum) {
-      const bizType = ent.business_type || sub.businessType || '';
-      const r = await runCheck(reference, merchantId, 'CAC', () => yv.verifyCac(rcNum, sub.businessName, bizType), rcNum, sub.businessName);
-      if (r) allReports.push(r);
-    }
-    for (const p of principals) {
-      const pName = fullName(p);
-      allNames.push(pName);
-      if (p.bvn && /^\d{11}$/.test(p.bvn)) {
-        const r = await runCheck(reference, merchantId, 'BVN', () => yv.verifyBvn(p.bvn), p.bvn, pName);
+    if (DOJAH_PRIMARY && dojahReady) {
+      if (rcNum) {
+        // Dojah CAC: company_type defaults to COMPANY; business_type from form mapped if available
+        const companyType = ent.business_type === 'business_name' ? 'BUSINESS_NAME' : 'COMPANY';
+        const r = await runDojahCheck(reference, merchantId, 'CAC', () => dojah.verifyCac(rcNum, companyType), rcNum, sub.businessName);
         if (r) allReports.push(r);
       }
-      if (p.nin && /^\d{11}$/.test(p.nin)) {
-        const r = await runCheck(reference, merchantId, 'NIN', () => yv.verifyNin(p.nin), p.nin, pName);
+      for (const p of principals) {
+        const pName = fullName(p);
+        allNames.push(pName);
+        if (p.bvn && /^\d{11}$/.test(p.bvn)) {
+          const r = await runDojahCheck(reference, merchantId, 'BVN', () => dojah.verifyBvn(p.bvn), p.bvn, pName);
+          if (r) allReports.push(r);
+        }
+        if (p.nin && /^\d{11}$/.test(p.nin)) {
+          const r = await runDojahCheck(reference, merchantId, 'NIN', () => dojah.verifyNin(p.nin), p.nin, pName);
+          if (r) allReports.push(r);
+        }
+      }
+    } else {
+      if (rcNum) {
+        const bizType = ent.business_type || sub.businessType || '';
+        const r = await runCheck(reference, merchantId, 'CAC', () => yv.verifyCac(rcNum, sub.businessName, bizType), rcNum, sub.businessName);
         if (r) allReports.push(r);
+      }
+      for (const p of principals) {
+        const pName = fullName(p);
+        allNames.push(pName);
+        if (p.bvn && /^\d{11}$/.test(p.bvn)) {
+          const r = await runCheck(reference, merchantId, 'BVN', () => yv.verifyBvn(p.bvn), p.bvn, pName);
+          if (r) allReports.push(r);
+        }
+        if (p.nin && /^\d{11}$/.test(p.nin)) {
+          const r = await runCheck(reference, merchantId, 'NIN', () => yv.verifyNin(p.nin), p.nin, pName);
+          if (r) allReports.push(r);
+        }
       }
     }
   }
@@ -507,17 +582,71 @@ async function runOnboardingChecks(reference, { suppressMerchantEmail = false } 
     }
   }
 
-  // ── 5. AML (PEP + sanctions) + adverse media via direct API ──────────────────
+  // ── 5. AML (PEP + sanctions) + adverse media ─────────────────────────────────
+  // DOJAH_PRIMARY → Dojah is the sole AML provider (saved as AML / ADVERSE_MEDIA, not AML_DOJAH).
+  // Otherwise   → YouVerify primary + Dojah supplementary (AML_DOJAH, compliance-only).
   const uniqueNames = [...new Set(allNames.filter(Boolean))];
-  for (const name of uniqueNames) {
-    const entityType = sub.applicantType === 'entity' ? 'business' : 'individual';
-    const amlR = await runCheck(reference, merchantId, 'AML',
-      () => yv.screenAml(name, entityType), null, name);
-    if (amlR) allReports.push(amlR);
+  if (!DOJAH_PRIMARY) {
+    for (const name of uniqueNames) {
+      const entityType = sub.applicantType === 'entity' ? 'business' : 'individual';
+      const amlR = await runCheck(reference, merchantId, 'AML',
+        () => yv.screenAml(name, entityType), null, name);
+      if (amlR) allReports.push(amlR);
 
-    const amR = await runCheck(reference, merchantId, 'ADVERSE_MEDIA',
-      () => yv.screenAdverseMedia(name, entityType), null, name);
-    if (amR) allReports.push(amR);
+      const amR = await runCheck(reference, merchantId, 'ADVERSE_MEDIA',
+        () => yv.screenAdverseMedia(name, entityType), null, name);
+      if (amR) allReports.push(amR);
+    }
+  }
+
+  // ── 5b. Dojah AML/PEP/sanctions screening ────────────────────────────────────
+  // DOJAH_PRIMARY → primary AML check, saved as AML (standard check type, can block).
+  // Otherwise     → supplementary/compliance-only flag, saved as AML_DOJAH (never shown to merchant).
+  // Runs in addition to YouVerify AML. Hits are saved and included in the compliance
+  // summary email, but EXCLUDED from the merchant failure email — merchants are not
+  // notified of AML flags (per policy). Never auto-blocks onboarding.
+  if (dojahReady) {
+    for (const name of uniqueNames) {
+      const parts = name.split(' ').filter(Boolean);
+      const firstName  = parts[0] || name;
+      const lastName   = parts.length > 1 ? parts[parts.length - 1] : '';
+      const middleName = parts.length > 2 ? parts.slice(1, -1).join(' ') : undefined;
+      const schema     = sub.applicantType === 'entity' ? 'organization' : 'individual';
+      // When Dojah is primary, save under the standard AML type so it drives PASS/FAIL.
+      // When supplementary, save as AML_DOJAH so it's compliance-only and never emails the merchant.
+      const amlCheckType = DOJAH_PRIMARY ? 'AML' : 'AML_DOJAH';
+
+      let dojahResult = 'ERROR', dojahNotes = null, dojahRaw = null;
+      try {
+        const r = await dojah.screenAml({
+          schema,
+          names: [{ firstName, lastName, ...(middleName ? { middleName } : {}) }],
+        });
+        dojahRaw = r.raw;
+        if (!r.success) {
+          dojahResult = 'ERROR';
+          dojahNotes  = r.message || 'Dojah AML check failed';
+        } else {
+          const isHit = r.matchStatus && !/no.?match/i.test(r.matchStatus);
+          dojahResult = isHit ? 'FAIL' : 'PASS';
+          dojahNotes  = isHit
+            ? `Dojah: ${r.matchStatus} · risk: ${r.riskLevel || 'unknown'} · ${r.totalResults} result(s)${DOJAH_PRIMARY ? '' : ' — flagged for manual compliance review'}`
+            : `Dojah: No match · risk: ${r.riskLevel || 'Low'}`;
+        }
+      } catch (e) {
+        dojahResult = 'ERROR';
+        dojahNotes  = e.message || 'Dojah AML network error';
+        logger.warn({ err: e.message, name }, 'Dojah AML check error (non-fatal)');
+      }
+
+      const dr = await saveReport({
+        submissionRef: reference, merchantId, checkType: amlCheckType,
+        result: dojahResult, provider: 'dojah',
+        subjectName: name, responsePayload: dojahRaw,
+        matchNotes: dojahNotes,
+      });
+      if (dr) allReports.push(dr);
+    }
   }
 
   // ── 6. Liveness (new merchants only, if selfie submitted) ────────────────────
@@ -546,7 +675,8 @@ async function runOnboardingChecks(reference, { suppressMerchantEmail = false } 
   if (allReports.length) await emailInternalSummary(reference, businessName, allReports);
 
   // ── 8. Notify merchant only if there are failures ────────────────────────────
-  const failedChecks = allReports.filter((r) => r && r.result === 'FAIL' && r.checkType !== 'COMPLETENESS');
+  // AML_DOJAH hits go to compliance summary only — merchants are never notified of AML flags.
+  const failedChecks = allReports.filter((r) => r && r.result === 'FAIL' && r.checkType !== 'COMPLETENESS' && r.checkType !== 'AML_DOJAH');
   if (!suppressMerchantEmail && (failedChecks.length || completenessIssues.length)) {
     await emailMerchantFailures(sub.contactEmail, businessName, reference, failedChecks, completenessIssues);
   }

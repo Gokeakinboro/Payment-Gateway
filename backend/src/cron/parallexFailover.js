@@ -12,7 +12,7 @@
  * No wallet reads, writes, or reversals of any kind.
  */
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
-const { execFile }    = require('child_process');
+const net             = require('net');
 const fs              = require('fs');
 const { PrismaClient } = require('@prisma/client');
 const { sendEmail }   = require('../services/emailService');
@@ -32,7 +32,7 @@ const POLL_MS      = 5 * 60_000;    // how often to check
 const CONFIRM_DOWN = 2;             // consecutive failures before acting
 const CONFIRM_UP   = 2;             // consecutive successes before reverting
 const ALERT_TO     = 'gokeakinboro@paylodeservices.com';
-const ALERT_CC     = 'financeadmin@paylodeservices.com';
+const ALERT_CC     = 'financeadmin@paylodeservices.com,gokeakinboro@gmail.com';
 
 // Monitor targets — one entry per VPN-connected rail.
 // railPattern is matched case-insensitively against payment_rails.name.
@@ -54,9 +54,14 @@ MONITORS.forEach(m => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function ping(ip) {
+function checkTcp(ip, port = 443, timeoutMs = 5000) {
   return new Promise(resolve => {
-    execFile('ping', ['-c', '2', '-W', '3', ip], err => resolve(!err));
+    const sock = new net.Socket();
+    sock.setTimeout(timeoutMs);
+    sock.once('connect', () => { sock.destroy(); resolve(true); });
+    sock.once('error',   () => { sock.destroy(); resolve(false); });
+    sock.once('timeout', () => { sock.destroy(); resolve(false); });
+    sock.connect(port, ip);
   });
 }
 
@@ -87,23 +92,25 @@ async function bestAlternativeRail(failedRailId) {
 // Switches single-rail merchants off failedRailId onto failoverRail.
 // Returns count of merchants switched.
 async function doFailover(failedRailId, failoverRail) {
-  // 1. Merchants with an explicit payout_rail_id = failed rail (no active splits).
+  // 1. Merchants with an explicit payout_rail_id = failed rail (no active splits, active only).
   const withOverride = await prisma.$queryRaw`
     SELECT m.id, m.payout_rail_id AS original_payout_rail_id
     FROM merchants m
     WHERE m.payout_rail_id = ${failedRailId}::uuid
+      AND m.is_active = true
       AND NOT EXISTS (
         SELECT 1 FROM merchant_payout_splits s
         WHERE s.merchant_id = m.id AND s.is_active = true
       )`;
 
-  // 2. Merchants with no explicit override who rely on this being the default rail (no active splits).
+  // 2. Merchants with no explicit override who rely on this being the default rail (no active splits, active only).
   const isDefault = await prisma.$queryRaw`
     SELECT 1 FROM payment_rails WHERE id = ${failedRailId}::uuid AND is_default_payout = true`;
   const onDefault = isDefault.length ? await prisma.$queryRaw`
     SELECT m.id, NULL::uuid AS original_payout_rail_id
     FROM merchants m
     WHERE m.payout_rail_id IS NULL
+      AND m.is_active = true
       AND NOT EXISTS (
         SELECT 1 FROM merchant_payout_splits s
         WHERE s.merchant_id = m.id AND s.is_active = true
@@ -180,7 +187,7 @@ async function tick() {
       continue;
     }
 
-    const up = await ping(m.ip).catch(() => false);
+    const up = await checkTcp(m.ip, 443).catch(() => false);
     const label = `[failover:${m.railPattern}]`;
 
     if (!up) {

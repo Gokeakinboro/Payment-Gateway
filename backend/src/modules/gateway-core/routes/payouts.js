@@ -1978,6 +1978,7 @@ async function dispatchBatch({ batchId, overrideRailId = null, actorId = null, i
         // Switch the disbursement record and leg to PalmPay rail for the payout.
         // Whether JIT succeeded (funded) or fell back (pre-funded reserve), we fire via PalmPay.
         await prisma.$executeRaw`UPDATE rail_disbursements SET rail_id=${plmRailId}::uuid WHERE id=${leg.leg_id}::uuid`;
+        await prisma.$executeRaw`UPDATE payout_items SET rail_id=${plmRailId}::uuid WHERE id=${leg.item_id}::uuid`;
         leg = { ...leg, rail_id: plmRailId };
         nePrefetch = {};
         void jitOk; // used only for the poll above
