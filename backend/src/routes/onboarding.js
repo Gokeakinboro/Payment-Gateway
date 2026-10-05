@@ -13,6 +13,7 @@ const { requireAuth, requireCompliance } = require('../middleware/auth');
 const { CHECK_ITEMS } = require('./documents');
 const compliance = require('../services/complianceService');
 const { runOnboardingChecks } = require('../services/kycOrchestrator');
+const { verifyBankAccount } = require('../services/bankVerification');
 
 // Required documents seeded into kyc_documents when a merchant is provisioned,
 // keyed by entity sub-type. Uploaded application docs are marked 'submitted'.
@@ -155,7 +156,11 @@ router.post('/invite', requireAuth, async (req, res, next) => {
       return res.status(403).json({ status: false, message: 'Not permitted', error_code: 'FORBIDDEN' });
 
     const base = process.env.APP_URL || 'https://paylodeservices.com';
-    const link = `${base}/onboarding.html?type=${type}&via=invite&email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`;
+    // Aggregator-sent invites carry their aggregator id as `ref` so the resulting
+    // merchant gets linked back to them — onboarding.html already stores `ref` into
+    // referred_by on submit; provisionMerchant() reads it back to set aggregatorId.
+    const ref  = (req.user.role === 'AGGREGATOR' && req.user.aggregator) ? req.user.aggregator.id : null;
+    const link = `${base}/onboarding.html?type=${type}&via=invite&email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}${ref ? `&ref=${ref}` : ''}`;
     const content = await getEmailContent('onboarding_invite',
       { name, email, business: name, link, invite_link: link, type },
       `You're invited to onboard on Paylode`,
@@ -258,6 +263,24 @@ router.post('/submit', async (req, res, next) => {
       const bank = (data && data.np_business) || {};
       const missing = ['bank_name', 'account_number', 'account_name'].filter((k) => !String(bank[k] || '').trim());
       if (missing.length) return fail(res, 'Settlement bank details are required to onboard: ' + missing.join(', ').replace(/_/g, ' '), 'SETTLEMENT_BANK_REQUIRED');
+
+      const acctNo = String(bank.account_number || '').trim();
+      if (!/^\d{10}$/.test(acctNo)) return fail(res, 'Settlement account number must be a valid 10-digit NUBAN.', 'INVALID_ACCOUNT_NUMBER');
+
+      // Live name-enquiry against the bank/NIP network — confirms the account is
+      // real before we let the application through. Only a DEFINITIVE "no such
+      // account" response blocks; a rail outage (every provider errored/timed out)
+      // must never block a legitimate signup, so it's allowed through for the
+      // async KYC orchestrator to flag instead.
+      try {
+        const ne = await verifyBankAccount(bank.bank_name, acctNo);
+        if (!ne.bankResolved) return fail(res, `Could not recognize bank "${bank.bank_name}" — please select a valid bank.`, 'BANK_NOT_RECOGNIZED');
+        if (ne.queried && !ne.found && ne.definitive) {
+          return fail(res, `We could not verify account ${acctNo} at ${ne.bank.name}. Please check the account number and bank, then resubmit.`, 'BANK_ACCOUNT_UNVERIFIABLE');
+        }
+      } catch (e) {
+        logger.error({ err: e.message, reference: 'pre-submit' }, 'Settlement bank name-enquiry failed (non-fatal, submission allowed)');
+      }
     }
 
     // Compulsory KYC identity fields — enforced SERVER-SIDE so the API can't be
@@ -384,7 +407,7 @@ router.post('/submit', async (req, res, next) => {
           sanctionsHit: screening.sanctionsHit,
           riskLevel: screening.riskLevel,
           screeningNotes: screening.screeningNotes,
-          signature: signature || null,
+          signature: signature ? (typeof signature === 'string' ? signature : JSON.stringify(signature)) : null,
           referredBy: referred_by || null,
           statusHistory: [{ status: 'submitted', at: new Date().toISOString(), by: 'applicant', note: null }],
         },
@@ -531,7 +554,7 @@ router.post('/dead-letter/:reference/retry', requireAuth, requireCompliance, asy
         sanctionsHit: pl.screening && pl.screening.sanctionsHit,
         riskLevel: pl.screening && pl.screening.riskLevel,
         screeningNotes: pl.screening && pl.screening.screeningNotes,
-        signature: pl.signature || null, referredBy: pl.referred_by || null,
+        signature: pl.signature ? (typeof pl.signature === 'string' ? pl.signature : JSON.stringify(pl.signature)) : null, referredBy: pl.referred_by || null,
       },
     });
     fs.unlinkSync(file); // recovered — remove from dead-letter store
@@ -606,6 +629,15 @@ async function provisionMerchant(tx, sub, opts = {}) {
          partnership:'Partnership', trust:'Registered Trust', charity:'Registered Charity',
          prof_body:'Professional Body', other:(ent.entity_other || 'Other') }[ent.entity_type] || 'Registered Business');
 
+  // referredBy carries the inviting aggregator's id (set via /invite's `ref` param,
+  // read back from onboarding.html's sessionStorage on submit). Only trust it if it
+  // resolves to a real aggregator — anyone can tamper with a public form's query string.
+  let aggregatorId = null;
+  if (sub.referredBy) {
+    const refAgg = await tx.aggregator.findUnique({ where: { id: sub.referredBy }, select: { id: true } }).catch(() => null);
+    if (refAgg) aggregatorId = refAgg.id;
+  }
+
   // One user ⇒ one merchant (Merchant.userId is unique). Reuse an existing user
   // with this email; if they already have a merchant, link to it (idempotent).
   let user = await tx.user.findUnique({ where: { email }, include: { merchant: true } });
@@ -636,6 +668,7 @@ async function provisionMerchant(tx, sub, opts = {}) {
     // Compliance: structured MCC + card-acceptance scope (selects local vs intl matrix).
     mcc:                 data.mcc || biz.mcc || ent.mcc || null,
     cardAcceptanceScope: (data.card_acceptance_scope || biz.card_acceptance_scope) === 'international' ? 'international' : 'local',
+    aggregatorId,
     kycStatus: active ? 'ACTIVE' : 'PENDING_KYC', kycTier: active ? 1 : null, isActive: active,
     settlementBank:        biz.bank_name || null,
     settlementAccount:     biz.account_number || null,

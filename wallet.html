@@ -598,10 +598,39 @@ function openAccount(){
     '<button class="btn btn-2" style="margin-top:10px;width:100%;text-align:left" onclick="changePinFlow()">Change transaction PIN</button>'+
     (window.PublicKeyCredential?('<button class="btn btn-2" style="margin-top:10px;width:100%;text-align:left" onclick="toggleBiometric()">'+(bioOn()?'Disable':'Enable')+' Face / Touch ID</button>'):'')+
     '<button class="btn btn-2" id="ac-push" style="margin-top:10px;width:100%;text-align:left" onclick="togglePush()">Notifications</button>'+
+    '<button class="btn btn-2" style="margin-top:10px;width:100%;text-align:left" onclick="openJoinClub()">Join another club ›</button>'+
     '<button class="btn btn-2" style="margin-top:10px;width:100%;background:#fff;color:var(--red);border:1.5px solid var(--red)" onclick="logout()">Log out</button>'
   );
   updatePushBtn();
 }
+
+function openJoinClub(){
+  openSheet(
+    '<h3>Join another club</h3>'+
+    '<p class="muted" style="margin-bottom:14px">Enter the club\'s Billspay code — ask your club admin for it.</p>'+
+    '<label>Club code</label>'+
+    '<input id="jc-code" type="text" autocapitalize="characters" autocorrect="off" autocomplete="off" placeholder="e.g. LSC-5C3645" style="text-transform:uppercase">'+
+    '<div class="err" id="jc-err"></div>'+
+    '<div class="ok" id="jc-ok"></div>'+
+    '<button class="btn" id="jc-btn" onclick="doJoinClub()">Join</button>'
+  );
+}
+
+async function doJoinClub(){
+  var btn=document.getElementById('jc-btn');
+  btn.disabled=true; btn.textContent='Joining…';
+  document.getElementById('jc-err').textContent='';
+  var okEl=document.getElementById('jc-ok'); okEl.textContent='';
+  var code=(document.getElementById('jc-code').value||'').trim().toUpperCase();
+  if(!code){document.getElementById('jc-err').textContent='Enter a club code';btn.disabled=false;btn.textContent='Join';return;}
+  var r=await api('/wallet/me/join-club',{method:'POST',body:{merchant_code:code}});
+  btn.disabled=false; btn.textContent='Join';
+  if(!r.ok){document.getElementById('jc-err').textContent=r.message||'Could not join that club';return;}
+  okEl.textContent='Joined '+(r.data&&r.data.club||code)+'! Refreshing…';
+  await loadMemberships();
+  setTimeout(function(){closeM();loadApp();},1200);
+}
+
 // Toggle the edit-details fields (kept collapsed alongside change-password).
 function toggleEditDetails(){
   var d=document.getElementById('ac-ed'),t=document.getElementById('ac-ed-toggle');

@@ -4,22 +4,24 @@
 // — same flow as departmental users. A member is created with a wallet in one step.
 const router = require('express').Router();
 const { prisma, tenantAuth, requireWalletEnabled, getConfig, isValidEmail, normalizePhone,
-        genTempPassword, hashPassword, LOGIN_URL } = require('../_shared');
+        genTempPassword, hashPassword, genDefaultPin, hashLoginPin, LOGIN_URL } = require('../_shared');
 const { ok, fail, created, notFound } = require('../../../utils/helpers');
 const { sendEmail } = require('../../../services/emailService');
 
 router.use(tenantAuth, requireWalletEnabled);
 
 const num = (v) => (v === null || v === undefined ? null : Number(v));
-const SELECT = `m.id::text, m.name, m.email, m.phone, m.kyc_tier, m.status, m.user_id::text AS user_id, m.created_at,
+const SELECT = `m.id::text, m.name, m.email, m.phone, m.kyc_tier, m.status, m.is_admin, m.user_id::text AS user_id, m.created_at,
   w.id::text AS wallet_id, w.balance::text AS balance, w.currency, w.low_balance_threshold::text AS low_balance_threshold`;
 const shapeMember = (r) => ({
   id: r.id, name: r.name, email: r.email, phone: r.phone, kyc_tier: r.kyc_tier, status: r.status,
+  is_admin: !!r.is_admin,
   has_login: !!r.user_id, wallet_id: r.wallet_id || null, balance: num(r.balance), currency: r.currency || 'NGN',
   low_balance_threshold: num(r.low_balance_threshold), created_at: r.created_at,
 });
 
 // Onboard one member: create login user (temp pw) + member + wallet. Returns temp password.
+// For social_club merchants also generates a 4-digit login PIN and includes it in the email.
 async function onboardMember(mid, body, cfg) {
   const name = String(body.name || '').trim();
   const email = String(body.email || '').trim().toLowerCase();
@@ -29,6 +31,10 @@ async function onboardMember(mid, body, cfg) {
   if (body.phone && !phone) return { error: 'Invalid phone number' };
   if (await prisma.user.findUnique({ where: { email }, select: { id: true } })) return { error: 'A user with that email already exists', email };
 
+  const merRows = await prisma.$queryRawUnsafe(
+    `SELECT merchant_type FROM merchants WHERE id=$1::uuid`, mid);
+  const isSocialClub = merRows.length && merRows[0].merchant_type === 'social_club';
+
   const [firstName, ...rest] = name.split(' ');
   const tempPassword = genTempPassword();
   const user = await prisma.user.create({
@@ -36,24 +42,43 @@ async function onboardMember(mid, body, cfg) {
             lastName: rest.join(' ') || '-', role: 'MERCHANT', permissions: [], mustChangePassword: true },
     select: { id: true },
   });
-  const mrows = await prisma.$queryRawUnsafe(
-    `INSERT INTO mw_members (merchant_id, user_id, name, email, phone, kyc_tier)
-     VALUES ($1::uuid,$2::uuid,$3,$4,$5,'low') RETURNING id::text`, mid, user.id, name, email, phone);
+
+  let defaultPin = null;
+  let mrows;
+  if (isSocialClub) {
+    defaultPin = genDefaultPin();
+    const pinHash = await hashLoginPin(defaultPin);
+    mrows = await prisma.$queryRawUnsafe(
+      `INSERT INTO mw_members (merchant_id,user_id,name,email,phone,kyc_tier,login_pin_hash,login_pin_set)
+       VALUES ($1::uuid,$2::uuid,$3,$4,$5,'low',$6,false) RETURNING id::text`,
+      mid, user.id, name, email, phone, pinHash);
+  } else {
+    mrows = await prisma.$queryRawUnsafe(
+      `INSERT INTO mw_members (merchant_id,user_id,name,email,phone,kyc_tier)
+       VALUES ($1::uuid,$2::uuid,$3,$4,$5,'low') RETURNING id::text`,
+      mid, user.id, name, email, phone);
+  }
   await prisma.$executeRawUnsafe(
     `INSERT INTO mw_wallets (merchant_id, member_id, low_balance_threshold) VALUES ($1::uuid,$2::uuid,$3)`,
     mid, mrows[0].id, cfg.low_balance_default);
 
+  const clubName = cfg.brand_name || 'your club';
+  const pinSection = isSocialClub
+    ? `<p>Your Billspay login PIN: <strong>${defaultPin}</strong><br>You must change this PIN on first sign-in.</p>` : '';
+  const pinText = isSocialClub ? `\nBillspay login PIN: ${defaultPin} (change on first sign-in)` : '';
+
   sendEmail({
     to: email,
-    subject: `Your ${cfg.brand_name || 'wallet'} account`,
+    subject: `Your ${clubName} Billspay account`,
     html: `<div style="font-family:system-ui,Arial,sans-serif;max-width:480px;color:#222">
-      <p>A wallet account has been created for you.</p>
+      <p>A Billspay account has been created for you at ${clubName}.</p>
       <p>Sign in at <a href="${LOGIN_URL}">${LOGIN_URL}</a> with:</p>
       <p>Email: <strong>${email}</strong><br>Temporary password: <strong>${tempPassword}</strong></p>
+      ${pinSection}
       <p>You'll be asked to set your own password on first sign-in.</p></div>`,
-    text: `Wallet account created. Sign in at ${LOGIN_URL}\nEmail: ${email}\nTemporary password: ${tempPassword}\nYou must change it on first sign-in.`,
+    text: `Billspay account created at ${clubName}.\nSign in at ${LOGIN_URL}\nEmail: ${email}\nTemporary password: ${tempPassword}${pinText}\nChange password on first sign-in.`,
   }).catch(() => {});
-  return { id: mrows[0].id, email, temp_password: tempPassword };
+  return { id: mrows[0].id, email, temp_password: tempPassword, ...(isSocialClub ? { default_login_pin: defaultPin } : {}) };
 }
 
 // List members.
@@ -122,6 +147,7 @@ router.patch('/:id', async (req, res, next) => {
       const st = ['active', 'suspended', 'deactivated'].includes(b.status) ? b.status : 'active';
       sets.push(`status = $${i++}`); vals.push(st);
     }
+    if (b.is_admin !== undefined) { sets.push(`is_admin = $${i++}`); vals.push(!!b.is_admin); }
     if (sets.length) {
       sets.push('updated_at = now()'); vals.push(req.params.id, mid);
       const r = await prisma.$queryRawUnsafe(
@@ -152,6 +178,25 @@ router.delete('/:id', async (req, res, next) => {
       req.params.id, mid);
     if (!r.length) return notFound(res, 'Member');
     return ok(res, { id: req.params.id }, 'Member deleted');
+  } catch (e) { next(e); }
+});
+
+// Admin view of a member's invoices — for the member profile panel
+router.get('/:id/invoices', async (req, res, next) => {
+  try {
+    const mid = req.walletTenant.merchantId;
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT i.id::text, i.invoice_number, i.description, i.total_amount::text AS total_amount,
+              i.amount_paid::text AS amount_paid, i.status, i.due_at, i.created_at
+         FROM mw_invoices i
+         JOIN mw_members m ON m.id = i.member_id
+         WHERE i.member_id = $1::uuid AND m.merchant_id = $2::uuid
+         ORDER BY i.created_at DESC LIMIT 200`,
+      req.params.id, mid);
+    return ok(res, rows.map((r) => ({
+      ...r, total_amount: num(r.total_amount), amount_paid: num(r.amount_paid),
+      due: num(r.total_amount) - num(r.amount_paid),
+    })));
   } catch (e) { next(e); }
 });
 

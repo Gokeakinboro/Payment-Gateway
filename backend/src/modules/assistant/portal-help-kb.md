@@ -45,6 +45,7 @@ Sidebar sections a merchant sees:
 - **Dashboard** — overview stats (collected, payouts, etc.).
 - **Transactions** → *Transactions* (all your payments) and *Settlements* (what's been settled to your bank).
 - **Payment Links & QR Code** — create shareable checkout links and scan-to-pay QR codes (two tabs). See §5.
+- **Sell Online** — link-in-bio storefront, channel connect wizard, and embeddable pay buttons. Your public store page lists all your active payment links at `paylodeservices.com/store.html?m=<your_code>`. See §5.
 - **Invoice & Collect** — create/send invoices, manage Contacts & Lists, invoice format, departments, reports.
 - **Billspay** — a closed-loop, merchant-branded member wallet. Your members get a Billspay account linked to your brand; they fund it and spend within your ecosystem (at your departments/outlets). Balances are per-merchant, so member money stays within your programme. Bills-payment features are planned for a future phase. To activate Billspay for your account, contact product@paylodeservices.com — a Super Admin approves access.
 - **Payouts** → *Send Payouts* (single/bulk disbursements) and *Payout Logs*.
@@ -57,6 +58,9 @@ Sidebar sections a merchant sees:
 ## 5. Common merchant how-tos
 - **Create a payment link:** Payment Links & QR Code → *Payment Links* tab → **+ New Payment Link** → title, optional amount (blank = customer enters), optional VAT, reusable/one-off, optional recipients → share the link.
 - **Create a QR code:** Payment Links & QR Code → *QR Codes* tab → **+ New QR Code** → fixed or open amount, label, optional VAT → the QR shows for scanning; **Copy link**, **Download PNG/SVG**, or **Share** via Email (sent by Paylode) or WhatsApp. QR codes are saved; use **View / Share**, **Enable/Disable**, **Delete** anytime.
+- **Share your store link:** Sell Online → your public storefront link is shown with a QR code. Copy and paste it into your Instagram bio, WhatsApp Business profile, or anywhere online. Customers open the link, see all your active payment links, and tap to pay — no account needed.
+- **Connect a channel:** Sell Online → Connect a Channel → pick Instagram, WhatsApp, Website, or TikTok — step-by-step instructions for adding your link to each platform.
+- **Embed a pay button on a website:** Sell Online → Embed a Pay Button → each active payment link has a copy-paste HTML snippet; paste it into any website or blog.
 - **Send a payout:** Payouts → Send Payouts → enter recipient bank details/amount (or bulk upload). Payouts are pre-funded: you must have sufficient balance in your **Payout Wallet** before sending. To top up your payout balance, contact product@paylodeservices.com.
 - **Create an invoice:** Invoice & Collect → Invoices → create (amount, recipient, optional VAT, due date, reminders).
 - **Get API keys:** Integration → API Keys — self-serve, no request needed. Public key (`pk_`) is safe for frontend; secret key (`sk_`) must stay server-side. Your test (sandbox) keys are available immediately; live keys activate once KYC is approved.

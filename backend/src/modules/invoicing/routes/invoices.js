@@ -6,6 +6,7 @@ const { ok, fail, created, notFound } = require('../../../utils/helpers');
 const { nextInvoiceNumber } = require('../services/invoiceNumber');
 const { sendInvoice } = require('../services/invoiceSend');
 const { renderQrForUrl } = require('../services/qrService');
+const { notifyInvoice, isConfigured: waConfigured } = require('../../../services/whatsappService');
 
 router.use(tenantAuth);
 
@@ -198,6 +199,35 @@ router.get('/:id/share', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── Share an invoice link directly via WhatsApp ──────────────────────────────
+router.post('/:id/share-whatsapp', async (req, res, next) => {
+  try {
+    if (!waConfigured()) return fail(res, 'WhatsApp is not configured', 'WA_NOT_CONFIGURED', 503);
+    const phone = String((req.body && req.body.phone) || '').trim();
+    if (!phone) return fail(res, 'A recipient phone number is required');
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT i.access_token, i.invoice_number, i.total_amount::text AS total_amount, i.currency,
+              i.recipient_name, m.business_name, m.id::text AS merchant_id
+         FROM inv_invoices i JOIN merchants m ON m.id = i.merchant_id
+        WHERE i.id=$1::uuid AND i.merchant_id=$2::uuid`, req.params.id, req.invTenant.merchantId);
+    if (!rows.length) return notFound(res, 'Invoice');
+    const r = rows[0];
+    const result = await notifyInvoice({
+      phone,
+      recipientName: r.recipient_name || null,
+      businessName: r.business_name,
+      invoiceNumber: r.invoice_number,
+      amount: Number(r.total_amount),
+      currency: r.currency || 'NGN',
+      payUrl: `${CHECKOUT_BASE}/invoice.html?t=${r.access_token}`,
+      merchantId: r.merchant_id,
+    });
+    if (result.skipped) return fail(res, 'WhatsApp send skipped — check template or token', 'WA_SKIPPED', 503);
+    if (!result.ok) return fail(res, 'WhatsApp send failed', 'WA_SEND_FAILED', 502);
+    return ok(res, { sent: true }, `Invoice shared via WhatsApp to ${phone}`);
+  } catch (e) { next(e); }
+});
+
 // ── Edit an unpaid invoice (fix a mistake instead of re-issuing) ────────────────
 router.patch('/:id', async (req, res, next) => {
   try {
@@ -266,6 +296,51 @@ router.post('/:id/send', async (req, res, next) => {
       : (!rr.recipient ? (rr.error || 'Invoice has no email recipient')
                        : `Could not send invoice: ${rr.error}`);
     return ok(res, { id: req.params.id, sent: !!rr.sent, recipient: !!rr.recipient, email: rr.email || null, error: rr.error || null }, msg);
+  } catch (e) { next(e); }
+});
+
+// ── Mark as paid (manual / outside gateway) ──────────────────────────────────
+// POST /:id/mark-paid  { manual_payment_method: 'CARD'|'BANK_TRANSFER'|'CASH', notes? }
+// Admin records a payment received outside the gateway (cash, bank transfer, card swipe).
+// Stamps the invoice paid and logs the event in inv_invoice_payments.
+router.post('/:id/mark-paid', async (req, res, next) => {
+  try {
+    const t = req.invTenant, mid = t.merchantId;
+    const b = req.body || {};
+    const method = ['CARD', 'BANK_TRANSFER', 'CASH'].includes(b.manual_payment_method)
+      ? b.manual_payment_method : null;
+    if (!method) return fail(res, 'manual_payment_method must be CARD, BANK_TRANSFER, or CASH');
+
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT id::text, total_amount::text AS total_amount, amount_paid::text AS amount_paid, status
+         FROM inv_invoices WHERE id=$1::uuid AND merchant_id=$2::uuid AND deleted_at IS NULL`,
+      req.params.id, mid);
+    if (!rows.length) return notFound(res, 'Invoice');
+    const inv = rows[0];
+    if (['paid', 'cancelled'].includes(inv.status))
+      return fail(res, `Invoice is already ${inv.status}`, 'ALREADY_FINAL', 409);
+
+    const totalAmount = BigInt(inv.total_amount);
+    const alreadyPaid = BigInt(inv.amount_paid);
+    const remaining   = totalAmount - alreadyPaid;
+    const notes       = b.notes ? String(b.notes).slice(0, 500) : null;
+    const markedBy    = t.isApiKey ? null : (t.userId || null);
+    const ref         = 'MANUAL-' + require('crypto').randomBytes(6).toString('hex').toUpperCase();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        `INSERT INTO inv_invoice_payments
+           (invoice_id,amount_paid,payment_reference,channel,paid_at,
+            manual_payment_method,marked_by,notes)
+         VALUES ($1::uuid,$2,$3,$4,now(),$5,$6::uuid,$7)`,
+        req.params.id, remaining, ref, 'MANUAL', method, markedBy, notes);
+      await tx.$executeRawUnsafe(
+        `UPDATE inv_invoices SET status='paid', amount_paid=total_amount, paid_at=now(), updated_at=now()
+           WHERE id=$1::uuid`, req.params.id);
+    });
+
+    return ok(res, { id: req.params.id, status: 'paid', method, reference: ref, notes },
+      'Invoice marked as paid');
   } catch (e) { next(e); }
 });
 

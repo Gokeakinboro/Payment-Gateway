@@ -19,6 +19,10 @@ const LOGIN_URL = (process.env.APP_BASE_URL || process.env.CHECKOUT_BASE_URL || 
 const genTempPassword = () => crypto.randomBytes(6).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) + 'A1!';
 const hashPassword = (pw) => bcrypt.hash(pw, 12);
 
+// 4-digit default login PIN for Social Club members (NOT the transaction PIN).
+const genDefaultPin = () => String(crypto.randomInt(1000, 10000));
+const hashLoginPin  = (pin) => bcrypt.hash(String(pin), 12);
+
 const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || '').trim());
 const normalizePhone = (p) => {
   let s = String(p || '').replace(/[^\d+]/g, '');
@@ -30,6 +34,28 @@ const normalizePhone = (p) => {
 };
 const genRef = (prefix = 'WLT') =>
   `${prefix}-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+
+// AES-256-GCM field-level encryption for NIN/BVN at rest.
+// Key: MEMBER_KYC_KEY env var, 64 hex chars (32 bytes). Falls back to plaintext in dev.
+const KYC_KEY = process.env.MEMBER_KYC_KEY
+  ? Buffer.from(process.env.MEMBER_KYC_KEY, 'hex')
+  : null;
+const ALGO = 'aes-256-gcm';
+function encryptField(val) {
+  if (!KYC_KEY) return String(val);
+  const iv  = crypto.randomBytes(12);
+  const c   = crypto.createCipheriv(ALGO, KYC_KEY, iv);
+  const enc = Buffer.concat([c.update(String(val), 'utf8'), c.final()]);
+  const tag = c.getAuthTag();
+  return `v1:${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
+}
+function decryptField(val) {
+  if (!KYC_KEY || !String(val).startsWith('v1:')) return String(val);
+  const [, ivHex, tagHex, encHex] = String(val).split(':');
+  const d = crypto.createDecipheriv(ALGO, KYC_KEY, Buffer.from(ivHex, 'hex'));
+  d.setAuthTag(Buffer.from(tagHex, 'hex'));
+  return d.update(Buffer.from(encHex, 'hex')) + d.final('utf8');
+}
 
 // ── Tenant resolution (management side) ──────────────────────────────────────
 // req.walletTenant = { merchantId, merchant, userId, departmentId|null, isDeptUser, isApiKey }
@@ -105,6 +131,7 @@ function memberAuth(req, res, next) {
       const rows = await prisma.$queryRawUnsafe(
         `SELECT m.id::text AS member_id, m.merchant_id::text AS merchant_id, m.name, m.email, m.phone, m.status,
                 m.pin_hash, m.pin_failed, m.pin_locked_until,
+                m.login_pin_hash, m.login_pin_set, m.login_pin_failed, m.login_pin_locked_until,
                 w.id::text AS wallet_id, w.balance::text AS balance, w.currency, w.low_balance_threshold::text AS low_balance_threshold
            FROM mw_members m JOIN mw_wallets w ON w.member_id = m.id
           WHERE m.user_id = $1::uuid AND m.status <> 'deleted'
@@ -123,5 +150,6 @@ function memberAuth(req, res, next) {
 
 module.exports = {
   prisma, DEFAULT_MAX_BALANCE, LOGIN_URL, isValidEmail, normalizePhone, genRef,
-  genTempPassword, hashPassword, tenantAuth, requireWalletEnabled, memberAuth, getConfig,
+  genTempPassword, hashPassword, genDefaultPin, hashLoginPin, encryptField, decryptField,
+  tenantAuth, requireWalletEnabled, memberAuth, getConfig,
 };

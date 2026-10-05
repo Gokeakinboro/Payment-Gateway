@@ -3,6 +3,7 @@
 _Siloed Claude project. Cross-project items live in the shared home namespace (C--Users-Goke)._
 
 - [Paylode money items need sign-off](feedback-paylode-money-signoff.md) — stage #1/#10/#11 for user review, don't auto-deploy
+- [🟡 KIV — Intelligent VA pay-in failover routing](kiv-intelligent-va-routing.md) — auto-switch VA rail when primary is down; default priority order; pay-in only; triggers when new bank VA secured.
 - [🟡 KIV — Accounting-software integration](kiv-accounting-software-integration.md) — hook gateway into QuickBooks/Xero/Zoho/Sage; data ready; blocked on user picking a provider + OAuth creds (discussed 2026-06-20).
 - [🟡 RESUME HERE — Open KIV backlog index (2026-07-01)](kiv-backlog-index.md) — consolidated list of all open KIV items with links; supersedes outstanding-tasks.md.
 - [🔴 KIV (IMPORTANT) — Bank Reconciliation module](kiv-bank-reconciliation-module.md) — match Paylode ledger vs merchant bank statement; inputs/outputs/challenges/phasing scoped 2026-07-01.
@@ -23,7 +24,7 @@ _Siloed Claude project. Cross-project items live in the shared home namespace (C
 - [Paylode Payment Gateway](project-paylode.md) — server 176.57.188.45, YouVerify key + webhook updated 2026-06-09, fan-out to biz9ja wired, Dojah migration pending
 - [Paylode Developer Chat](project-paylode-chat.md) — ✅ WORKING 2026-06-25 (credit blocker resolved, replies live-verified). /opt/paylode-chat, port 4003, at paylodeservices.com/developer-chat. Reusable test acct cc-test-1782360324@example.com / Test12345!
 - [Paylode dev/deploy + STALE local-checkout warning](project-paylode-dev-deploy.md) — Desktop\Paylode\paylode-full is ~90 commits STALE; repo of record = origin/main (work via worktree). Backend ships via tools/deploy.py (SFTP→176, PAYLODE_SSH_PASS user-held) + pm2 reload; push-to-main = frontend only. Shipped 2026-06-23: POST /merchants/:id/resend-sandbox + button (64d240e).
-- [KYC admin docs — SA/Admin enter info value AND/OR docs per requirement](project-paylode-kyc-admin-docs.md) — DEPLOYED 2026-06-22 (e2656b5/7979708): requirement kind=info|document|both; enter BVN/NIN/TIN values or upload docs; entering data=submitted (never auto-verify), reviewer must Verify/Defer; +Add requirement. Repo reconciled to mirror prod (94ee2c4, NOT pushed). Topology: backend=176, live frontend=45 (deploy BOTH + bump ?v=). SA-login-fail was browser autofill. Author=EagleCrest Premium Services Ltd.
+- [KYC admin docs — SA/Admin enter info value AND/OR docs per requirement](project-paylode-kyc-admin-docs.md) — DEPLOYED 2026-06-22 (e2656b5/7979708): requirement kind=info|document|both; enter BVN/NIN/TIN values or upload docs; entering data=submitted (never auto-verify), reviewer must Verify/Defer; +Add requirement. Repo reconciled to mirror prod (94ee2c4, NOT pushed). Topology: backend=176, live frontend=45 (deploy BOTH + bump ?v=). SA-login-fail was browser autofill. Author=Paylode Services.
 - [project-paylode-kyc-verification](project-paylode-kyc-verification.md)
 - [Paylode Mastercard Compliance](project-paylode-mastercard-compliance.md) — onboarding screening + per-txn gate + SA deferral DEPLOYED to prod + merged to main 2026-06-15; smoke-tested (lesson: `deferrable` is a reserved SQL word → is_deferrable)
 - [Portal Assistant — LIVE 2026-07-01 (role-aware in-portal help bot)](project-paylode-portal-assistant.md) — /api/v1/assistant chat+public-chat on main backend; KB at backend/src/modules/assistant/portal-help-kb.md. Gaps KIV'd.
@@ -44,6 +45,7 @@ _Siloed Claude project. Cross-project items live in the shared home namespace (C
 - [✅ Session 2026-06-20 — COMPLETE & SAVED](session-progress-payout-recon.md) — payout reconciliation (VAT-card-netting, webhook recon=authoritative settle+refund, rail-failure, queryPayoutResult path fixed, stuck-sent poller) + checkout fine-tuning (card rail un-hardcoded, VA name "Collected on behalf of <merchant>", optional/skippable payment-link email modal). 11 commits b36db8a→eaeedda all deployed; server==repo; smoke+drift clean. Commit manifest + open items at top of file.
 
 - [✅ Session 2026-07-05 — invoicing WIP committed (PR #60)](session-2026-07-05-invoicing-wip-committed.md) — the deployed-but-uncommitted itemized-render + accurate-send-reporting change brought into git (drift closed, prod==repo md5-verified); MERGED. Same day PR #61 (address-book picker + soft-delete + send banner + checkout VA reason + cache-bust) DEPLOYED LIVE.
+- [🟡 KIV — DO Droplet as redundant architecture](kiv-do-redundant-architecture.md) — 165.22.21.63 currently only a VPN hop; expand to HA/failover (raised 2026-08-12)
 - [🔴 KIV — Auto-settlement via Settlement page](kiv-auto-settlement.md) — daily/merchant views, execute via payout product, per-channel net report, compulsory merchant settlement bank at onboarding, SA margin/profitability on settlement+payout reports (2026-07-05).
 - [🟡 KIV (cross-cutting) — Server-access tracker + Claude unique ID](kiv-server-access-tracker.md) — audit who acts on the servers (incl. Claude); one stable Claude identity across all products (2026-07-05).
 
@@ -55,3 +57,4 @@ _Siloed Claude project. Cross-project items live in the shared home namespace (C
 
 ## Shared
 - [feedback-user-workstyle](feedback-user-workstyle.md)
+- [Never use "EagleCrest" in any output](feedback-no-eaglecrest.md) — brand is Paylode / Paylode Services; firm rule across all silos

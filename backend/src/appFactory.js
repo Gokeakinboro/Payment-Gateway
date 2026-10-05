@@ -70,6 +70,8 @@ function createApp({ modules = MODULES, logger = defaultLogger } = {}) {
   // ── Body parsing ─────────────────────────────────────────────────────────
   // Raw body preserved for webhook signature verification
   app.use('/api/v1/webhooks/inbound', express.raw({ type: 'application/json' }));
+  // NIBSS NPS sends XML — parse as text so req.body is a string in the handler
+  app.use('/api/v1/webhooks/nibss', express.text({ type: ['application/xml', 'text/xml', '*/*'], limit: '5mb' }));
   // Onboarding submit carries base64 document scans + the signature image in one
   // JSON body — needs a much larger limit than the default API requests.
   app.use('/api/v1/onboarding/submit', express.json({ limit: process.env.ONBOARDING_BODY_LIMIT || '50mb' }));
@@ -79,7 +81,7 @@ function createApp({ modules = MODULES, logger = defaultLogger } = {}) {
   // ── Global rate limiting ───────────────────────────────────────────────────
   const globalLimiter = rateLimit({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-    max:      parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
+    max:      parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 500,
     standardHeaders: true,
     legacyHeaders:   false,
     message: { status: false, message: 'Too many requests, please try again later.', error_code: 'RATE_LIMIT_EXCEEDED' },

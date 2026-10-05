@@ -32,52 +32,52 @@ function startCoreJobs({ logger }) {
     logger.error({ err: e }, '  ✗ rail-float poll failed to start (continuing)');
   }
 
-  // Stuck-'sent' payout reconciliation — backstop for payout legs whose rail
-  // webhook never landed. Queries the rail's payout-result API and settles/refunds
-  // via the same shared logic as the webhook. Worker 0 only.
+  // Sent-payout reconciler — polls Parallex/PalmPay for legs stuck in 'sent'
+  // (webhook never landed) and closes them. Safe: queries only, never re-dispatches.
+  // Reversal only happens on confirmed NO RECORD (code=30) or after 12h hard cutoff.
+  // Re-enabled 2026-09-17: requery guard at dispatch prevents false 'sent' legs.
   try {
     const { reconcileSentPayouts } = require('./services/payoutSettle');
-    const RECON_MS = Number(process.env.PAYOUT_RECON_MS || 3 * 60 * 1000); // 3 min
-    const recon = () => reconcileSentPayouts().catch(e => logger.error({ err: e }, 'payout reconciliation failed'));
-    setTimeout(recon, 25000);        // once shortly after boot
-    setInterval(recon, RECON_MS);    // then on a schedule
-    logger.info(`  Stuck-sent payout reconciliation every ${Math.round(RECON_MS / 60000)} min (worker 0)`);
+    const RECON_MS = Number(process.env.PAYOUT_RECON_MS || 10 * 60 * 1000); // 10 min
+    const run = () => reconcileSentPayouts()
+      .catch(e => logger.error({ err: e }, 'sent payout reconciliation failed'));
+    setTimeout(run, 60 * 1000);      // first run 1 min after boot
+    setInterval(run, RECON_MS);
+    logger.info(`  Sent-payout reconciler every ${Math.round(RECON_MS / 60000)} min (worker 0)`);
   } catch (e) {
-    logger.error({ err: e }, '  ✗ payout reconciliation failed to start (continuing)');
+    logger.error({ err: e }, '  ✗ sent-payout reconciler failed to start (continuing)');
   }
 
-  // Settlement firing — run DUE scheduled settlements + reconcile fired settlements
-  // stuck PROCESSING (the dedicated settlement dispatch has no rail_disbursement leg,
-  // so the payout webhook can't finalize them; we poll the rail instead). Worker 0 only.
-  try {
-    const { processScheduledSettlements, reconcileFiredSettlements } = require('./services/settlementFire');
-    const SET_MS = Number(process.env.SETTLEMENT_FIRE_MS || 60 * 1000); // 1 min
-    const run = () => {
-      processScheduledSettlements().catch(e => logger.error({ err: e }, 'scheduled settlement firing failed'));
-      reconcileFiredSettlements().catch(e => logger.error({ err: e }, 'settlement fire reconciliation failed'));
-    };
-    setTimeout(run, 35000);           // once shortly after boot
-    setInterval(run, SET_MS);         // then on a schedule
-    logger.info(`  Settlement firing/reconcile every ${Math.round(SET_MS / 1000)}s (worker 0)`);
-  } catch (e) {
-    logger.error({ err: e }, '  ✗ settlement firing job failed to start (continuing)');
-  }
+  // DISABLED 2026-09-17 — auto-settlement firing disabled pending manual review process.
+  // Re-enable only with explicit SA sign-off.
+  // try {
+  //   const { processScheduledSettlements, reconcileFiredSettlements } = require('./services/settlementFire');
+  //   ...
+  // }
 
-  // Auto-dispatch DUE payouts — normal payouts auto-fire (no manual SA release); this
-  // also fires SCHEDULED payouts when their time arrives + backstops any immediate
-  // batch whose post-response fire didn't complete. HELD batches (rail down / no float)
-  // stay in the exception queue for SA. Worker 0 only.
+  // DISABLED 2026-09-17 — auto-dispatch caused duplicate sends during the 2026-09-15
+  // incident. Inline dispatch (POST /payouts) still fires on submit; this cron backstop
+  // is removed until a safe re-dispatch guard is in place.
+  // try {
+  //   const { autoDispatchDuePayouts } = require('./routes/payouts');
+  //   ...
+  // }
+
+  // Stuck payout monitor — every 5 min, finds processing batches with unsent legs
+  // (dispatch crashed after setup tx, before any rail transfer) and recovers them:
+  // returns float, deletes pending disbursements, resets items + batch for re-dispatch.
+  // Sends an alert email when anything is found. Complements the 30s Step-0 recovery
+  // inside autoDispatchDuePayouts (which is the primary fix path; this is the safety net).
   try {
-    const { autoDispatchDuePayouts } = require('./routes/payouts');
-    const PAYOUT_MS = Number(process.env.PAYOUT_DISPATCH_MS || 30 * 1000); // 30s
-    const run = () => autoDispatchDuePayouts()
-      .then(r => { if (r.fired || r.held) logger.info(r, 'auto-dispatched due payouts'); })
-      .catch(e => logger.error({ err: e }, 'payout auto-dispatch failed'));
-    setTimeout(run, 30000);          // once shortly after boot
-    setInterval(run, PAYOUT_MS);     // then on a schedule
-    logger.info(`  Payout auto-dispatch every ${Math.round(PAYOUT_MS / 1000)}s (worker 0)`);
+    const { recoverStuckPayouts, INTERVAL_S: STUCK_MS } = require('../../cron/stuckPayoutCron');
+    const stuckRun = () => recoverStuckPayouts()
+      .then(r => { if (r && r.found) logger.warn(r, '[stuck-payout-cron] cycle complete'); })
+      .catch(e => logger.error({ err: e }, '[stuck-payout-cron] run error'));
+    setTimeout(stuckRun, 2 * 60 * 1000);  // first check 2 min after boot
+    setInterval(stuckRun, STUCK_MS);
+    logger.info('  Stuck payout monitor every 5 min (worker 0)');
   } catch (e) {
-    logger.error({ err: e }, '  ✗ payout auto-dispatch failed to start (continuing)');
+    logger.error({ err: e }, '  ✗ stuck payout monitor failed to start (continuing)');
   }
 
   // Daily settlement GENERATION for the prior NIGERIAN day, at 00:01 Africa/Lagos, so
@@ -104,6 +104,41 @@ function startCoreJobs({ logger }) {
   } catch (e) {
     logger.error({ err: e }, '  ✗ daily settlement generation failed to start (continuing)');
   }
+
+  // Aggregator T+1 margin sweep — daily at 01:00 Africa/Lagos.
+  // Sums agg_share from the prior Lagos day, upserts monthly agg_payouts bucket,
+  // and emails SA a summary. Does NOT trigger bank transfers. Worker 0 only.
+  try {
+    require('../../cron/aggPayoutCron');
+    logger.info('  Aggregator T+1 margin sweep started (worker 0)');
+  } catch (e) {
+    logger.error({ err: e }, '  ✗ agg-payout cron failed to start (continuing)');
+  }
+
+  // Social Club — invoice generation cron + reminder scheduler. Worker 0 only.
+  // Invoice cron: polls every 5 min for plans with next_run_at <= now, generates
+  //   invoices for all enrolled active members, advances next_run_at.
+  // Reminder scheduler: polls every 15 min, fires WhatsApp+email at reminder_days
+  //   intervals before/after due date (idempotent via club_invoice_reminders table).
+  try {
+    const { runInvoiceCron, runReminderScheduler } = require('../wallet/services/socialClubJobs');
+    const INVOICE_MS  = Number(process.env.SOCIAL_CLUB_INVOICE_CRON_MS  || 5  * 60 * 1000);
+    const REMINDER_MS = Number(process.env.SOCIAL_CLUB_REMINDER_MS      || 15 * 60 * 1000);
+    const runInv = () => runInvoiceCron()
+      .then(r => { if (r.plans) logger.info(r, 'social club invoice cron'); })
+      .catch(e => logger.error({ err: e }, 'social club invoice cron failed'));
+    const runRem = () => runReminderScheduler()
+      .then(r => { if (r.fired) logger.info(r, 'social club reminders fired'); })
+      .catch(e => logger.error({ err: e }, 'social club reminder scheduler failed'));
+    setTimeout(runInv, 60000);
+    setInterval(runInv, INVOICE_MS);
+    setTimeout(runRem, 90000);
+    setInterval(runRem, REMINDER_MS);
+    logger.info(`  Social Club invoice cron every ${INVOICE_MS / 60000}min, reminders every ${REMINDER_MS / 60000}min (worker 0)`);
+  } catch (e) {
+    logger.error({ err: e }, '  ✗ social club jobs failed to start (continuing)');
+  }
 }
 
 module.exports = { startCoreJobs };
+

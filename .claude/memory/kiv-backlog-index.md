@@ -35,6 +35,9 @@ Single place to pick up. Each links to its detail memory. Supersedes stale [[out
 ## 🔵 In progress / monitoring
 - **176 backend git — LEFT AS-IS by decision (2026-07-08).** Cosmetic only; verified live `backend/` == origin/main (0 genuine content diffs; HEAD just stale + orphan commits). Goke chose to leave it — running gateway is fine and doesn't use this `.git`. Nothing changed on prod. Detail + the (earlier, wrong) "mis-rooted" note correction → [[kiv-server-repo-reconciliation]].
 
+## 🔴 OPEN — blocked on Goke / external (2026-09-03 additions)
+- **Parallex VA account TPT enrollment** — [[kiv-parallex-va-tpt-enrollment]]. Account `1000362856` (VA settlement) rejected by Parallex TPT as debit source ("Account does not belong to you") — not enrolled in TPT product. Until Goke calls Parallex to enroll it, funds must be manually swept `1000362856` → `1000362849` via Parallex portal before merchant payouts can go out. Also: code `09` in `parallexTransferService.js` PENDING_CODES needs fixing (it's a rejection in this context, not pending).
+
 ## ⛔ Parked / ops
 - **DrinksArena maintenance gate** — remove nginx Basic Auth on 45 when product updates done — [[drinksarena-maintenance-gate-active]].
 - **Server-access tracker** — done; only optional `root@` allow-rule retirement left — [[kiv-server-access-tracker]].
