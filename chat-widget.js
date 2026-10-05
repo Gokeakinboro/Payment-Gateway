@@ -3,6 +3,7 @@
 
   if (sessionStorage.getItem('plcw_hidden')) return;
 
+
   var API_URL = window.PAYLODE_CHAT_API_URL || '/api/v1/chat';
   var PRIMARY = '#1a2744';
   var ACCENT = '#7dc534';
@@ -31,7 +32,11 @@
 
   var css = `
     #plcw-btn {
+<<<<<<< HEAD
+      position: fixed; bottom: 24px; right: 24px; z-index: 99998;
+=======
       position: fixed; bottom: 24px; right: 24px; z-index: 900;
+>>>>>>> origin/main
       width: 56px; height: 56px; border-radius: 50%;
       background: ${PRIMARY}; border: none; cursor: pointer;
       box-shadow: 0 4px 16px rgba(0,0,0,0.25);
@@ -40,6 +45,10 @@
     }
     #plcw-btn:hover { transform: scale(1.08); }
     #plcw-btn svg { width: 26px; height: 26px; fill: #fff; }
+<<<<<<< HEAD
+    #plcw-panel {
+      position: fixed; bottom: 92px; right: 24px; z-index: 99999;
+=======
     #plcw-dismiss {
       position: fixed; bottom: 68px; right: 14px; z-index: 901;
       width: 20px; height: 20px; border-radius: 50%; border: 2px solid #fff;
@@ -49,6 +58,7 @@
     }
     #plcw-panel {
       position: fixed; bottom: 92px; right: 24px; z-index: 901;
+>>>>>>> origin/main
       width: 330px; height: 480px; border-radius: 16px;
       background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,0.18);
       display: flex; flex-direction: column; overflow: hidden;
@@ -152,6 +162,8 @@
   document.body.appendChild(btn);
   document.body.appendChild(panel);
 
+<<<<<<< HEAD
+=======
   var dismiss = document.createElement('button');
   dismiss.id = 'plcw-dismiss';
   dismiss.title = 'Hide assistant';
@@ -165,6 +177,7 @@
   });
   document.body.appendChild(dismiss);
 
+>>>>>>> origin/main
   function addMsg(text, role) {
     var cls = role === 'user' ? 'plcw-msg plcw-msg-user' : 'plcw-msg plcw-msg-bot';
     var node = el('div', { class: cls }, text);
