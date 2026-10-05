@@ -21,6 +21,9 @@
 // [ name, basePath, loader, enabledEnv, category ]
 // `loader` is lazy so a broken require can't crash module load of the registry itself.
 const MODULES = [
+  // ── Internal service-to-service (Golf Platform → Paylode) ────────────────
+  { name: 'internal-golf', basePath: '/api/internal', load: () => require('../routes/internal'), enabledEnv: 'MODULE_INTERNAL_GOLF_ENABLED', category: 'core' },
+
   // ── Core / platform ──────────────────────────────────────────────────────
   { name: 'auth',            basePath: '/api/v1/auth',                 load: () => require('../routes/auth'),              enabledEnv: 'MODULE_AUTH_ENABLED',            category: 'core' },
   { name: 'merchants',       basePath: '/api/v1/merchants',            load: () => require('./gateway-core/routes/merchants'),         enabledEnv: 'MODULE_MERCHANTS_ENABLED',       category: 'core' },
@@ -36,6 +39,7 @@ const MODULES = [
   { name: 'checkout',        basePath: '/api/v1/checkout',             load: () => require('./gateway-core/routes/checkout'),          enabledEnv: 'MODULE_CHECKOUT_ENABLED',        category: 'money' },
   { name: 'onboarding',      basePath: '/api/v1/onboarding',           load: () => require('../routes/onboarding'),        enabledEnv: 'MODULE_ONBOARDING_ENABLED',      category: 'core' },
   { name: 'payouts',         basePath: '/api/v1/payouts',              load: () => require('./gateway-core/routes/payouts'),           enabledEnv: 'MODULE_PAYOUTS_ENABLED',         category: 'money' },
+  { name: 'wallet-actions',  basePath: '/api/v1/wallet-actions',       load: () => require('./gateway-core/routes/walletActions'),     enabledEnv: 'MODULE_PAYOUTS_ENABLED',         category: 'money' },
   { name: 'users',           basePath: '/api/v1/users',                load: () => require('../routes/users'),             enabledEnv: 'MODULE_USERS_ENABLED',           category: 'core' },
   { name: 'chargebacks',     basePath: '/api/v1/chargebacks',          load: () => require('./gateway-core/routes/chargebacks'),       enabledEnv: 'MODULE_CHARGEBACKS_ENABLED',     category: 'money' },
   { name: 'compliance',      basePath: '/api/v1/compliance',           load: () => require('../routes/compliance'),        enabledEnv: 'MODULE_COMPLIANCE_ENABLED',      category: 'core' },
@@ -47,14 +51,21 @@ const MODULES = [
   { name: 'youverify-webhook', basePath: '/api/v1/webhooks/youverify', load: () => require('../routes/youverify-webhook'), enabledEnv: 'MODULE_YOUVERIFY_WEBHOOK_ENABLED', category: 'webhook' },
   { name: 'palmpay-webhook',   basePath: '/api/v1/webhooks/palmpay',   load: () => require('./gateway-core/routes/palmpay-webhook'),   enabledEnv: 'MODULE_PALMPAY_WEBHOOK_ENABLED',   category: 'money' },
   { name: 'parallex-webhook',  basePath: '/api/v1/webhooks/parallex',  load: () => require('./gateway-core/routes/parallex-webhook'),  enabledEnv: 'MODULE_PARALLEX_WEBHOOK_ENABLED', category: 'money' },
+  { name: 'opay-webhook',           basePath: '/api/v1/webhooks/opay',           load: () => require('./gateway-core/routes/opay-webhook'),           enabledEnv: 'MODULE_OPAY_WEBHOOK_ENABLED',           category: 'money' },
+  { name: 'wema-webhook',           basePath: '/api/v1/webhooks/wema',           load: () => require('./gateway-core/routes/wema-webhook'),           enabledEnv: 'MODULE_WEMA_WEBHOOK_ENABLED',           category: 'money' },
+  { name: 'alphamorgan-webhook',    basePath: '/api/v1/webhooks/alphamorgan',    load: () => require('./gateway-core/routes/alphamorgan-webhook'),    enabledEnv: 'MODULE_ALPHAMORGAN_WEBHOOK_ENABLED',    category: 'money' },
+  { name: 'nibss-consent-webhook',   basePath: '/api/v1/webhooks/nibss/consent', load: () => require('./gateway-core/routes/nibss-consent-webhook'),   enabledEnv: 'MODULE_NIBSS_CONSENT_WEBHOOK_ENABLED',  category: 'webhook' },
+  { name: 'nibss-iso20022-webhook',  basePath: '/api/v1/webhooks/nibss',         load: () => require('./gateway-core/routes/nibss-iso20022-webhook'),  enabledEnv: 'MODULE_NIBSS_ISO20022_WEBHOOK_ENABLED', category: 'webhook' },
   { name: 'whatsapp-webhook',   basePath: '/api/v1/webhooks/whatsapp',  load: () => require('../routes/whatsappWebhook'),    enabledEnv: 'MODULE_WHATSAPP_WEBHOOK_ENABLED',   category: 'webhook' },
   { name: 'platform-settings', basePath: '/api/v1/platform/settings',  load: () => require('../routes/platformSettings'),   enabledEnv: 'MODULE_PLATFORM_SETTINGS_ENABLED',  category: 'core'    },
 
   // ── More core ────────────────────────────────────────────────────────────
+  { name: 'audit-log',     basePath: '/api/v1/audit-log',      load: () => require('./gateway-core/routes/auditLog'),     enabledEnv: 'MODULE_AUDIT_LOG_ENABLED',     category: 'core' },
   { name: 'deferrals',     basePath: '/api/v1/deferrals',      load: () => require('./gateway-core/routes/deferrals'),    enabledEnv: 'MODULE_DEFERRALS_ENABLED',     category: 'core' },
   { name: 'documents',     basePath: '/api/v1/documents',      load: () => require('../routes/documents'),    enabledEnv: 'MODULE_DOCUMENTS_ENABLED',     category: 'core' },
   { name: 'support',       basePath: '/api/v1/support',        load: () => require('../routes/support'),      enabledEnv: 'MODULE_SUPPORT_ENABLED',       category: 'core' },
   { name: 'payment-links', basePath: '/api/v1/payment-links',  load: () => require('../routes/paymentLinks'), enabledEnv: 'MODULE_PAYMENT_LINKS_ENABLED', category: 'money' },
+  { name: 'store',         basePath: '/api/v1/store',          load: () => require('../routes/store'),        enabledEnv: 'MODULE_STORE_ENABLED',         category: 'money' },
   { name: 'mpgs',          basePath: '/api/v1/mpgs',           load: () => require('./gateway-core/routes/mpgs'),             enabledEnv: 'MODULE_MPGS_ENABLED',          category: 'money' },
   { name: 'mpgs-portal',  basePath: '/api/v1/mpgs-portal',    load: () => require('../routes/mpgs-portal'),  enabledEnv: 'MODULE_MPGS_PORTAL_ENABLED',   category: 'core'  },
   // MPGS-mirrored gateway — merchants use standard MPGS SDK/docs, host = Paylode
@@ -66,6 +77,7 @@ const MODULES = [
   { name: 'invoicing', basePath: '/api/v1/invoicing', load: () => require('./invoicing'), enabledEnv: 'MODULE_INVOICING_ENABLED', category: 'product' },
   { name: 'wallet',    basePath: '/api/v1/wallet',    load: () => require('./wallet'),    enabledEnv: 'MODULE_WALLET_ENABLED',    category: 'product' },
   { name: 'assistant', basePath: '/api/v1/assistant', load: () => require('./assistant'), enabledEnv: 'MODULE_ASSISTANT_ENABLED', category: 'product' },
+  { name: 'staff-crm', basePath: '/api/v1/staff',     load: () => require('./staff'),     enabledEnv: 'MODULE_STAFF_CRM_ENABLED', category: 'core' },
   { name: 'chat',      basePath: '/api/v1/chat',      load: () => require('../routes/chat'),  enabledEnv: 'MODULE_CHAT_ENABLED',      category: 'core' },
 ];
 

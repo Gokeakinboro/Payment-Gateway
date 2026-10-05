@@ -23,6 +23,7 @@ const OPS_EMAIL          = process.env.OPS_EMAIL || 'product@paylodeservices.com
 const FAILURE_THRESHOLD  = parseInt(process.env.RAIL_FAILURE_THRESHOLD || '3', 10); // consecutive fails before alert
 const ALERT_DEBOUNCE_MS  = parseInt(process.env.RAIL_ALERT_DEBOUNCE_MS || String(30 * 60 * 1000), 10); // 30 min
 const LOW_BALANCE_KOBO   = BigInt(process.env.RAIL_LOW_BALANCE_KOBO || String(5000000 * 100)); // ₦5m default
+const SKIP_LOW_BAL_RAILS = new Set((process.env.RAIL_SKIP_LOW_BALANCE || '').toLowerCase().split(',').filter(Boolean));
 
 // In-memory per-rail health. (Stateless restarts reset counters — that's fine;
 // alerts are debounced and incidents are also written to the audit log.)
@@ -84,7 +85,8 @@ async function checkRailBalanceAndAlert(rail, getBalance) {
   try { bal = await getBalance(); } catch (e) { logger.error({ err: e }, 'rail getBalance failed'); return null; }
   if (bal == null) return null;
   const balKobo = BigInt(bal);
-  if (balKobo < LOW_BALANCE_KOBO) {
+  const railNameLower = ((rail && rail.name) || '').toLowerCase();
+  if (balKobo < LOW_BALANCE_KOBO && !SKIP_LOW_BAL_RAILS.has(railNameLower)) {
     await notifyRailIncident(rail, 'Low balance on our account with this rail', {
       kind: 'low-balance', balanceNaira: Number(balKobo) / 100,
       suggestedAction: 'Top up our account at this rail, or reroute payout traffic to another rail.',

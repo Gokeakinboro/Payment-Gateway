@@ -32,6 +32,7 @@ const { prisma } = require('../utils/db');
 const { logger } = require('../utils/logger');
 const { sendEmail } = require('./emailService');
 const yv = require('./youverifyService');
+const { verifyBankAccount } = require('./bankVerification');
 
 const REPORT_EMAIL  = process.env.KYC_REPORT_EMAIL || process.env.COMPLIANCE_EMAIL || 'compliance@paylodeservices.com';
 const APP_URL       = process.env.APP_URL || 'https://paylodeservices.com';
@@ -82,10 +83,25 @@ async function saveReport({ submissionRef, merchantId, checkType, result, subjec
 
 // ── email merchant about failures ─────────────────────────────────────────────
 
+// Strip provider-internal error details before surfacing to merchants.
+// The raw notes are retained in the DB for SA/compliance review.
+function merchantSafeNote(matchNotes) {
+  if (!matchNotes) return null;
+  const s = String(matchNotes);
+  // gRPC-style codes, subscription/permission errors, network noise
+  if (/PERMISSION_DENIED|UNAUTHENTICATED|UNAVAILABLE|subscription|subscribe|quota|api.?key|bearer/i.test(s)) return null;
+  if (/^\d+\s+[A-Z_]{3,}:/i.test(s)) return null; // e.g. "7 PERMISSION_DENIED: ..."
+  if (/network|api.?error|timeout|ECONNREFUSED|socket/i.test(s)) return null;
+  // Keep merchant-actionable notes
+  return s;
+}
+
 async function emailMerchantFailures(contactEmail, businessName, submissionRef, failedChecks, completenessIssues) {
   if (!contactEmail) return;
-  const failLines = failedChecks.map((c) =>
-    `<li><strong>${checkLabel(c.checkType)}</strong>${c.subjectName ? ` (${c.subjectName})` : ''}${c.matchNotes ? ` — ${c.matchNotes}` : ''}</li>`).join('');
+  const failLines = failedChecks.map((c) => {
+    const note = merchantSafeNote(c.matchNotes);
+    return `<li><strong>${checkLabel(c.checkType)}</strong>${c.subjectName ? ` (${c.subjectName})` : ''}${note ? ` — ${note}` : ''}</li>`;
+  }).join('');
   const completeLines = completenessIssues.map((i) => `<li>${i}</li>`).join('');
   const html = `
     <div style="font-family:system-ui,Arial,sans-serif;max-width:600px;color:#1a1a1a">
@@ -96,7 +112,7 @@ async function emailMerchantFailures(contactEmail, businessName, submissionRef, 
       ${completenessIssues.length ? `<h3 style="color:#d97706">Incomplete information</h3><ul>${completeLines}</ul>` : ''}
       <p><a href="${ONBOARDING_URL}" style="display:inline-block;padding:12px 24px;background:#16a34a;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">Correct and resubmit</a></p>
       <p style="font-size:13px;color:#666;margin-top:24px">If you have questions, reply to this email or contact us at support@paylodeservices.com.</p>
-      <p style="font-size:12px;color:#999">Paylode · EagleCrest Premium Services Ltd</p>
+      <p style="font-size:12px;color:#999">Paylode Services</p>
     </div>`;
   try {
     await sendEmail({
@@ -225,13 +241,40 @@ function matchSettlementName(submittedName, verifiedName) {
 
 async function runSettlementNameCheck(submissionRef, merchantId, sub, eidReports) {
   // Get settlement account name from form data
-  const settlementAccountName = (sub.data?.np_business?.account_name || '').trim();
+  const biz = sub.data?.np_business || {};
+  const settlementAccountName = (biz.account_name || '').trim();
   if (!settlementAccountName) {
     return saveReport({
       submissionRef, merchantId, checkType: 'SETTLEMENT_NAME', result: 'SKIPPED',
       provider: 'internal', matchNotes: 'No settlement account name provided',
     });
   }
+
+  // Ground truth first: a live name-enquiry against the bank/NIP network returns
+  // the REAL account-holder name, which is more trustworthy than the self-reported
+  // account_name on the form. Match that true name against the applicant's declared
+  // business/applicant name (what the user signed up as) — a mismatch doesn't block
+  // onboarding, it just flags the application for manual compliance review (the
+  // existing SETTLEMENT_NAME FAIL gate on /me/activate already does this).
+  if (biz.bank_name && biz.account_number) {
+    try {
+      const ne = await verifyBankAccount(biz.bank_name, biz.account_number);
+      if (ne.queried && ne.found && ne.accountName) {
+        const match = matchSettlementName(sub.businessName, ne.accountName);
+        return saveReport({
+          submissionRef, merchantId, checkType: 'SETTLEMENT_NAME',
+          result: match.pass ? 'PASS' : 'FAIL', provider: ne.provider,
+          subjectName: ne.accountName,
+          matchNotes: `Live bank name-enquiry (${ne.provider}): ${match.reason}`,
+        });
+      }
+    } catch (e) {
+      logger.error({ err: e.message, submissionRef }, 'runSettlementNameCheck: live name-enquiry failed');
+    }
+  }
+
+  // Live NE unavailable (no rail configured, or every rail errored) — fall back to
+  // the legacy comparison of the self-reported settlement name against BVN/CAC.
 
   // For natural persons — match against BVN/NIN returned name
   if (sub.applicantType === 'natural') {
@@ -310,8 +353,17 @@ async function runCheck(submissionRef, merchantId, checkType, yvCall, subjectId,
     requestPayload  = { id: subjectId };
 
     if (!yvResult.success) {
-      result = 'FAIL';
-      matchNotes = yvResult.message || 'Verification failed — not found or not verified';
+      const msg = String(yvResult.message || '');
+      // Infrastructure gap (our subscription/permission) → ERROR, not FAIL.
+      // FAIL means the applicant's data is bad; ERROR means our system couldn't run the check.
+      // Keeping these separate prevents merchant failure emails going out for our own config issues.
+      if (/PERMISSION_DENIED|UNAUTHENTICATED|UNAVAILABLE|subscription|subscribe|quota|api.?key|bearer|\d+\s+[A-Z_]{3,}:/i.test(msg)) {
+        result = 'ERROR';
+        matchNotes = 'Check not available — provider subscription required';
+      } else {
+        result = 'FAIL';
+        matchNotes = msg || 'Verification failed — not found or not verified';
+      }
     } else {
       result = 'PASS';
       const d = yvResult.raw?.data || {};
@@ -330,7 +382,7 @@ async function runCheck(submissionRef, merchantId, checkType, yvCall, subjectId,
 
 // ── main entry point ──────────────────────────────────────────────────────────
 
-async function runOnboardingChecks(reference) {
+async function runOnboardingChecks(reference, { suppressMerchantEmail = false } = {}) {
   if (!process.env.YOUVERIFY_API_KEY) {
     logger.info({ reference }, 'YouVerify not configured — skipping KYC checks');
     return;
@@ -495,11 +547,11 @@ async function runOnboardingChecks(reference) {
 
   // ── 8. Notify merchant only if there are failures ────────────────────────────
   const failedChecks = allReports.filter((r) => r && r.result === 'FAIL' && r.checkType !== 'COMPLETENESS');
-  if (failedChecks.length || completenessIssues.length) {
+  if (!suppressMerchantEmail && (failedChecks.length || completenessIssues.length)) {
     await emailMerchantFailures(sub.contactEmail, businessName, reference, failedChecks, completenessIssues);
   }
 
   logger.info({ reference, total: allReports.length, failed: failedChecks.length }, 'KYC orchestrator complete');
 }
 
-module.exports = { runOnboardingChecks };
+module.exports = { runOnboardingChecks, matchSettlementName };

@@ -6,7 +6,7 @@ const { requireAuth, requireSuperAdmin, requireCompliance, requireAdmin, require
 const { ok, fail, notFound, koboToNaira, generateApiKey, hashApiKey } = require('../../../utils/helpers');
 const { logAudit } = require('../../../services/auditService');
 const { hasPermission } = require('../../../config/permissions');
-const { sendEmail, getEmailContent } = require('../../../services/emailService');
+const { sendEmail, getEmailContent, buildPlatformWelcomeEmail } = require('../../../services/emailService');
 const { logger } = require('../../../utils/logger');
 
 // Local temp-password generator (mirrors auth.js genTempPassword).
@@ -313,6 +313,9 @@ router.post('/:id/outlets', requireAuth, requireSuperAdmin, async (req, res, nex
 
     await logAudit(req.user.id, 'OUTLET_CREATED', 'merchants', outlet.id, null,
       { parentMerchantId: parent.id, outletName: outlet_name });
+
+    const { subject: emlSubj, html: emlHtml } = buildPlatformWelcomeEmail({ firstName: business_name, email: business_email, tempPassword, role: 'MERCHANT' });
+    sendEmail({ to: business_email, subject: emlSubj, html: emlHtml }).catch(e => logger.warn({ err: e }, 'outlet welcome email failed'));
 
     ok(res, { ...outlet, temp_password: tempPassword });
   } catch (e) { next(e); }
@@ -974,6 +977,8 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res, next) => {
       if (aggregatorId !== undefined) data.aggregatorId = aggregatorId || null;
       if (req.body.cardAcceptanceScope !== undefined)
         data.cardAcceptanceScope = req.body.cardAcceptanceScope === 'international' ? 'international' : 'local';
+      if (req.body.merchantType !== undefined && ['retail', 'social_club'].includes(req.body.merchantType))
+        data.merchantType = req.body.merchantType;
     }
 
     if (!Object.keys(data).length) return fail(res, 'No updatable fields provided');
@@ -1204,6 +1209,45 @@ router.get('/whatsapp-billing', requireAuth, requireSuperAdmin, async (req, res,
       return acc;
     }, { charge_kobo_total: 0, unsettled_kobo: 0 });
     ok(res, { rows: rows.map((r) => ({ ...r, messages_today: Number(r.messages_today), messages_total: Number(r.messages_total), charge_kobo_total: Number(r.charge_kobo_total), unsettled_kobo: Number(r.unsettled_kobo) })), total });
+  } catch (e) { next(e); }
+});
+
+// ── POST /:id/run-kyc — (re)run KYC orchestrator for a merchant ───────────────
+const { runOnboardingChecks } = require('../../../services/kycOrchestrator');
+router.post('/:id/run-kyc', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const suppressMerchantEmail = req.body?.suppressMerchantEmail === true;
+    const sub = await prisma.onboardingSubmission.findFirst({
+      where: { merchantId: id },
+      select: { reference: true },
+      orderBy: { submittedAt: 'desc' },
+    });
+    if (!sub) return fail(res, 'No onboarding submission found for this merchant', 404);
+    setImmediate(() => runOnboardingChecks(sub.reference, { suppressMerchantEmail }).catch((e) => logger.error({ err: e.message, ref: sub.reference }, 'Manual KYC run failed')));
+    ok(res, { reference: sub.reference }, `KYC checks started — summary email will arrive shortly${suppressMerchantEmail ? ' (merchant emails suppressed)' : ''}`);
+  } catch (e) { next(e); }
+});
+
+// ── POST /kyc-batch — run KYC for all PENDING_KYC merchants ──────────────────
+router.post('/kyc-batch', requireAuth, requireAdminOrCompliance, async (req, res, next) => {
+  try {
+    const suppressMerchantEmail = req.body?.suppressMerchantEmail !== false; // default true for batch
+    const subs = await prisma.onboardingSubmission.findMany({
+      where: { merchant: { kycStatus: 'PENDING_KYC' } },
+      select: { reference: true, merchantId: true },
+      orderBy: { submittedAt: 'asc' },
+    });
+    if (!subs.length) return ok(res, { count: 0 }, 'No PENDING_KYC merchants found');
+    setImmediate(async () => {
+      for (const sub of subs) {
+        await runOnboardingChecks(sub.reference, { suppressMerchantEmail }).catch((e) =>
+          logger.error({ err: e.message, ref: sub.reference }, 'Batch KYC run failed')
+        );
+      }
+      logger.info({ count: subs.length, suppressMerchantEmail }, 'KYC batch complete');
+    });
+    ok(res, { count: subs.length, suppressMerchantEmail }, `KYC batch started for ${subs.length} merchants`);
   } catch (e) { next(e); }
 });
 

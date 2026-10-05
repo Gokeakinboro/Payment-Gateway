@@ -25,7 +25,9 @@ router.get('/vat', requireAuth, requireCompliance, async (req, res, next) => {
       ? req.query.month
       : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     const start = new Date(month + '-01T00:00:00.000Z');
-    const end = new Date(start); end.setUTCMonth(end.getUTCMonth() + 1);
+    const curMon = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const endFull = new Date(start); endFull.setUTCMonth(endFull.getUTCMonth() + 1);
+    const end = month === curMon ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : endFull;
 
     // Transactions (cards / VA / USSD …): output + input VAT per product.
     const txnRows = await prisma.$queryRaw`
@@ -92,19 +94,30 @@ router.get('/cbn', requireAuth, requireCompliance, async (req, res, next) => {
       ? req.query.month
       : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     const start = new Date(month + '-01T00:00:00.000Z');
-    const end = new Date(start); end.setUTCMonth(end.getUTCMonth() + 1);
+    const curMon = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const isCurrent = month === curMon;
+    const endFull = new Date(start); endFull.setUTCMonth(endFull.getUTCMonth() + 1);
+    const end = isCurrent ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : endFull;
     const [yyyy, mm] = month.split('-');
-    const lastDay = new Date(end.getTime() - 1).getUTCDate();
-    const period = `01-${String(lastDay).padStart(2, '0')}/${mm}/${yyyy}`;
+    const periodEndDay = isCurrent ? now.getUTCDate() : new Date(endFull.getTime() - 1).getUTCDate();
+    const period = `01-${String(periodEndDay).padStart(2, '0')}/${mm}/${yyyy}`;
 
-    const agg = await prisma.$queryRaw`
-      SELECT COUNT(*)::int AS volume, COALESCE(SUM(amount),0) AS value_kobo
-      FROM transactions
-      WHERE status = 'SUCCESS' AND is_sandbox = false
-        AND paid_at >= ${start} AND paid_at < ${end}
-    `;
-    const webVolume = agg[0] ? agg[0].volume : 0;
-    const webValue  = agg[0] ? Number(agg[0].value_kobo) / 100 : 0;
+    const [collectionsAgg, payoutsAgg] = await Promise.all([
+      prisma.$queryRaw`
+        SELECT COUNT(*)::int AS volume, COALESCE(SUM(amount),0) AS value_kobo
+        FROM transactions
+        WHERE status = 'SUCCESS' AND is_sandbox = false
+          AND paid_at >= ${start} AND paid_at < ${end}
+      `,
+      prisma.$queryRaw`
+        SELECT COUNT(*)::int AS volume, COALESCE(SUM(amount),0) AS value_kobo
+        FROM payout_items
+        WHERE status = 'success'
+          AND processed_at >= ${start} AND processed_at < ${end}
+      `,
+    ]);
+    const webVolume = (collectionsAgg[0] ? collectionsAgg[0].volume : 0) + (payoutsAgg[0] ? payoutsAgg[0].volume : 0);
+    const webValue  = (collectionsAgg[0] ? Number(collectionsAgg[0].value_kobo) / 100 : 0) + (payoutsAgg[0] ? Number(payoutsAgg[0].value_kobo) / 100 : 0);
 
     const channels = [
       { code: 'CHNL001', channel: 'ATM',         volume: 0,         value: 0,        period },
@@ -264,8 +277,11 @@ router.get('/revenue', requireAuth, requireCompliance, async (req, res, next) =>
 router.get('/aggregator-revenue', requireAuth, requireCompliance, async (req, res, next) => {
   try {
     const { month } = req.query;
-    const periodStart = month ? new Date(month + '-01') : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const periodEnd   = new Date(periodStart); periodEnd.setMonth(periodEnd.getMonth()+1);
+    const now = new Date();
+    const curMon = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const periodStart = month ? new Date(month + '-01') : new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodEndFull = new Date(periodStart); periodEndFull.setMonth(periodEndFull.getMonth() + 1);
+    const periodEnd = (!month || month === curMon) ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : periodEndFull;
 
     const rows = await prisma.$queryRaw`
       SELECT
@@ -412,7 +428,7 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const toDate   = to ? new Date(to + 'T23:59:59Z') : new Date();
 
-    const [txns, byCcy] = await Promise.all([
+    const [txns, byCcy, ledgerEntries, walletRows, vaRateConfig] = await Promise.all([
       prisma.transaction.findMany({
         where: {
           merchantId: targetMerchantId,
@@ -429,6 +445,29 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
         _count: true,
         _sum: { amount: true, merchantFee: true },
       }),
+      // All entry types fetched — REBALANCE, FEE, VAT are not rendered but their
+      // balanceBefore/balanceAfter deltas are used to compute a correct combined
+      // running balance across all rails. REBALANCE nets to zero (one debit rail,
+      // one credit rail). FEE/VAT reduce the running balance without showing a row.
+      prisma.walletLedger.findMany({
+        where: {
+          merchantId: targetMerchantId,
+          createdAt: { gte: fromDate, lte: toDate },
+        },
+        select: {
+          id: true, entryType: true, amount: true,
+          balanceBefore: true, balanceAfter: true,
+          reference: true, description: true, createdAt: true,
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      }),
+      // Closing balance: sum of live per-rail wallet balances (authoritative)
+      prisma.merchantWallet.findMany({
+        where: { merchantId: targetMerchantId },
+        select: { balance: true },
+      }),
+      // feePaidBy field not yet on model — default PAYER (merchant gets full face value)
+      Promise.resolve(null),
     ]);
 
     const merchant = await prisma.merchant.findUnique({ where: { id: targetMerchantId }, select: { businessName:true, merchantCode:true } });
@@ -446,6 +485,80 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
       };
     });
 
+    // VA collections — BANK_TRANSFER channel, successful only.
+    // feePaidBy: PAYER (default) = merchant gets full face value; MERCHANT = fee deducted from net.
+    const vaFeePaidBy = vaRateConfig?.feePaidBy ?? 'PAYER';
+    const vaCollections = txns
+      .filter(t => t.channel === 'BANK_TRANSFER' && t.status === 'SUCCESS')
+      .map(t => ({
+        reference:      t.reference,
+        date:           t.createdAt,
+        customer_email: t.customerEmail,
+        amount:         Number(t.amount) / 100,
+        fee:            Number(t.merchantFee) / 100,
+        net:            vaFeePaidBy === 'MERCHANT'
+                          ? Number(t.amount - t.merchantFee) / 100
+                          : Number(t.amount) / 100,
+      }));
+
+    // Card collections — CARD / CARD_INTL_* channels, successful only
+    const cardCollections = txns
+      .filter(t => t.channel?.startsWith('CARD') && t.status === 'SUCCESS')
+      .map(t => ({
+        reference:      t.reference,
+        date:           t.createdAt,
+        customer_email: t.customerEmail,
+        amount:         Number(t.amount) / 100,
+        fee:            Number(t.merchantFee) / 100,
+        net:            Number(t.amount - t.merchantFee) / 100,
+        currency:       t.currency || 'NGN',
+      }));
+
+    // Payout wallet activity — single combined statement across all rails.
+    //
+    // The ledger stores per-rail balanceBefore/balanceAfter. To produce a coherent
+    // combined running balance we use deltas (balanceAfter − balanceBefore) rather
+    // than raw balanceAfter values. REBALANCE entries cancel out (one rail −X, other
+    // rail +X = net 0). FEE/VAT reduce the running balance but are not shown as rows.
+    // Opening balance is derived: closing_balance − Σ(period deltas).
+    const VISIBLE_TYPES = new Set(['DEBIT', 'CREDIT', 'REVERSAL', 'REBALANCE']);
+    const CREDIT_TYPES  = new Set(['CREDIT', 'REVERSAL']);
+    const DESC_MAP = { CREDIT: 'Wallet top up', DEBIT: 'Payout', REVERSAL: 'Reversal', REBALANCE: 'Wallet adjustment' };
+
+    const combinedClosingKobo = walletRows.reduce((s, w) => s + Number(w.balance), 0);
+    const periodDeltaKobo     = ledgerEntries.reduce(
+      (s, l) => s + (Number(l.balanceAfter) - Number(l.balanceBefore)), 0);
+    const combinedOpeningKobo = combinedClosingKobo - periodDeltaKobo;
+
+    // Walk entries in time order; accumulate combined running balance.
+    // For each visible entry, look ahead through consecutive hidden entries so the
+    // displayed balance reflects all charges (FEE, VAT) that belong to that row.
+    let runBal = combinedOpeningKobo; // kobo
+    const walletActivity = [];
+    for (let i = 0; i < ledgerEntries.length; i++) {
+      const l = ledgerEntries[i];
+      runBal += Number(l.balanceAfter) - Number(l.balanceBefore);
+      if (!VISIBLE_TYPES.has(l.entryType)) continue;
+      // Peek ahead: accumulate deltas of hidden entries that immediately follow
+      // this visible entry (FEE, VAT for this payout).
+      let visBalKobo = runBal;
+      for (let j = i + 1; j < ledgerEntries.length && !VISIBLE_TYPES.has(ledgerEntries[j].entryType); j++) {
+        visBalKobo += Number(ledgerEntries[j].balanceAfter) - Number(ledgerEntries[j].balanceBefore);
+      }
+      // REBALANCE direction is encoded in the delta, not a separate type flag.
+      const delta    = Number(l.balanceAfter) - Number(l.balanceBefore);
+      const isCredit = l.entryType === 'REBALANCE' ? delta >= 0 : CREDIT_TYPES.has(l.entryType);
+      const amtKobo  = l.entryType === 'REBALANCE' ? Math.abs(delta) : Number(l.amount);
+      walletActivity.push({
+        reference:   l.reference,
+        date:        l.createdAt,
+        description: DESC_MAP[l.entryType] || l.description || l.entryType,
+        credit:      isCredit ? amtKobo / 100 : null,
+        debit:       isCredit ? null : amtKobo / 100,
+        balance:     visBalKobo / 100,
+      });
+    }
+
     ok(res, {
       merchant,
       period:    { from: fromDate, to: toDate },
@@ -453,19 +566,24 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
       summary: summaryBy.NGN,
       summary_by_currency: summaryBy,
       transactions: txns.map(t => ({
-        reference:       t.reference,
-        date:            t.createdAt,
-        customer_email:  t.customerEmail,
-        currency:        t.currency || 'NGN',
+        reference:        t.reference,
+        date:             t.createdAt,
+        customer_email:   t.customerEmail,
+        currency:         t.currency || 'NGN',
         is_international: t.currency === 'USD',
-        amount:          Number(t.amount) / 100,
-        channel:         t.channel,
-        status:          t.status,
-        fee:             Number(t.merchantFee) / 100,
-        net:             Number(t.amount - t.merchantFee) / 100,
-        failure_reason:  t.failureReason,
-        metadata:        t.metadata,
+        amount:           Number(t.amount) / 100,
+        channel:          t.channel,
+        status:           t.status,
+        fee:              Number(t.merchantFee) / 100,
+        net:              Number(t.amount - t.merchantFee) / 100,
+        failure_reason:   t.failureReason,
+        metadata:         t.metadata,
       })),
+      va_collections:         vaCollections,
+      card_collections:       cardCollections,
+      wallet_opening_balance: combinedOpeningKobo / 100,
+      wallet_closing_balance: combinedClosingKobo / 100,
+      wallet_activity:        walletActivity,
     });
   } catch (e) { next(e); }
 });
@@ -1157,6 +1275,116 @@ router.get('/user-type-summary', requireAuth, requireCompliance, async (req, res
       by_aggregator: aggRows.map(r => ({ ...r, volume: Number(r.volume_kobo||0)/100, fee: Number(r.fee_kobo||0)/100 })),
       by_partner:    partnerRows.map(r => ({ ...r, volume: Number(r.volume_kobo||0)/100, fee: Number(r.fee_kobo||0)/100 })),
       direct_by_channel: directRows.map(r => ({ ...r, volume: Number(r.volume_kobo||0)/100, fee: Number(r.fee_kobo||0)/100 })),
+    });
+  } catch (e) { next(e); }
+});
+
+// ── GET /api/v1/reports/debit-alert-recon ──────────────────────────────────
+// Reconciliation of Parallex bank debit alert emails vs our rail_disbursements.
+// Returns three lists:
+//   unmatched_alerts  — debits in the email inbox with NO matching rail_disbursement
+//                       (potential unauthorized debit — needs investigation)
+//   unmatched_payouts — successful rail_disbursements with NO alert received
+//                       (alert may be delayed, or alert email missed)
+//   matched           — confirmed pairs
+// SA / compliance only.  ?from=YYYY-MM-DD&to=YYYY-MM-DD  (defaults: last 7 days)
+router.get('/debit-alert-recon', requireAuth, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { from, to, trigger_sync } = req.query;
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 7 * 86400_000);
+    const toDate   = to   ? new Date(to + 'T23:59:59Z') : new Date();
+
+    // Optionally trigger a live IMAP sync before returning results
+    if (trigger_sync === '1') {
+      try {
+        const { syncParallexAlerts } = require('../../../services/parallexAlertReader');
+        await syncParallexAlerts();
+      } catch (e) {
+        // non-fatal — report stale data
+      }
+    }
+
+    const [alerts, payouts] = await Promise.all([
+      // All alerts in the window
+      prisma.$queryRawUnsafe(`
+        SELECT id, amount_kobo, description, beneficiary_name, tx_reference,
+               alert_at, available_balance_naira, current_balance_naira,
+               match_status, match_note, matched_rd_id, created_at
+        FROM bank_debit_alerts
+        WHERE alert_at BETWEEN $1 AND $2
+        ORDER BY alert_at DESC
+      `, fromDate, toDate),
+
+      // Parallex rail_disbursements in the window (success or sent)
+      prisma.$queryRawUnsafe(`
+        SELECT rd.id, rd.rail_order_id, rd.amount, rd.status,
+               rd.settled_at, rd.sent_at, rd.created_at,
+               pi.account_name, pi.account_number, pi.bank_code,
+               pb.batch_ref, m.business_name AS merchant_name
+        FROM rail_disbursements rd
+        JOIN payment_rails pr      ON pr.id = rd.rail_id
+        LEFT JOIN payout_items pi  ON pi.id = rd.payout_item_id
+        LEFT JOIN payout_batches pb ON pb.id = rd.batch_id
+        LEFT JOIN merchants m       ON m.id  = rd.merchant_id
+        WHERE pr.name ILIKE '%parallex%'
+          AND rd.status IN ('success','sent')
+          AND COALESCE(rd.settled_at, rd.sent_at, rd.created_at) BETWEEN $1 AND $2
+        ORDER BY COALESCE(rd.settled_at, rd.sent_at, rd.created_at) DESC
+      `, fromDate, toDate),
+    ]);
+
+    // Index matched rd IDs from alerts
+    const matchedRdIds = new Set(
+      alerts.filter(a => a.match_status === 'MATCHED' && a.matched_rd_id)
+            .map(a => String(a.matched_rd_id))
+    );
+
+    const unmatchedAlerts  = alerts.filter(a => a.match_status === 'UNMATCHED');
+    const matchedAlerts    = alerts.filter(a => a.match_status === 'MATCHED');
+    const unmatchedPayouts = payouts.filter(p => !matchedRdIds.has(String(p.id)));
+
+    const fmtKobo = (k) => Number(k || 0) / 100;
+
+    ok(res, {
+      period: { from: fromDate, to: toDate },
+      summary: {
+        total_alerts:        alerts.length,
+        matched:             matchedAlerts.length,
+        unmatched_alerts:    unmatchedAlerts.length,
+        unmatched_payouts:   unmatchedPayouts.length,
+        total_alert_volume:  alerts.reduce((s, a) => s + fmtKobo(a.amount_kobo), 0),
+        total_payout_volume: payouts.reduce((s, p) => s + fmtKobo(p.amount), 0),
+      },
+      // ⚠️ These need investigation — debits not initiated by Paylode
+      unmatched_alerts: unmatchedAlerts.map(a => ({
+        id:               a.id,
+        amount_naira:     fmtKobo(a.amount_kobo),
+        beneficiary:      a.beneficiary_name,
+        description:      a.description,
+        tx_reference:     a.tx_reference,
+        alert_at:         a.alert_at,
+        balance_after:    a.current_balance_naira,
+        match_note:       a.match_note,
+      })),
+      // Payouts with no alert received (alert may be delayed)
+      unmatched_payouts: unmatchedPayouts.map(p => ({
+        id:              p.id,
+        batch_ref:       p.batch_ref,
+        merchant:        p.merchant_name,
+        account_name:    p.account_name,
+        account_number:  p.account_number,
+        amount_naira:    fmtKobo(p.amount),
+        status:          p.status,
+        dispatched_at:   p.settled_at || p.sent_at || p.created_at,
+      })),
+      matched: matchedAlerts.map(a => ({
+        alert_id:     a.id,
+        rd_id:        a.matched_rd_id,
+        amount_naira: fmtKobo(a.amount_kobo),
+        beneficiary:  a.beneficiary_name,
+        alert_at:     a.alert_at,
+        match_note:   a.match_note,
+      })),
     });
   } catch (e) { next(e); }
 });

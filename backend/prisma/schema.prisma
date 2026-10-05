@@ -70,6 +70,7 @@ enum UserRole {
   AUDIT
   AGGREGATOR
   MERCHANT
+  OPERATIONS
 }
 
 enum PayoutStatus {
@@ -112,6 +113,8 @@ model Aggregator {
   companyName       String   @map("company_name")
   rcNumber          String?  @map("rc_number")
   revenueSplitPct   Decimal  @map("revenue_split_pct") @db.Decimal(5, 4)  // 0.3000 = 30%
+  payoutFloorKobo   BigInt?  @map("payout_floor_kobo")  // override platform PAYOUT flat_fee; NULL = use platform
+  vaCapKobo         BigInt?  @map("va_cap_kobo")         // override platform VA cap; NULL = use platform
   settlementBank    String?  @map("settlement_bank")
   settlementAccount String?  @map("settlement_account")
   status            String   @default("active")
@@ -592,6 +595,7 @@ model MerchantRateConfig {
   cap        BigInt   @default(0)                           // kobo max fee, 0 = no cap
   minCharge  BigInt   @default(0) @map("min_charge")        // kobo min fee, 0 = no minimum
   vatRate    Decimal  @default(0.075) @map("vat_rate") @db.Decimal(5, 4)  // default 7.5%
+  feePaidBy  String   @default("PAYER") @map("fee_paid_by")               // PAYER | MERCHANT
   notes      String?
   setBy      String?  @map("set_by") @db.Uuid
   createdAt  DateTime @default(now()) @map("created_at")
@@ -636,7 +640,11 @@ model AggregatorRateConfig {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   aggregatorId  String   @map("aggregator_id") @db.Uuid
   merchantId    String?  @map("merchant_id") @db.Uuid  // null = aggregator-wide default
-  splitPct      Decimal  @map("split_pct") @db.Decimal(5, 4)  // 0.3000 = 30%
+  channel       String   @default("VIRTUAL_ACCOUNT")   // VIRTUAL_ACCOUNT | PAYOUT
+  rate          Decimal  @default(0) @map("rate") @db.Decimal(10, 6)  // e.g. 0.030000 = 3%
+  flatFee       BigInt   @default(0) @map("flat_fee")   // kobo flat fee per txn
+  minCharge     BigInt   @default(0) @map("min_charge") // kobo minimum charge
+  maxCharge     BigInt   @default(0) @map("max_charge") // kobo cap; 0 = no cap
   notes         String?
   setBy         String?  @map("set_by") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at")
@@ -645,7 +653,7 @@ model AggregatorRateConfig {
   aggregator Aggregator @relation(fields: [aggregatorId], references: [id], onDelete: Cascade)
   merchant   Merchant?  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
-  @@unique([aggregatorId, merchantId], name: "aggregatorId_merchantId")
+  @@unique([aggregatorId, merchantId, channel], name: "aggregatorId_merchantId_channel")
   @@index([aggregatorId])
   @@map("aggregator_rate_configs")
 }
@@ -1021,4 +1029,19 @@ model MpgsComment {
   createdAt     DateTime        @default(now()) @map("created_at")
 
   @@map("mpgs_comments")
+}
+
+// ─── NIBSS Consent Hub ────────────────────────────────────────────────────────
+
+model NibssConsentToken {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId       String    @unique @map("session_id")
+  retrievalToken  String    @map("retrieval_token")
+  consentStatus   String    @default("Unknown") @map("consent_status")
+  bvnMasked       String?   @map("bvn_masked")
+  usedAt          DateTime? @map("used_at")
+  receivedAt      DateTime  @default(now()) @map("received_at")
+  expiresAt       DateTime? @map("expires_at")
+
+  @@map("nibss_consent_tokens")
 }

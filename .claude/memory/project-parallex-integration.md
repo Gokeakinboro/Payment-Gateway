@@ -1,10 +1,52 @@
 ---
 name: project-parallex-integration
-description: "🟢 Parallex VA LIVE for ONE test merchant (Demo/Test → Parallex) via per-merchant pay-in override; adapter+webhook deployed on 176; still scaffold webhook mode + no prod routing decision"
+description: "🟢 Parallex VA + Transfer FULLY LIVE via VPN tunnel (2026-08-11); VA MerchantId PB_014; Transfer username Paylode; Bucksnostar Global on Parallex for both VA + payout; interbank payout blocked on pilot NIBSS"
 metadata: 
   node_type: memory
   type: project
   originSessionId: b3c41ab9-af9b-40a2-89db-9ff4775b47ce
+---
+
+**🟢 2026-08-11 — VA + TRANSFER BOTH LIVE VIA VPN TUNNEL. ALL CREDENTIALS CONFIRMED.**
+
+### VPN / Routing
+- IPSec IKEv2 tunnel: DO Droplet `165.22.21.63` → FortiGate `102.220.220.19`
+- Phase 2 selector: `10.254.254.1/32 === 192.18.0.40/32` (both VA and Transfer on `.40`)
+- DNAT on DO: 176.57.188.45:443 → 192.18.0.40:443. SNAT source = 10.254.254.1
+- `/etc/hosts` on 176: `165.22.21.63 tptintegration.parallexbank.com`
+- DPD + 6hr force-up cron on DO. Health check cron on 176 → `/var/log/parallex-vpn.log`
+
+### VA (Collections / Pay-in) — LIVE
+- **Base URL:** `https://tptintegration.parallexbank.com/VirtualAccountAPI/V2/VirtualAccount`
+- **Username:** `Paylode` | **Password:** `PaylodeVA@2026!` (base64-encoded on call)
+- **MerchantId header:** `PB_014` | **Subkey:** `89199022492c4abaaa17ed7d2984f524`
+- **Settlement account:** `1000362856`
+- **Webhook secret:** `0db9fd42d16141799440f52831a8a7f9071904` (registered INFLOW → `https://paylodeservices.com/api/v1/webhooks/parallex/inflow`)
+- **Proven 2026-08-11:** Login ✅ · VA created (`6014000001` "Test Paylode") ✅ · ₦100 payment received (requery: SUCCESSFUL) ✅
+- **Proven 2026-08-12:** VA `6014000007` "Paylode WebhookTest" ₦103 received (requery SUCCESSFUL, txn ref `100004260812093050168038367264`) ✅ · webhook NOT delivered ❌ (zero nginx + app log hits — Parallex-side failure)
+- **referenceId minimum 20 chars** (Parallex validation enforces this; UUIDs = 36 chars, fine)
+- **Webhook delivery:** confirmed broken on Parallex's end — two live payment tests, zero webhook deliveries to `https://paylodeservices.com/api/v1/webhooks/parallex/inflow`
+- **env on 176:** `PARALLEX_VA_{BASE_URL,USERNAME,PASSWORD,SUBKEY,MERCHANT_ID,SETTLEMENT_ACCOUNT,WEBHOOK_SECRET}` all set; `MODULE_PARALLEX_WEBHOOK_ENABLED=true`
+
+### Transfer (Payouts) — LIVE (intrabank); interbank blocked on pilot NIBSS
+- **Base URL:** `https://tptintegration.parallexbank.com/ThirdPartyTransferAPI`
+- **Username:** `Paylode` | **Password:** `Paylode@Parallex2026!` (PLAINTEXT — not base64)
+- **VA collections / settlement account (debit source for VA→merchant payouts):** `1000362856`
+- **Payout debit float account:** `1000362849` (balance ~₦3,896 last checked — top up before batch payouts)
+- **Intrabank transfer 2026-08-11:** ✅ ₦100 tested (1000362849 → 1000362856)
+- **Intrabank transfer 2026-08-12:** ❌ TIMEOUT — `IntrabankTransfer` POST endpoint hanging (GetBalance still works); Parallex-side regression
+- **1000362856 as TPT debit:** ❌ "Invalid Account Number" — not enrolled in TPT product; must raise with Parallex (enroll it, or confirm sweep model: 1000362856 → 1000362849 happens Parallex-side)
+- **NIP name enquiry:** ✅ First Bank, GTBank, OPay (with 6-digit institution codes)
+- **Interbank transfer:** ❌ pilot NIBSS not live — hangs, times out after 45s
+- **Institution code map:** CBN `328`/`305` → OPay `100004`; `058` → GTBank `000013`; etc. (full map in parallexTransferService.js)
+- **PalmPay NIP fallback:** used only when Parallex NIP fails, to get accountName; sessionId passed as empty string to Parallex interbank (which is already blocked anyway)
+- **Bucksnostar Global** (`f4530c4c-015a-4d18-af38-cd918a0997e3`): MUST use Parallex for both payin + payout — NEVER PalmPay (business rule, no exceptions)
+
+### Code committed
+- `parallexService.js` — VA service (Connection: close + 30s timeout + base URL correct)
+- `parallexTransferService.js` — Transfer service (Connection: close + 45s timeout + institution code map + PalmPay NIP fallback + code 90 re-login bug fixed) — commit `46f9fab`
+- `parallex-webhook.js` — inbound INFLOW webhook (verifies secret, calls finalizePayinSuccess)
+
 ---
 
 **🟢 2026-07-12/13 SESSION — PARALLEX VA LIVE FOR DRINKS ARENA; PAYOUT BLOCKED ON NIP + BALANCE.**
