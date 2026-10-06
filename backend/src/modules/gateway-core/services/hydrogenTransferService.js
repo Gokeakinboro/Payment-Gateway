@@ -4,29 +4,24 @@
 //  transfer switch (spec: "TECHNICAL SPECIFICATION DOCUMENT FOR FUNDS
 //  TRANSFER", Hydrogen, 2025-10-28).
 //
-//  Outbound path: pacs.008 PGP-encrypted+hex → Hydrogen
-//  Name enquiry:  acmt.023 PGP-encrypted+hex → Hydrogen
-//  Status query:  pacs.028 PGP-encrypted+hex → Hydrogen  (send within 30s of pacs.008)
-//  Balance:       plain JSON POST to /eft/v1/inst/balance (per doc sample — not
-//                  shown encrypted in the spec's balance example, unlike the
-//                  XML message types; TODO: confirm with Hydrogen whether the
-//                  balance call also needs PGP+hex, since Integration Spec
-//                  note 1 says "these" [messages] are encrypted then hex'd
-//                  without explicitly excluding balance).
+//  Outbound path: pacs.008 PGP-encrypted (ASCII armored) inside xenc → Hydrogen
+//  Name enquiry:  acmt.023 PGP-encrypted (ASCII armored) inside xenc → Hydrogen
+//  Status query:  pacs.028 PGP-encrypted (ASCII armored) inside xenc → Hydrogen
+//  Balance:       plain JSON PGP-encrypted; format TBC by Hydrogen support.
 //
 //  Encryption scheme per spec section 3 & 5 (different from NIBSS NPS, which
 //  uses XMLDSig-sign + AES-256-GCM/RSA-OAEP):
 //    1. Build the plaintext ISO20022 XML content element (e.g. <IdVrfctnReq>,
 //       <FIToFICstmrCdtTrf>, <FIToFIPmtStsReq>).
-//    2. PGP-encrypt that entire element's inner XML with Hydrogen's PGP public
-//       key (openpgp, format: 'binary' — no ASCII armor).
-//    3. Hex-encode the binary PGP message (uppercase, per sample CipherValue).
-//    4. Wrap as <xenc:EncryptedData><xenc:CipherData><xenc:CipherValue>
-//       {HEX}</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData> in
-//       place of the plaintext content element — same xenc envelope shape as
-//       NIBSS NPS, but CipherValue is PGP+hex, not AES-GCM+base64.
-//    Inbound responses reverse this: hex-decode → PGP-decrypt with our own
-//    private key.
+//    2. PGP-encrypt the inner XML with Hydrogen's PGP public key, producing
+//       ASCII-armored output (-----BEGIN PGP MESSAGE-----...-----END...).
+//       Sandbox testing confirmed armored format; Hydrogen server recognises it
+//       and attempts decryption (hex-encoded binary gives "InvalidIso20022Xml").
+//    3. Wrap as <xenc:EncryptedData><xenc:CipherData><xenc:CipherValue>
+//       {ARMORED PGP}</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData>
+//       inside the content element.
+//    Inbound responses reverse this: Hydrogen response CipherValue may be
+//    armored PGP or hex-encoded PGP; both are handled by decryptContentElement.
 //
 //  Required env vars (HYDROGEN_*) — none set yet; isConfigured() is false
 //  until they are, so this module is fully inert (not wired into
@@ -187,12 +182,26 @@ function replaceElement(xml, tag, replacement) {
   return xml.slice(0, start) + replacement + xml.slice(end + close.length);
 }
 
-// ── PGP encrypt/decrypt → hex (spec §3 note 1 + §5 sample) ──────────────────
-async function pgpEncryptToHex(plaintext) {
+// ── PGP encrypt/decrypt ───────────────────────────────────────────────────────
+// Testing confirmed Hydrogen expects ASCII-armored PGP in xenc:CipherValue
+// (not hex-encoded binary). Hydrogen recognises the -----BEGIN PGP MESSAGE-----
+// envelope and tries to decrypt with their private key.
+async function pgpEncryptToArmored(plaintext) {
   const publicKey = await loadHydrogenPublicKey();
   const message   = await openpgp.createMessage({ text: plaintext });
-  const encrypted = await openpgp.encrypt({ message, encryptionKeys: publicKey, format: 'binary' });
-  return Buffer.from(encrypted).toString('hex').toUpperCase();
+  // Return ASCII-armored string (default format for openpgp.encrypt)
+  return openpgp.encrypt({
+    message,
+    encryptionKeys: publicKey,
+    config: { allowMissingKeyFlags: true },
+  });
+}
+
+async function pgpDecryptArmored(armoredStr) {
+  const privateKey = await loadOurPrivateKey();
+  const message    = await openpgp.readMessage({ armoredMessage: armoredStr });
+  const { data }   = await openpgp.decrypt({ message, decryptionKeys: privateKey, format: 'binary' });
+  return Buffer.from(data).toString('utf8');
 }
 
 async function pgpDecryptFromHex(hexStr) {
@@ -203,23 +212,34 @@ async function pgpDecryptFromHex(hexStr) {
   return Buffer.from(data).toString('utf8');
 }
 
-// Replace the plaintext contentTag element with the xenc:EncryptedData envelope
+// Encrypt the INNER content of contentTag, keeping the outer element tags.
+// Result: <contentTag><xenc:EncryptedData>...armored PGP...</xenc:EncryptedData></contentTag>
 async function encryptContentElement(xmlStr, contentTag) {
-  const contentXml = extractElement(xmlStr, contentTag);
-  if (!contentXml) throw new Error(`encryptContentElement: <${contentTag}> not found`);
-  const hex = await pgpEncryptToHex(contentXml);
+  const openTag  = `<${contentTag}`;
+  const closeTag = `</${contentTag}>`;
+  const elemStart = xmlStr.indexOf(openTag);
+  if (elemStart < 0) throw new Error(`encryptContentElement: <${contentTag}> not found`);
+  const openEnd    = xmlStr.indexOf('>', elemStart) + 1;
+  const closeStart = xmlStr.indexOf(closeTag, openEnd);
+  if (closeStart < 0) throw new Error(`encryptContentElement: </${contentTag}> not found`);
+
+  const innerContent = xmlStr.slice(openEnd, closeStart);
+  const armored = await pgpEncryptToArmored(innerContent);
   const encryptedData = [
     '<xenc:EncryptedData Type="http://www.w3.org/2001/04/xmlenc#Content"',
     ' xmlns:xenc="http://www.w3.org/2001/04/xmlenc#">',
     '<xenc:CipherData><xenc:CipherValue>',
-    hex,
+    armored,
     '</xenc:CipherValue></xenc:CipherData>',
     '</xenc:EncryptedData>',
   ].join('');
-  return replaceElement(xmlStr, contentTag, encryptedData);
+  return xmlStr.slice(0, openEnd) + encryptedData + xmlStr.slice(closeStart);
 }
 
-// Reverse — decrypt the <xenc:EncryptedData> envelope back into plaintext XML
+// Reverse — decrypt the <xenc:EncryptedData> envelope back into plaintext XML.
+// CipherValue may be ASCII-armored PGP (-----BEGIN PGP MESSAGE-----) or
+// hex-encoded binary PGP depending on Hydrogen's response format.
+// Plaintext error strings (e.g. "MissingEncryptedData") are detected and surfaced.
 async function decryptContentElement(xmlStr) {
   const encDataOpen  = '<xenc:EncryptedData';
   const encDataClose = '</xenc:EncryptedData>';
@@ -227,11 +247,21 @@ async function decryptContentElement(xmlStr) {
   const end   = xmlStr.indexOf(encDataClose, start);
   if (start < 0 || end < 0) throw new Error('decryptContentElement: no EncryptedData found');
 
-  const encDataStr = xmlStr.slice(start, end + encDataClose.length);
+  const encDataStr  = xmlStr.slice(start, end + encDataClose.length);
   const cipherMatch = encDataStr.match(/<xenc:CipherValue>([\s\S]+?)<\/xenc:CipherValue>/);
   if (!cipherMatch) throw new Error('decryptContentElement: CipherValue not found');
 
-  const plaintextXml = await pgpDecryptFromHex(cipherMatch[1].replace(/\s+/g, ''));
+  const cipherValue = cipherMatch[1].trim();
+
+  let plaintextXml;
+  if (cipherValue.startsWith('-----BEGIN PGP')) {
+    plaintextXml = await pgpDecryptArmored(cipherValue);
+  } else if (/^[0-9A-Fa-f]+$/.test(cipherValue.replace(/\s+/g, ''))) {
+    plaintextXml = await pgpDecryptFromHex(cipherValue.replace(/\s+/g, ''));
+  } else {
+    throw new Error(`Hydrogen error: ${cipherValue}`);
+  }
+
   return xmlStr.slice(0, start) + plaintextXml + xmlStr.slice(end + encDataClose.length);
 }
 
@@ -484,17 +514,19 @@ const PERMANENT_FAILURE_CODES = new Set([
 ]);
 
 // ── getBalance — Institution Balance endpoint ────────────────────────────────
-// TODO: confirm whether this JSON body also needs PGP+hex encryption per spec
-// §3 note 1 ("these are expected to be encrypted..."), or whether it is sent
-// plain as shown in the §4 sample. Implemented plain for now, matching the
-// literal sample; revisit once Hydrogen confirms.
+// Balance endpoint format TBC — using armored PGP with text/plain for now.
 async function getBalance() {
   if (!isConfigured()) return BigInt(0);
   try {
-    const reqBody = JSON.stringify({ ChannelCode: String(CHANNEL_CODE), SourceInstitutionCode: INSTITUTION_CODE });
-    const { status, body } = await post('/eft/v1/inst/balance', reqBody, 'application/json');
+    const payload = JSON.stringify({ ChannelCode: String(CHANNEL_CODE), SourceInstitutionCode: INSTITUTION_CODE });
+    const armored = await pgpEncryptToArmored(payload);
+    const { status, body } = await post('/eft/v1/inst/balance', armored, 'text/plain');
     if (status === 200 && body) {
-      const parsed = JSON.parse(body);
+      const trimmed = body.trim();
+      const decrypted = trimmed.startsWith('-----BEGIN PGP')
+        ? await pgpDecryptArmored(trimmed)
+        : await pgpDecryptFromHex(trimmed);
+      const parsed = JSON.parse(decrypted);
       if (parsed.ResponseCode === '00' && parsed.Amount) {
         return BigInt(Math.round(parseFloat(parsed.Amount) * 100));
       }
