@@ -4650,7 +4650,7 @@ async function loadMerchApiKeys() {
       '</div>' +
       '<div class="flex" style="gap:6px;margin-left:16px">' +
         '<button class="btn btn-outline btn-sm" onclick="copyApiKeyPrefix(\'' + k.id + '\',\'' + prefix + '\')"><i data-lucide="copy" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Copy</button>' +
-        '<button class="btn btn-outline btn-sm" style="color:var(--amber)" onclick="rotateApiKey(\'' + k.id + '\',\'' + prefix + '\',\'' + (k.label||'API Key').replace(/'/g,"\\'") + '\')<i data-lucide="rotate-cw" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Rotate</button>' +
+        '<button class="btn btn-outline btn-sm" style="color:var(--amber)" onclick="rotateApiKey(\'' + k.id + '\',\'' + prefix + '\',\'' + (k.label||'API Key').replace(/'/g,"\\'") + '\')"><i data-lucide="rotate-cw" width="12" height="12" style="vertical-align:middle;margin-right:3px"></i> Rotate</button>' +
       '</div></div>';
     }).join('') : '<div class="info-box" style="font-size:12px">No API keys yet. Test keys are issued automatically when your account is created — refresh, or contact support@paylodeservices.com if they are missing.</div>';
 
