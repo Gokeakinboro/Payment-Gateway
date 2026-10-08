@@ -7,7 +7,7 @@
 //  Status query:  pacs.028 signed+encrypted → NIBSS NPS
 //
 //  Sign-then-encrypt per NIBSS spec:
-//    1. XMLDSig enveloped, Exclusive C14n, RSA-SHA256 (xml-crypto)
+//    1. XMLDSig enveloped, Inclusive C14N 1.0 (REC-xml-c14n-20010315), RSA-SHA256
 //    2. AES-256-GCM content encryption + RSA-OAEP-MGF1P key wrap (Node crypto)
 //
 //  Required env vars (NIBSS_NPS_*):
@@ -53,6 +53,7 @@ const ENABLED          = process.env.NIBSS_NPS_ENABLED === 'true';
 // Lazy-load certs — they may not exist until NIBSS onboarding completes
 let _privateKey  = null;
 let _nibssCert   = null;
+let _paylodePubKeyInfo = null;  // { n: base64, e: base64 }
 
 function loadPrivateKey() {
   if (_privateKey) return _privateKey;
@@ -66,6 +67,26 @@ function loadNibssCert() {
   if (!NIBSS_CERT_PATH) throw new Error('NIBSS_NPS_NIBSS_CERT_PATH not set');
   _nibssCert = fs.readFileSync(NIBSS_CERT_PATH);
   return _nibssCert;
+}
+
+// Load RSA modulus+exponent from our public key for inline KeyInfo in signatures.
+// Allows NIBSS to verify without requiring our key to be pre-registered.
+function loadPaylodePubKeyInfo() {
+  if (_paylodePubKeyInfo !== null) return _paylodePubKeyInfo;
+  try {
+    const pubKeyPath = PRIVATE_KEY_PATH.replace(/\.key$/, '_public.pem');
+    if (!pubKeyPath || !fs.existsSync(pubKeyPath)) { _paylodePubKeyInfo = false; return false; }
+    const pem    = fs.readFileSync(pubKeyPath, 'utf8');
+    const keyObj = crypto.createPublicKey(pem);
+    const jwk    = keyObj.export({ format: 'jwk' });
+    // JWK uses base64url; XMLDSig RSAKeyValue uses plain base64
+    const b64url2b64 = (s) => (s + '===').slice(0, s.length + (4 - s.length % 4) % 4)
+                                         .replace(/-/g, '+').replace(/_/g, '/');
+    _paylodePubKeyInfo = { n: b64url2b64(jwk.n), e: b64url2b64(jwk.e) };
+  } catch (err) {
+    _paylodePubKeyInfo = false;
+  }
+  return _paylodePubKeyInfo;
 }
 
 function isConfigured() {
@@ -89,8 +110,9 @@ function nowWAT() {
   const d = new Date(Date.now() + 60 * 60 * 1000);
   return {
     yyyyMMddHHmmss: d.toISOString().replace(/[-T:.Z]/g, '').slice(0, 14),
-    iso:   d.toISOString().replace('Z', '+01:00'),
-    date:  d.toISOString().slice(0, 10) + 'Z',
+    iso:     d.toISOString().replace('Z', '+01:00'),
+    isoNoMs: d.toISOString().slice(0, 19),   // YYYY-MM-DDTHH:MM:SS (NIBSS acmt format)
+    date:    d.toISOString().slice(0, 10) + 'Z',
   };
 }
 
@@ -141,36 +163,67 @@ function replaceElement(xml, tag, replacement) {
 }
 
 // ── XMLDSig — Sign ────────────────────────────────────────────────────────────
-// Returns signed XML (Signature appended inside document root, URI="", Exclusive C14n)
+// Inclusive C14N 1.0 (REC-xml-c14n-20010315) as required by NIBSS NPS spec.
+// Two Reference transforms: enveloped-signature + C14N 1.0 (matches NIBSS sample).
+// RSAKeyValue is embedded in ds:KeyInfo so NIBSS can verify without pre-registration.
+const C14N_1_0 = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+
 function signXml(xmlStr) {
-  const sig = new SignedXml({ privateKey: loadPrivateKey() });
+  const pubKeyInfo = loadPaylodePubKeyInfo();
+  const signerOpts = { privateKey: loadPrivateKey() };
+  if (pubKeyInfo) {
+    signerOpts.keyInfoProvider = {
+      getKeyInfo(key, prefix) {
+        const p = prefix ? `${prefix}:` : '';
+        return `<${p}KeyValue><${p}RSAKeyValue>` +
+               `<${p}Modulus>${pubKeyInfo.n}</${p}Modulus>` +
+               `<${p}Exponent>${pubKeyInfo.e}</${p}Exponent>` +
+               `</${p}RSAKeyValue></${p}KeyValue>`;
+      },
+    };
+  }
+  const sig = new SignedXml(signerOpts);
   sig.addReference({
     uri:            '',
     isEmptyUri:     true,
     xpath:          '/*',
-    transforms:     ['http://www.w3.org/2000/09/xmldsig#enveloped-signature'],
+    transforms: [
+      'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+      C14N_1_0,
+    ],
     digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256',
   });
-  sig.canonicalizationAlgorithm = 'http://www.w3.org/2001/10/xml-exc-c14n#';
+  sig.canonicalizationAlgorithm = C14N_1_0;
   sig.signatureAlgorithm        = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
-  sig.computeSignature(xmlStr);
+  sig.computeSignature(xmlStr, { prefix: 'ds' });
   return sig.getSignedXml();
 }
 
-// ── XML Encryption — Encrypt content element ─────────────────────────────────
-// Replaces <contentTag>...</contentTag> with <xenc:EncryptedData>
+// ── XML Encryption — Encrypt content element (Type="#Content") ───────────────
+// Encrypts only the CHILDREN of <contentTag>, keeping the parent tag intact.
+// Structure: <contentTag><xenc:EncryptedData Type="#Content">...</xenc:EncryptedData></contentTag>
 // AES-256-GCM content; RSA-OAEP-MGF1P (SHA-1 for OAEP) key wrap
 //
 // xmlenc11 AES-GCM CipherValue layout: base64(IV[12] || Ciphertext || Tag[16])
 function encryptContentElement(xmlStr, contentTag) {
-  const contentXml = extractElement(xmlStr, contentTag);
-  if (!contentXml) throw new Error(`encryptContentElement: <${contentTag}> not found`);
+  const openTagStart = xmlStr.indexOf(`<${contentTag}`);
+  if (openTagStart < 0) throw new Error(`encryptContentElement: <${contentTag}> not found`);
+
+  // End of the opening tag (e.g. after '>')
+  const openTagEnd = xmlStr.indexOf('>', openTagStart) + 1;
+
+  const closeTag      = `</${contentTag}>`;
+  const closeTagStart = xmlStr.indexOf(closeTag, openTagStart);
+  if (closeTagStart < 0) throw new Error(`encryptContentElement: </${contentTag}> not found`);
+
+  // Encrypt only the children (content between open and close tags)
+  const childrenXml = xmlStr.slice(openTagEnd, closeTagStart);
 
   const aesKey = crypto.randomBytes(32);
   const iv     = crypto.randomBytes(12);
 
   const cipher   = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
-  const ct1      = cipher.update(Buffer.from(contentXml, 'utf8'));
+  const ct1      = cipher.update(Buffer.from(childrenXml, 'utf8'));
   const ct2      = cipher.final();
   const authTag  = cipher.getAuthTag();
   const cipherBuf = Buffer.concat([iv, ct1, ct2, authTag]);
@@ -199,7 +252,15 @@ function encryptContentElement(xmlStr, contentTag) {
     '</xenc:EncryptedData>',
   ].join('');
 
-  return replaceElement(xmlStr, contentTag, encryptedData);
+  // Keep the parent tag; replace only its children with EncryptedData
+  const openTagStr = xmlStr.slice(openTagStart, openTagEnd);
+  return (
+    xmlStr.slice(0, openTagStart) +
+    openTagStr +
+    encryptedData +
+    closeTag +
+    xmlStr.slice(closeTagStart + closeTag.length)
+  );
 }
 
 // ── XML Decryption ─────────────────────────────────────────────────────────────
@@ -249,11 +310,12 @@ function decryptContentElement(xmlStr) {
 // Returns true if the XMLDSig in xmlStr is valid against nibssCert
 function verifySignature(xmlStr, nibssCertPem) {
   const sig = new SignedXml({ publicCert: nibssCertPem });
-  // Find the Signature element
-  const sigStart = xmlStr.indexOf('<Signature ');
-  const sigEnd   = xmlStr.indexOf('</Signature>');
+  // Accept both default-namespace <Signature> and prefixed <ds:Signature>
+  const sigStart = xmlStr.search(/<(?:ds:)?Signature[\s>]/);
+  const sigEnd   = xmlStr.search(/<\/(?:ds:)?Signature>/);
   if (sigStart < 0 || sigEnd < 0) return false;
-  const sigXml = xmlStr.slice(sigStart, sigEnd + '</Signature>'.length);
+  const closeTag = xmlStr.slice(sigEnd).match(/^<\/(?:ds:)?Signature>/)[0];
+  const sigXml = xmlStr.slice(sigStart, sigEnd + closeTag.length);
   sig.loadSignature(sigXml);
   return sig.checkSignature(xmlStr);
 }
@@ -265,16 +327,23 @@ const CONTENT_TAG = {
   'pacs.002': 'FIToFIPmtStsRpt',
   'pacs.028': 'FIToFIPmtStsReq',
   'acmt.023': 'IdVrfctnReq',
+  'acmt.024': 'IdVrfctnRpt',
   'pain.001': 'CstmrCdtTrfInitn',
   'pain.008': 'CstmrDrctDbtInitn',
 };
 
+// NIBSS FTA format requires this declaration on all outbound messages.
+const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>';
+
 function prepareOutbound(xmlStr, msgType) {
   const tag = CONTENT_TAG[msgType];
   if (!tag) throw new Error(`prepareOutbound: unknown msgType ${msgType}`);
+  // Sign first (over plaintext), then encrypt the content element.
+  // NIBSS switch decrypts first, then verifies signature against restored plaintext.
+  // Prepend XML declaration to final output — required by NIBSS FTA format.
   const signed    = signXml(xmlStr);
   const encrypted = encryptContentElement(signed, tag);
-  return encrypted;
+  return XML_DECL + encrypted;
 }
 
 // ── HTTP (curl, follows VPN routing) ─────────────────────────────────────────
@@ -330,19 +399,69 @@ function buildPacs008(opts) {
     txLocation,
   } = opts;
 
-  return `<Document xmlns:ns2="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.12"><FIToFICstmrCdtTrf><GrpHdr><MsgId>${esc(msgId)}</MsgId><CreDtTm>${nowWAT().iso}</CreDtTm><BtchBookg>false</BtchBookg><NbOfTxs>1</NbOfTxs><SttlmInf><SttlmMtd>CLRG</SttlmMtd></SttlmInf><InstgAgt><FinInstnId><BICFI>${esc(INSTITUTION_CODE)}</BICFI><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><BICFI>${esc(destMemberId)}</BICFI><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt></GrpHdr><CdtTrfTxInf><PmtId><InstrId>${esc(instrId)}</InstrId><EndToEndId>${esc(endToEndId)}</EndToEndId><TxId>${esc(txId)}</TxId></PmtId><PmtTpInf><ClrChanl>RTNS</ClrChanl><SvcLvl><Prtry>0100</Prtry></SvcLvl><LclInstrm><Prtry>CTAA</Prtry></LclInstrm><CtgyPurp><Prtry>001</Prtry></CtgyPurp></PmtTpInf><IntrBkSttlmAmt Ccy="NGN">${esc(amountNaira)}</IntrBkSttlmAmt><IntrBkSttlmDt>${esc(settlementDate)}</IntrBkSttlmDt><ChrgBr>SLEV</ChrgBr><InstgAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt><Dbtr><Nm>${esc(debtorName)}</Nm></Dbtr><DbtrAcct><Id><IBAN>${esc(debtorAccount)}</IBAN></Id><Nm>${esc(debtorName)}</Nm></DbtrAcct><DbtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(debtorAgentId)}</MmbId></ClrSysMmbId></FinInstnId></DbtrAgt><Cdtr><Nm>${esc(creditorName)}</Nm></Cdtr><CdtrAcct><Id><IBAN>${esc(creditorAccount)}</IBAN></Id><Nm>${esc(creditorName)}</Nm></CdtrAcct><CdtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(creditorAgentId)}</MmbId></ClrSysMmbId></FinInstnId></CdtrAgt>${narration ? `<RmtInf><Ustrd>${esc(String(narration).slice(0, 100))}</Ustrd></RmtInf>` : ''}<SplmtryData><PlcAndNm>AdditionalVerificationDetails</PlcAndNm><Envlp><CustomData><DebtorInfo><AccountDesignation>1</AccountDesignation><IdType>BVN</IdType><IdValue>${esc(DEBIT_ACCOUNT_BVN)}</IdValue><AccountTier>${DEBIT_ACCOUNT_TIER}</AccountTier></DebtorInfo><CreditorInfo><AccountDesignation>${creditorDesignation || 1}</AccountDesignation><IdType>${esc(creditorIdType || 'BVN')}</IdType><IdValue>${esc(creditorIdValue || '')}</IdValue><AccountTier>${creditorTier || 3}</AccountTier></CreditorInfo><TransactionInfo><TransactionLocation>${esc(txLocation || '01080652440N020900337921E')}</TransactionLocation><NameEnquiryMsgId>${esc(neEnquiryMsgId || '')}</NameEnquiryMsgId><ChannelCode>${CHANNEL_CODE}</ChannelCode><RiskRating>R000000000000000000B9</RiskRating></TransactionInfo></CustomData></Envlp></SplmtryData></CdtTrfTxInf></FIToFICstmrCdtTrf></Document>`;
+  return `<ns2:Document xmlns:ns2="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.12"><FIToFICstmrCdtTrf><GrpHdr><MsgId>${esc(msgId)}</MsgId><CreDtTm>${nowWAT().iso}</CreDtTm><BtchBookg>false</BtchBookg><NbOfTxs>1</NbOfTxs><SttlmInf><SttlmMtd>CLRG</SttlmMtd></SttlmInf><InstgAgt><FinInstnId><BICFI>${esc(INSTITUTION_CODE)}</BICFI><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><BICFI>${esc(destMemberId)}</BICFI><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt></GrpHdr><CdtTrfTxInf><PmtId><InstrId>${esc(instrId)}</InstrId><EndToEndId>${esc(endToEndId)}</EndToEndId><TxId>${esc(txId)}</TxId></PmtId><PmtTpInf><ClrChanl>RTNS</ClrChanl><SvcLvl><Prtry>0100</Prtry></SvcLvl><LclInstrm><Prtry>CTAA</Prtry></LclInstrm><CtgyPurp><Prtry>001</Prtry></CtgyPurp></PmtTpInf><IntrBkSttlmAmt Ccy="NGN">${esc(amountNaira)}</IntrBkSttlmAmt><IntrBkSttlmDt>${esc(settlementDate)}</IntrBkSttlmDt><ChrgBr>SLEV</ChrgBr><InstgAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt><Dbtr><Nm>${esc(debtorName)}</Nm></Dbtr><DbtrAcct><Id><IBAN>${esc(debtorAccount)}</IBAN></Id><Nm>${esc(debtorName)}</Nm></DbtrAcct><DbtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(debtorAgentId)}</MmbId></ClrSysMmbId></FinInstnId></DbtrAgt><Cdtr><Nm>${esc(creditorName)}</Nm></Cdtr><CdtrAcct><Id><IBAN>${esc(creditorAccount)}</IBAN></Id><Nm>${esc(creditorName)}</Nm></CdtrAcct><CdtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(creditorAgentId)}</MmbId></ClrSysMmbId></FinInstnId></CdtrAgt>${narration ? `<RmtInf><Ustrd>${esc(String(narration).slice(0, 100))}</Ustrd></RmtInf>` : ''}<SplmtryData><PlcAndNm>AdditionalVerificationDetails</PlcAndNm><Envlp><CustomData><DebtorInfo><AccountDesignation>1</AccountDesignation><IdType>BVN</IdType><IdValue>${esc(DEBIT_ACCOUNT_BVN)}</IdValue><AccountTier>${DEBIT_ACCOUNT_TIER}</AccountTier></DebtorInfo><CreditorInfo><AccountDesignation>${creditorDesignation || 1}</AccountDesignation><IdType>${esc(creditorIdType || 'BVN')}</IdType><IdValue>${esc(creditorIdValue || '')}</IdValue><AccountTier>${creditorTier || 3}</AccountTier></CreditorInfo><TransactionInfo><TransactionLocation>${esc(txLocation || '01080652440N020900337921E')}</TransactionLocation><NameEnquiryMsgId>${esc(neEnquiryMsgId || '')}</NameEnquiryMsgId><ChannelCode>${CHANNEL_CODE}</ChannelCode><RiskRating>R000000000000000000B9</RiskRating></TransactionInfo></CustomData></Envlp></SplmtryData></CdtTrfTxInf></FIToFICstmrCdtTrf></ns2:Document>`;
 }
 
 // ── acmt.023 builder ──────────────────────────────────────────────────────────
+// FTA format: 4-space indentation, CreDtTm with no ms/tz (matches NIBSS sample)
 function buildAcmt023(opts) {
   const { msgId, destMemberId, beneficiaryAccount } = opts;
-  return `<Document xmlns:ns2="urn:iso:std:iso:20022:tech:xsd:acmt.023.001.04"><IdVrfctnReq><Assgnmt><MsgId>${esc(msgId)}</MsgId><CreDtTm>${nowWAT().iso}</CreDtTm><Cretr><Pty><Nm>${esc(INSTITUTION_NAME)}</Nm></Pty></Cretr><Assgnr><Pty><Nm>${esc(INSTITUTION_NAME)}</Nm></Pty><Agt><FinInstnId><BICFI>${esc(INSTITUTION_CODE)}</BICFI><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></Agt></Assgnr><Assgne><Agt><FinInstnId><BICFI>${esc(destMemberId)}</BICFI><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></Agt></Assgne></Assgnmt><Vrfctn><Id>${esc(msgId)}</Id><PtyAndAcctId><Pty><Nm></Nm></Pty><Acct><Id><IBAN>${esc(beneficiaryAccount)}</IBAN></Id></Acct></PtyAndAcctId></Vrfctn></IdVrfctnReq></Document>`;
+  const creDtTm = nowWAT().isoNoMs;
+  return `<ns2:Document xmlns:ns2="urn:iso:std:iso:20022:tech:xsd:acmt.023.001.04">
+    <IdVrfctnReq>
+        <Assgnmt>
+            <MsgId>${esc(msgId)}</MsgId>
+            <CreDtTm>${creDtTm}</CreDtTm>
+            <Cretr>
+                <Pty>
+                    <Nm>${esc(INSTITUTION_NAME)}</Nm>
+                </Pty>
+            </Cretr>
+            <Assgnr>
+                <Pty>
+                    <Nm>${esc(INSTITUTION_NAME)}</Nm>
+                </Pty>
+                <Agt>
+                    <FinInstnId>
+                        <BICFI>${esc(INSTITUTION_CODE)}</BICFI>
+                        <ClrSysMmbId>
+                            <MmbId>${esc(INSTITUTION_CODE)}</MmbId>
+                        </ClrSysMmbId>
+                    </FinInstnId>
+                </Agt>
+            </Assgnr>
+            <Assgne>
+                <Agt>
+                    <FinInstnId>
+                        <BICFI>${esc(destMemberId)}</BICFI>
+                        <ClrSysMmbId>
+                            <MmbId>${esc(destMemberId)}</MmbId>
+                        </ClrSysMmbId>
+                    </FinInstnId>
+                </Agt>
+            </Assgne>
+        </Assgnmt>
+        <Vrfctn>
+            <Id>${esc(msgId)}</Id>
+            <PtyAndAcctId>
+                <Pty>
+                    <Nm></Nm>
+                </Pty>
+                <Acct>
+                    <Id>
+                        <IBAN>${esc(beneficiaryAccount)}</IBAN>
+                    </Id>
+                </Acct>
+            </PtyAndAcctId>
+        </Vrfctn>
+    </IdVrfctnReq>
+</ns2:Document>`;
 }
 
 // ── pacs.028 builder ──────────────────────────────────────────────────────────
 function buildPacs028(opts) {
   const { msgId, origMsgId, origTxId } = opts;
-  return `<Document xmlns:ns2="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.06"><FIToFIPmtStsReq><GrpHdr><MsgId>${esc(msgId)}</MsgId><CreDtTm>${nowWAT().iso}</CreDtTm><InstgAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt></GrpHdr><OrgnlGrpInf><OrgnlMsgId>${esc(origMsgId)}</OrgnlMsgId><OrgnlMsgNmId>pacs.008.001.12</OrgnlMsgNmId></OrgnlGrpInf><TxInf><StsReqId>${esc(msgId)}</StsReqId><OrgnlTxId>${esc(origTxId)}</OrgnlTxId></TxInf></FIToFIPmtStsReq></Document>`;
+  return `<ns2:Document xmlns:ns2="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.06"><FIToFIPmtStsReq><GrpHdr><MsgId>${esc(msgId)}</MsgId><CreDtTm>${nowWAT().iso}</CreDtTm><InstgAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt></GrpHdr><OrgnlGrpInf><OrgnlMsgId>${esc(origMsgId)}</OrgnlMsgId><OrgnlMsgNmId>pacs.008.001.12</OrgnlMsgNmId></OrgnlGrpInf><TxInf><StsReqId>${esc(msgId)}</StsReqId><OrgnlTxId>${esc(origTxId)}</OrgnlTxId></TxInf></FIToFIPmtStsReq></ns2:Document>`;
 }
 
 // ── nameEnquiry ───────────────────────────────────────────────────────────────
@@ -356,7 +475,7 @@ async function nameEnquiry(bankMemberId, accountNumber) {
   try {
     const xml     = buildAcmt023({ msgId, destMemberId: bankMemberId, beneficiaryAccount: accountNumber });
     const payload = prepareOutbound(xml, 'acmt.023');
-    const { status, body } = await npsPost('/nps/acmt/023', payload);
+    const { status, body } = await npsPost('/nps/acmt', payload);
 
     if (status === 200 && body) {
       const decrypted = body.includes('<xenc:EncryptedData') ? decryptContentElement(body) : body;
@@ -500,6 +619,115 @@ async function queryPayoutResult(item) {
   }
 }
 
+// ── acmt.024 builder — NE response (we respond to NIBSS's acmt.023) ──────────
+// status: 'ACCP' (found) | 'RJCT' (not found); rejectCode e.g. 'AC01', 'AC03'
+function buildAcmt024(opts) {
+  const { msgId, origMsgId, requesterMemberId, accountNumber, accountName, status, rejectCode } = opts;
+  const accepted = status !== 'RJCT';
+  const now = nowWAT().iso;
+  return '<Document xmlns:ns2="urn:iso:std:iso:20022:tech:xsd:acmt.024.001.04">' +
+    '<IdVrfctnRpt>' +
+    '<Assgnmt>' +
+    '<MsgId>' + esc(msgId) + '</MsgId>' +
+    '<CreDtTm>' + now + '</CreDtTm>' +
+    '<Cretr><Pty><Nm>' + esc(INSTITUTION_NAME) + '</Nm></Pty></Cretr>' +
+    '<Assgnr><Pty><Nm>' + esc(INSTITUTION_NAME) + '</Nm></Pty>' +
+    '<Agt><FinInstnId><BICFI>' + esc(INSTITUTION_CODE) + '</BICFI>' +
+    '<ClrSysMmbId><MmbId>' + esc(INSTITUTION_CODE) + '</MmbId></ClrSysMmbId>' +
+    '</FinInstnId></Agt></Assgnr>' +
+    '<Assgne><Agt><FinInstnId><BICFI>' + esc(requesterMemberId) + '</BICFI>' +
+    '<ClrSysMmbId><MmbId>' + esc(requesterMemberId) + '</MmbId></ClrSysMmbId>' +
+    '</FinInstnId></Agt></Assgne>' +
+    '</Assgnmt>' +
+    '<OrgnlId>' + esc(origMsgId) + '</OrgnlId>' +
+    (accepted
+      ? '<Vrfctn><Id>' + esc(origMsgId) + '</Id>' +
+        '<PtyAndAcctId><Pty><Nm>' + esc(accountName || '') + '</Nm></Pty>' +
+        '<Acct><Id><IBAN>' + esc(accountNumber || '') + '</IBAN></Id></Acct>' +
+        '</PtyAndAcctId></Vrfctn>'
+      : '<Rpt><Rsn><Cd>' + esc(rejectCode || 'AC01') + '</Cd></Rsn></Rpt>') +
+    '</IdVrfctnRpt></Document>';
+}
+
+// ── pacs.002 builder — payment status report (we ACK NIBSS's inbound pacs.008) ─
+// grpStatus: 'ACCP' (received/processing) | 'ACSC' (settled) | 'RJCT' (rejected)
+function buildPacs002(opts) {
+  const { msgId, origMsgId, origTxId, grpStatus, rejectCode } = opts;
+  return '<Document xmlns:ns2="urn:iso:std:iso:20022:tech:xsd:pacs.002.001.14">' +
+    '<FIToFIPmtStsRpt>' +
+    '<GrpHdr>' +
+    '<MsgId>' + esc(msgId) + '</MsgId>' +
+    '<CreDtTm>' + nowWAT().iso + '</CreDtTm>' +
+    '<InstgAgt><FinInstnId><ClrSysMmbId><MmbId>' + esc(INSTITUTION_CODE) + '</MmbId></ClrSysMmbId></FinInstnId></InstgAgt>' +
+    '</GrpHdr>' +
+    '<OrgnlGrpInfAndSts>' +
+    '<OrgnlMsgId>' + esc(origMsgId) + '</OrgnlMsgId>' +
+    '<OrgnlMsgNmId>pacs.008.001.12</OrgnlMsgNmId>' +
+    '<GrpSts>' + esc(grpStatus) + '</GrpSts>' +
+    (grpStatus === 'RJCT' ? '<StsRsnInf><Rsn><Cd>' + esc(rejectCode || 'MS03') + '</Cd></Rsn></StsRsnInf>' : '') +
+    '</OrgnlGrpInfAndSts>' +
+    (origTxId
+      ? '<TxInfAndSts><OrgnlTxId>' + esc(origTxId) + '</OrgnlTxId>' +
+        '<TxSts>' + esc(grpStatus) + '</TxSts></TxInfAndSts>'
+      : '') +
+    '</FIToFIPmtStsRpt></Document>';
+}
+
+// ── parseAcmt023 — extract fields from NIBSS's inbound NE request ─────────────
+function parseAcmt023(xmlStr) {
+  const msgId          = (xmlStr.match(/<MsgId>([^<]+)<\/MsgId>/)   || [])[1] || '';
+  const requesterMid   = (xmlStr.match(/<BICFI>([^<]+)<\/BICFI>/)   || [])[1] || '';
+  const accountNumber  = (xmlStr.match(/<IBAN>([^<]+)<\/IBAN>/)     || [])[1] || '';
+  return { msgId, requesterMemberId: requesterMid, accountNumber };
+}
+
+// ── parsePacs008Inbound — extract fields from NIBSS's inbound credit transfer ──
+function parsePacs008Inbound(xmlStr) {
+  const msgId        = (xmlStr.match(/<MsgId>([^<]+)<\/MsgId>/)                                                                       || [])[1] || '';
+  const txId         = (xmlStr.match(/<TxId>([^<]+)<\/TxId>/)                                                                         || [])[1] || msgId;
+  const amountStr    = (xmlStr.match(/<IntrBkSttlmAmt[^>]*>([^<]+)</)                                                                 || [])[1] || '0';
+  const currency     = (xmlStr.match(/<IntrBkSttlmAmt[^>]*Ccy="([^"]+)"/)                                                             || [])[1] || 'NGN';
+  const creditorAcct = (xmlStr.match(/<CdtrAcct>[\s\S]*?<IBAN>([^<]+)<\/IBAN>[\s\S]*?<\/CdtrAcct>/)                                   || [])[1] || '';
+  const creditorNm   = (xmlStr.match(/<Cdtr>[\s\S]*?<Nm>([^<]+)<\/Nm>[\s\S]*?<\/Cdtr>/)                                               || [])[1] || '';
+  const debtorNm     = (xmlStr.match(/<Dbtr>[\s\S]*?<Nm>([^<]+)<\/Nm>[\s\S]*?<\/Dbtr>/)                                               || [])[1] || '';
+  const senderMid    = (xmlStr.match(/<InstgAgt>[\s\S]*?<MmbId>([^<]+)<\/MmbId>[\s\S]*?<\/InstgAgt>/)                                 || [])[1] || '';
+  const narration    = (xmlStr.match(/<Ustrd>([^<]+)<\/Ustrd>/)                                                                       || [])[1] || '';
+  return {
+    msgId, txId,
+    amountKobo: Math.round(parseFloat(amountStr) * 100),
+    currency, creditorAccount: creditorAcct, creditorName: creditorNm,
+    debtorName: debtorNm, senderMemberId: senderMid, narration,
+  };
+}
+
+// ── sendAcmt024 — send NE response to NIBSS ───────────────────────────────────
+async function sendAcmt024(opts) {
+  if (!isConfigured()) return { ok: false, reason: 'NPS not configured' };
+  const msgId = makeMsgId();
+  try {
+    const xml     = buildAcmt024({ msgId, ...opts });
+    const payload = prepareOutbound(xml, 'acmt.024');
+    const { status } = await npsPost('/nps/acmt', payload);
+    return { ok: status === 200 || status === 202, status, msgId };
+  } catch (e) {
+    return { ok: false, reason: e.message, msgId };
+  }
+}
+
+// ── sendPacs002 — send payment status report to NIBSS ─────────────────────────
+async function sendPacs002(opts) {
+  if (!isConfigured()) return { ok: false, reason: 'NPS not configured' };
+  const msgId = makeMsgId();
+  try {
+    const xml     = buildPacs002({ msgId, ...opts });
+    const payload = prepareOutbound(xml, 'pacs.002');
+    const { status } = await npsPost('/nps/pacs', payload);
+    return { ok: status === 200 || status === 202, status, msgId };
+  } catch (e) {
+    return { ok: false, reason: e.message, msgId };
+  }
+}
+
 // getBalance not supported by NPS — payout rail always pre-funded externally
 async function getBalance() {
   return BigInt(0);
@@ -511,8 +739,20 @@ module.exports = {
   sendPayout,
   queryPayoutResult,
   nameEnquiry,
+  // Builders (outbound)
+  buildAcmt023,
+  buildPacs002,
+  buildAcmt024,
+  // Senders (outbound — triggered by inbound events)
+  sendPacs002,
+  sendAcmt024,
+  // Parsers (inbound)
+  parseAcmt023,
+  parsePacs008Inbound,
   // Exposed for inbound webhook handler
   decryptContentElement,
   verifySignature,
   parsePacs002,
+  // Exposed for testing
+  prepareOutbound,
 };
