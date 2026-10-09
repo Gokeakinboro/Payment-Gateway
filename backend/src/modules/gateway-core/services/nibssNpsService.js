@@ -170,19 +170,17 @@ const C14N_1_0 = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
 
 function signXml(xmlStr) {
   const pubKeyInfo = loadPaylodePubKeyInfo();
-  const signerOpts = { privateKey: loadPrivateKey() };
+  const sig = new SignedXml({ privateKey: loadPrivateKey() });
+  // xml-crypto v6: getKeyInfoContent must be set on the instance, not in constructor options
   if (pubKeyInfo) {
-    signerOpts.keyInfoProvider = {
-      getKeyInfo(key, prefix) {
-        const p = prefix ? `${prefix}:` : '';
-        return `<${p}KeyValue><${p}RSAKeyValue>` +
-               `<${p}Modulus>${pubKeyInfo.n}</${p}Modulus>` +
-               `<${p}Exponent>${pubKeyInfo.e}</${p}Exponent>` +
-               `</${p}RSAKeyValue></${p}KeyValue>`;
-      },
+    sig.getKeyInfoContent = function(key, prefix) {
+      const p = prefix ? `${prefix}:` : '';
+      return `<${p}KeyValue><${p}RSAKeyValue>` +
+             `<${p}Modulus>${pubKeyInfo.n}</${p}Modulus>` +
+             `<${p}Exponent>${pubKeyInfo.e}</${p}Exponent>` +
+             `</${p}RSAKeyValue></${p}KeyValue>`;
     };
   }
-  const sig = new SignedXml(signerOpts);
   sig.addReference({
     uri:            '',
     isEmptyUri:     true,
@@ -491,7 +489,8 @@ async function nameEnquiry(bankMemberId, accountNumber) {
     }
 
     // HTTP 202 = accepted, response async — caller must re-check
-    if (status === 202) {
+    // HTTP 400 + empty body = NIBSS async ACK (they return 400 for all async responses)
+    if (status === 202 || (status === 400 && !body)) {
       return { ok: false, accountName: '', sessionId: msgId, kycLevel: '', reason: 'ASYNC', raw: body };
     }
 
