@@ -4,24 +4,23 @@
 //  transfer switch (spec: "TECHNICAL SPECIFICATION DOCUMENT FOR FUNDS
 //  TRANSFER", Hydrogen, 2025-10-28).
 //
-//  Outbound path: pacs.008 PGP-encrypted (ASCII armored) inside xenc → Hydrogen
-//  Name enquiry:  acmt.023 PGP-encrypted (ASCII armored) inside xenc → Hydrogen
-//  Status query:  pacs.028 PGP-encrypted (ASCII armored) inside xenc → Hydrogen
-//  Balance:       plain JSON PGP-encrypted; format TBC by Hydrogen support.
+//  Outbound path: pacs.008 PGP-encrypted (binary→hex) inside xenc → Hydrogen
+//  Name enquiry:  acmt.023 PGP-encrypted (binary→hex) inside xenc → Hydrogen
+//  Status query:  pacs.028 PGP-encrypted (binary→hex) inside xenc → Hydrogen
+//  Balance:       JSON payload, same PGP binary→hex wrapping, application/xml.
 //
-//  Encryption scheme per spec section 3 & 5 (different from NIBSS NPS, which
-//  uses XMLDSig-sign + AES-256-GCM/RSA-OAEP):
+//  Encryption scheme confirmed by Hydrogen support:
 //    1. Build the plaintext ISO20022 XML content element (e.g. <IdVrfctnReq>,
 //       <FIToFICstmrCdtTrf>, <FIToFIPmtStsReq>).
-//    2. PGP-encrypt the inner XML with Hydrogen's PGP public key, producing
-//       ASCII-armored output (-----BEGIN PGP MESSAGE-----...-----END...).
-//       Sandbox testing confirmed armored format; Hydrogen server recognises it
-//       and attempts decryption (hex-encoded binary gives "InvalidIso20022Xml").
+//    2. PGP-encrypt the inner XML with Hydrogen's RSA-2048 public key, producing
+//       raw binary output (NOT ASCII-armored). Convert the binary directly to
+//       uppercase hex. Do NOT base64/armor the output first.
 //    3. Wrap as <xenc:EncryptedData><xenc:CipherData><xenc:CipherValue>
-//       {ARMORED PGP}</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData>
+//       {UPPERCASE HEX}</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData>
 //       inside the content element.
-//    Inbound responses reverse this: Hydrogen response CipherValue may be
-//    armored PGP or hex-encoded PGP; both are handled by decryptContentElement.
+//    Inbound responses reverse this: Hydrogen encrypts responses with our public
+//    key; CipherValue contains hex-encoded binary PGP; decryptContentElement
+//    handles both hex and armored formats.
 //
 //  Required env vars (HYDROGEN_*) — none set yet; isConfigured() is false
 //  until they are, so this module is fully inert (not wired into
@@ -138,16 +137,22 @@ function nowUTC() {
   };
 }
 
+// Confirmed format from Hydrogen sample: {inst(6)}{yyMMddHHmmss(12)}{random(12)} = 30 chars
+// (2-digit year, NOT 4-digit; 12 random digits, NOT 15)
 function makeMsgId() {
   const t = nowUTC();
-  return INSTITUTION_CODE + t.yyyyMMddHHmmss + randomDigits(15);
+  const yyMMddHHmmss = t.yyyyMMddHHmmss.slice(2); // drop century "20" → 12 chars
+  return INSTITUTION_CODE + yyMMddHHmmss + randomDigits(12);
 }
 function makeEndToEndId() {
-  return INSTITUTION_CODE + randomDigits(29);
+  const t = nowUTC();
+  const yyMMddHHmmss = t.yyyyMMddHHmmss.slice(2);
+  return INSTITUTION_CODE + yyMMddHHmmss + randomDigits(12);
 }
 function makeInstrId(destCode) {
   const t = nowUTC();
-  return INSTITUTION_CODE + String(destCode).padEnd(6, '0').slice(0, 6) + t.yyyyMMddHHmmss + randomDigits(9);
+  const yyMMddHHmmss = t.yyyyMMddHHmmss.slice(2);
+  return INSTITUTION_CODE + String(destCode).padEnd(6, '0').slice(0, 6) + yyMMddHHmmss + randomDigits(6);
 }
 
 // ── Naira ↔ kobo ─────────────────────────────────────────────────────────────
@@ -183,18 +188,18 @@ function replaceElement(xml, tag, replacement) {
 }
 
 // ── PGP encrypt/decrypt ───────────────────────────────────────────────────────
-// Testing confirmed Hydrogen expects ASCII-armored PGP in xenc:CipherValue
-// (not hex-encoded binary). Hydrogen recognises the -----BEGIN PGP MESSAGE-----
-// envelope and tries to decrypt with their private key.
-async function pgpEncryptToArmored(plaintext) {
+// Hydrogen confirmed: encrypt to binary, convert directly to uppercase hex.
+// Do NOT use ASCII-armored output.
+async function pgpEncryptToHex(plaintext) {
   const publicKey = await loadHydrogenPublicKey();
   const message   = await openpgp.createMessage({ text: plaintext });
-  // Return ASCII-armored string (default format for openpgp.encrypt)
-  return openpgp.encrypt({
+  const encrypted = await openpgp.encrypt({
     message,
     encryptionKeys: publicKey,
-    config: { allowMissingKeyFlags: true },
+    format: 'binary',
+    config: { allowMissingKeyFlags: true, aeadProtect: false },
   });
+  return Buffer.from(encrypted).toString('hex').toUpperCase();
 }
 
 async function pgpDecryptArmored(armoredStr) {
@@ -213,7 +218,10 @@ async function pgpDecryptFromHex(hexStr) {
 }
 
 // Encrypt the INNER content of contentTag, keeping the outer element tags.
-// Result: <contentTag><xenc:EncryptedData>...armored PGP...</xenc:EncryptedData></contentTag>
+// Encrypt a COMPLETE ISO 20022 document containing the content element, place
+// the xenc:EncryptedData wrapper INSIDE the content element (outer tags kept).
+// Hydrogen validates the decrypted payload as a full ISO 20022 document, so we
+// must pass it a complete <?xml...><Document xmlns="...">...</Document>.
 async function encryptContentElement(xmlStr, contentTag) {
   const openTag  = `<${contentTag}`;
   const closeTag = `</${contentTag}>`;
@@ -224,15 +232,25 @@ async function encryptContentElement(xmlStr, contentTag) {
   if (closeStart < 0) throw new Error(`encryptContentElement: </${contentTag}> not found`);
 
   const innerContent = xmlStr.slice(openEnd, closeStart);
-  const armored = await pgpEncryptToArmored(innerContent);
+
+  // Extract the ISO 20022 namespace from the Document element to build a
+  // self-contained valid document for the encrypted payload.
+  const nsMatch = xmlStr.match(/xmlns:ns2="([^"]+)"/);
+  const ns = nsMatch ? nsMatch[1] : '';
+  const plainDocument = ns
+    ? `<?xml version="1.0" encoding="UTF-8"?><Document xmlns="${ns}"><${contentTag}>${innerContent}</${contentTag}></Document>`
+    : `<${contentTag}>${innerContent}</${contentTag}>`;
+
+  const hex = await pgpEncryptToHex(plainDocument);
   const encryptedData = [
     '<xenc:EncryptedData Type="http://www.w3.org/2001/04/xmlenc#Content"',
     ' xmlns:xenc="http://www.w3.org/2001/04/xmlenc#">',
     '<xenc:CipherData><xenc:CipherValue>',
-    armored,
+    hex,
     '</xenc:CipherValue></xenc:CipherData>',
     '</xenc:EncryptedData>',
   ].join('');
+  // Keep outer <contentTag> wrapper; xenc goes inside it
   return xmlStr.slice(0, openEnd) + encryptedData + xmlStr.slice(closeStart);
 }
 
@@ -342,7 +360,7 @@ function buildPacs008(opts) {
     creditorIdType, creditorIdValue, creditorTier, creditorDesignation,
   } = opts;
 
-  return `<?xml version="1.0" encoding="UTF-8" standalone="no"?><ns2:Document xmlns:ns2="${NS['pacs.008']}"><FIToFICstmrCdtTrf><GrpHdr><MsgId>${esc(msgId)}</MsgId><CreDtTm>${nowUTC().iso}</CreDtTm><BtchBookg>false</BtchBookg><NbOfTxs>1</NbOfTxs><SttlmInf><SttlmMtd>CLRG</SttlmMtd></SttlmInf><InstgAgt><FinInstnId><BICFI>${esc(INSTITUTION_CODE)}</BICFI><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><BICFI>${esc(destMemberId)}</BICFI><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt></GrpHdr><CdtTrfTxInf><PmtId><InstrId>${esc(instrId)}</InstrId><EndToEndId>${esc(endToEndId)}</EndToEndId><TxId>${esc(txId)}</TxId></PmtId><PmtTpInf><ClrChanl>RTNS</ClrChanl><SvcLvl><Prtry>0100</Prtry></SvcLvl><LclInstrm><Prtry>CTAA</Prtry></LclInstrm><CtgyPurp><Prtry>001</Prtry></CtgyPurp></PmtTpInf><IntrBkSttlmAmt Ccy="NGN">${esc(amountNaira)}</IntrBkSttlmAmt><IntrBkSttlmDt>${esc(settlementDate)}</IntrBkSttlmDt><ChrgBr>SLEV</ChrgBr><InstgAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt><Dbtr><Nm>${esc(debtorName)}</Nm></Dbtr><DbtrAcct><Id><IBAN>${esc(debtorAccount)}</IBAN></Id><Nm>${esc(debtorName)}</Nm></DbtrAcct><DbtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></DbtrAgt><CdtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></CdtrAgt><Cdtr><Nm>${esc(creditorName)}</Nm></Cdtr><CdtrAcct><Id><IBAN>${esc(creditorAccount)}</IBAN></Id><Nm>${esc(creditorName)}</Nm></CdtrAcct>${narration ? `<RmtInf><Ustrd>${esc(String(narration).slice(0, 140))}</Ustrd></RmtInf>` : ''}<SplmtryData><PlcAndNm>AdditionalVerificationDetails</PlcAndNm><Envlp><CustomData><DebtorInfo><AccountDesignation>${DEBIT_ACCOUNT_DESIGNATION}</AccountDesignation><IdType>BVN</IdType><IdValue>${esc(DEBIT_ACCOUNT_BVN)}</IdValue><AccountTier>${DEBIT_ACCOUNT_TIER}</AccountTier></DebtorInfo><CreditorInfo><AccountDesignation>${creditorDesignation || 1}</AccountDesignation><IdType>${esc(creditorIdType || 'BVN')}</IdType><IdValue>${esc(creditorIdValue || '')}</IdValue><AccountTier>${creditorTier != null ? creditorTier : 3}</AccountTier></CreditorInfo><TransactionInfo><TransactionLocation>${esc(TXN_LOCATION)}</TransactionLocation><NameEnquiryMsgId>${esc(neEnquiryMsgId || '')}</NameEnquiryMsgId><ChannelCode>${CHANNEL_CODE}</ChannelCode></TransactionInfo></CustomData></Envlp></SplmtryData></CdtTrfTxInf></FIToFICstmrCdtTrf></ns2:Document>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="no"?><ns2:Document xmlns:ns2="${NS['pacs.008']}"><FIToFICstmrCdtTrf><GrpHdr><MsgId>${esc(msgId)}</MsgId><CreDtTm>${nowUTC().iso}</CreDtTm><BtchBookg>false</BtchBookg><NbOfTxs>1</NbOfTxs><SttlmInf><SttlmMtd>CLRG</SttlmMtd></SttlmInf><InstgAgt><FinInstnId><BICFI>${esc(INSTITUTION_CODE)}</BICFI><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><BICFI>${esc(destMemberId)}</BICFI><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt></GrpHdr><CdtTrfTxInf><PmtId><InstrId>${esc(instrId)}</InstrId><EndToEndId>${esc(endToEndId)}</EndToEndId><TxId>${esc(txId)}</TxId></PmtId><PmtTpInf><ClrChanl>RTNS</ClrChanl><SvcLvl><Prtry>0100</Prtry></SvcLvl><LclInstrm><Prtry>CTAA</Prtry></LclInstrm><CtgyPurp><Prtry>001</Prtry></CtgyPurp></PmtTpInf><IntrBkSttlmAmt Ccy="NGN">${esc(amountNaira)}</IntrBkSttlmAmt><IntrBkSttlmDt>${esc(settlementDate)}</IntrBkSttlmDt><ChrgBr>SLEV</ChrgBr><InstgAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt><Dbtr><Nm>${esc(debtorName)}</Nm></Dbtr><DbtrAcct><Id><Othr><Id>${esc(debtorAccount)}</Id></Othr></Id><Nm>${esc(debtorName)}</Nm></DbtrAcct><DbtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></DbtrAgt><CdtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></CdtrAgt><Cdtr><Nm>${esc(creditorName)}</Nm></Cdtr><CdtrAcct><Id><IBAN>${esc(creditorAccount)}</IBAN></Id><Nm>${esc(creditorName)}</Nm></CdtrAcct>${narration ? `<RmtInf><Ustrd>${esc(String(narration).slice(0, 140))}</Ustrd></RmtInf>` : ''}<SplmtryData><PlcAndNm>AdditionalVerificationDetails</PlcAndNm><Envlp><CustomData><DebtorInfo><AccountDesignation>${DEBIT_ACCOUNT_DESIGNATION}</AccountDesignation><IdType>BVN</IdType><IdValue>${esc(DEBIT_ACCOUNT_BVN)}</IdValue><AccountTier>${DEBIT_ACCOUNT_TIER}</AccountTier></DebtorInfo><CreditorInfo><AccountDesignation>${creditorDesignation || 1}</AccountDesignation><IdType>${esc(creditorIdType || 'BVN')}</IdType><IdValue>${esc(creditorIdValue || '')}</IdValue><AccountTier>${creditorTier != null ? creditorTier : 3}</AccountTier></CreditorInfo><TransactionInfo><TransactionLocation>${esc(TXN_LOCATION)}</TransactionLocation><NameEnquiryMsgId>${esc(neEnquiryMsgId || '')}</NameEnquiryMsgId><ChannelCode>${CHANNEL_CODE}</ChannelCode></TransactionInfo></CustomData></Envlp></SplmtryData></CdtTrfTxInf></FIToFICstmrCdtTrf></ns2:Document>`;
 }
 
 // ── pacs.028 builder — Transaction Status Query request ──────────────────────
@@ -364,12 +382,16 @@ async function nameEnquiry(bankMemberId, accountNumber) {
     if (status === 200 && body) {
       const decrypted = body.includes('<xenc:EncryptedData') ? await decryptContentElement(body) : body;
       const vrfctn  = (decrypted.match(/<Vrfctn>(true|false)<\/Vrfctn>/i) || [])[1] || '';
-      const name    = (decrypted.match(/<Nm>([^<]+)<\/Nm>/) || [])[1] || '';
+      // Name is in UpdtdPtyAndAcctId/Pty/Nm — the verified/resolved name (not Assgne/Pty/Nm)
+      const name    = (decrypted.match(/<UpdtdPtyAndAcctId>[\s\S]*?<Nm>([^<]+)<\/Nm>/) || [])[1]
+                   || (decrypted.match(/<Nm>([^<]+)<\/Nm>/) || [])[1] || '';
+      // Use Hydrogen's own response MsgId (from <Assgnmt><MsgId>) as session ID for pacs.008
+      const hydrogenMsgId = (decrypted.match(/<Assgnmt>\s*<MsgId>([^<]+)<\/MsgId>/) || [])[1] || msgId;
       const rjctCd  = (decrypted.match(/<Rsn>\s*<Cd>([^<]+)<\/Cd>/) || [])[1] || '';
       if (/true/i.test(vrfctn) && name) {
-        return { ok: true, accountName: name, sessionId: msgId, kycLevel: '', reason: '', raw: body };
+        return { ok: true, accountName: name, sessionId: hydrogenMsgId, kycLevel: '', reason: '', raw: body };
       }
-      return { ok: false, accountName: '', sessionId: msgId, kycLevel: '', reason: rjctCd || 'Not verified', raw: body };
+      return { ok: false, accountName: '', sessionId: hydrogenMsgId, kycLevel: '', reason: rjctCd || 'Not verified', raw: body };
     }
 
     return { ok: false, reason: `HTTP ${status}`, sessionId: msgId, raw: body };
@@ -514,21 +536,32 @@ const PERMANENT_FAILURE_CODES = new Set([
 ]);
 
 // ── getBalance — Institution Balance endpoint ────────────────────────────────
-// Balance endpoint format TBC — using armored PGP with text/plain for now.
+// Confirmed by Hydrogen: same PGP+xenc wrapping as XML endpoints, application/xml.
+// Response may be xenc-wrapped JSON or plain JSON; both are handled.
 async function getBalance() {
   if (!isConfigured()) return BigInt(0);
   try {
     const payload = JSON.stringify({ ChannelCode: String(CHANNEL_CODE), SourceInstitutionCode: INSTITUTION_CODE });
-    const armored = await pgpEncryptToArmored(payload);
-    const { status, body } = await post('/eft/v1/inst/balance', armored, 'text/plain');
+    const hex = await pgpEncryptToHex(payload);
+    const encryptedBody = [
+      '<xenc:EncryptedData Type="http://www.w3.org/2001/04/xmlenc#Content"',
+      ' xmlns:xenc="http://www.w3.org/2001/04/xmlenc#">',
+      '<xenc:CipherData><xenc:CipherValue>',
+      hex,
+      '</xenc:CipherValue></xenc:CipherData>',
+      '</xenc:EncryptedData>',
+    ].join('');
+    const { status, body } = await post('/eft/v1/inst/balance', encryptedBody, 'application/xml; charset=UTF-8');
     if (status === 200 && body) {
-      const trimmed = body.trim();
-      const decrypted = trimmed.startsWith('-----BEGIN PGP')
-        ? await pgpDecryptArmored(trimmed)
-        : await pgpDecryptFromHex(trimmed);
-      const parsed = JSON.parse(decrypted);
-      if (parsed.ResponseCode === '00' && parsed.Amount) {
-        return BigInt(Math.round(parseFloat(parsed.Amount) * 100));
+      const decryptedBody = body.includes('<xenc:EncryptedData')
+        ? await decryptContentElement(body)
+        : body;
+      const jsonMatch = decryptedBody.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed.ResponseCode === '00' && parsed.Amount) {
+          return BigInt(Math.round(parseFloat(parsed.Amount) * 100));
+        }
       }
     }
     return BigInt(0);

@@ -11,6 +11,8 @@ const connection = new IORedis(process.env.REDIS_URL || 'redis://127.0.0.1:6379'
   maxRetriesPerRequest: null,
   enableReadyCheck:     false,
 });
+connection.on('error', err => logger.warn({ err }, 'Redis connection error'));
+connection.on('reconnecting', () => logger.info('Redis reconnecting'));
 
 const worker = new Worker('webhook-deliveries', async (job) => {
   const { merchantId, event, payload, url, secret } = job.data;
