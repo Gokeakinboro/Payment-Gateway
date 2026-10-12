@@ -428,7 +428,7 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const toDate   = to ? new Date(to + 'T23:59:59Z') : new Date();
 
-    const [txns, byCcy, ledgerEntries, walletRows, vaRateConfig] = await Promise.all([
+    const [txns, byCcy, periodDeltaResult, visibleLedgerEntries, walletRows, vaRateConfig] = await Promise.all([
       prisma.transaction.findMany({
         where: {
           merchantId: targetMerchantId,
@@ -445,14 +445,22 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
         _count: true,
         _sum: { amount: true, merchantFee: true },
       }),
-      // All entry types fetched — REBALANCE, FEE, VAT are not rendered but their
-      // balanceBefore/balanceAfter deltas are used to compute a correct combined
-      // running balance across all rails. REBALANCE nets to zero (one debit rail,
-      // one credit rail). FEE/VAT reduce the running balance without showing a row.
+      // Aggregate period delta across ALL entry types (including FEE/VAT/REBALANCE).
+      // Done as a raw aggregate so we don't fetch thousands of FEE/VAT rows.
+      prisma.$queryRawUnsafe(`
+        SELECT COALESCE(SUM(balance_after::numeric - balance_before::numeric), 0)::bigint AS delta
+        FROM wallet_ledger
+        WHERE merchant_id = $1::uuid
+          AND created_at >= $2
+          AND created_at <= $3
+      `, targetMerchantId, fromDate, toDate),
+      // Visible entries only (DEBIT/CREDIT/REVERSAL/REBALANCE), capped at 5000 newest.
+      // balance_after on each row already reflects post-entry balance; display uses it directly.
       prisma.walletLedger.findMany({
         where: {
           merchantId: targetMerchantId,
           createdAt: { gte: fromDate, lte: toDate },
+          entryType: { in: ['DEBIT', 'CREDIT', 'REVERSAL', 'REBALANCE'] },
         },
         select: {
           id: true, entryType: true, amount: true,
@@ -460,6 +468,7 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
           reference: true, description: true, createdAt: true,
         },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: 5000,
       }),
       // Closing balance: sum of live per-rail wallet balances (authoritative)
       prisma.merchantWallet.findMany({
@@ -516,48 +525,31 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
 
     // Payout wallet activity — single combined statement across all rails.
     //
-    // The ledger stores per-rail balanceBefore/balanceAfter. To produce a coherent
-    // combined running balance we use deltas (balanceAfter − balanceBefore) rather
-    // than raw balanceAfter values. REBALANCE entries cancel out (one rail −X, other
-    // rail +X = net 0). FEE/VAT reduce the running balance but are not shown as rows.
-    // Opening balance is derived: closing_balance − Σ(period deltas).
-    const VISIBLE_TYPES = new Set(['DEBIT', 'CREDIT', 'REVERSAL', 'REBALANCE']);
-    const CREDIT_TYPES  = new Set(['CREDIT', 'REVERSAL']);
+    // Opening balance = closing − full period delta. The period delta comes from the
+    // aggregate query (all entry types, no row limit) so it's accurate even when the
+    // per-row fetch is capped at 5000 visible entries.
+    // Each visible entry uses balance_after directly; FEE/VAT are omitted from the
+    // display but are already accounted for in the aggregate opening balance.
+    const CREDIT_TYPES = new Set(['CREDIT', 'REVERSAL']);
     const DESC_MAP = { CREDIT: 'Wallet top up', DEBIT: 'Payout', REVERSAL: 'Reversal', REBALANCE: 'Wallet adjustment' };
 
     const combinedClosingKobo = walletRows.reduce((s, w) => s + Number(w.balance), 0);
-    const periodDeltaKobo     = ledgerEntries.reduce(
-      (s, l) => s + (Number(l.balanceAfter) - Number(l.balanceBefore)), 0);
+    const periodDeltaKobo     = Number(periodDeltaResult[0]?.delta ?? 0);
     const combinedOpeningKobo = combinedClosingKobo - periodDeltaKobo;
 
-    // Walk entries in time order; accumulate combined running balance.
-    // For each visible entry, look ahead through consecutive hidden entries so the
-    // displayed balance reflects all charges (FEE, VAT) that belong to that row.
-    let runBal = combinedOpeningKobo; // kobo
-    const walletActivity = [];
-    for (let i = 0; i < ledgerEntries.length; i++) {
-      const l = ledgerEntries[i];
-      runBal += Number(l.balanceAfter) - Number(l.balanceBefore);
-      if (!VISIBLE_TYPES.has(l.entryType)) continue;
-      // Peek ahead: accumulate deltas of hidden entries that immediately follow
-      // this visible entry (FEE, VAT for this payout).
-      let visBalKobo = runBal;
-      for (let j = i + 1; j < ledgerEntries.length && !VISIBLE_TYPES.has(ledgerEntries[j].entryType); j++) {
-        visBalKobo += Number(ledgerEntries[j].balanceAfter) - Number(ledgerEntries[j].balanceBefore);
-      }
-      // REBALANCE direction is encoded in the delta, not a separate type flag.
+    const walletActivity = visibleLedgerEntries.map(l => {
       const delta    = Number(l.balanceAfter) - Number(l.balanceBefore);
       const isCredit = l.entryType === 'REBALANCE' ? delta >= 0 : CREDIT_TYPES.has(l.entryType);
       const amtKobo  = l.entryType === 'REBALANCE' ? Math.abs(delta) : Number(l.amount);
-      walletActivity.push({
+      return {
         reference:   l.reference,
         date:        l.createdAt,
         description: DESC_MAP[l.entryType] || l.description || l.entryType,
         credit:      isCredit ? amtKobo / 100 : null,
         debit:       isCredit ? null : amtKobo / 100,
-        balance:     visBalKobo / 100,
-      });
-    }
+        balance:     Number(l.balanceAfter) / 100,
+      };
+    });
 
     ok(res, {
       merchant,

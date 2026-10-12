@@ -6777,6 +6777,7 @@ async function downloadStatement() {
       '</body></html>';
 
     var w = window.open('', '_blank');
+    if (!w) { alert('Popup blocked — please allow popups for this site, then try again.'); return; }
     w.document.write(html);
     w.document.close();
     setTimeout(function() { w.print(); }, 500);
