@@ -2624,8 +2624,10 @@ async function loadPayoutReview() {
     var fmt = function(n) { return '₦' + Number(n).toLocaleString('en-NG', {minimumFractionDigits:2}); };
     var fmtDate = function(s) { return s ? new Date(s).toLocaleString('en-NG', {dateStyle:'medium',timeStyle:'short'}) : '—'; };
 
-    var heldItems   = items.filter(function(i) { return i.status === 'held'; });
-    var failedItems = items.filter(function(i) { return i.status === 'failed' && i.refundStatus === 'pending_review'; });
+    var heldItems    = items.filter(function(i) { return i.status === 'held'; });
+    var failedItems  = items.filter(function(i) { return i.status === 'failed' && i.refundStatus === 'pending_review'; });
+    var nullItems    = items.filter(function(i) { return i.status === 'failed' && !i.refundStatus; });
+    window._payoutReviewAllItems = items.concat(watchItems);
 
     var buildTable = function(list, cols) {
       if (!list.length) return '<p style="color:var(--gray-400);padding:12px 0">None</p>';
@@ -2662,13 +2664,17 @@ async function loadPayoutReview() {
         '<tbody>' + rows + '</tbody></table></div>';
     };
 
-    var allClear = items.length === 0 && watchItems.length === 0;
+    var allClear = heldItems.length === 0 && failedItems.length === 0 && nullItems.length === 0 && watchItems.length === 0;
+    var nullTotal = nullItems.reduce(function(s,i){return s+Number(i.amount||0);},0);
 
     host.innerHTML =
       '<div class="page-header"><div class="page-title">Payout Review</div>' +
       '<div class="page-desc">Items the watchdog could not auto-resolve. Use <strong>Re-query</strong> to check live Parallex status and auto-update.</div>' +
       '</div>' +
-      '<div style="margin-bottom:10px"><button class="btn btn-outline btn-sm" onclick="loadPayoutReview()">&#8635; Refresh</button></div>' +
+      '<div style="margin-bottom:10px">' +
+        '<button class="btn btn-outline btn-sm" onclick="loadPayoutReview()" style="margin-right:8px">&#8635; Refresh</button>' +
+        (window._payoutReviewAllItems && window._payoutReviewAllItems.length ? '<button class="btn btn-outline btn-sm" onclick="downloadPayoutReviewCSV()">&#8681; Download CSV</button>' : '') +
+      '</div>' +
       (allClear
         ? '<div class="card" style="padding:40px;text-align:center;color:var(--gray-400)">No items pending review ✓</div>'
         : '') +
@@ -2680,6 +2686,11 @@ async function loadPayoutReview() {
           '<div style="font-weight:600;margin-bottom:4px;color:#b91c1c">Failed — Refund Pending SA Approval</div>' +
           '<p style="font-size:12px;color:var(--gray-500);margin-bottom:8px">Parallex confirmed NO RECORD. Rail float restored. Approve refund before crediting merchant wallet.</p>' +
           buildTable(failedItems, 'normal') + '</div>' : '') +
+      (nullItems.length ? '<div class="card" style="margin-bottom:16px;border-left:3px solid #6b7280">' +
+          '<div style="font-weight:600;margin-bottom:4px">Unqueued Failed Payouts — ' + nullItems.length + ' items · ₦' + nullTotal.toLocaleString('en-NG',{minimumFractionDigits:2}) + '</div>' +
+          '<p style="font-size:12px;color:var(--gray-500);margin-bottom:10px">These failed payouts were never queued for refund review (older code path). Download CSV to audit with merchant before approving any.</p>' +
+          '<button class="btn btn-outline btn-sm" onclick="downloadPayoutReviewCSV()">&#8681; Download CSV (' + nullItems.length + ' rows)</button>' +
+          '</div>' : '') +
       (watchItems.length ? '<div class="card" style="border-left:3px solid #92400e">' +
           '<div style="font-weight:600;margin-bottom:4px;color:#92400e">Watch List — Wallet Already Refunded, Parallex Unconfirmed</div>' +
           '<p style="font-size:12px;color:var(--gray-500);margin-bottom:8px">These were refunded to the merchant wallet before the watchdog fix. Parallex status was unknown at refund time. Re-query each to confirm Parallex\'s final answer — if settled, money was double-spent.</p>' +
@@ -2687,6 +2698,31 @@ async function loadPayoutReview() {
   } catch(e) {
     host.innerHTML = errorCard(e.message || 'Failed to load payout review');
   }
+}
+
+function downloadPayoutReviewCSV() {
+  var all = window._payoutReviewAllItems || [];
+  if (!all.length) { alert('No data — open Payout Review first.'); return; }
+  var headers = ['Merchant Code','Merchant','Reference','Beneficiary','Account','Bank Code','Amount (NGN)','Fee (NGN)','Refund Amount (NGN)','Status','Refund Status','Failure Reason','Rail','Date'];
+  var esc = function(v) { return '"' + String(v||'').replace(/"/g,"'") + '"'; };
+  var rows = all.map(function(i) {
+    return [
+      i.merchantCode||'', esc(i.businessName||''), i.railOrderId||'',
+      esc(i.accountName||''), i.accountNumber||'', i.bankCode||'',
+      Number(i.amount||0).toFixed(2), Number(i.itemFee||0).toFixed(2),
+      i.refundAmount!=null ? Number(i.refundAmount).toFixed(2) : '',
+      i.status||'', i.refundStatus||'null',
+      esc(i.failureReason||''), i.railName||'',
+      i.createdAt ? new Date(i.createdAt).toISOString().slice(0,10) : '',
+    ].join(',');
+  });
+  var csv = '﻿' + headers.join(',') + '\n' + rows.join('\n');
+  var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'payout-review-' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── SA: STUCK PAYOUTS — NIP status check + safe resolution per batch ─────────
@@ -2968,9 +3004,10 @@ async function loadMerchStatement() {
         '<label class="form-label" style="margin:0;white-space:nowrap">To</label>' +
         '<input class="form-input" type="date" id="stmt-to" value="' + todayStr + '" style="width:160px" onchange="refreshMerchStatement()">' +
         '<button class="btn btn-lime" onclick="downloadStatement()">&#8681; Download PDF</button>' +
+        '<button class="btn btn-outline" onclick="downloadWalletCSV()">&#8681; Download CSV</button>' +
         '<button class="btn btn-outline" onclick="emailStatement()"><i data-lucide="mail" width="14" height="14" style="vertical-align:middle;margin-right:4px"></i>Email to Me</button>' +
       '</div>' +
-      '<div class="form-hint" style="margin-top:8px">View up to 3 months &nbsp;·&nbsp; Download up to 6 months</div>' +
+      '<div class="form-hint" style="margin-top:8px">View up to 3 months &nbsp;·&nbsp; Download up to 6 months &nbsp;·&nbsp; CSV includes wallet debits, credits & refunds</div>' +
     '</div>' +
     '<div id="stmt-preview"><div style="text-align:center;padding:32px;color:var(--gray-400)">Loading statement…</div></div>';
   if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -3061,15 +3098,16 @@ function _buildStmtPanels(d, scope) {
   var collHead = '<thead><tr><th>Date</th><th>Reference</th><th>Customer</th><th style="text-align:right">Amount</th><th style="text-align:right">Fee</th><th style="text-align:right">Net</th></tr></thead>';
   var wallHead = '<thead><tr><th>Date</th><th>Description</th><th style="text-align:right">Credit</th><th style="text-align:right">Debit</th><th style="text-align:right">Balance</th></tr></thead>';
 
+  var defTab = (wall.length > 0 && !va.length && !card.length) ? 'payout' : 'va';
   return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
     '<label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);white-space:nowrap">Statement</label>'+
     '<select class="form-control" style="width:auto;font-size:13px;font-weight:600" onchange="_switchStmtPanel(this.value,\''+scope+'\')">'+
-      '<option value="va">Collections — Virtual Account</option>'+
+      '<option value="va"'+(defTab==='va'?' selected':'')+'>Collections — Virtual Account</option>'+
       '<option value="card">Collections — Card</option>'+
-      '<option value="payout">Payout Wallet</option>'+
+      '<option value="payout"'+(defTab==='payout'?' selected':'')+'>Payout Wallet</option>'+
     '</select>'+
   '</div>'+
-  '<div data-sp="va" data-ss="'+scope+'" class="card">'+
+  '<div data-sp="va" data-ss="'+scope+'" class="card"'+(defTab!=='va'?' style="display:none"':'')+'>'+
     '<div class="card-header"><div class="card-title">Collections via Virtual Account</div></div>'+
     '<div class="table-wrap"><table>'+collHead+'<tbody>'+collRows(va)+'</tbody></table></div>'+
   '</div>'+
@@ -3077,7 +3115,7 @@ function _buildStmtPanels(d, scope) {
     '<div class="card-header"><div class="card-title">Collections — Card</div></div>'+
     '<div class="table-wrap"><table>'+collHead+'<tbody>'+collRows(card)+'</tbody></table></div>'+
   '</div>'+
-  '<div data-sp="payout" data-ss="'+scope+'" class="card" style="display:none">'+
+  '<div data-sp="payout" data-ss="'+scope+'" class="card"'+(defTab!=='payout'?' style="display:none"':'')+'>'+
     '<div class="card-header"><div class="card-title">Payout Wallet</div></div>'+
     '<div class="table-wrap"><table>'+wallHead+'<tbody>'+walletRows()+'</tbody></table></div>'+
   '</div>';
@@ -6746,6 +6784,61 @@ async function downloadStatement() {
     alert('Failed to generate statement: ' + e.message);
   } finally {
     if (btn) { btn.innerHTML = '&#8681; Download PDF'; btn.disabled = false; }
+  }
+}
+
+async function downloadWalletCSV() {
+  var range = _stmtGetRange();
+  var from = range.from, to = range.to;
+  var days = (new Date(to) - new Date(from)) / 86400000;
+  if (days < 0)   { alert('"To" date must be after "From" date'); return; }
+  if (days > 366) { alert('Download window is limited to 12 months.'); return; }
+
+  var btn = document.querySelector('[onclick="downloadWalletCSV()"]');
+  if (btn) { btn.textContent = '⟳ Generating...'; btn.disabled = true; }
+
+  try {
+    var res = await apiFetch('/reports/merchant-statement?from=' + from + '&to=' + to + '&perPage=2000');
+    if (!res || !res.data) throw new Error('Could not fetch statement data');
+    var d = res.data;
+    var wall = d.wallet_activity || [];
+    var opening = d.wallet_opening_balance || 0;
+    var closing = d.wallet_closing_balance != null ? d.wallet_closing_balance : (wall.length ? wall[wall.length-1].balance : 0);
+    var m = d.merchant || {};
+
+    var fmtNum = function(n) { return n == null ? '' : Number(n).toFixed(2); };
+    var fmtDate = function(d) { return d ? new Date(d).toLocaleDateString('en-NG', {year:'numeric',month:'2-digit',day:'2-digit'}) : ''; };
+    var fmtTime = function(d) { return d ? new Date(d).toLocaleTimeString('en-NG', {hour12:false}) : ''; };
+    var esc2 = function(s) { return '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"'; };
+
+    var rows = [
+      ['Date', 'Time', 'Reference', 'Description', 'Credit (NGN)', 'Debit (NGN)', 'Balance (NGN)'].join(','),
+      [fmtDate(d.period && d.period.from), '', 'OPENING', 'Balance brought forward', '', '', fmtNum(opening)].join(','),
+    ];
+    wall.forEach(function(w) {
+      rows.push([
+        fmtDate(w.date),
+        fmtTime(w.date),
+        esc2(w.reference || ''),
+        esc2(w.description || ''),
+        fmtNum(w.credit),
+        fmtNum(w.debit),
+        fmtNum(w.balance),
+      ].join(','));
+    });
+    rows.push([fmtDate(d.period && d.period.to), '', 'CLOSING', 'Closing balance', '', '', fmtNum(closing)].join(','));
+
+    var csv = rows.join('\r\n');
+    var filename = 'wallet-statement-' + (m.merchantCode || 'merchant') + '-' + from + '-to-' + to + '.csv';
+    var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) {
+    alert('Failed to generate CSV: ' + e.message);
+  } finally {
+    if (btn) { btn.innerHTML = '&#8681; Download CSV'; btn.disabled = false; }
   }
 }
 

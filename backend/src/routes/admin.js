@@ -201,7 +201,7 @@ router.get('/payout-review', requireAuth, requireAdmin, async (req, res, next) =
            OR (pi.status = 'failed' AND pi.refund_status = 'pending_review')
            OR (pi.status = 'failed' AND pi.refund_status IS NULL AND pi.failure_reason IS NOT NULL)
         ORDER BY pi.created_at DESC
-        LIMIT 200
+        LIMIT 1000
       `,
       // Watch list: old items where wallet was already refunded (approved) but Parallex
       // couldn't be reached — status still unknown; monitor until Parallex gives a final answer.
