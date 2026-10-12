@@ -360,7 +360,7 @@ function buildPacs008(opts) {
     creditorIdType, creditorIdValue, creditorTier, creditorDesignation,
   } = opts;
 
-  return `<?xml version="1.0" encoding="UTF-8" standalone="no"?><ns2:Document xmlns:ns2="${NS['pacs.008']}"><FIToFICstmrCdtTrf><GrpHdr><MsgId>${esc(msgId)}</MsgId><CreDtTm>${nowUTC().iso}</CreDtTm><BtchBookg>false</BtchBookg><NbOfTxs>1</NbOfTxs><SttlmInf><SttlmMtd>CLRG</SttlmMtd></SttlmInf><InstgAgt><FinInstnId><BICFI>${esc(INSTITUTION_CODE)}</BICFI><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><BICFI>${esc(destMemberId)}</BICFI><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt></GrpHdr><CdtTrfTxInf><PmtId><InstrId>${esc(instrId)}</InstrId><EndToEndId>${esc(endToEndId)}</EndToEndId><TxId>${esc(txId)}</TxId></PmtId><PmtTpInf><ClrChanl>RTNS</ClrChanl><SvcLvl><Prtry>0100</Prtry></SvcLvl><LclInstrm><Prtry>CTAA</Prtry></LclInstrm><CtgyPurp><Prtry>001</Prtry></CtgyPurp></PmtTpInf><IntrBkSttlmAmt Ccy="NGN">${esc(amountNaira)}</IntrBkSttlmAmt><IntrBkSttlmDt>${esc(settlementDate)}</IntrBkSttlmDt><ChrgBr>SLEV</ChrgBr><InstgAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt><Dbtr><Nm>${esc(debtorName)}</Nm></Dbtr><DbtrAcct><Id><Othr><Id>${esc(debtorAccount)}</Id></Othr></Id><Nm>${esc(debtorName)}</Nm></DbtrAcct><DbtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></DbtrAgt><CdtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></CdtrAgt><Cdtr><Nm>${esc(creditorName)}</Nm></Cdtr><CdtrAcct><Id><IBAN>${esc(creditorAccount)}</IBAN></Id><Nm>${esc(creditorName)}</Nm></CdtrAcct>${narration ? `<RmtInf><Ustrd>${esc(String(narration).slice(0, 140))}</Ustrd></RmtInf>` : ''}<SplmtryData><PlcAndNm>AdditionalVerificationDetails</PlcAndNm><Envlp><CustomData><DebtorInfo><AccountDesignation>${DEBIT_ACCOUNT_DESIGNATION}</AccountDesignation><IdType>BVN</IdType><IdValue>${esc(DEBIT_ACCOUNT_BVN)}</IdValue><AccountTier>${DEBIT_ACCOUNT_TIER}</AccountTier></DebtorInfo><CreditorInfo><AccountDesignation>${creditorDesignation || 1}</AccountDesignation><IdType>${esc(creditorIdType || 'BVN')}</IdType><IdValue>${esc(creditorIdValue || '')}</IdValue><AccountTier>${creditorTier != null ? creditorTier : 3}</AccountTier></CreditorInfo><TransactionInfo><TransactionLocation>${esc(TXN_LOCATION)}</TransactionLocation><NameEnquiryMsgId>${esc(neEnquiryMsgId || '')}</NameEnquiryMsgId><ChannelCode>${CHANNEL_CODE}</ChannelCode></TransactionInfo></CustomData></Envlp></SplmtryData></CdtTrfTxInf></FIToFICstmrCdtTrf></ns2:Document>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="no"?><ns2:Document xmlns:ns2="${NS['pacs.008']}"><FIToFICstmrCdtTrf><GrpHdr><MsgId>${esc(msgId)}</MsgId><CreDtTm>${nowUTC().iso}</CreDtTm><BtchBookg>false</BtchBookg><NbOfTxs>1</NbOfTxs><SttlmInf><SttlmMtd>CLRG</SttlmMtd></SttlmInf><InstgAgt><FinInstnId><BICFI>${esc(INSTITUTION_CODE)}</BICFI><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><BICFI>${esc(destMemberId)}</BICFI><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt></GrpHdr><CdtTrfTxInf><PmtId><InstrId>${esc(instrId)}</InstrId><EndToEndId>${esc(endToEndId)}</EndToEndId><TxId>${esc(txId)}</TxId></PmtId><PmtTpInf><ClrChanl>RTNS</ClrChanl><SvcLvl><Prtry>0100</Prtry></SvcLvl><LclInstrm><Prtry>CTAA</Prtry></LclInstrm><CtgyPurp><Prtry>001</Prtry></CtgyPurp></PmtTpInf><IntrBkSttlmAmt Ccy="NGN">${esc(amountNaira)}</IntrBkSttlmAmt><IntrBkSttlmDt>${esc(settlementDate)}</IntrBkSttlmDt><ChrgBr>SLEV</ChrgBr><InstgAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></InstgAgt><InstdAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></InstdAgt><Dbtr><Nm>${esc(debtorName)}</Nm></Dbtr><DbtrAcct><Id><IBAN>${esc(debtorAccount)}</IBAN></Id><Nm>${esc(debtorName)}</Nm></DbtrAcct><DbtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(INSTITUTION_CODE)}</MmbId></ClrSysMmbId></FinInstnId></DbtrAgt><CdtrAgt><FinInstnId><ClrSysMmbId><MmbId>${esc(destMemberId)}</MmbId></ClrSysMmbId></FinInstnId></CdtrAgt><Cdtr><Nm>${esc(creditorName)}</Nm></Cdtr><CdtrAcct><Id><IBAN>${esc(creditorAccount)}</IBAN></Id><Nm>${esc(creditorName)}</Nm></CdtrAcct>${narration ? `<RmtInf><Ustrd>${esc(String(narration).slice(0, 140))}</Ustrd></RmtInf>` : ''}</CdtTrfTxInf><SplmtryData><PlcAndNm>AdditionalVerificationDetails</PlcAndNm><Envlp><CustomData><DebtorInfo><AccountDesignation>${DEBIT_ACCOUNT_DESIGNATION}</AccountDesignation><IdType>BVN</IdType><IdValue>${esc(DEBIT_ACCOUNT_BVN)}</IdValue><AccountTier>${DEBIT_ACCOUNT_TIER}</AccountTier></DebtorInfo><CreditorInfo><AccountDesignation>${creditorDesignation || 1}</AccountDesignation><IdType>${esc(creditorIdType || 'BVN')}</IdType><IdValue>${esc(creditorIdValue || '')}</IdValue><AccountTier>${creditorTier != null ? creditorTier : 3}</AccountTier></CreditorInfo><TransactionInfo><TransactionLocation>${esc(TXN_LOCATION)}</TransactionLocation><NameEnquiryMsgId>${esc(neEnquiryMsgId || '')}</NameEnquiryMsgId><ChannelCode>${CHANNEL_CODE}</ChannelCode></TransactionInfo></CustomData></Envlp></SplmtryData></FIToFICstmrCdtTrf></ns2:Document>`;
 }
 
 // ── pacs.028 builder — Transaction Status Query request ──────────────────────
@@ -536,29 +536,21 @@ const PERMANENT_FAILURE_CODES = new Set([
 ]);
 
 // ── getBalance — Institution Balance endpoint ────────────────────────────────
-// Confirmed by Hydrogen: same PGP+xenc wrapping as XML endpoints, application/xml.
-// Response may be xenc-wrapped JSON or plain JSON; both are handled.
+// Confirmed 2026-10-12: Content-Type application/json; body {"Request":"<hex of PGP-encrypted JSON>"}.
+// Response: {"statusCode":"90000","message":"Successful","data":"<hex PGP>"} → decrypts to
+// {"ChannelCode","Amount","SourceInstitutionCode","ResponseCode"}.
 async function getBalance() {
   if (!isConfigured()) return BigInt(0);
   try {
     const payload = JSON.stringify({ ChannelCode: String(CHANNEL_CODE), SourceInstitutionCode: INSTITUTION_CODE });
     const hex = await pgpEncryptToHex(payload);
-    const encryptedBody = [
-      '<xenc:EncryptedData Type="http://www.w3.org/2001/04/xmlenc#Content"',
-      ' xmlns:xenc="http://www.w3.org/2001/04/xmlenc#">',
-      '<xenc:CipherData><xenc:CipherValue>',
-      hex,
-      '</xenc:CipherValue></xenc:CipherData>',
-      '</xenc:EncryptedData>',
-    ].join('');
-    const { status, body } = await post('/eft/v1/inst/balance', encryptedBody, 'application/xml; charset=UTF-8');
+    const { status, body } = await post('/eft/v1/inst/balance', JSON.stringify({ Request: hex }), 'application/json');
     if (status === 200 && body) {
-      const decryptedBody = body.includes('<xenc:EncryptedData')
-        ? await decryptContentElement(body)
-        : body;
-      const jsonMatch = decryptedBody.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
+      const env = JSON.parse(body);
+      if (env && env.data) {
+        const data = String(env.data).trim();
+        const plain = /^-----BEGIN PGP/.test(data) ? await pgpDecryptArmored(data) : await pgpDecryptFromHex(data);
+        const parsed = JSON.parse(plain);
         if (parsed.ResponseCode === '00' && parsed.Amount) {
           return BigInt(Math.round(parseFloat(parsed.Amount) * 100));
         }

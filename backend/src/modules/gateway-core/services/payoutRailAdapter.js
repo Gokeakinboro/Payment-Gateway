@@ -11,6 +11,7 @@ const parallexTransfer = require('./parallexTransferService');
 const opay             = require('./opayService');
 const nibssEasyPay     = require('./nibssEasyPayService');
 const nomba            = require('./nombaService');
+const hydrogen         = require('./hydrogenTransferService');
 
 function payoutAdapterForName(name) {
   const n = (name || '').toLowerCase();
@@ -19,6 +20,7 @@ function payoutAdapterForName(name) {
   if (/opay/.test(n)                 && opay.isPayoutConfigured())       return opay;
   if (/nibss|easypay|nip/.test(n)    && nibssEasyPay.isConfigured())     return nibssEasyPay;
   if (/nomba/.test(n)                && nomba.isConfigured())            return nomba;
+  if (/hydrogen/.test(n)             && hydrogen.isConfigured())         return hydrogen;
   return null;
 }
 
