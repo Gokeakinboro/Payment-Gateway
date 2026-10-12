@@ -6799,7 +6799,7 @@ async function downloadWalletCSV() {
   if (btn) { btn.textContent = '⟳ Generating...'; btn.disabled = true; }
 
   try {
-    var res = await apiFetch('/reports/merchant-statement?from=' + from + '&to=' + to + '&perPage=2000');
+    var res = await apiFetch('/reports/merchant-statement?from=' + from + '&to=' + to + '&perPage=2000&ledgerLimit=50000');
     if (!res || !res.data) throw new Error('Could not fetch statement data');
     var d = res.data;
     var wall = d.wallet_activity || [];

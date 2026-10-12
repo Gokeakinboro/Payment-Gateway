@@ -414,7 +414,7 @@ router.get('/failure-analysis', requireAuth, requireCompliance, async (req, res,
 // Merchant can pull their own; admin can pull any
 router.get('/merchant-statement', requireAuth, async (req, res, next) => {
   try {
-    const { merchant_id, from, to, page=1, perPage=100 } = req.query;
+    const { merchant_id, from, to, page=1, perPage=100, ledgerLimit=5000 } = req.query;
     let targetMerchantId;
 
     if (req.user.role === 'MERCHANT') {
@@ -468,7 +468,7 @@ router.get('/merchant-statement', requireAuth, async (req, res, next) => {
           reference: true, description: true, createdAt: true,
         },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        take: 5000,
+        take: Math.min(parseInt(ledgerLimit) || 5000, 50000),
       }),
       // Closing balance: sum of live per-rail wallet balances (authoritative)
       prisma.merchantWallet.findMany({
