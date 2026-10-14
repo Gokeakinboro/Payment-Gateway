@@ -274,10 +274,16 @@ async function decryptContentElement(xmlStr) {
   let plaintextXml;
   if (cipherValue.startsWith('-----BEGIN PGP')) {
     plaintextXml = await pgpDecryptArmored(cipherValue);
-  } else if (/^[0-9A-Fa-f]+$/.test(cipherValue.replace(/\s+/g, ''))) {
-    plaintextXml = await pgpDecryptFromHex(cipherValue.replace(/\s+/g, ''));
   } else {
-    throw new Error(`Hydrogen error: ${cipherValue}`);
+    // Hydrogen may split one reply into several hex PGP messages joined by ';' — the
+    // decrypted parts concatenate into the full document.
+    const parts = cipherValue.split(';').map(p => p.replace(/\s+/g, '')).filter(Boolean);
+    if (!parts.length || !parts.every(p => /^[0-9A-Fa-f]+$/.test(p))) {
+      throw new Error(`Hydrogen error: ${cipherValue}`);
+    }
+    const decrypted = [];
+    for (const p of parts) decrypted.push(await pgpDecryptFromHex(p));
+    plaintextXml = decrypted.join('');
   }
 
   return xmlStr.slice(0, start) + plaintextXml + xmlStr.slice(end + encDataClose.length);
@@ -389,7 +395,13 @@ async function nameEnquiry(bankMemberId, accountNumber) {
       const hydrogenMsgId = (decrypted.match(/<Assgnmt>\s*<MsgId>([^<]+)<\/MsgId>/) || [])[1] || msgId;
       const rjctCd  = (decrypted.match(/<Rsn>\s*<Cd>([^<]+)<\/Cd>/) || [])[1] || '';
       if (/true/i.test(vrfctn) && name) {
-        return { ok: true, accountName: name, sessionId: hydrogenMsgId, kycLevel: '', reason: '', raw: body };
+        const ci = (decrypted.match(/<CreditorInfo>([\s\S]*?)<\/CreditorInfo>/) || [])[1] || '';
+        const pick = (tag) => (ci.match(new RegExp(`<${tag}>([^<]*)</${tag}>`)) || [])[1];
+        const creditorInfo = {
+          designation: pick('AccountDesignation'), idType: pick('IdType'),
+          idValue: pick('IdValue'), tier: pick('AccountTier'),
+        };
+        return { ok: true, accountName: name, sessionId: hydrogenMsgId, kycLevel: '', creditorInfo, reason: '', raw: body };
       }
       return { ok: false, accountName: '', sessionId: hydrogenMsgId, kycLevel: '', reason: rjctCd || 'Not verified', raw: body };
     }
@@ -415,12 +427,14 @@ async function sendPayout(item) {
 
   let neSessionId   = item.neSessionId   || null;
   let neAccountName = item.neAccountName || item.account_name || '';
+  let neCreditor    = {};
 
   if (!neSessionId) {
     const ne = await nameEnquiry(destMemberId, item.account_number);
     if (!ne.ok) throw new Error(`Hydrogen NE failed for ${destMemberId}/${item.account_number}: ${ne.reason}`);
     neSessionId   = ne.sessionId;
     neAccountName = ne.accountName || neAccountName;
+    neCreditor    = ne.creditorInfo || {};
   }
 
   const msgId      = makeMsgId();
@@ -436,10 +450,10 @@ async function sendPayout(item) {
     creditorAccount: item.account_number,
     narration:       item.narration || '',
     neEnquiryMsgId:  neSessionId || '',
-    creditorIdType:        item.hydrogenCreditorIdType        || 'BVN',
-    creditorIdValue:       item.hydrogenCreditorIdValue       || '',
-    creditorTier:          item.hydrogenCreditorTier,
-    creditorDesignation:   item.hydrogenCreditorDesignation   || 1,
+    creditorIdType:        item.hydrogenCreditorIdType        || neCreditor.idType      || 'BVN',
+    creditorIdValue:       item.hydrogenCreditorIdValue       || neCreditor.idValue     || '',
+    creditorTier:          item.hydrogenCreditorTier != null ? item.hydrogenCreditorTier : (neCreditor.tier ? Number(neCreditor.tier) : undefined),
+    creditorDesignation:   item.hydrogenCreditorDesignation   || neCreditor.designation || 1,
   });
 
   try {
